@@ -38,6 +38,12 @@ win:
     - target: nsis
       arch:
         - x64
+    # Primary no-install delivery: extract once, then launch the EXE from the
+    # folder. The legacy portable target remains only for compatibility with
+    # existing readiness evidence and is no longer the user-facing default.
+    - target: zip
+      arch:
+        - x64
     - target: portable
       arch:
         - x64

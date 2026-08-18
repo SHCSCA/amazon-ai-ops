@@ -110,7 +110,8 @@ describe('store-scoped ad/listing panels', () => {
     const listingMarkup = renderToStaticMarkup(<StoreScopedListingContentPanel storeContext={context} />);
 
     expect(adMarkup).toContain('广告对象事实');
-    expect(adMarkup).toContain('Campaign');
+    expect(adMarkup).toContain('广告活动');
+    expect(adMarkup).not.toContain('Campaign');
     expect(adMarkup).toContain('Amazon US · USD · 只读事实');
     expect(keywordMarkup).toContain('关键词事实与机会');
     expect(keywordMarkup).toContain('指标与机会合并');
@@ -121,13 +122,14 @@ describe('store-scoped ad/listing panels', () => {
     expect(listingMarkup).not.toContain('自动发布');
   });
 
-  it('fails every surface closed without a full Main-authorized StoreContext', () => {
+  it('fails every surface closed without a fully confirmed current store', () => {
     for (const markup of [
       renderToStaticMarkup(<StoreScopedAdObjectsPanel storeContext={null} />),
       renderToStaticMarkup(<StoreScopedKeywordFactsPanel storeContext={null} />),
       renderToStaticMarkup(<StoreScopedListingContentPanel storeContext={null} />),
     ]) {
-      expect(markup).toContain('尚无权威 StoreContext');
+      expect(markup).toContain('当前店铺尚未确认');
+      expect(markup).not.toMatch(/Main|StoreContext|Authority|Renderer|Profile/);
       expect(markup).not.toContain('新建 Listing');
       expect(markup).not.toContain('执行成功');
     }
@@ -255,7 +257,8 @@ describe('store-scoped ad/listing panels', () => {
     );
 
     expect(markup).toContain('B0LIST0001 版本历史');
-    expect(markup).toContain('store-one · Amazon US · USD');
+    expect(markup).toContain('当前店铺 · Amazon US · USD');
+    expect(markup).not.toContain('store-one · Amazon US · USD');
     expect(markup).toContain('v2');
     expect(markup).toContain('2026-07-22 02:00:00.000 · 人工录入');
     expect(markup).toContain('Operator refined title and search terms');
@@ -285,7 +288,9 @@ describe('store-scoped ad/listing panels', () => {
     );
 
     expect(loading).toContain('正在读取当前店铺的 Listing 版本历史');
-    expect(failed).toContain('Main unavailable');
+    expect(failed).toContain('版本历史读取失败');
+    expect(failed).toContain('请刷新后重试');
+    expect(failed).not.toContain('Main unavailable');
     expect(failed).toContain('重试');
     expect(empty).toContain('当前 Listing 尚无已保存的历史快照');
   });
@@ -322,7 +327,8 @@ describe('store-scoped ad/listing panels', () => {
     );
     expect(markup).toContain('当前店铺 Listing 版本账本');
     expect(markup).toContain('已删除 Listing 的历史快照也会保留在这里');
-    expect(markup).toContain('Listing #412');
+    expect(markup).toContain('已关联历史版本');
+    expect(markup).not.toContain('Listing #412');
     expect(markup).toContain('加载更多历史');
   });
 

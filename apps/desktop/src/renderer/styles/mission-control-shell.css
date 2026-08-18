@@ -328,10 +328,57 @@
   box-shadow: 0 12px 28px rgb(15 23 42 / 0.12);
 }
 
-.mission-control-shell .mission-control-mode:hover .mission-control-mode-blocker,
-.mission-control-shell .mission-control-mode:focus-within .mission-control-mode-blocker,
+.mission-control-shell .mission-control-mode:has(.mission-control-mode-button[data-authority-blocked="true"]:hover) .mission-control-mode-blocker,
+.mission-control-shell .mission-control-mode:has(.mission-control-mode-button[data-authority-blocked="true"]:focus-visible) .mission-control-mode-blocker,
 .mission-control-shell .mission-control-mode-feedback {
   display: block;
+}
+
+.mission-control-shell .mission-control-mode:has(.mission-control-mode-feedback) .mission-control-mode-blocker {
+  display: none;
+}
+
+.mission-control-shell .mission-control-mode-feedback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 360px;
+  padding: 9px 10px;
+}
+
+.mission-control-shell .mission-control-mode-feedback > span {
+  min-width: 0;
+}
+
+.mission-control-shell .mission-control-mode-feedback__action,
+.mission-control-shell .mission-control-mode-feedback__close {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.mission-control-shell .mission-control-mode-feedback__action {
+  min-height: 28px;
+  border: 1px solid #fed7aa;
+  padding: 4px 8px;
+}
+
+.mission-control-shell .mission-control-mode-feedback__close {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+}
+
+.mission-control-shell .mission-control-mode-feedback__action:hover,
+.mission-control-shell .mission-control-mode-feedback__close:hover {
+  background: #ffedd5;
 }
 
 .mission-control-shell .mission-control-global-search {
@@ -2028,7 +2075,7 @@
   z-index: 160;
   display: grid;
   gap: 7px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   padding-bottom: 10px;
   border-bottom: 1px solid #e4e9f0;
 }
@@ -2133,11 +2180,12 @@
 .mission-control-shell .store-scope-switcher__popover {
   position: fixed;
   z-index: 260;
-  top: calc(var(--mission-topbar-height) + 10px);
+  top: auto;
+  bottom: 74px;
   left: 8px;
   display: grid;
   width: min(338px, calc(100vw - 24px));
-  max-height: calc(100vh - var(--mission-topbar-height) - 20px);
+  max-height: calc(100vh - var(--mission-topbar-height) - 96px);
   overflow: auto;
   border: 1px solid #cfd8e6;
   border-radius: 10px;
@@ -2473,6 +2521,47 @@
 
 .login-stable-identity {
   margin-top: 8px;
+}
+
+.store-connection-overall-status {
+  display: grid;
+  gap: 3px;
+  margin: 12px 0;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #64748b;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.store-connection-overall-status strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.store-connection-overall-status span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.store-connection-overall-status[data-state="connected"] {
+  border-color: #bbf7d0;
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.store-connection-overall-status[data-state="partial"],
+.store-connection-overall-status[data-state="connecting"] {
+  border-color: #fed7aa;
+  border-left-color: #f59e0b;
+  background: #fff7ed;
+}
+
+.store-connection-overall-status[data-state="error"] {
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  background: #fef2f2;
 }
 
 .login-unbind-dialog .store-connection-unbind-facts,

@@ -31,6 +31,12 @@ async function expectNoBodyText(page, text, key) {
   if (content.includes(text)) fail(`Unexpected body text: ${text}`, key);
 }
 
+async function expectNoRawRevisionStatus(page, key) {
+  const content = await bodyText(page);
+  const exposed = content.match(/\br\d+\s*·\s*(?:生效中|已归档)\b/i);
+  if (exposed) fail(`Raw runtime config revision is visible: ${exposed[0]}`, key);
+}
+
 async function expectWorkspace(page, heading, subview) {
   await page.getByRole('heading', { name: heading, level: 1, exact: true })
     .waitFor({ state: 'visible', timeout: 10_000 });
@@ -198,7 +204,7 @@ async function main() {
     await page.getByRole('heading', { name: '编辑店铺运行配置', level: 2, exact: true })
       .waitFor({ state: 'hidden', timeout: 10_000 });
     for (const text of [
-      'r2 · 生效中',
+      '版本已校验 · 生效中',
       '07:45 · 回看 17 天',
       '30 天 · 目标 ACOS 31.5%',
       '启用 · ≥ 79%',
@@ -207,6 +213,7 @@ async function main() {
     ]) {
       await expectBodyText(page, text, 'settings-shc001-updated');
     }
+    await expectNoRawRevisionStatus(page, 'settings-shc001-updated');
 
     await clickButton(page, '编辑规则阈值');
     await page.getByRole('heading', {
@@ -234,13 +241,14 @@ async function main() {
     await switchStore(page, 'preview-store-shc002', 'SHC002-US');
     await expectWorkspace(page, '店铺与运行设置', 'ai-and-local');
     for (const text of [
-      'r2 · 生效中',
+      '版本已校验 · 生效中',
       '09:30 · 回看 21 天',
       '180 天',
       'US / USD',
     ]) {
       await expectBodyText(page, text, 'settings-shc002-isolated');
     }
+    await expectNoRawRevisionStatus(page, 'settings-shc002-isolated');
     for (const storeOneValue of ['07:45 · 回看 17 天', '400 天']) {
       await expectNoBodyText(page, storeOneValue, 'settings-shc002-isolated');
     }
@@ -253,18 +261,21 @@ async function main() {
     await clickButton(page, '保存变更');
     await page.getByRole('heading', { name: '编辑店铺运行配置', level: 2, exact: true })
       .waitFor({ state: 'hidden', timeout: 10_000 });
-    for (const text of ['r3 · 生效中', '210 天', '已关闭']) {
+    for (const text of ['版本已校验 · 生效中', '210 天', '已关闭']) {
       await expectBodyText(page, text, 'settings-shc002-updated');
     }
+    await expectNoRawRevisionStatus(page, 'settings-shc002-updated');
 
     await clickButton(page, '归档');
     await page.getByRole('heading', { name: '归档当前店铺配置？', level: 2, exact: true })
       .waitFor({ state: 'visible' });
     await expectBodyText(page, '配置会停止生效但保留全部版本，可随时恢复；不会影响其他店铺。', 'settings-archive-confirm');
     await clickButton(page, '确认归档');
-    await expectBodyText(page, 'r4 · 已归档', 'settings-shc002-archived');
+    await expectBodyText(page, '版本已校验 · 已归档', 'settings-shc002-archived');
+    await expectNoRawRevisionStatus(page, 'settings-shc002-archived');
     await clickButton(page, '恢复配置');
-    await expectBodyText(page, 'r5 · 生效中', 'settings-shc002-restored');
+    await expectBodyText(page, '版本已校验 · 生效中', 'settings-shc002-restored');
+    await expectNoRawRevisionStatus(page, 'settings-shc002-restored');
     await expectBodyText(page, '4 个版本', 'settings-shc002-restored');
     await capture(page, evidence, 'settings-shc002-restored', runId);
 
@@ -275,12 +286,15 @@ async function main() {
       '失败关闭',
       '同一店铺、业务日与采集口径的失败终态不会回到等待',
       '证据保留预览',
-      'DRY-RUN · deletionSupported=false',
+      '仅预览 · 不支持删除',
       '同采集口径关闭 · 不重试',
       '210 天',
       '当前版本始终不支持删除或应用',
     ]) {
       await expectBodyText(page, text, 'scheduler-shc002');
+    }
+    for (const technicalText of ['DRY-RUN', 'deletionSupported', 'RUN NOW', 'StoreContext', '当前浏览器 Profile']) {
+      await expectNoBodyText(page, technicalText, 'scheduler-shc002');
     }
     await assertUsUsdOnly(page, 'scheduler-shc002');
     await capture(page, evidence, 'scheduler-shc002-failed-closed', runId);
@@ -302,9 +316,10 @@ async function main() {
 
     await navigateLegacyRoute(page, 'settings');
     await expectWorkspace(page, '店铺与运行设置', 'ai-and-local');
-    for (const text of ['r2 · 生效中', '07:45 · 回看 17 天', '400 天']) {
+    for (const text of ['版本已校验 · 生效中', '07:45 · 回看 17 天', '400 天']) {
       await expectBodyText(page, text, 'settings-shc001-roundtrip');
     }
+    await expectNoRawRevisionStatus(page, 'settings-shc001-roundtrip');
     await expectNoBodyText(page, '210 天', 'settings-shc001-roundtrip');
 
     await navigateLegacyRoute(page, 'delivery');
@@ -345,6 +360,14 @@ async function main() {
       if (!actionTypes.includes(requiredAction)) {
         fail('Required runtime config CRUD action missing', requiredAction);
       }
+    }
+    const versionGuardedActions = evidence.actionLog.filter((item) => [
+      'updateStoreRuntimeConfig',
+      'archiveStoreRuntimeConfig',
+      'restoreStoreRuntimeConfig',
+    ].includes(item.type));
+    if (versionGuardedActions.some((item) => !Number.isSafeInteger(item.input?.expectedRevision))) {
+      fail('Runtime config mutation lost its expectedRevision concurrency guard', JSON.stringify(versionGuardedActions));
     }
     const storeOneUpdates = evidence.actionLog.filter((item) =>
       item.type === 'updateStoreRuntimeConfig' && item.storeId === 'preview-store-shc001');

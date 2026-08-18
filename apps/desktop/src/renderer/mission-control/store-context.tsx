@@ -274,8 +274,10 @@ export function MissionControlStoreContextProvider({
 
   const resyncAuthority = useCallback(async (
     phaseWhenMissing: MissionControlStorePhase = 'needs-selection',
+    reservedSequence?: number,
   ): Promise<StoreWorkspaceView | null> => {
-    const sequence = ++resyncSequenceRef.current;
+    const sequence = reservedSequence ?? ++resyncSequenceRef.current;
+    if (!mountedRef.current || sequence !== resyncSequenceRef.current) return null;
     let view: StoreWorkspaceView | null;
     try {
       view = await readActiveView();
@@ -316,10 +318,11 @@ export function MissionControlStoreContextProvider({
     mountedRef.current = true;
     let disposed = false;
     const bootstrap = async () => {
+      const authoritySequence = ++resyncSequenceRef.current;
       try {
         await refreshStores();
         await Promise.allSettled([refreshDailyStatuses()]);
-        if (!disposed) await resyncAuthority('needs-selection');
+        if (!disposed) await resyncAuthority('needs-selection', authoritySequence);
       } catch (error) {
         if (!disposed) dispatch({ type: 'error', error: errorMessage(error) });
       }
@@ -327,6 +330,7 @@ export function MissionControlStoreContextProvider({
     void bootstrap();
 
     const removeContextListener = api.onStoreContextChanged((view) => {
+      ++resyncSequenceRef.current;
       if (view) dispatch({ type: 'authority', view });
       else dispatch({ type: 'clear-authority', phase: 'needs-selection' });
       void refreshDailyStatuses().catch(() => undefined);
@@ -406,10 +410,11 @@ export function MissionControlStoreContextProvider({
 
   const retryBootstrap = useCallback(async () => {
     dispatch({ type: 'loading' });
+    const authoritySequence = ++resyncSequenceRef.current;
     try {
       await refreshStores();
       await Promise.allSettled([refreshDailyStatuses()]);
-      await resyncAuthority('needs-selection');
+      await resyncAuthority('needs-selection', authoritySequence);
       dispatch({ type: 'post-commit-sync-warning', warning: null });
     } catch (error) {
       dispatch({ type: 'error', error: errorMessage(error) });

@@ -10,6 +10,11 @@ const {
   resolveWindowsBuildSteps,
 } = require('./build-windows-package.js');
 const {
+  PROGRESS_TEMPLATE,
+  assertProgressTemplateContract,
+  withPortableTemplateOverride,
+} = require('./run-electron-builder-windows.js');
+const {
   EXPECTED_ELECTRON_MODULES_ABI,
   sha256File,
 } = require('./prepare-native-runtime.js');
@@ -51,9 +56,49 @@ describe('single-lock isolated Windows package orchestration', () => {
     ))).toBe(false);
     expect(commandText).toMatch(/stage-playwright-chromium\.js/i);
     expect(commandText).toMatch(/electron-builder[\\/]+cli\.js/i);
+    expect(commandText).toMatch(/run-electron-builder-windows\.js/i);
     expect(steps.at(-1).env).toMatchObject(builderEnvironment);
     expect(steps.at(-1).env.NO_UPDATE_NOTIFIER).toBe('1');
     expect(steps.at(-2).env.AAO_STAGED_SQLITE_BINDING).toBeUndefined();
+  });
+
+  it('ships a visible portable progress, duplicate-launch, and exit-78 contract', () => {
+    const contents = fs.readFileSync(PROGRESS_TEMPLATE, 'utf8');
+    expect(() => assertProgressTemplateContract(contents)).not.toThrow();
+    expect(contents).not.toMatch(/SetSilent\s+silent/i);
+    expect(contents).toContain('MUI_PAGE_INSTFILES');
+    expect(contents).toContain('!insertmacro addLangs');
+    expect(contents).toContain('AmazonAIOpsAgentPortableLauncher-v1');
+    expect(contents).toContain('安全校验错误 78');
+    expect(contents).toMatch(/ShowWindow\s+\$HWNDPARENT\s+\$\{SW_SHOW\}/);
+  });
+
+  it.each(['success', 'failure'])('restores the installed portable template byte-exactly after %s', (outcome) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-portable-template-'));
+    tempDirectories.push(directory);
+    const installedDirectory = path.join(directory, 'templates', 'nsis');
+    const installedTemplate = path.join(installedDirectory, 'portable.nsi');
+    const replacementTemplate = path.join(directory, 'replacement.nsi');
+    const original = Buffer.from('Function .onInit\n  SetSilent silent\nFunctionEnd\n');
+    fs.mkdirSync(installedDirectory, { recursive: true });
+    fs.writeFileSync(installedTemplate, original);
+    fs.copyFileSync(PROGRESS_TEMPLATE, replacementTemplate);
+
+    const invoke = () => withPortableTemplateOverride({
+      installedTemplate,
+      replacementTemplate,
+    }, () => {
+      expect(fs.readFileSync(installedTemplate, 'utf8')).toContain('正在解压运行文件');
+      if (outcome === 'failure') throw new Error('fake builder failure');
+      return 'ok';
+    });
+
+    if (outcome === 'failure') {
+      expect(invoke).toThrow(/fake builder failure/i);
+    } else {
+      expect(invoke()).toBe('ok');
+    }
+    expect(fs.readFileSync(installedTemplate).equals(original)).toBe(true);
   });
 
   it('holds one outer scope across isolated prep, build, package probe, and cleanup', () => {
@@ -111,6 +156,8 @@ describe('single-lock isolated Windows package orchestration', () => {
       sourceReadOnly: true,
     });
     expect(result.package.freshCurrentRun).toBe(true);
+    expect(result.package.defaultNoInstallDelivery).toBe('folder_zip');
+    expect(result.package.folderZipPath).toBe(fixture.packageOutputs.folderZipPath);
     expect(sha256File(fixture.sourcePaths.sqliteBindingPath))
       .toBe(fixture.sourceBefore.sqliteSha256);
     expect(sha256File(fixture.sourcePaths.duckdbBindingPath))
@@ -212,6 +259,7 @@ function nativeFixture() {
     executablePath: packageExe,
     installerPath: path.join(releaseRoot, 'AmazonAIOpsAgent-1.5.0.exe'),
     portablePath: path.join(releaseRoot, 'AmazonAIOpsAgent-1.5.0-portable.exe'),
+    folderZipPath: path.join(releaseRoot, 'AmazonAIOpsAgent-1.5.0.zip'),
     blockmapPath: path.join(releaseRoot, 'AmazonAIOpsAgent-1.5.0.exe.blockmap'),
   };
   fs.writeFileSync(sourcePaths.sqliteBindingPath, 'source-node-sqlite');
@@ -224,6 +272,7 @@ function nativeFixture() {
   fs.writeFileSync(packagePaths.duckdbBindingPath, 'stale-package-duck');
   fs.writeFileSync(packageOutputs.installerPath, 'stale-installer');
   fs.writeFileSync(packageOutputs.portablePath, 'stale-portable');
+  fs.writeFileSync(packageOutputs.folderZipPath, 'stale-folder-zip');
   fs.writeFileSync(packageOutputs.blockmapPath, 'stale-blockmap');
   const sourceBefore = {
     sqliteSha256: sha256File(sourcePaths.sqliteBindingPath),
@@ -266,6 +315,7 @@ function nativeFixture() {
     fs.copyFileSync(sourcePaths.duckdbBindingPath, packagePaths.duckdbBindingPath);
     fs.writeFileSync(packageOutputs.installerPath, 'fresh-installer');
     fs.writeFileSync(packageOutputs.portablePath, 'fresh-portable');
+    fs.writeFileSync(packageOutputs.folderZipPath, 'fresh-folder-zip');
     fs.writeFileSync(packageOutputs.blockmapPath, 'fresh-blockmap');
   };
   return {

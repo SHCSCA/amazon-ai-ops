@@ -107,7 +107,7 @@ async function main() {
     await navigateLegacyRoute(page, 'keyword-opportunities');
     await page.getByRole('heading', { name: '关键词事实与机会', level: 1 }).waitFor();
     await page.getByText('shc001 smart lock', { exact: true }).waitFor();
-    await expectBody(page, 'preview-store-shc001', 'store 1 keyword authority');
+    await expectBodyWithout(page, 'preview-store-shc001', 'store 1 internal identity is hidden');
     await expectBody(page, 'Amazon US · USD · 指标与机会合并', 'store 1 keyword authority');
     await expectBody(page, 'B0GTTJFQTM', 'store 1 keyword fact');
     await expectBody(page, 'shc001 bedroom lock', 'store 1 keyword fact');
@@ -128,7 +128,7 @@ async function main() {
 
     await switchStore(page, 'preview-store-shc002', 'SHC002-US');
     await page.getByText('shc002 smart lock', { exact: true }).waitFor();
-    await expectBody(page, 'preview-store-shc002', 'store 2 keyword authority');
+    await expectBodyWithout(page, 'preview-store-shc002', 'store 2 internal identity is hidden');
     await expectBody(page, 'B0SHC00201', 'store 2 keyword fact');
     await expectBodyWithout(page, 'shc001 smart lock', 'keyword store isolation');
     await expectBodyWithout(page, 'B0GTTJFQTM', 'keyword store isolation');
@@ -137,10 +137,10 @@ async function main() {
 
     await switchStore(page, 'preview-store-shc001', 'SHC001-US');
     await navigateLegacyRoute(page, 'listing-optimization');
-    await page.getByRole('heading', { name: 'Listing 内容库', level: 1 }).waitFor();
+    await page.getByRole('heading', { name: '商品详情内容库', level: 1 }).waitFor();
     await page.getByText('SHC001-US Preview Listing', { exact: true }).waitFor();
     await expectBody(page, 'Amazon US · USD · 本地内容库', 'store 1 Listing authority');
-    await expectBody(page, '本阶段只保存在本地，不自动发布 Amazon', 'Listing local-only contract');
+    await expectBody(page, '本阶段只保存在本地，不自动发布到 Amazon', 'Listing local-only contract');
 
     await dispatchClick(page.getByRole('button', { name: '新建 Listing', exact: true }));
     const createDialog = page.getByRole('dialog', { name: '新建美国站 Listing' });

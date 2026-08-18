@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   CheckCircle,
@@ -67,6 +67,14 @@ export interface MissionControlShellProps {
   children: React.ReactNode;
 }
 
+export function annotateMissionControlSidebarScrollOwner(root: ParentNode | null): void {
+  const scrollOwner = root?.querySelector<HTMLElement>('.app-sidebar-scroll');
+  if (!scrollOwner) return;
+  scrollOwner.setAttribute('data-scroll-owner', 'main-navigation');
+  scrollOwner.setAttribute('role', 'region');
+  scrollOwner.setAttribute('aria-label', '主业务导航滚动区');
+}
+
 function autonomyModeLabel(mode: MissionControlAutonomyMode): string {
   return mode === 'manual_approval' ? '人工审批' : 'AI 策略内自动';
 }
@@ -106,6 +114,7 @@ export function MissionControlShell({
   const [commandQuery, setCommandQuery] = useState('');
   const [globalPopover, setGlobalPopover] = useState<'boundaries' | 'help' | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const activeStoreId = String(authoritativeContext.storeId);
   const autoBlockerId = 'mission-control-auto-mode-blocker';
   const visibleCommandItems = useMemo(() => {
@@ -141,14 +150,31 @@ export function MissionControlShell({
     window.requestAnimationFrame(() => commandInputRef.current?.focus());
   }, [commandOpen]);
 
+  useEffect(() => {
+    if (!modeFeedback) return undefined;
+    const timeout = window.setTimeout(() => setModeFeedback(''), 8_000);
+    return () => window.clearTimeout(timeout);
+  }, [modeFeedback]);
+
+  useLayoutEffect(() => {
+    annotateMissionControlSidebarScrollOwner(shellRef.current);
+  }, []);
+
   async function requestMode(mode: MissionControlAutonomyMode) {
-    if (pendingMode || mode === projection.currentMode) return;
+    if (pendingMode) return;
+    if (mode === projection.currentMode) {
+      setModeFeedback(`当前已经是${autonomyModeLabel(mode)}模式。`);
+      return;
+    }
     if (mode === 'policy_auto' && !projection.policyAutoAvailable) {
-      setModeFeedback(projection.policyAutoBlockerDetail || DEFAULT_BLOCKED_AUTONOMY.policyAutoBlockerDetail || '');
+      setModeFeedback(
+        projection.policyAutoBlockerDetail
+        || '策略内自动尚未开放：请先到“策略与风控”发布并启用不可变策略版本。',
+      );
       return;
     }
     if (!onSetAutonomyMode) {
-      setModeFeedback('模式权限尚未从 Main 同步，未改变当前模式。');
+      setModeFeedback('模式权限尚未同步，未改变当前模式。');
       return;
     }
     setPendingMode(mode);
@@ -160,10 +186,10 @@ export function MissionControlShell({
         return;
       }
       if (isBlockedModeResponse(result)) {
-        setModeFeedback(result.detail || '模式请求被 Main 权限边界阻断。');
+        setModeFeedback(result.detail || '模式请求被本机安全边界阻断。');
         return;
       }
-      setModeFeedback(readModeResponseDetail(result) || `Main 已处理${autonomyModeLabel(mode)}请求，当前状态以权威回传为准。`);
+      setModeFeedback(readModeResponseDetail(result) || `${autonomyModeLabel(mode)}请求已处理，当前状态以确认结果为准。`);
     } catch (error) {
       setModeFeedback(error instanceof Error ? error.message : '模式切换失败');
     } finally {
@@ -175,6 +201,7 @@ export function MissionControlShell({
     <div
       className={`app-shell mission-control-shell${sidebarCollapsed ? ' mission-control-sidebar-collapsed' : ''}`}
       data-store-context={activeStoreId}
+      ref={shellRef}
     >
       <header className="topbar mission-control-topbar">
         <div className="mission-control-brand-lockup">
@@ -184,7 +211,7 @@ export function MissionControlShell({
           <span className="mission-control-brand-copy">
             <span className="mission-control-brand-title">
               <strong>运营智能体</strong>
-              <small>Mission Control</small>
+              <small>运营工作台</small>
             </span>
             {brandBadges && <span className="mission-control-brand-badges">{brandBadges}</span>}
           </span>
@@ -194,13 +221,14 @@ export function MissionControlShell({
           aria-label="当前店铺权威摘要"
           className="mission-control-topbar-select mission-control-store-select mission-control-store-select--readonly"
           data-error={storeError ? 'true' : undefined}
+          data-store-id={activeStoreId}
           role="status"
           title={storeError || activeStore?.displayName || activeStoreId}
         >
           <Storefront aria-hidden="true" size={17} weight="duotone" />
           <span className="mission-control-store-field">
             <strong>{activeStore?.displayName || activeStoreId}</strong>
-            <small>Main authority</small>
+            <small>当前店铺</small>
           </span>
           <span className="mission-control-fixed-scope" aria-label="美国站，美元">
             <span>US</span>
@@ -257,7 +285,31 @@ export function MissionControlShell({
               {projection.policyAutoBlockerDetail || DEFAULT_BLOCKED_AUTONOMY.policyAutoBlockerDetail}
             </span>
           )}
-          {modeFeedback && <span className="mission-control-mode-feedback" role="status">{modeFeedback}</span>}
+          {modeFeedback && (
+            <div className="mission-control-mode-feedback" role="status">
+              <span>{modeFeedback}</span>
+              {!projection.policyAutoAvailable && (
+                <button
+                  className="mission-control-mode-feedback__action"
+                  onClick={() => {
+                    setModeFeedback('');
+                    onNavigate(VISIBLE_WORKSPACES.find((item) => item.id === 'policy')!.defaultIntent);
+                  }}
+                  type="button"
+                >
+                  去策略配置
+                </button>
+              )}
+              <button
+                aria-label="关闭模式提示"
+                className="mission-control-mode-feedback__close"
+                onClick={() => setModeFeedback('')}
+                type="button"
+              >
+                <X aria-hidden="true" size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
         <button
@@ -321,8 +373,8 @@ export function MissionControlShell({
             {globalPopover === 'help' && (
               <div className="mission-control-small-popover mission-control-help-popover" role="note">
                 <strong>安全执行边界</strong>
-                <p>店铺、会话和模式均以 Main 权威为准。策略内自动只有在真实权限链完整后才会开放。</p>
-                <p>无法确认外部写入结果时必须停止并转人工，界面不会把 UNKNOWN 显示成成功。</p>
+                <p>店铺、会话和模式均以本机安全进程的确认结果为准。策略内自动只有在真实权限链完整后才会开放。</p>
+                <p>无法确认外部写入结果时必须停止并转人工，界面不会把“结果不确定”显示成成功。</p>
               </div>
             )}
           </div>
@@ -370,7 +422,7 @@ export function MissionControlShell({
               error={storeError}
               onCreate={onCreateStore ?? (() => Promise.reject(new Error('店铺创建接口不可用。')))}
               onManage={() => onNavigate(
-                VISIBLE_WORKSPACES.find((item) => item.id === 'objects')!.defaultIntent,
+                VISIBLE_WORKSPACES.find((item) => item.id === 'settings')!.defaultIntent,
               )}
               onRetry={onRetryStores ?? (() => undefined)}
               onSwitch={onSwitchStore}

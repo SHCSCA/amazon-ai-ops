@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   normalizeStoreContextEnvelope,
   normalizeStoreId,
@@ -10,7 +10,9 @@ import {
   INITIAL_MISSION_CONTROL_STORE_STATE,
   requestStoreWorkspaceSwitch,
   reduceMissionControlStoreState,
+  type MissionControlStoreState,
 } from './store-context';
+import type { MissionControlWindowApi } from './bridge/window-api';
 
 const store: StoreRecord = {
   storeId: normalizeStoreId('store-one'),
@@ -180,6 +182,121 @@ describe('Mission Control StoreContext state', () => {
     expect(source).toContain('const switchSequence = ++switchSequenceRef.current');
     expect(source).toContain('switchSequence !== switchSequenceRef.current');
     expect(source).toMatch(/const switchStore[\s\S]*dispatch\(\{ type: 'authority', view \}\)[\s\S]*runBestEffortPostCommitSync/);
+  });
+
+  it('invalidates any older Authority read before adopting a newer Main event', () => {
+    const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
+    const listenerBlock = source.slice(
+      source.indexOf('const removeContextListener'),
+      source.indexOf('const removeStoresListener'),
+    );
+    const invalidationIndex = listenerBlock.indexOf('++resyncSequenceRef.current');
+    const authorityDispatchIndex = listenerBlock.indexOf("dispatch({ type: 'authority', view })");
+
+    expect(invalidationIndex).toBeGreaterThanOrEqual(0);
+    expect(invalidationIndex).toBeLessThan(authorityDispatchIndex);
+  });
+
+  it('keeps newer Main authority when an older active-view read resolves null', async () => {
+    let latestState: MissionControlStoreState | undefined;
+    let contextListener: ((next: StoreWorkspaceView | null) => void) | undefined;
+    const cleanups: Array<() => void> = [];
+
+    vi.resetModules();
+    vi.doMock('react', async () => {
+      const actual = await vi.importActual<typeof import('react')>('react');
+      return {
+        ...actual,
+        useMemo: (factory: () => unknown) => factory(),
+        useCallback: <T,>(callback: T) => callback,
+        useRef: <T,>(initial: T) => ({ current: initial }),
+        useState: <T,>(initial: T) => {
+          latestState = initial as unknown as MissionControlStoreState;
+          const setState = (next: T | ((current: T) => T)) => {
+            const current = latestState as unknown as T;
+            latestState = (
+              typeof next === 'function'
+                ? (next as (value: T) => T)(current)
+                : next
+            ) as unknown as MissionControlStoreState;
+          };
+          return [initial, setState];
+        },
+        useEffect: (effect: () => void | (() => void)) => {
+          const cleanup = effect();
+          if (cleanup) cleanups.push(cleanup);
+        },
+      };
+    });
+
+    try {
+      const { MissionControlStoreContextProvider } = await import('./store-context');
+      let resolveActiveView!: (value: StoreWorkspaceView | null) => void;
+      const delayedActiveView = new Promise<StoreWorkspaceView | null>((resolve) => {
+        resolveActiveView = resolve;
+      });
+      const getActiveStoreWorkspaceView = vi.fn(() => delayedActiveView);
+      const api = {
+        listStores: vi.fn(async () => [store]),
+        listStoreDailyStatuses: vi.fn(async () => ({
+          schemaVersion: 1,
+          marketplace: 'US',
+          generatedAt: '2026-07-22T00:00:00.000Z',
+          stores: [],
+        })),
+        getActiveStoreWorkspaceView,
+        onStoreContextChanged: vi.fn((listener: (next: StoreWorkspaceView | null) => void) => {
+          contextListener = listener;
+          return () => undefined;
+        }),
+        onStoresChanged: vi.fn(() => () => undefined),
+      } as unknown as MissionControlWindowApi;
+
+      MissionControlStoreContextProvider({ api, children: null });
+      await vi.waitFor(() => {
+        expect(getActiveStoreWorkspaceView).toHaveBeenCalledTimes(1);
+      });
+
+      contextListener?.(view());
+      expect(latestState).toMatchObject({
+        phase: 'ready',
+        activeStore: { storeId: store.storeId },
+        authorityKey: expect.any(String),
+      });
+
+      resolveActiveView(null);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(latestState).toMatchObject({
+        phase: 'ready',
+        activeStore: { storeId: store.storeId },
+        authorityKey: expect.any(String),
+      });
+    } finally {
+      cleanups.reverse().forEach((cleanup) => cleanup());
+      vi.doUnmock('react');
+      vi.resetModules();
+    }
+  });
+
+  it('reserves bootstrap and retry Authority reads before their earlier async refresh work', () => {
+    const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
+    const bootstrapBlock = source.slice(
+      source.indexOf('const bootstrap = async'),
+      source.indexOf('void bootstrap()'),
+    );
+    const retryBlock = source.slice(
+      source.indexOf('const retryBootstrap ='),
+      source.indexOf('const createStore ='),
+    );
+
+    for (const block of [bootstrapBlock, retryBlock]) {
+      const reservationIndex = block.indexOf('const authoritySequence = ++resyncSequenceRef.current');
+      const refreshIndex = block.indexOf('await refreshStores()');
+      expect(reservationIndex).toBeGreaterThanOrEqual(0);
+      expect(reservationIndex).toBeLessThan(refreshIndex);
+      expect(block).toContain("resyncAuthority('needs-selection', authoritySequence)");
+    }
   });
 
   it('resyncs the complete Main workspace view without fabricating empty connections', () => {

@@ -602,7 +602,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       return exists ? current.map((item) => item.id === saved.id ? saved : item) : [...current, saved];
     });
     setProductEditor(null);
-    setFeedback(`${saved.asin} 已保存到当前店铺数据域。`);
+    setFeedback(`${saved.asin} 已保存到当前店铺。`);
   };
 
   const archiveProduct = async () => {
@@ -703,9 +703,9 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   if (!storeContext) {
     return (
       <WorkspaceState
-        description="等待 Main 确认当前店铺后，才会开放产品与运营事件的店铺级读写。"
+        description="请先选择并确认店铺，确认后才会开放该店铺的产品与运营事件读写。"
         kind="blocked"
-        title="尚无权威 StoreContext"
+        title="尚未确认当前店铺"
       />
     );
   }
@@ -883,7 +883,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         <button aria-selected={visibleSubview === 'events'} onClick={() => setSubview('events')} role="tab" type="button">
           <NotePencil aria-hidden="true" size={16} />运营事件 <span>{events.length}</span>
         </button>
-        <span className="store-object-authority">{String(storeContext.storeId)} · US / USD</span>
+        <span className="store-object-authority">当前店铺 · 美国站 / USD</span>
       </div>}
 
       {error && <div className="store-object-feedback store-object-feedback--error" role="alert">{error}</div>}
@@ -892,7 +892,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       {visibleSubview === 'products' ? (
         <WorkbenchPanel
           className="store-object-panel"
-          description="产品身份、成本、售价与广告目标均写入当前店铺数据域；归档不会删除历史事实。"
+          description="产品身份、成本、售价与广告目标均独立保存到当前店铺；归档不会删除历史事实。"
           status={<span>{filteredProducts.length} / {products.length} 个产品</span>}
           title="产品与经营目标"
           toolbar={(
@@ -900,7 +900,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
               <label className="store-object-search"><span className="sr-only">查询产品</span><input onChange={(event) => setSearch(event.target.value)} placeholder="查询 ASIN / 标题 / SKU" value={search} /></label>
               <label className="store-object-toggle"><input checked={includeArchivedProducts} onChange={(event) => setIncludeArchivedProducts(event.target.checked)} type="checkbox" />包含已归档</label>
               <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</button>
-              <button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => { setError(null); setProductEditor({ product: null, draft: productDraft() }); }} type="button"><Plus aria-hidden="true" size={16} />新建产品</button>
+              <button className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setProductEditor({ product: null, draft: productDraft() }); }} type="button"><Plus aria-hidden="true" size={16} />新建产品</button>
             </>
           )}
         >
@@ -947,7 +947,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         <div className="mission-control-dialog-backdrop">
           <section aria-labelledby="store-product-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" role="dialog">
             <header>
-              <div><span>STORE-SCOPED PRODUCT</span><h2 id="store-product-editor-title">{productEditor.product ? `编辑 ${productEditor.product.asin}` : '新建美国站产品'}</h2><p>站点固定 Amazon US，金额固定 USD；保存前 Main 会校验店铺上下文和对象 revision。</p></div>
+              <div><span>当前店铺产品</span><h2 id="store-product-editor-title">{productEditor.product ? `编辑 ${productEditor.product.asin}` : '新建美国站产品'}</h2><p>站点固定 Amazon US，金额固定 USD；保存前本机安全进程会校验店铺范围和对象版本。</p></div>
               <button aria-label="关闭产品编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setProductEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
             </header>
             <div className="store-object-form store-object-form--product">
@@ -962,7 +962,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
               {([
                 ['purchaseCost', '采购成本'], ['firstLegCost', '头程'], ['fbaFee', 'FBA 费用'], ['storageFee', '仓储费'], ['otherCost', '其他成本'], ['currentPrice', '当前售价'], ['minPrice', '最低可接受价'],
               ] as const).map(([field, label]) => <label key={field}><span>{label} (USD)</span><input min="0" onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, [field]: e.target.value } } : current)} step="0.01" type="number" value={productEditor.draft[field]} /></label>)}
-              <div className="store-object-form__section"><strong>费率与广告目标</strong><small>界面输入百分比，Main 保存为 0–1 比率</small></div>
+              <div className="store-object-form__section"><strong>费率与广告目标</strong><small>界面按百分比填写，保存时自动换算，无需手动输入小数</small></div>
               {([
                 ['referralFeeRate', '推荐费率'], ['targetNetMargin', '目标净利率'], ['targetAcos', '目标 ACOS'], ['targetTacos', '目标 TACOS'],
               ] as const).map(([field, label]) => <label key={field}><span>{label} (%)</span><input max="100" min={field === 'targetNetMargin' ? '-100' : '0'} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, [field]: e.target.value } } : current)} step="0.1" type="number" value={productEditor.draft[field]} /></label>)}
@@ -996,7 +996,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )}
 
       {confirmEventArchive && (
-        <div className="mission-control-dialog-backdrop"><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>ARCHIVE EVENT</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。Main 会用当前 revision 防止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</button></footer></section></div>
+        <div className="mission-control-dialog-backdrop"><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档运营事件</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。本机安全进程会通过版本校验防止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</button></footer></section></div>
       )}
     </div>
   );

@@ -115,7 +115,7 @@ describe('StoreScopeSwitcher', () => {
     expect(markup).toContain('Amazon US · USD');
   });
 
-  it('renders multi-store daily health and keeps UNKNOWN explicit', () => {
+  it('renders multi-store daily health without exposing internal status terms', () => {
     const unknown = status(storeTwo, {
       overall: 'unknown',
       eligibleForCollection: false,
@@ -147,8 +147,12 @@ describe('StoreScopeSwitcher', () => {
     expect(markup).toContain('Harbor Living');
     expect(markup).toContain('下载 8 / 8');
     expect(markup).toContain('下载 ? / 8');
-    expect(markup).toContain('指标 UNKNOWN');
-    expect(markup).toContain('无法确认当前采集 authority。');
+    expect(markup).toContain('导入 待确认');
+    expect(markup).toContain('指标 待确认');
+    expect(markup).toContain('今日状态尚未确认，请刷新后重试。');
+    expect(markup).not.toContain('UNKNOWN');
+    expect(markup).not.toContain('authority');
+    expect(markup).not.toContain('Main');
   });
 
   it('covers loading, error/retry, empty and group-disabled switching states', () => {
@@ -157,6 +161,16 @@ describe('StoreScopeSwitcher', () => {
     );
     const error = renderToStaticMarkup(
       <StoreScopeSwitcher {...handlers} dailyStatusError="读取失败" dailyStatusPhase="error" initiallyExpanded phase="error" stores={[]} />,
+    );
+    const technicalError = renderToStaticMarkup(
+      <StoreScopeSwitcher
+        {...handlers}
+        dailyStatusError="Main unavailable: StoreContext Profile"
+        dailyStatusPhase="error"
+        initiallyExpanded
+        phase="error"
+        stores={[]}
+      />,
     );
     const empty = renderToStaticMarkup(
       <StoreScopeSwitcher {...handlers} initiallyExpanded phase="needs-selection" stores={[]} />,
@@ -168,6 +182,11 @@ describe('StoreScopeSwitcher', () => {
     expect(loading).toContain('正在读取今日状态');
     expect(error).toContain('读取失败');
     expect(error).toContain('重试');
+    expect(technicalError).toContain('店铺状态读取失败，请点击“重试”再次确认。');
+    expect(technicalError).toContain('诊断详情');
+    expect(technicalError).toContain('Main unavailable: StoreContext Profile');
+    expect(technicalError.replace(/<details[\s\S]*?<\/details>/g, '').replace(/<[^>]+>/g, ' '))
+      .not.toMatch(/Main|StoreContext|Profile|Authority/i);
     expect(empty).toContain('尚无可用店铺');
     expect(switching).toContain('aria-busy="true"');
     expect(switching).toContain('disabled=""');

@@ -249,6 +249,15 @@ interface S7StartupGateIo {
   sleep(milliseconds: number): void;
 }
 
+export interface S7AuthorityPathProtectionPort {
+  inspectWindowsPathSecurity(
+    filePath: string,
+    type: 'file' | 'directory',
+    label: string,
+  ): S7WindowsPathSecurity;
+  protectWindowsPath(filePath: string, type: 'file' | 'directory'): void;
+}
+
 export interface S7StartupGateAppPort {
   requestSingleInstanceLock(): boolean;
 }
@@ -1436,6 +1445,27 @@ function requireSecurePath(
   );
   if (
     security.passed !== true
+    || security.ownerSid !== security.currentUserSid
+    || security.inheritanceProtected !== true
+    || security.unauthorizedRules.length !== 0
+  ) {
+    fail('S7_STARTUP_GATE_ACL_UNTRUSTED', `${label} ACL/owner proof failed.`);
+  }
+}
+
+export function protectFreshS7AuthorityPath(
+  filePath: string,
+  type: 'file' | 'directory',
+  label: string,
+  port: S7AuthorityPathProtectionPort = DEFAULT_IO,
+): void {
+  const resolved = path.resolve(filePath);
+  port.protectWindowsPath(resolved, type);
+  const security = port.inspectWindowsPathSecurity(resolved, type, label);
+  if (
+    security.passed !== true
+    || !samePath(security.path, resolved)
+    || security.type !== type
     || security.ownerSid !== security.currentUserSid
     || security.inheritanceProtected !== true
     || security.unauthorizedRules.length !== 0

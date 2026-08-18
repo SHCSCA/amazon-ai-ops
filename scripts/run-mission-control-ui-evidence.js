@@ -43,7 +43,7 @@ const WORKSPACE_LABELS = Object.freeze({
   experiments: '经营实验',
   execution: '实时执行',
   memory: '因果记忆',
-  objects: '店铺与广告对象',
+  objects: '产品与广告对象',
   collection: '数据采集',
   policy: '策略与风控',
   settings: '系统设置',

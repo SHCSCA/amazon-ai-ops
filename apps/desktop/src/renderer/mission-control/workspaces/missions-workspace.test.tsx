@@ -1,4 +1,5 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type {
@@ -11,6 +12,10 @@ import {
   MissionsWorkspace,
   buildCreateMissionInput,
   buildUpdateMissionInput,
+  buildMissionProductOptions,
+  missionAnalysisBlockerLabel,
+  missionGuardrailLabel,
+  missionTransitionActionLabel,
   responseMatchesMissionAuthority,
 } from './missions-workspace';
 
@@ -42,7 +47,45 @@ const previewCapabilities = (['view', 'create', 'update', 'pause', 'resume', 'ar
     action: 'create', state: 'PROTOTYPE_ONLY', detail: 'checkpoint preview',
   } as MissionControlCapabilityProjection);
 
+function ordinaryText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+    .replace(/<i\b[^>]*hidden=""[^>]*>[\s\S]*?<\/i>/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 describe('MissionsWorkspace contracts', () => {
+  it('uses only current-store completed batches, enabled rules and existing products', () => {
+    const source = readFileSync(new URL('./missions-workspace.tsx', import.meta.url), 'utf8');
+    const defaults = source.slice(source.indexOf('function missionDraft'), source.indexOf('export function buildCreateMissionInput'));
+    expect(defaults).not.toContain('BATCH-');
+    expect(defaults).not.toContain('-ACTIVE');
+    expect(source).toContain('getBusinessBatchOptions');
+    expect(source).toContain('getOperationScope(storeContext)');
+    expect(source).not.toContain('getOperationScope?.()');
+    expect(source).toContain('listPolicyVersions');
+    expect(source).toContain('listStoreProducts');
+    expect(source).toContain('先采集');
+    expect(source).toContain('先启用策略');
+    expect(source).toContain('先添加产品');
+  });
+
+  it('submits the current-store product ASIN instead of its local database row id', () => {
+    expect(buildMissionProductOptions([
+      { id: 17, asin: 'B0GTTJFQTM', title: '主推产品' },
+    ])).toEqual([
+      { value: 'B0GTTJFQTM', label: '主推产品 · B0GTTJFQTM' },
+    ]);
+  });
+
+  it('labels a newly created draft task as start instead of resume', () => {
+    expect(missionTransitionActionLabel('draft')).toBe('启动任务');
+    expect(missionTransitionActionLabel('active')).toBe('暂停任务');
+    expect(missionTransitionActionLabel('paused')).toBe('恢复任务');
+  });
+
   it('renders the prototype flight-plan shell only when the explicit preview adapter is supplied', () => {
     const markup = renderToStaticMarkup(
       <MissionsWorkspace
@@ -58,7 +101,7 @@ describe('MissionsWorkspace contracts', () => {
     expect(markup).toContain('MISSION CONTROL');
     expect(markup).toContain('显式内存 adapter');
     expect(markup).toContain('Amazon US · USD');
-    expect(markup).toContain('显式 Preview Adapter');
+    expect(markup).toContain('仅开发预览');
     expect(markup).toContain('新建 Mission');
     expect(markup).toContain('Mission 队列');
     expect(markup).toContain('task-banner--compact');
@@ -98,10 +141,41 @@ describe('MissionsWorkspace contracts', () => {
     );
 
     expect(markup).toContain('data-capability-state="BLOCKED"');
-    expect(markup).toContain('失败关闭');
-    expect(markup).toContain('数据 Authority');
-    expect(markup).not.toContain('显式 Preview Adapter');
+    expect(markup).toContain('已阻断');
+    expect(markup).toContain('数据来源');
+    expect(markup).not.toContain('显式内存 adapter');
     expect(markup).not.toContain('稳定智能门锁');
+  });
+
+  it('keeps production ordinary copy operator-facing when the blocker contains internal terms', () => {
+    const markup = renderToStaticMarkup(
+      <MissionsWorkspace
+        blockedReason="Main 未返回 Mission Authority；UNKNOWN revision draft set_keyword_bid"
+        capabilities={[capability('view', 'BLOCKED')]}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+    const text = ordinaryText(markup);
+    expect(text).toContain('运营任务');
+    expect(text).not.toMatch(/Mission|Experiment|Decision|Authority|Renderer|Main|UNKNOWN|\brevision\b|\bdraft\b|set_keyword_bid/);
+  });
+
+  it('translates stored technical guardrails before they reach ordinary UI', () => {
+    const label = missionGuardrailLabel('UNKNOWN 立即停止；Main 按 revision 阻断 set_keyword_bid');
+    expect(label).toContain('结果不确定');
+    expect(label).toContain('本机安全进程');
+    expect(label).toContain('版本');
+    expect(label).toContain('调整关键词竞价');
+    expect(label).not.toMatch(/UNKNOWN|Main|\brevision\b|set_keyword_bid/);
+  });
+
+  it('sanitizes analysis authorization blockers before ordinary feedback', () => {
+    const label = missionAnalysisBlockerLabel('POLICY_AUTHORITY_REVISION_MISMATCH Main StoreContext');
+    expect(label).toContain('策略自动授权');
+    expect(label).toContain('重试');
+    expect(label).not.toMatch(/Main|StoreContext|Authority|revision|POLICY_/i);
+    expect(missionAnalysisBlockerLabel('证据尚未满足自动授权条件')).toBe('证据尚未满足自动授权条件');
   });
 
   it('builds immutable authority on create and revision CAS on update', () => {
@@ -154,5 +228,13 @@ describe('MissionsWorkspace contracts', () => {
     expect(responseMatchesMissionAuthority('store-a', 'store-a', 4, 4)).toBe(true);
     expect(responseMatchesMissionAuthority('store-b', 'store-a', 4, 4)).toBe(false);
     expect(responseMatchesMissionAuthority('store-a', 'store-a', 5, 4)).toBe(false);
+  });
+
+  it('rejects creation without an existing current-store product', () => {
+    expect(() => buildCreateMissionInput(context, {
+      title: '缺少产品', objective: '验证产品归属门', dataBatchId: 'BATCH-001', policyVersionId: 'POLICY-V3',
+      productId: '', priority: 'P2', observationStartsOn: '2026-07-22', observationEndsOn: '2026-07-29',
+      successCriteria: '改善', guardrails: '停止',
+    }, 'MISSION-003')).toThrow(/产品/);
   });
 });

@@ -348,6 +348,55 @@ describe('PackageUiSchedulerAudit', () => {
     )).toThrow(/CHECKPOINT_DISABLED/);
   });
 
+  it('allows an early failed evidence attempt to close without fabricating a terminal checkpoint', () => {
+    const database = databaseFixture();
+    const audit = new PackageUiSchedulerAudit({
+      enabled: true,
+      evidenceMode: 'package-ui',
+      database: () => database.source,
+      authorizeDatabaseCheckpoint: () => contextFixture(),
+      userDataDir: temporaryDirectory(),
+    });
+
+    expect(audit.capturePreCloseTerminalDatabaseCheckpointIfReady()).toBeNull();
+    expect(audit.snapshot().databaseMutationAudit).toEqual(expect.objectContaining({
+      checkpoints: [],
+      passed: false,
+    }));
+  });
+
+  it('allows a repeated safe-close attempt after the terminal checkpoint already exists', () => {
+    const database = databaseFixture();
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const audit = new PackageUiSchedulerAudit({
+      enabled: true,
+      evidenceMode: 'package-ui',
+      database: () => database.source,
+      authorizeDatabaseCheckpoint: () => contextFixture(),
+      userDataDir: temporaryDirectory(),
+    });
+    audit.registerDatabaseCheckpointIpc({
+      handle: (channel, listener) => handlers.set(channel, listener),
+    });
+
+    audit.capturePostBootstrapDatabaseBaseline();
+    handlers.get('package-ui-evidence:database-checkpoint')?.({}, { phase: 'post-bootstrap' });
+    handlers.get('package-ui-evidence:database-checkpoint')?.({}, { phase: 'post-navigation' });
+
+    const firstTerminal = audit.capturePreCloseTerminalDatabaseCheckpointIfReady();
+    const repeatedTerminal = audit.capturePreCloseTerminalDatabaseCheckpointIfReady();
+
+    expect(repeatedTerminal).toEqual(firstTerminal);
+    expect(audit.snapshot().databaseMutationAudit).toEqual(expect.objectContaining({
+      checkpoints: [
+        expect.objectContaining({ phase: 'post-bootstrap' }),
+        expect.objectContaining({ phase: 'post-navigation' }),
+        expect.objectContaining({ phase: 'pre-close-terminal' }),
+      ],
+      passed: true,
+    }));
+  });
+
   it('binds both checkpoints to one authorized non-secret StoreContext digest', () => {
     const database = databaseFixture();
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();

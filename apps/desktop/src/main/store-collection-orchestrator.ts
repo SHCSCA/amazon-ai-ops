@@ -504,7 +504,8 @@ interface CapabilityIdentityRecord {
 
 interface PendingTransitionRecoveryPlan {
   transition: StoreCollectionOrchestratorTransition;
-  disposition: 'interrupt' | 'scheduler_succeeded' | 'scheduler_failed' | 'scheduler_unresolved';
+  disposition: 'interrupt' | 'scheduler_succeeded' | 'scheduler_failed'
+    | 'scheduler_not_created' | 'scheduler_unresolved';
   transitionAuthority?: StoreCollectionRecoveryAutomationAuthority;
   error?: unknown;
 }
@@ -656,6 +657,7 @@ export class StoreCollectionOrchestrator {
         attempt.storeId === storeId
         && attempt.browserProfileId === browserProfileId
         && attempt.expectedFingerprint === expectedFingerprintValue
+        && !isSchedulerNotCreatedSemanticAttempt(history, attempt)
       ));
       if (matches.length === 0) return null;
       if (matches.length !== 1) throw corruptHistory();
@@ -919,6 +921,13 @@ export class StoreCollectionOrchestrator {
             outcomes.push(finalized);
           } else if (plan.disposition === 'scheduler_failed') {
             const finalized = this.finalizeRecoveredSchedulerTransition(plan, false);
+            outcomes.push(finalized);
+          } else if (plan.disposition === 'scheduler_not_created') {
+            const finalized = this.finalizeRecoveredSchedulerTransition(
+              plan,
+              false,
+              'SCHEDULER_NOT_SUCCEEDED',
+            );
             outcomes.push(finalized);
           }
         }
@@ -1771,7 +1780,7 @@ export class StoreCollectionOrchestrator {
         || durableContext.marketplace !== 'US'
         || durableContext.currency !== 'USD'
         || durableContext.businessTimezone !== 'America/Los_Angeles'
-        || receipt.targetGenerationBefore !== durableContext.sessionGeneration
+        || (receipt.targetGenerationBefore ?? -1) < durableContext.sessionGeneration
         || context.sessionGeneration <= durableContext.sessionGeneration
         || codepointCompare(context.businessDate, durableContext.businessDate) < 0) {
         throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
@@ -1840,7 +1849,7 @@ export class StoreCollectionOrchestrator {
       transitionId: string;
       expectedFingerprint: string;
     },
-  ): 'accepted' | 'succeeded' | 'failed' | 'unknown' {
+  ): 'accepted' | 'succeeded' | 'failed' | 'not_found' | 'unknown' {
     if (input.auth.transitionScope.capabilityDomain !== 'recovery_existing_request_only') {
       throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
         'SAFETY_STATE_UNKNOWN',
@@ -1859,6 +1868,15 @@ export class StoreCollectionOrchestrator {
         throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
           'SAFETY_STATE_UNKNOWN',
           'scheduler recover 状态未绑定已接受的 exact durable request。',
+        ));
+      }
+      return projection.state;
+    }
+    if (projection.state === 'not_found') {
+      if (projection.accepted !== undefined || projection.duplicate !== undefined) {
+        throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
+          'SAFETY_STATE_UNKNOWN',
+          'scheduler recover 的 not_found 回执不得携带已接受标记。',
         ));
       }
       return projection.state;
@@ -2525,7 +2543,8 @@ export class StoreCollectionOrchestrator {
         );
       }
       if (history.semanticAttempts.some((attempt) => (
-        collectionAttemptSemanticKey(attempt) === semanticKey
+        (collectionAttemptSemanticKey(attempt) === semanticKey
+          && !isSchedulerNotCreatedSemanticAttempt(history, attempt))
         || attempt.transitionId === semanticAttempt.transitionId
         || attempt.semanticAttemptId === semanticAttempt.semanticAttemptId
         || attempt.schedulerAttemptId === semanticAttempt.schedulerAttemptId
@@ -2594,6 +2613,7 @@ export class StoreCollectionOrchestrator {
   ): ReadonlySet<string> {
     const attempted = new Set<string>();
     for (const semanticAttempt of history.semanticAttempts) {
+      if (isSchedulerNotCreatedSemanticAttempt(history, semanticAttempt)) continue;
       const key = collectionAttemptSemanticKey(semanticAttempt);
       if (attempted.has(key)) throw corruptHistory();
       attempted.add(key);
@@ -2674,6 +2694,18 @@ export class StoreCollectionOrchestrator {
         if (recoveredState === 'accepted' && transition.phase === 'scheduler_request_bound') {
           transition = this.updateTransition(transition, { phase: 'scheduler_accepted' });
         }
+        if (recoveredState === 'not_found' && transition.phase === 'scheduler_request_bound') {
+          // The collector persists its initial running job before its first
+          // external browser step. An exact request-bound miss therefore proves
+          // this pre-acceptance attempt never crossed that durable boundary.
+          // A scheduler_accepted miss remains unresolved and fail-closed below.
+          plans.push({
+            transition,
+            disposition: 'scheduler_not_created',
+            transitionAuthority,
+          });
+          continue;
+        }
         plans.push({
           transition,
           disposition: 'scheduler_unresolved',
@@ -2698,6 +2730,8 @@ export class StoreCollectionOrchestrator {
   private finalizeRecoveredSchedulerTransition(
     plan: PendingTransitionRecoveryPlan,
     succeeded: boolean,
+    failedCode: Extract<StoreCollectionOrchestratorFailureCode,
+      'SCHEDULER_FAILED' | 'SCHEDULER_NOT_SUCCEEDED'> = 'SCHEDULER_FAILED',
   ): StoreCollectionOrchestratorOutcome {
     let transition = plan.transition;
     try {
@@ -2706,7 +2740,7 @@ export class StoreCollectionOrchestrator {
       }
       const completedAt = this.now().toISOString();
       const terminalPhase: TransitionPhase = succeeded ? 'completed' : 'failed';
-      const failureCode = succeeded ? undefined : 'SCHEDULER_FAILED';
+      const failureCode = succeeded ? undefined : failedCode;
       const result = this.completeCollectionTransition(transition, {
         phase: terminalPhase,
         completedAt,
@@ -3234,13 +3268,14 @@ function assertHistory(value: StoreCollectionOrchestratorHistory): void {
   for (const semanticAttempt of value.semanticAttempts) {
     assertSemanticAttempt(semanticAttempt);
     const semanticKey = collectionAttemptSemanticKey(semanticAttempt);
+    const schedulerNotCreated = isSchedulerNotCreatedSemanticAttempt(value, semanticAttempt);
     const dailyKey = JSON.stringify([
       semanticAttempt.storeId,
       semanticAttempt.browserProfileId,
       semanticAttempt.businessDate,
     ]);
     const dailyCount = (dailySemanticAttemptCounts.get(dailyKey) ?? 0) + 1;
-    if (semanticKeys.has(semanticKey)
+    if ((!schedulerNotCreated && semanticKeys.has(semanticKey))
       || semanticAttemptIds.has(semanticAttempt.semanticAttemptId)
       || semanticTransitionIds.has(semanticAttempt.transitionId)
       || schedulerAttemptIds.has(semanticAttempt.schedulerAttemptId)
@@ -3263,7 +3298,7 @@ function assertHistory(value: StoreCollectionOrchestratorHistory): void {
     )) {
       throw corruptHistory();
     }
-    semanticKeys.add(semanticKey);
+    if (!schedulerNotCreated) semanticKeys.add(semanticKey);
     semanticAttemptIds.add(semanticAttempt.semanticAttemptId);
     semanticTransitionIds.add(semanticAttempt.transitionId);
     schedulerAttemptIds.add(semanticAttempt.schedulerAttemptId);
@@ -3698,6 +3733,25 @@ function collectionAttemptSemanticKey(input: {
     input.browserProfileId,
     input.expectedFingerprint,
   ]);
+}
+
+function isSchedulerNotCreatedSemanticAttempt(
+  history: Pick<StoreCollectionOrchestratorHistory, 'transitions' | 'outcomes'>,
+  semanticAttempt: StoreCollectionSemanticAttempt,
+): boolean {
+  const transition = history.transitions.find((candidate) => (
+    candidate.transitionId === semanticAttempt.transitionId
+  ));
+  const outcome = history.outcomes.find((candidate) => (
+    candidate.transitionId === semanticAttempt.transitionId
+  ));
+  return transition?.purpose === 'collection'
+    && transition.phase === 'failed'
+    && transition.failureCode === 'SCHEDULER_NOT_SUCCEEDED'
+    && outcome?.state === 'failed'
+    && outcome.failureCode === 'SCHEDULER_NOT_SUCCEEDED'
+    && outcome.schedulerSucceeded === false
+    && outcome.cleanupStatus === 'confirmed';
 }
 
 function compactSemanticAttemptsToLatestBusinessDate(

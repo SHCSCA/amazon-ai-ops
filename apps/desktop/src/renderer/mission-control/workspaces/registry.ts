@@ -18,10 +18,10 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
   {
     id: 'missions',
     label: '任务中心',
-    description: '管理 Mission 的目标、约束、检查点与停驻原因。',
+    description: '管理运营任务的目标、约束、检查点与停驻原因。',
     subviews: [
-      { id: 'overview', label: 'Mission 队列', description: '目标、约束与检查点', view: 'missions/overview', kind: 'canonical' },
-      { id: 'facts', label: '广告事实', description: '核验 Mission 事实检查点与数据 lineage', view: 'missions/facts', kind: 'canonical' },
+      { id: 'overview', label: '运营任务队列', description: '目标、约束与检查点', view: 'missions/overview', kind: 'canonical' },
+      { id: 'facts', label: '广告事实', description: '核验运营任务事实检查点与数据来源链', view: 'missions/facts', kind: 'canonical' },
     ],
   },
   {
@@ -61,10 +61,10 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
   },
   {
     id: 'objects',
-    label: '店铺与广告对象',
-    description: '维护店铺数据域、产品、经营目标、关键词与 Listing。',
+    label: '产品与广告对象',
+    description: '维护产品、经营目标、关键词与 Listing。',
     subviews: [
-      { id: 'products', label: '店铺与产品', description: '原生店铺 CRUD 与产品维护', view: 'objects/products', kind: 'legacy', legacyRoute: 'product-management' },
+      { id: 'products', label: '产品与目标', description: '维护当前店铺的产品、成本与经营目标', view: 'objects/products', kind: 'legacy', legacyRoute: 'product-management' },
       { id: 'targets', label: '广告对象', description: 'Campaign、广告组、Target 与 Search Term 事实', view: 'objects/targets', kind: 'legacy', legacyRoute: 'product-config' },
       { id: 'keywords', label: '关键词事实', description: '当前店铺关键词指标与机会证据', view: 'objects/keywords', kind: 'legacy', legacyRoute: 'keyword-opportunities' },
       { id: 'listing', label: 'Listing 内容', description: '店铺级内容、版本与本地草案', view: 'objects/listing', kind: 'legacy', legacyRoute: 'listing-optimization' },

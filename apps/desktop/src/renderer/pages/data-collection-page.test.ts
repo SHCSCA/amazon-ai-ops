@@ -20,6 +20,7 @@ import {
   collectionActionButtonLabel,
   collectionActionButtonView,
   collectionActionError,
+  collectionActionFeedbackBelongsToAuthority,
   collectionActionGuide,
   collectionActionNextStep,
   collectionCompletionNotice,
@@ -32,6 +33,8 @@ import {
   collectionReportSelectionState,
   dataCollectionFirstViewportReportFolder,
   createLingxingCollectionRequestId,
+  resolveAuthoritativeCollectionCapture,
+  retainCollectionActionFeedback,
   runCollectionDownloadAction,
   shouldOfferDownloadCenterVerification,
   upsertCollectionJobSnapshot,
@@ -130,6 +133,62 @@ function collectionJob(input: {
 }
 
 describe('DataCollectionPage store authority collection contract', () => {
+  it('keeps operator failure feedback when only the same store session generation moves forward', () => {
+    const nextGeneration = normalizeStoreContextEnvelope({
+      ...storeContext,
+      sessionGeneration: storeContext.sessionGeneration + 1,
+    });
+
+    expect(collectionActionFeedbackBelongsToAuthority(storeContext, nextGeneration)).toBe(true);
+  });
+
+  it('drops operator feedback when store, profile, site, currency, business date, timezone, or generation lineage changes', () => {
+    const nextGeneration = storeContext.sessionGeneration + 1;
+    const changedContexts = [
+      normalizeStoreContextEnvelope({ ...storeContext, storeId: 'store_us_secondary', sessionGeneration: nextGeneration }),
+      normalizeStoreContextEnvelope({ ...storeContext, browserProfileId: 'profile_us_secondary', sessionGeneration: nextGeneration }),
+      { ...storeContext, marketplace: 'CA', sessionGeneration: nextGeneration } as unknown as typeof storeContext,
+      { ...storeContext, currency: 'CAD', sessionGeneration: nextGeneration } as unknown as typeof storeContext,
+      normalizeStoreContextEnvelope({ ...storeContext, businessDate: '2026-07-23', sessionGeneration: nextGeneration }),
+      normalizeStoreContextEnvelope({ ...storeContext, businessTimezone: 'UTC', sessionGeneration: nextGeneration }),
+      normalizeStoreContextEnvelope({ ...storeContext, sessionGeneration: storeContext.sessionGeneration - 1 }),
+    ];
+
+    expect(changedContexts.map((current) => (
+      collectionActionFeedbackBelongsToAuthority(storeContext, current)
+    ))).toEqual([false, false, false, false, false, false, false]);
+    expect(collectionActionFeedbackBelongsToAuthority(storeContext, null)).toBe(false);
+  });
+
+  it('retains the current Chinese action failure only across a forward generation transition', () => {
+    const failure = {
+      notice: '创建并下载未完成。',
+      error: '当前领星会话需要重新确认，请重试连接后再采集。',
+    };
+    const nextGeneration = normalizeStoreContextEnvelope({
+      ...storeContext,
+      sessionGeneration: storeContext.sessionGeneration + 1,
+    });
+    const nextBusinessDate = normalizeStoreContextEnvelope({
+      ...nextGeneration,
+      businessDate: '2026-07-23',
+    });
+
+    expect(retainCollectionActionFeedback(storeContext, nextGeneration, failure)).toBe(failure);
+    expect(retainCollectionActionFeedback(storeContext, nextBusinessDate, failure)).toBeNull();
+  });
+
+  it('creates its runtime UUID inside the function body instead of a default-parameter optional chain', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const requestIdFunction = source.slice(
+      source.indexOf('export function createLingxingCollectionRequestId'),
+      source.indexOf('export function buildAuthoritativeCollectionDateRange'),
+    );
+    expect(requestIdFunction).toContain('const resolvedRandomToken = randomToken ?? createCollectionRandomToken()');
+    expect(requestIdFunction).toContain("typeof cryptoApi.randomUUID === 'function'");
+    expect(requestIdFunction).not.toMatch(/randomToken:\s*string\s*=|randomUUID\?\./);
+  });
+
   it('builds a safe request id and carries a captured US/USD StoreContext', () => {
     const requestId = createLingxingCollectionRequestId('recreate full', 123456, 'unsafe token/value');
     const range = buildAuthoritativeCollectionDateRange({
@@ -146,6 +205,69 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(range.storeContext).toEqual(storeContext);
     expect(range.storeContext).not.toBe(storeContext);
     expect(range.marketplaceCode).toBe('US');
+  });
+
+  it('replaces a stale page range with the current Main schedule before collection', async () => {
+    const calls: string[] = [];
+    const captured = await resolveAuthoritativeCollectionCapture({
+      action: 'recreate-full',
+      api: {
+        getStoreCollectionSchedule: async () => {
+          calls.push('schedule');
+          return {
+            storeId: storeContext.storeId,
+            businessDate: storeContext.businessDate,
+            enabled: true,
+            state: 'due',
+            detail: '可采集',
+            dateStart: '2026-07-08',
+            dateEnd: '2026-07-21',
+          };
+        },
+      },
+      scope: {
+        dateFrom: '2026-07-01',
+        dateTo: '2026-07-14',
+        storeName: '旧店铺名',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      storeContext,
+      storeName: 'SHC001',
+    });
+
+    expect(calls).toEqual(['schedule']);
+    expect(captured.dateRange).toMatchObject({ start: '2026-07-08', end: '2026-07-21' });
+    expect(captured.refreshScope).toMatchObject({
+      dateFrom: '2026-07-08', dateTo: '2026-07-21', storeName: 'SHC001', marketplaceCode: 'US', currency: 'USD',
+    });
+  });
+
+  it('rejects a collection schedule from another authority before any collection action', async () => {
+    const anotherStore = normalizeStoreContextEnvelope({
+      ...storeContext,
+      storeId: 'another-store',
+      browserProfileId: 'another-profile',
+    });
+    await expect(resolveAuthoritativeCollectionCapture({
+      action: 'recreate-full',
+      api: {
+        getStoreCollectionSchedule: async () => ({
+          storeId: anotherStore.storeId,
+          businessDate: storeContext.businessDate,
+          enabled: true,
+          state: 'due',
+          detail: '可采集',
+          dateStart: '2026-07-08',
+          dateEnd: '2026-07-21',
+        }),
+      },
+      scope: {
+        dateFrom: '2026-07-01', dateTo: '2026-07-14', storeName: 'SHC001', marketplaceCode: 'US', currency: 'USD',
+      },
+      storeContext,
+      storeName: 'SHC001',
+    })).rejects.toThrow(/当前店铺不一致/);
   });
 
   it('drops delayed prior-store and prior-session progress before it reaches UI state', () => {
@@ -418,6 +540,33 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(unknownMarkup).not.toContain('>继续采集<');
   });
 
+  it('keeps collection task ids and internal failure terms out of the ordinary workspace surface', () => {
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: 'Main unavailable',
+      jobs: [collectionJob({ jobId: 'job-internal-opaque', jobState: 'completed_with_errors', checkpointState: 'create_unknown' })],
+      loading: false,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+    }));
+    const ordinaryText = markup
+      .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    expect(ordinaryText).toContain('当前店铺会话');
+    expect(ordinaryText).toContain('人工核对');
+    expect(ordinaryText).not.toMatch(/StoreContext|UNKNOWN|Main unavailable|job-internal-opaque/);
+  });
+
+  it('does not interpolate internal job ids into operator action notices', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/setActionNotice\(`[^`]*\$\{job\.jobId\}/);
+  });
+
   it('captures storeContext for job and import mutations and drops responses after an authority change', () => {
     const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
 
@@ -432,6 +581,15 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(source).toContain('importCurrentBusinessReports(captured.input)');
     expect(source).toContain('importLocalBusinessReportFiles(captured.input)');
     expect(source).toContain('if (!isCapturedAuthorityCurrent(captured.authorityKey)) return;');
+  });
+
+  it('wires generation-only feedback retention while successful stale responses stay fully authority guarded', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('retainCollectionActionFeedback(previousFeedbackContext, nextFeedbackContext, currentNotice)');
+    expect(source).toContain('retainCollectionActionFeedback(previousFeedbackContext, nextFeedbackContext, currentError)');
+    expect(source).toContain('!isCapturedFeedbackAuthorityCurrent(dateRange.storeContext)');
+    expect(source).toContain('if (!isCapturedAuthorityCurrent(authorityKey)) return;');
   });
 });
 
@@ -602,6 +760,13 @@ describe('collectionCompletionNotice', () => {
 });
 
 describe('collectionActionError', () => {
+  it('translates collection-only Lingxing identity rejection into a Chinese reason and next step', () => {
+    expect(collectionActionError(
+      'recreate-full',
+      new Error('visible Lingxing page identity is unverified'),
+    )).toBe('领星当前页面身份尚未确认：请保持当前店铺的领星浏览器打开，确认已登录且页面属于当前店铺，然后重试采集。');
+  });
+
   it('keeps download-existing and recreate failures action-specific for Chinese missing-report errors', () => {
     const downloadError = collectionActionError('download-existing', new Error('当前范围缺少可下载报表批次'));
     const recreateError = collectionActionError('recreate-full', new Error('当前范围缺少可下载报表批次'));
@@ -1072,5 +1237,12 @@ describe('task-first data page helpers', () => {
     expect(partial.statusLabel).toBe('待补齐');
     expect(partial.tone).toBe('warning');
     expect(partial.detail).toContain('不能进入正式诊断');
+  });
+
+  it('refreshes collection results from the captured range instead of a live render variable', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('refreshScope: typeof scope');
+    expect(source).toContain('getBusinessUiDataPipeline?.(captured.refreshScope)');
+    expect(source).not.toContain('getBusinessUiDataPipeline?.(scope);');
   });
 });

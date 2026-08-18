@@ -53,7 +53,7 @@ export const WORKSPACE_SUBVIEW_TABS = {
     { id: 'events', label: '运营事件', description: '记录会影响当日判断的运营上下文' },
   ],
   missions: [
-    { id: 'overview', label: 'Mission 队列', description: '查看目标、约束、检查点与运行状态' },
+    { id: 'overview', label: '运营任务队列', description: '查看目标、约束、检查点与运行状态' },
     { id: 'facts', label: '广告事实', description: '复用真实广告诊断与量化事实' },
   ],
   decisions: [
@@ -66,7 +66,7 @@ export const WORKSPACE_SUBVIEW_TABS = {
     { id: 'evidence', label: '执行回读', description: '补齐执行前、执行后与 Reload 回读证据' },
   ],
   objects: [
-    { id: 'products', label: '店铺与产品', description: '维护当前店铺的产品与业务身份' },
+    { id: 'products', label: '产品与目标', description: '维护当前店铺的产品、成本与经营目标' },
     { id: 'targets', label: '成本与目标', description: '维护利润边界与广告目标' },
     { id: 'keywords', label: '关键词机会', description: '筛选可行动的真实关键词机会' },
     { id: 'listing', label: 'Listing 草案', description: '生成并导出仅本地使用的 Listing 草案' },
@@ -124,12 +124,12 @@ export const DEFAULT_WORKSPACE_INTENTS = {
 
 export const VISIBLE_WORKSPACES: readonly VisibleWorkspaceDefinition[] = [
   { id: 'today', label: '今日任务', description: '查看当前店铺的运营重点与下一安全动作', section: 'mission', defaultIntent: DEFAULT_WORKSPACE_INTENTS.today },
-  { id: 'missions', label: '任务中心', description: '管理 Mission、目标、约束与检查点', section: 'mission', defaultIntent: DEFAULT_WORKSPACE_INTENTS.missions },
+  { id: 'missions', label: '任务中心', description: '管理运营任务、目标、约束与检查点', section: 'mission', defaultIntent: DEFAULT_WORKSPACE_INTENTS.missions },
   { id: 'decisions', label: '决策与审批', description: '复核关键决定并签发授权', section: 'mission', defaultIntent: DEFAULT_WORKSPACE_INTENTS.decisions },
   { id: 'experiments', label: '经营实验', description: '把经营干预记录成可验证实验', section: 'learning', defaultIntent: DEFAULT_WORKSPACE_INTENTS.experiments },
   { id: 'execution', label: '实时执行', description: '监控可见领星执行并完成回读', section: 'learning', defaultIntent: DEFAULT_WORKSPACE_INTENTS.execution },
   { id: 'memory', label: '因果记忆', description: '检索事实、动作、结果与因果链', section: 'learning', defaultIntent: DEFAULT_WORKSPACE_INTENTS.memory },
-  { id: 'objects', label: '店铺与广告对象', description: '维护产品、目标、关键词与 Listing', section: 'foundation', defaultIntent: DEFAULT_WORKSPACE_INTENTS.objects },
+  { id: 'objects', label: '产品与广告对象', description: '维护产品、目标、关键词与 Listing', section: 'foundation', defaultIntent: DEFAULT_WORKSPACE_INTENTS.objects },
   { id: 'collection', label: '数据采集', description: '配置范围、采集报表并检查导入', section: 'foundation', defaultIntent: DEFAULT_WORKSPACE_INTENTS.collection },
   { id: 'policy', label: '策略与风控', description: '管理模式、限额、熔断与审批边界', section: 'governance', defaultIntent: DEFAULT_WORKSPACE_INTENTS.policy },
   { id: 'settings', label: '系统设置', description: '管理 AI、本地任务与交付验收', section: 'governance', defaultIntent: DEFAULT_WORKSPACE_INTENTS.settings },

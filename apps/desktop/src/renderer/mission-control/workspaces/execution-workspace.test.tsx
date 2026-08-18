@@ -18,6 +18,7 @@ import {
   buildExecutableGrantSelections,
   EXECUTION_CAPABILITY_IDS,
   ExecutionWorkspace,
+  executionUserFacingError,
   executionCapabilityReady,
   preferredExecutionBatchId,
   selectableExecutionMissions,
@@ -48,6 +49,58 @@ const previewExecutionCapabilities = [
   executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PROTOTYPE_ONLY'),
   executionCapability(EXECUTION_CAPABILITY_IDS.reconcileUnknown, 'reconcile-unknown', 'BLOCKED'),
 ] as const;
+
+const ORDINARY_EXECUTION_FORBIDDEN_TERMS = [
+  'Mission',
+  'Experiment',
+  'UNKNOWN',
+  'revision',
+  'draft',
+  'set_keyword_bid',
+  'Main',
+  'StoreContext',
+  'Authority',
+  'Profile',
+  'dry-run',
+  'manifest',
+  'fingerprint',
+  'Renderer',
+  'CRUD',
+  'PRODUCTION_NATIVE',
+  'PROTOTYPE_ONLY',
+  'LEGACY_ADAPTER',
+  'sequence',
+  'append-only',
+  'correction',
+  'DECISION',
+  'ACTION',
+  'READBACK',
+  'EFFECT',
+] as const;
+
+const ORDINARY_EXECUTION_LEGACY_COPY = [
+  'MissionGrant',
+  'Grant',
+  'EXECUTION',
+  'EVENT CONSOLE',
+  'SERIAL STATE MACHINE',
+  'mock',
+  'API',
+  'Ads',
+  'preview://',
+  'fingerprint door lock',
+  'intent',
+  'after',
+  'reload',
+] as const;
+
+function ordinaryExecutionText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function authorityFixture() {
   const mission: MissionRecord = {
@@ -171,6 +224,73 @@ function authorityFixture() {
 }
 
 describe('execution workspace', () => {
+  it('keeps all internal execution terms out of every ordinary first-screen surface', () => {
+    const liveCapabilities = [
+      executionCapability(EXECUTION_CAPABILITY_IDS.view, 'view', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.start, 'start', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.takeover, 'takeover', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PRODUCTION_NATIVE'),
+    ];
+    const surfaces = {
+      preview: renderToStaticMarkup(<ExecutionWorkspace
+        apiOverride={createPreviewExecutionAuthorityApi()}
+        blockedReason="仅开发预览"
+        capabilities={previewExecutionCapabilities}
+        previewEnabled
+        storeContext={context}
+      />),
+      production: renderToStaticMarkup(<ExecutionWorkspace
+        apiOverride={createPreviewExecutionAuthorityApi()}
+        blockedReason=""
+        capabilities={liveCapabilities}
+        previewEnabled={false}
+        storeContext={context}
+      />),
+      blocked: renderToStaticMarkup(<ExecutionWorkspace
+        blockedReason="StoreContext UNKNOWN Authority Renderer raw failure"
+        capabilities={[]}
+        previewEnabled={false}
+        storeContext={context}
+      />),
+    };
+
+    for (const [surface, markup] of Object.entries(surfaces)) {
+      const text = ordinaryExecutionText(markup);
+      const leaks = ORDINARY_EXECUTION_FORBIDDEN_TERMS.filter((term) => text.toLowerCase().includes(term.toLowerCase()));
+      expect(leaks, `${surface} ordinary text: ${text}`).toEqual([]);
+    }
+
+    expect(surfaces.preview).toContain('<details>');
+    expect(surfaces.preview).toContain('UNKNOWN · 队列已停止；UNKNOWN 对账 BLOCKED');
+  });
+
+  it('replaces legacy preview and queue copy with Chinese business labels outside diagnostics', () => {
+    const markup = renderToStaticMarkup(<ExecutionWorkspace
+      apiOverride={createPreviewExecutionAuthorityApi()}
+      blockedReason="仅开发预览"
+      capabilities={previewExecutionCapabilities}
+      previewEnabled
+      storeContext={context}
+    />);
+    const text = ordinaryExecutionText(markup);
+    const leaks = ORDINARY_EXECUTION_LEGACY_COPY.filter((term) => text.toLowerCase().includes(term.toLowerCase()));
+
+    expect(leaks, `preview ordinary text: ${text}`).toEqual([]);
+    expect(text).toContain('仅开发预览 · 不连接真实广告页面，不提交任何广告调整');
+    expect(text).toContain('排队 → 预检 → 写入意图 → 提交 → 保存后核验 → 刷新回读');
+  });
+
+  it('fails closed to stable business copy instead of exposing raw execution errors', () => {
+    const raw = 'DECISION revision mismatch in Main Renderer sequence';
+    const fallback = executionUserFacingError(new Error(raw));
+    const mappedConnection = executionUserFacingError(new Error('browser session is not ready'));
+
+    expect(fallback).toBe('实时执行暂不可用：请核对当前店铺连接、审批授权与可见浏览器状态。');
+    expect(fallback).not.toContain(raw);
+    expect(mappedConnection).toContain('浏览器会话未就绪');
+    expect(mappedConnection).not.toMatch(/browser session|Profile|Main|Renderer/i);
+  });
+
   it('renders the canonical visible-browser cockpit with an explicit development-only boundary', () => {
     const markup = renderToStaticMarkup(<ExecutionWorkspace
       apiOverride={createPreviewExecutionAuthorityApi()}
@@ -183,13 +303,15 @@ describe('execution workspace', () => {
     expect(markup).toContain('data-canonical-surface="execution"');
     expect(markup).toContain('仅开发预览');
     expect(markup).toContain('Amazon US / USD');
-    expect(markup).toContain('解析当前 Ads 页身份');
-    expect(markup).toContain('从完整 Grant 建队列');
-    expect(markup).toContain('可见 Ads 浏览器');
-    expect(markup).toContain('排队 → 预检 → intent → 提交 → after → reload');
+    expect(markup).toContain('核验当前广告对象');
+    expect(markup).toContain('从完整授权建队列');
+    expect(markup).toContain('可见广告页面');
+    expect(markup).toContain('排队 → 预检 → 写入意图 → 提交 → 保存后核验 → 刷新回读');
     expect(markup).toContain('before / after / reload');
     expect(markup).toContain('append-only');
     expect(markup).toContain('不允许编辑或删除审计记录');
+    expect(markup).toContain('data-action-priority="primary"');
+    expect(markup).toContain('查看执行来源与边界');
     expect(markup).not.toContain(['USD 1.08', '1.30'].join(' → '));
     expect(markup).not.toContain(['15', '%'].join(''));
   });
@@ -217,6 +339,67 @@ describe('execution workspace', () => {
     expect(liveMarkup).toContain('<h2>Prime Day 后 7 日利润守护</h2>');
     expect(css).toMatch(/\.execution-page-title\s*\{[\s\S]*?font-size:\s*20px/);
     expect(css).toMatch(/\.execution-mission-header h2\s*\{/);
+  });
+
+  it('keeps execution authority ids and English status values out of the blocked ordinary surface', () => {
+    const markup = renderToStaticMarkup(<ExecutionWorkspace
+      blockedReason="执行服务尚未接入"
+      capabilities={[]}
+      previewEnabled={false}
+      storeContext={context}
+    />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(ordinaryText).not.toMatch(/UNKNOWN|set_keyword_bid|\brevision\b|execution\/|execution\.queue|BLOCKED|Authority|Renderer|\bAPI\b/);
+    expect(ordinaryText).toContain('实时执行尚未就绪');
+    expect(ordinaryText).toContain('请先完成当前店铺连接、审批授权和可见浏览器检查');
+  });
+
+  it('translates uncertain results and revisions on the production execution workbench', () => {
+    const capabilities = [
+      executionCapability(EXECUTION_CAPABILITY_IDS.view, 'view', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.start, 'start', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.takeover, 'takeover', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.reconcileUnknown, 'reconcile-unknown', 'BLOCKED'),
+    ];
+    const markup = renderToStaticMarkup(<ExecutionWorkspace
+      apiOverride={createPreviewExecutionAuthorityApi()}
+      blockedReason=""
+      capabilities={capabilities}
+      previewEnabled={false}
+      storeContext={context}
+    />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(ordinaryText).not.toMatch(/UNKNOWN|set_keyword_bid|\brevision\b/);
+    expect(ordinaryText).toContain('结果不确定');
+    expect(ordinaryText).toContain('版本校验');
+  });
+
+  it('uses operator-facing Chinese names instead of execution internals on the production workbench', () => {
+    const capabilities = [
+      executionCapability(EXECUTION_CAPABILITY_IDS.view, 'view', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.start, 'start', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.takeover, 'takeover', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PRODUCTION_NATIVE'),
+    ];
+    const markup = renderToStaticMarkup(<ExecutionWorkspace
+      apiOverride={createPreviewExecutionAuthorityApi()}
+      blockedReason=""
+      capabilities={capabilities}
+      previewEnabled={false}
+      storeContext={context}
+    />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(ordinaryText).not.toMatch(/\b(?:MissionGrant|Mission|Grant|Authority|Renderer|Main|Intent|After|Reload|WAITING|EXECUTION|Entity)\b|SERIAL STATE MACHINE|EVENT CONSOLE|append-only|任务 ID/);
+    expect(ordinaryText).toContain('当前运营任务');
+    expect(ordinaryText).toContain('有效执行授权');
+    expect(ordinaryText).toContain('只追加审计事件');
   });
 
   it('fails closed when the production preload API is absent', () => {
@@ -264,8 +447,8 @@ describe('execution workspace', () => {
 
   it('uses readable authority selectors instead of typed opaque production ids', () => {
     const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('当前 Mission');
-    expect(source).toContain('有效 MissionGrant');
+    expect(source).toContain('当前运营任务');
+    expect(source).toContain('有效执行授权');
     expect(source).toContain('已决定广告对象');
     expect(source).toContain('Authority 只读标识');
     expect(source).not.toContain('从已决定记录复制 Grant ID');

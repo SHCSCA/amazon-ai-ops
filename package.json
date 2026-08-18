@@ -41,6 +41,7 @@
     "evidence:package-ui": "node scripts/run-package-ui-evidence.js",
     "inspect:package-ui-run-group": "node scripts/inspect-package-ui-run-group.js",
     "smoke:package-launch": "node scripts/smoke-package-launch.js",
+    "smoke:folder-zip-launch": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-folder-zip-launch.ps1",
     "smoke:package-security-boundaries": "node scripts/smoke-package-security-boundaries.js",
     "smoke:package-adversarial-node-env": "node scripts/smoke-package-adversarial-node-env.js",
     "smoke:v15-product-readiness-ui": "pnpm run smoke:business-ui-current",

@@ -45,7 +45,7 @@ const OVERALL_LABELS: Record<StoreDailyStatusProjection['overall'], string> = {
   blocked: '已阻塞',
   inactive: '已停用',
   archived: '已归档',
-  unknown: 'UNKNOWN',
+  unknown: '待确认',
 };
 
 const IMPORT_LABELS: Record<StoreDailyStatusProjection['import']['state'], string> = {
@@ -54,15 +54,33 @@ const IMPORT_LABELS: Record<StoreDailyStatusProjection['import']['state'], strin
   succeeded: '已导入',
   failed: '失败',
   not_applicable: '不适用',
-  unknown: 'UNKNOWN',
+  unknown: '待确认',
 };
 
 const FRESHNESS_LABELS: Record<StoreDailyStatusProjection['metrics']['freshness'], string> = {
   fresh: '新鲜',
   stale: '过期',
   missing: '缺失',
-  unknown: 'UNKNOWN',
+  unknown: '待确认',
 };
+
+const INTERNAL_OPERATOR_TERM = /(?:\b(?:Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER|PROTOTYPE_ONLY|UNKNOWN|IPC|electronAPI)\b|Package UI|Error invoking remote method|RuntimeError|remote method)/i;
+
+function operatorStoreMessage(value: string | null | undefined, fallback: string): string {
+  const firstLine = value?.trim().split(/\r?\n/)[0];
+  if (!firstLine || INTERNAL_OPERATOR_TERM.test(firstLine)) return fallback;
+  return firstLine.slice(0, 240);
+}
+
+function StoreDiagnosticDetails({ raw, visible }: { raw?: string | null; visible: string }) {
+  if (!raw || raw === visible) return null;
+  return (
+    <details>
+      <summary>诊断详情</summary>
+      <code>{raw}</code>
+    </details>
+  );
+}
 
 export function validateStoreScopeCreateName(value: string): string | null {
   const normalized = value.trim();
@@ -91,8 +109,9 @@ function statusForStore(
 
 function statusDetail(status?: StoreDailyStatusProjection): string {
   if (!status) return '今日状态尚未读取';
-  if (status.blockers[0]?.detail) return status.blockers[0].detail;
-  if (status.overall === 'unknown') return 'Main 无法确认今日权威状态';
+  const blockerDetail = status.blockers[0]?.detail;
+  if (blockerDetail && !INTERNAL_OPERATOR_TERM.test(blockerDetail)) return blockerDetail;
+  if (blockerDetail || status.overall === 'unknown') return '今日状态尚未确认，请刷新后重试。';
   return OVERALL_LABELS[status.overall];
 }
 
@@ -132,6 +151,11 @@ export function StoreScopeSwitcher({
   const switching = phase === 'switching' || pendingStoreId !== null;
   const listBusy = phase === 'loading' || dailyStatusPhase === 'loading';
   const currentStatus = activeStore ? statusForStore(dailyStatuses, activeStore) : undefined;
+  const rawScopeError = error || dailyStatusError || null;
+  const visibleScopeError = operatorStoreMessage(
+    rawScopeError,
+    '店铺状态读取失败，请点击“重试”再次确认。',
+  );
 
   useEffect(() => {
     if (initiallyExpanded && !previousInitiallyExpanded.current) setExpanded(true);
@@ -266,7 +290,7 @@ export function StoreScopeSwitcher({
           <header>
             <div>
               <strong>店铺与站点</strong>
-              <span>作用域由 Main 精确确认</span>
+              <span>当前店铺由系统核验</span>
             </div>
             <button aria-label="关闭店铺列表" onClick={() => setExpanded(false)} type="button">
               <X aria-hidden="true" size={15} />
@@ -276,14 +300,19 @@ export function StoreScopeSwitcher({
           {(phase === 'error' || dailyStatusPhase === 'error') && (
             <div className="store-scope-switcher__state" data-state="error" role="alert">
               <Warning aria-hidden="true" size={17} weight="fill" />
-              <span>{error || dailyStatusError || '店铺状态读取失败。'}</span>
+              <span>{visibleScopeError}</span>
               <button onClick={() => void onRetry()} type="button">重试</button>
+              <StoreDiagnosticDetails raw={rawScopeError} visible={visibleScopeError} />
             </div>
           )}
           {switchError && (
             <div className="store-scope-switcher__state" data-state="error" role="alert">
               <Warning aria-hidden="true" size={17} weight="fill" />
-              <span>{switchError}</span>
+              <span>{operatorStoreMessage(switchError, '店铺切换失败，请重试；仍失败时查看诊断详情。')}</span>
+              <StoreDiagnosticDetails
+                raw={switchError}
+                visible={operatorStoreMessage(switchError, '店铺切换失败，请重试；仍失败时查看诊断详情。')}
+              />
             </div>
           )}
           {listBusy && (
@@ -327,8 +356,8 @@ export function StoreScopeSwitcher({
                     <span className="store-scope-switcher__option-market">Amazon US · USD</span>
                     <span className="store-scope-switcher__health">
                       <span>下载 {downloaded ?? '?'} / {status?.collection.requiredReportCount ?? 8}</span>
-                      <span>导入 {status ? IMPORT_LABELS[status.import.state] : 'UNKNOWN'}</span>
-                      <span>指标 {status ? FRESHNESS_LABELS[status.metrics.freshness] : 'UNKNOWN'}</span>
+                      <span>导入 {status ? IMPORT_LABELS[status.import.state] : '尚未读取'}</span>
+                      <span>指标 {status ? FRESHNESS_LABELS[status.metrics.freshness] : '尚未读取'}</span>
                     </span>
                     <small title={statusDetail(status)}>{statusDetail(status)}</small>
                   </button>
@@ -385,7 +414,7 @@ export function StoreScopeSwitcher({
           >
             <header>
               <div>
-                <span>STORE AUTHORITY</span>
+                <span>店铺配置</span>
                 <h2 id="store-scope-create-title">新增美国站店铺</h2>
                 <p id="store-scope-create-description">创建只新增数据域，不会暗中切换当前店铺。</p>
               </div>
@@ -400,7 +429,15 @@ export function StoreScopeSwitcher({
                 <div>
                   <strong>{createdStore.displayName} 已创建</strong>
                   <p>当前店铺没有改变。需要进入新店时，请显式切换；外部连接在店铺工作台内单独启动。</p>
-                  {switchError && <p className="store-scope-create-switch-error" role="alert">{switchError}</p>}
+                  {switchError && (
+                    <div className="store-scope-create-switch-error" role="alert">
+                      <p>{operatorStoreMessage(switchError, '店铺切换失败，请重试；仍失败时查看诊断详情。')}</p>
+                      <StoreDiagnosticDetails
+                        raw={switchError}
+                        visible={operatorStoreMessage(switchError, '店铺切换失败，请重试；仍失败时查看诊断详情。')}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -433,7 +470,15 @@ export function StoreScopeSwitcher({
                 </div>
                 <p className="store-scope-create-limit">首版仅开放美国站；站点、币种与业务时区不可编辑。</p>
                 <div className="store-scope-create-feedback" aria-live="polite">
-                  {createError && <span role="alert">{createError}</span>}
+                  {createError && (
+                    <div role="alert">
+                      <span>{operatorStoreMessage(createError, '店铺创建失败，请检查名称后重试。')}</span>
+                      <StoreDiagnosticDetails
+                        raw={createError}
+                        visible={operatorStoreMessage(createError, '店铺创建失败，请检查名称后重试。')}
+                      />
+                    </div>
+                  )}
                 </div>
               </form>
             )}

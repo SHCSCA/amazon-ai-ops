@@ -311,10 +311,27 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
           },
           { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute), disabled: taskState.primaryActionBusy },
         ]}
-        status={collectionJobsLoading ? '核对生产血缘中' : canQuantify ? operationScopeSaveFeedbackLabel(saveStatus) : '生产血缘未闭合'}
+        status={saveStatus !== 'idle'
+          ? operationScopeSaveFeedbackLabel(saveStatus)
+          : collectionJobsLoading
+            ? '核对生产血缘中'
+            : canQuantify
+              ? operationScopeSaveFeedbackLabel(saveStatus)
+              : '生产血缘未闭合'}
         title={taskState.title}
         tone={canQuantify ? 'confirmed' : taskState.tone === 'warning' ? 'attention' : 'blocked'}
       />
+
+      {saveStatus !== 'idle' && (
+        <p
+          aria-live="polite"
+          className="operation-scope-save-feedback"
+          data-tone={saveStatus === 'saved' ? 'success' : saveStatus === 'error' ? 'error' : 'pending'}
+          role={saveStatus === 'error' ? 'alert' : 'status'}
+        >
+          {operationScopeSaveFeedbackLabel(saveStatus)}
+        </p>
+      )}
 
       <div className="business-stack">
         {editing && (
@@ -343,7 +360,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
                   value={draft.dateTo}
                 />
               </FormTableRow>
-              <FormTableRow label="店铺 / 站点" hint="店铺、站点和币种由当前 Main StoreContext 锁定，不能跨店修改。">
+              <FormTableRow label="店铺 / 站点" hint="店铺、站点和币种已按当前店铺锁定，不能跨店修改。">
                 <div className="operation-scope-locked-authority" aria-label="当前锁定店铺站点币种">
                   <strong>{scope.storeName}</strong>
                   <StatusPill tone="ready">US</StatusPill>

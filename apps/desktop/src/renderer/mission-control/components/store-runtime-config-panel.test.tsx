@@ -4,6 +4,7 @@ import {
   DEFAULT_STORE_RUNTIME_CONFIG_VALUES,
   STORE_RUNTIME_CONFIG_CAPABILITY_IDS,
   readStoreRuntimeConfigApi,
+  runtimeConfigRevisionDisplayLabel,
   validateStoreRuntimeConfigDraft,
 } from './store-runtime-config-panel';
 
@@ -47,5 +48,9 @@ describe('StoreRuntimeConfigPanel contract', () => {
     expect(source).not.toContain('maxBidChangePercent');
     expect(source).not.toContain('killSwitch');
     expect(source).not.toContain('localStorage');
+  });
+
+  it('shows configuration version checks without exposing the internal revision number', () => {
+    expect(runtimeConfigRevisionDisplayLabel(12)).toBe('版本已校验');
   });
 });

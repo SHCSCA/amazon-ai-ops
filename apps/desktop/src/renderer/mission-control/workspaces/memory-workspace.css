@@ -658,6 +658,12 @@
   font-size: 11px;
 }
 
+.memory-search > button {
+  flex: 0 0 auto;
+  min-width: 84px;
+  white-space: nowrap;
+}
+
 .memory-list-columns {
   display: grid;
   grid-template-columns: 45px minmax(0, 1fr) 112px;

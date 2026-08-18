@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const inspector = require('./inspect-package-ui-run-group.js');
 const protectedSqliteTemp = require('./protected-sqlite-temp.js');
+const authoritySelectionVerifier = require('./verify-production-authority-selection.js');
 const temporaryRoots = [];
 
 afterEach(() => {
@@ -66,6 +67,69 @@ function createDatabase(filePath, value = 'fixture') {
   } finally {
     db.close();
   }
+}
+
+function createWalAuthoritySelectionFixture() {
+  const root = makeRoot();
+  const roamingAppData = path.join(root, 'AppData', 'Roaming');
+  const userDataDir = path.join(roamingAppData, '@amazon-ai-ops', 'desktop');
+  const protectedDatabasePath = path.join(userDataDir, 'amazon-ai-ops.db');
+  const tempRoot = path.join(root, 'authority-temp');
+  const receiptPath = path.join(root, 'authority-selection.json');
+  const localRequire = createRequire(path.resolve('packages/local-db/package.json'));
+  const Database = localRequire('better-sqlite3');
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.mkdirSync(tempRoot, { recursive: true });
+  const database = new Database(protectedDatabasePath);
+  try {
+    database.pragma('journal_mode = WAL');
+    database.exec("CREATE TABLE fixture(value TEXT); INSERT INTO fixture VALUES ('current');");
+    const expectedMainSha256 = hash(fs.readFileSync(protectedDatabasePath));
+    const userProfile = path.join(root, 'Users', 'operator');
+    const verifierOptions = {
+      dbPath: protectedDatabasePath,
+      expectedMainSha256,
+      expectedUserDataDir: userDataDir,
+    };
+    const verifierContext = {
+      env: { APPDATA: roamingAppData, USERPROFILE: userProfile },
+      now: () => new Date('2026-08-14T00:00:00.000Z'),
+      tempRoot,
+      writeStdout() {},
+    };
+    authoritySelectionVerifier.inspectProductionAuthoritySelection(
+      verifierOptions,
+      verifierContext,
+    );
+    const receipt = authoritySelectionVerifier.inspectProductionAuthoritySelection(
+      verifierOptions,
+      verifierContext,
+    );
+    return {
+      canonicalPaths: {
+        databasePath: protectedDatabasePath,
+        roamingAppData,
+        userDataDir,
+        userProfile,
+      },
+      database,
+      protectedDatabasePath,
+      receipt,
+      receiptPath,
+    };
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+function validateWalAuthoritySelectionFixture(fixture) {
+  fs.writeFileSync(fixture.receiptPath, `${JSON.stringify(fixture.receipt)}\n`, 'utf8');
+  return inspector.validateAuthoritySelectionFromPureChild({
+    canonicalPaths: fixture.canonicalPaths,
+    protectedDatabasePath: fixture.protectedDatabasePath,
+    receiptPath: fixture.receiptPath,
+  });
 }
 
 function fastLogical(filePath) {
@@ -184,7 +248,9 @@ function authorityBinding(databasePath, receiptPath, canonicalDatabasePath = dat
   return {
     authoritySelectionReceiptSha256: hash(fs.readFileSync(receiptPath)),
     canonicalDatabasePathSha256: hash(Buffer.from(
-      path.resolve(canonicalDatabasePath).replace(/\\/g, '/').toLowerCase(),
+      path.win32.normalize(String(canonicalDatabasePath || ''))
+        .replace(/[\\/]+$/, '')
+        .toLowerCase(),
       'utf8',
     )),
     databaseFileIdentity: {
@@ -778,6 +844,35 @@ describe('inspect-package-ui-run-group', () => {
     const result = inspectFixture(fixture);
     expect(result).toMatchObject({ nextProfileId: '100-compact', status: 'RESUME_SAFE', violations: [] });
     expect(require.cache[require.resolve('./playwright-loader.js')]).toBeUndefined();
+  });
+
+  it.runIf(process.platform === 'win32')('binds the canonical authority path with package-runner Windows lexical semantics', () => {
+    const fixture = createFixture();
+    const canonicalDatabasePath = fs.realpathSync.native(fixture.protectedDb);
+    const expectedPathHash = hash(Buffer.from(
+      path.win32.normalize(canonicalDatabasePath).replace(/[\\/]+$/, '').toLowerCase(),
+      'utf8',
+    ));
+    expect(path.win32.isAbsolute(canonicalDatabasePath)).toBe(true);
+    expect(fixture.metadata.authorityBinding.canonicalDatabasePathSha256)
+      .toBe(expectedPathHash);
+    expect(inspectFixture(fixture)).toMatchObject({
+      status: 'RESUME_SAFE',
+      violations: [],
+    });
+
+    const differentCanonicalPath = path.join(fixture.root, 'different-authority.db');
+    const rejected = inspectFixture(fixture, {
+      canonicalAuthorityPaths: {
+        databasePath: differentCanonicalPath,
+        roamingAppData: fixture.root,
+        userDataDir: path.dirname(differentCanonicalPath),
+        userProfile: fixture.root,
+      },
+    });
+    expect(rejected.status).toBe('LINEAGE_CHANGED');
+    expect(rejected.violations.map((item) => item.code))
+      .toContain('AUTHORITY_BINDING_CHANGED');
   });
 
   it('uses RECORD_ROOT_REQUIRED for a missing root and creates no evidence output', () => {
@@ -1427,6 +1522,44 @@ describe('inspect-package-ui-run-group', () => {
     });
     expect(result.status).toBe('LINEAGE_CHANGED');
     expect(result.violations.map((item) => item.code)).toContain('AUTHORITY_SELECTION_INVALID');
+  });
+
+  it.runIf(process.platform === 'win32')('accepts only SHM mtime drift during pure-child authority revalidation', () => {
+    const fixture = createWalAuthoritySelectionFixture();
+    try {
+      expect(fixture.receipt.selection.selected.sidecars.shm.exists).toBe(true);
+      expect(fixture.receipt.selection.selected.sidecarsBefore.shm.exists).toBe(true);
+      fixture.receipt.selection.selected.sidecars.shm.mtimeMs -= 10_000;
+      fixture.receipt.selection.selected.sidecarsBefore.shm.mtimeMs -= 10_000;
+
+      expect(validateWalAuthoritySelectionFixture(fixture)).toMatchObject({
+        passed: true,
+        status: fixture.receipt.status,
+      });
+    } finally {
+      fixture.database.close();
+    }
+  });
+
+  describe.runIf(process.platform === 'win32')('pure-child authority sidecar drift guards', () => {
+    it.each([
+      ['SHM hash', (selected) => { selected.sidecars.shm.sha256 = '0'.repeat(64); }],
+      ['SHM size', (selected) => { selected.sidecars.shm.sizeBytes += 1; }],
+      ['SHM path', (selected) => { selected.sidecars.shm.absolutePath += '.detached'; }],
+      ['WAL hash', (selected) => { selected.sidecars.wal.sha256 = '0'.repeat(64); }],
+      ['journal path', (selected) => { selected.sidecarsBefore.journal.absolutePath += '.detached'; }],
+    ])('rejects %s drift during pure-child authority revalidation', (_label, mutate) => {
+      const fixture = createWalAuthoritySelectionFixture();
+      try {
+        mutate(fixture.receipt.selection.selected);
+        expect(validateWalAuthoritySelectionFixture(fixture)).toMatchObject({
+          passed: false,
+          status: fixture.receipt.status,
+        });
+      } finally {
+        fixture.database.close();
+      }
+    });
   });
 
   it('resolves the canonical authority through Windows Known Folder rather than a poisoned APPDATA variable', () => {

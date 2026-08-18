@@ -5,6 +5,12 @@ export function toUserFacingError(error: unknown, fallback: string): string {
   if (/browser session is not ready/i.test(message)) {
     return '浏览器会话未就绪：请先登录领星 ERP，并从 ERP 广告入口进入 Ads 后重试。';
   }
+  if (/Amazon Ads account\/session identity is not ready|does not match exactly|ExecutionAuthorityRepositoryError/i.test(message)) {
+    return '当前店铺的 Amazon Ads 会话尚未连接或身份不一致：请先到“系统设置”重新连接当前店铺，看到“ERP 与 Ads 已连接”后再进入实时执行。';
+  }
+  if (/Ads SSO|店铺选择器|从领星 ERP 打开 Ads|Ads 页面在限定时间内未出现/i.test(message)) {
+    return '店铺连接未完成：系统没有确认当前美国站 Ads 页面与店铺一致，因此已安全关闭本次浏览器会话。请回到“系统设置”重新连接；若页面已打开，请保持窗口不动直至出现连接结果。';
+  }
   if (/只读数据接口未暴露|getBusinessUiDataPipeline|electronAPI/i.test(message)) {
     return '应用运行环境异常：当前页面没有连接到桌面端数据接口。请使用最新安装版或免安装版重新打开。';
   }

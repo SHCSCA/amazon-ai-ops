@@ -10,6 +10,7 @@ import {
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import type { Page } from 'playwright';
 import {
   BrowserController,
   BrowserLeaseManager,
@@ -69,6 +70,7 @@ import type {
   ResolveRecommendationReviewResult,
   StoreConnection,
   StoreConnectionProvider,
+  StoreCollectionScheduleProjection,
   StoreContextEnvelope,
   StoreRecord,
   StoreWorkspaceView,
@@ -112,7 +114,10 @@ import {
   type UserVisibleBrowserTransitionFinalState,
 } from './user-visible-browser-transition';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
-import { requireBrowserLoginProviderConnections } from './browser-login-provider-connections';
+import {
+  requireBrowserLoginProviderConnections,
+  type BrowserLoginProviderConnections,
+} from './browser-login-provider-connections';
 import { normalizeBrowserLoginAdsIdentityConfirmation } from './browser-login-ads-confirmation';
 import { normalizeBrowserLoginRequest } from './browser-login-request';
 import { recoverLingxingEnrollmentSession } from './lingxing-enrollment-session-recovery';
@@ -128,6 +133,7 @@ import {
 import {
   completeS7MainStartupAdmission,
   enforceS7MainStartupGate,
+  protectFreshS7AuthorityPath,
   resolveCanonicalAuthorityUserDataDir,
   type S7MainStartupAdmission,
 } from './s7-migration-startup-gate';
@@ -140,7 +146,7 @@ import { readDailyReportRecommendationSummary } from './daily-report-recommendat
 import { writeDownloadCenterPageModelEnablementAuditBundle } from './page-model-enablement-audit-export';
 import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterPageModel } from './download-center-page-model-validation';
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
-import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './lingxing-session-flow';
+import { getLingxingSessionNavigationPlan } from './lingxing-session-flow';
 import { bindLingxingCollectionCancellation } from './lingxing-collection-control';
 import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
 import { applyRecommendationDecision, assertRecommendationDecisionRevision, normalizeRecommendationDecisionRequest } from './recommendation-approval-policy';
@@ -201,15 +207,21 @@ import {
   isPackageUiSavedSessionContinuationAllowed,
 } from './login-session-credential-policy';
 import {
-  assertLingxingCollectionStoreNameEvidence,
-  assertProviderActiveIdentity,
-  PROVIDER_ACTIVE_IDENTITY_DOM_PROBES,
-  readAmazonAdsProfileIdentityEvidence,
-  readLingxingStableExternalAccountIdEvidence,
-  requireLingxingTypedStableIdentityEnrollment,
-  type ProviderActiveIdentityDomObservation,
-  type ProviderCredentialSubmission,
-} from './provider-active-identity';
+  dismissLingxingAdsChangeAnnouncements,
+  ensureLingxingErpAuthenticated,
+  findTrustedLingxingProviderPageAfterPendingNavigation,
+  findTrustedLingxingProviderReplacementPage,
+  isLingxingAdsExplicitlyLoggedOutPage,
+  isTransientLingxingAdsNavigationError,
+  isTrustedLingxingProviderUrl,
+  openLingxingAdsFromErp,
+  readLingxingAdsPageStateAfterNavigation,
+  readLingxingAdsProfileEvidence,
+  restoreAuthenticatedLingxingErpPage,
+  resolveLingxingStableIdentityFromAdsProfile,
+  resolveLingxingStableIdentityFromVerifiedContinuation,
+  selectOnlyLingxingAdsStore,
+} from './lingxing-ads-sso';
 import {
   EXTERNAL_OPEN_POLICY_MARKER,
   createMainWindowNavigationHandler,
@@ -301,6 +313,7 @@ import type { StoreCollectionOrchestrator } from './store-collection-orchestrato
 import type { StoreCollectionSchedulerReadModel } from './store-collection-scheduler-read-model';
 import {
   StoreMutationLane,
+  StoreMutationLaneError,
   VisibleBrowserRuntimeRegistry,
   type AmazonAdsVisibleIdentityClaim,
   type VisibleBrowserRuntime,
@@ -407,6 +420,7 @@ const state: AppState = {
 
 const browserOperationLeases = new BrowserLeaseManager();
 const visibleBrowserRuntimeRegistry = new VisibleBrowserRuntimeRegistry();
+const expectedVisibleRuntimeCloseIds = new Set<string>();
 const storeMutationLane = new StoreMutationLane();
 const storeCollectionPolicySuppression = new StoreCollectionPolicySuppressionController();
 const STORE_COLLECTION_ORCHESTRATOR_HISTORY_KEY = 'store_collection_orchestrator_history_v5';
@@ -470,6 +484,21 @@ const evidenceUserDataIdentity = configureEvidenceUserDataPath(app);
 const packageUiReadOnlyRuntime = evidenceUserDataIdentity.mode === PACKAGE_UI_EVIDENCE_MODE;
 const packageUiFreshTypedProofRequired = packageUiReadOnlyRuntime
   && process.env[PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV] === '1';
+let packageUiFreshTypedProof: Readonly<{
+  storeId: string;
+  username: string;
+}> | null = null;
+function hasPackageUiFreshTypedProof(storeId: unknown, username: unknown): boolean {
+  const normalizedStoreId = String(storeId ?? '').trim();
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+  return Boolean(
+    packageUiFreshTypedProof
+    && normalizedStoreId
+    && normalizedUsername
+    && packageUiFreshTypedProof.storeId === normalizedStoreId
+    && packageUiFreshTypedProof.username === normalizedUsername
+  );
+}
 const packageLaunchSmokeRuntime = evidenceUserDataIdentity.mode === PACKAGE_LAUNCH_SMOKE_MODE;
 const USER_DATA_DIR = app.getPath('userData');
 let mainStartupAdmission: S7MainStartupAdmission | null = null;
@@ -940,6 +969,16 @@ async function initApp(): Promise<void> {
   console.log('[App] init:start');
 
   // Init database
+  const freshCanonicalAuthority = mainStartupAdmission?.mode === 'NORMAL'
+    && !fs.existsSync(DB_PATH);
+  if (freshCanonicalAuthority) {
+    fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+    protectFreshS7AuthorityPath(
+      USER_DATA_DIR,
+      'directory',
+      'Fresh authority userData directory',
+    );
+  }
   if (mainStartupAdmission?.mode === 'S7_APPROVED_CHILD') {
     state.db = initGuardedExistingSqlite(DB_PATH, ({ database, resolvedPath }) => (
       completeS7MainStartupAdmission({
@@ -955,6 +994,14 @@ async function initApp(): Promise<void> {
     )).database;
   } else {
     state.db = initSqlite(DB_PATH);
+  }
+  if (freshCanonicalAuthority) {
+    protectFreshS7AuthorityPath(
+      DB_PATH,
+      'file',
+      'Fresh authority database',
+    );
+    console.info('[Security] Fresh authority path ACLs protected');
   }
   console.log('[App] init:sqlite-ready');
   ensureDirs();
@@ -1387,166 +1434,17 @@ function handleGetSavedLoginCredentialStatus(): StoreScopedSavedLoginCredentialS
     ...credentialStatus,
     storeId: capturedContext?.storeId ?? null,
     packageUiEvidenceMode: packageUiReadOnlyRuntime,
-    freshTypedProofRequired: packageUiFreshTypedProofRequired,
+    freshTypedProofRequired: packageUiFreshTypedProofRequired
+      && !hasPackageUiFreshTypedProof(capturedContext?.storeId, credentialStatus.username),
   };
 }
 
 async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
-  return page.evaluate(() => ({
-    url: window.location.href,
-    title: document.title,
-    bodyText: document.body?.innerText ?? '',
-    hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
-  }));
-}
-
-const AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS = 120_000;
-const AMAZON_ADS_AUTHORIZATION_POLL_MS = 1_000;
-
-function isRetryableAdsAuthorizationNavigationError(error: unknown): boolean {
-  return /execution context was destroyed|most likely because of a navigation|cannot find context/i
-    .test(String(error instanceof Error ? error.message : error));
-}
-
-async function waitForLingxingAdsSessionReady(
-  controller: BrowserController,
-  assertAttemptActive: () => void,
-  timeoutMs: number,
-): Promise<Awaited<ReturnType<typeof readLingxingPageState>> | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    assertAttemptActive();
-    try {
-      const pageState = await readLingxingPageState(getControllerPageOrThrow(controller));
-      if (isLingxingAdsLoggedInPage(pageState)) return pageState;
-    } catch (error) {
-      if (!isRetryableAdsAuthorizationNavigationError(error)) throw error;
-    }
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return null;
-    await controller.waitForTimeout(Math.min(AMAZON_ADS_AUTHORIZATION_POLL_MS, remainingMs));
-  }
-}
-
-async function waitForLingxingAdsIdentityEvidence(
-  controller: BrowserController,
-  assertAttemptActive: () => void,
-  timeoutMs: number,
-): Promise<{
-  externalAccountId: string;
-  accountLabel?: string;
-  pageState: Awaited<ReturnType<typeof readLingxingPageState>>;
-}> {
-  const deadline = Date.now() + timeoutMs;
-  let lastMissingEvidenceError: Error | null = null;
-  while (true) {
-    assertAttemptActive();
-    try {
-      const page = getControllerPageOrThrow(controller);
-      const pageState = await readLingxingPageState(page);
-      if (isLingxingAdsLoggedInPage(pageState)) {
-        try {
-          const identity = readAmazonAdsProfileIdentityEvidence({
-            pageUrl: pageState.url,
-            domObservations: await readProviderActiveIdentityDomObservations(page),
-          });
-          return { ...identity, pageState };
-        } catch (error) {
-          const message = String(error instanceof Error ? error.message : error);
-          if (!/无法自动识别唯一广告账户/.test(message)) throw error;
-          lastMissingEvidenceError = error instanceof Error ? error : new Error(message);
-        }
-      }
-    } catch (error) {
-      if (!isRetryableAdsAuthorizationNavigationError(error)) throw error;
-    }
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      throw lastMissingEvidenceError
-        ?? new Error('无法自动识别唯一广告账户；请在可见 Ads 窗口打开一个广告活动或广告组页面后重试。');
-    }
-    await controller.waitForTimeout(Math.min(AMAZON_ADS_AUTHORIZATION_POLL_MS, remainingMs));
-  }
-}
-
-async function assertProviderPageActiveIdentity(input: {
-  connection: StoreConnection;
-  page: NonNullable<ReturnType<BrowserController['getPage']>>;
-  pageUrl: string;
-  credentialSubmission?: ProviderCredentialSubmission;
-}): Promise<{ lingxingStableExternalAccountId?: string }> {
-  const domObservations = await readProviderActiveIdentityDomObservations(input.page);
-  if (input.connection.provider === 'lingxing') {
-    if (!input.connection.collectionStoreName) {
-      throw new Error('领星连接缺少下载中心店铺名称，登录已阻断。');
-    }
-    const expectedStableId = normalizeProviderExternalAccountId(
-      'lingxing',
-      input.connection.externalAccountId,
-    );
-    if (!expectedStableId) {
-      if (!input.connection.accountLabel) {
-        throw new Error('领星稳定身份首次绑定缺少连接账号，登录已阻断。');
-      }
-      return {
-        lingxingStableExternalAccountId: requireLingxingTypedStableIdentityEnrollment({
-          accountLabel: input.connection.accountLabel,
-          collectionStoreName: input.connection.collectionStoreName,
-          credentialSubmission: input.credentialSubmission,
-          pageUrl: input.pageUrl,
-          domObservations,
-        }),
-      };
-    }
-    assertLingxingCollectionStoreNameEvidence({
-      expectedCollectionStoreName: input.connection.collectionStoreName,
-      domObservations,
-    });
-    const observedStableId = readLingxingStableExternalAccountIdEvidence({
-      pageUrl: input.pageUrl,
-      domObservations,
-    });
-    if (observedStableId !== expectedStableId) {
-      throw new Error('领星页面稳定店铺身份与当前连接不一致，登录已阻断。');
-    }
-  }
-  assertProviderActiveIdentity({
-    connection: input.connection,
-    pageUrl: input.pageUrl,
-    domObservations,
-    credentialSubmission: input.credentialSubmission,
-  });
-  return input.connection.provider === 'lingxing'
-    ? { lingxingStableExternalAccountId: input.connection.externalAccountId }
-    : {};
-}
-
-async function readProviderActiveIdentityDomObservations(
-  page: NonNullable<ReturnType<BrowserController['getPage']>>,
-): Promise<ProviderActiveIdentityDomObservation[]> {
-  const probes = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map((probe) => ({
-    id: probe.id,
-    selector: probe.selector,
-    attribute: probe.attribute,
-  }));
-  return page.evaluate((activeIdentityProbes) => (
-    activeIdentityProbes.flatMap((probe) => (
-      [...document.querySelectorAll(probe.selector)]
-        .filter((element) => {
-          if (element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
-          const style = window.getComputedStyle(element);
-          return element.getClientRects().length > 0
-            && style.display !== 'none'
-            && style.visibility !== 'hidden'
-            && Number(style.opacity) > 0;
-        })
-        .slice(0, 2)
-        .flatMap((element) => {
-          const value = element.getAttribute(probe.attribute);
-          return value === null ? [] : [{ probeId: probe.id, value }];
-        })
-    ))
-  ), probes);
+  const state = await readLingxingAdsPageStateAfterNavigation(page);
+  return {
+    ...state,
+    hasAccountInput: state.hasAccountInput === true,
+  };
 }
 
 function adsSessionResultFromPageState(pageState: { url: string; title?: string }): AdsSessionResult {
@@ -1559,6 +1457,7 @@ function adsSessionResultFromPageState(pageState: { url: string; title?: string 
 
 function clearBrowserLoginState(): void {
   pendingAmazonAdsIdentityConfirmation = null;
+  pendingAmazonAdsIdentityRetry = null;
   state.isLoggedIn = false;
   try {
     const activeContext = state.storeCoordinator?.getActiveStoreContext();
@@ -1587,8 +1486,215 @@ let pendingAmazonAdsIdentityConfirmation: {
   connection: StoreConnection;
   detectedExternalAccountId: string;
   detectedAccountLabel?: string;
+  expectedStoreAlias: string;
+  profileEvidenceUrl: string;
   adsSession: AdsSessionResult;
 } | null = null;
+
+let pendingAmazonAdsIdentityRetry: {
+  context: StoreContextEnvelope;
+  runtimeId: string;
+  runtimeEpoch: number;
+  claim: AmazonAdsVisibleIdentityClaim;
+} | null = null;
+
+const completedLoginLivenessBindings = new WeakMap<Page, Set<string>>();
+
+function bindCompletedLoginPageLiveness(runtimeId: string, context: StoreContextEnvelope): void {
+  const runtime = visibleBrowserRuntimeRegistry.read();
+  if (!runtime || runtime.runtimeId !== runtimeId || !sameExactStoreContext(runtime.context, context)) return;
+  type LivenessController = Readonly<{
+    getPage(): unknown;
+    getContext(): unknown;
+    setActivePage?: (page: Page) => void;
+  }>;
+  const replacementCandidates = (controller: LivenessController): Page[] => {
+    const activePage = controller.getPage() as Page | null | undefined;
+    let contextPages: Page[] = [];
+    try {
+      const browserContext = controller.getContext() as { pages?: () => unknown[] } | null | undefined;
+      contextPages = (browserContext?.pages?.() ?? []) as Page[];
+    } catch {
+      contextPages = [];
+    }
+    return activePage ? [activePage, ...contextPages] : contextPages;
+  };
+  const watchPage = (
+    provider: 'lingxing' | 'amazon_ads',
+    controller: LivenessController,
+    page: Page,
+  ): void => {
+    const bindingKey = `${runtimeId}:${provider}`;
+    const bindings = completedLoginLivenessBindings.get(page) ?? new Set<string>();
+    if (bindings.has(bindingKey)) return;
+    bindings.add(bindingKey);
+    completedLoginLivenessBindings.set(page, bindings);
+    const adoptTrustedReplacement = (): boolean => {
+      const replacementPage = findTrustedLingxingProviderReplacementPage(
+        provider,
+        page,
+        replacementCandidates(controller),
+      );
+      if (!replacementPage) return false;
+      controller.setActivePage?.(replacementPage);
+      watchPage(provider, controller, replacementPage);
+      return true;
+    };
+    let pendingNavigationRecoveryStarted = false;
+    const recoverPendingAdsOrDegrade = (reason: string): void => {
+      const currentRuntime = visibleBrowserRuntimeRegistry.read();
+      if (provider !== 'amazon_ads'
+        || !currentRuntime
+        || currentRuntime.runtimeId !== runtimeId
+        || !sameExactStoreContext(currentRuntime.context, context)
+        || currentRuntime.providerIdentityStatus.amazonAds !== 'pending') {
+        void degradeVisibleLoginProvider(provider, runtimeId, context, reason);
+        return;
+      }
+      if (pendingNavigationRecoveryStarted) return;
+      pendingNavigationRecoveryStarted = true;
+      void (async () => {
+        const recoveredPage = await findTrustedLingxingProviderPageAfterPendingNavigation(
+          provider,
+          page,
+          () => replacementCandidates(controller),
+        );
+        const latestRuntime = visibleBrowserRuntimeRegistry.read();
+        if (!latestRuntime
+          || latestRuntime.runtimeId !== runtimeId
+          || !sameExactStoreContext(latestRuntime.context, context)
+          || latestRuntime.providerIdentityStatus.amazonAds !== 'pending') return;
+        if (recoveredPage) {
+          pendingNavigationRecoveryStarted = false;
+          controller.setActivePage?.(recoveredPage);
+          watchPage(provider, controller, recoveredPage);
+          return;
+        }
+        await degradeVisibleLoginProvider(provider, runtimeId, context, reason);
+      })();
+    };
+    page.once('close', () => {
+      if (adoptTrustedReplacement()) return;
+      recoverPendingAdsOrDegrade('可见浏览器已关闭。');
+    });
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame()) return;
+      if (!isTrustedLingxingProviderUrl(provider, frame.url())) {
+        if (adoptTrustedReplacement()) return;
+        recoverPendingAdsOrDegrade('页面身份已变化。');
+      }
+    });
+  };
+  const watch = (
+    provider: 'lingxing' | 'amazon_ads',
+    controller?: LivenessController,
+  ): void => {
+    const page = controller?.getPage() as Page | null | undefined;
+    if (!controller || !page) return;
+    // An Ads-only retry may still own a healthy, authenticated ERP page when
+    // the first SSO entry did not create any Ads document. Binding that ERP
+    // page as amazon_ads liveness would immediately misclassify it as an
+    // identity change, erase the retained retry claim, and overwrite the real
+    // ADS_SESSION_NOT_READY reason with VISIBLE_BROWSER_CLOSED.
+    if (!isTrustedLingxingProviderUrl(provider, page.url())) return;
+    watchPage(provider, controller, page);
+  };
+  watch('lingxing', runtime.controllers.lingxing);
+  watch('amazon_ads', runtime.controllers.amazonAds);
+}
+
+async function degradeVisibleLoginProvider(
+  provider: 'lingxing' | 'amazon_ads',
+  runtimeId: string,
+  context: StoreContextEnvelope,
+  reason: string,
+): Promise<void> {
+  if (expectedVisibleRuntimeCloseIds.has(runtimeId)) return;
+  const runtime = visibleBrowserRuntimeRegistry.read();
+  if (!runtime
+    || runtime.runtimeId !== runtimeId
+    || !sameExactStoreContext(runtime.context, context)) return;
+  const observedAt = new Date().toISOString();
+  try {
+    if (provider === 'lingxing') {
+      await closeVisibleBrowserRegistryStrictly();
+      state.db?.transaction(() => {
+        for (const blockedProvider of ['lingxing', 'amazon_ads'] as const) {
+          state.storeRepo?.saveSessionMetadata({
+            storeId: context.storeId,
+            browserProfileId: context.browserProfileId,
+            provider: blockedProvider,
+            status: 'blocked',
+            sessionGeneration: context.sessionGeneration,
+            observedAt,
+            failureCode: 'VISIBLE_BROWSER_CLOSED',
+          });
+        }
+      })();
+      clearBrowserLoginState();
+    } else {
+      const confirmationClaim = pendingAmazonAdsIdentityConfirmation
+        && pendingAmazonAdsIdentityConfirmation.runtimeId === runtime.runtimeId
+        ? pendingAmazonAdsIdentityConfirmation.claim
+        : null;
+      const retryClaim = pendingAmazonAdsIdentityRetry
+        && pendingAmazonAdsIdentityRetry.runtimeId === runtime.runtimeId
+        ? pendingAmazonAdsIdentityRetry.claim
+        : null;
+      const pendingClaim = confirmationClaim ?? retryClaim;
+      pendingAmazonAdsIdentityConfirmation = null;
+      pendingAmazonAdsIdentityRetry = null;
+      if (runtime.providerIdentityStatus.amazonAds !== 'blocked') {
+        const claim = pendingClaim ?? visibleBrowserRuntimeRegistry.claimAmazonAdsIdentity({
+            runtimeId: runtime.runtimeId,
+            epoch: runtime.epoch,
+            context: runtime.context,
+          });
+        visibleBrowserRuntimeRegistry.blockAmazonAdsIdentity(claim);
+      }
+      const connection = state.storeRepo?.listConnections(context.storeId)
+        .find((candidate) => candidate.provider === 'amazon_ads');
+      state.db?.transaction(() => {
+        if (connection) {
+          state.storeRepo?.updateConnection({
+            id: connection.id,
+            storeId: context.storeId,
+            status: 'attention_required',
+            lastFailureCode: 'VISIBLE_BROWSER_CLOSED',
+            expectedUpdatedAt: connection.updatedAt,
+          });
+        }
+        state.storeRepo?.saveSessionMetadata({
+          storeId: context.storeId,
+          browserProfileId: context.browserProfileId,
+          provider: 'amazon_ads',
+          status: 'blocked',
+          sessionGeneration: context.sessionGeneration,
+          observedAt,
+          failureCode: 'VISIBLE_BROWSER_CLOSED',
+        });
+      })();
+      if (state.loginSession?.erpSessionReady) {
+        const {
+          adsIdentityCandidate: _staleCandidate,
+          ...sessionWithoutCandidate
+        } = state.loginSession;
+        state.loginSession = {
+          ...sessionWithoutCandidate,
+          adsSessionReady: false,
+          adsEntryMode: undefined,
+          adsUrl: undefined,
+          adsTitle: undefined,
+          adsUnavailableReason: `Ads ${reason}ERP 已连接，可继续只读采集；请重新连接 ERP 与 Ads，真实广告执行保持阻断。`,
+        };
+      }
+    }
+    rereadAndPublishActiveStoreAuthority(String(context.storeId));
+    mainWindow?.webContents.send('business-ui:data-updated');
+  } catch (error) {
+    console.error('[StoreSession] failed to downgrade closed visible browser', error);
+  }
+}
 
 function ensureAmazonAdsEnrollmentConnection(
   context: StoreContextEnvelope,
@@ -1672,6 +1778,63 @@ function isProviderBrowserSessionReady(
   );
 }
 
+function readPackageUiStoreCollectionSchedule(
+  contextInput: StoreContextEnvelope,
+): StoreCollectionScheduleProjection {
+  if (!packageUiReadOnlyRuntime) {
+    throw new Error('PACKAGE_UI_SCHEDULER_PROJECTION_DISABLED');
+  }
+  if (!state.storeCoordinator || !state.storeRuntimeConfigService) {
+    throw new Error('正式验收的店铺计划只读服务尚未就绪。');
+  }
+  const context = state.storeCoordinator.assertActiveStoreContext(contextInput);
+  if (
+    context.marketplace !== 'US'
+    || context.currency !== 'USD'
+    || context.businessTimezone !== 'America/Los_Angeles'
+  ) {
+    throw new Error('正式验收只允许读取当前 Amazon 美国站 / USD 店铺计划。');
+  }
+  const config = state.storeRuntimeConfigService.get(context).current;
+  if (!config) {
+    return {
+      storeId: context.storeId,
+      businessDate: context.businessDate,
+      enabled: false,
+      state: 'not_configured',
+      detail: '当前店铺尚未配置采集计划。',
+    };
+  }
+  if (
+    config.storeId !== context.storeId
+    || config.marketplace !== context.marketplace
+    || config.currency !== context.currency
+    || config.businessTimezone !== context.businessTimezone
+  ) {
+    throw new Error('正式验收的店铺计划配置与当前 StoreContext 不一致。');
+  }
+  if (config.status === 'archived') {
+    return {
+      storeId: context.storeId,
+      businessDate: context.businessDate,
+      enabled: false,
+      state: 'archived',
+      detail: '当前店铺采集配置已归档。',
+      scheduleLocalTime: config.values.collectionScheduleLocalTime,
+      configRevision: config.revision,
+    };
+  }
+  return {
+    storeId: context.storeId,
+    businessDate: context.businessDate,
+    enabled: false,
+    state: 'failed',
+    detail: '正式验收使用独立 Windows Profile，受保护的采集历史不能跨隔离环境解密；真实采集和广告执行保持阻断。',
+    scheduleLocalTime: config.values.collectionScheduleLocalTime,
+    configRevision: config.revision,
+  };
+}
+
 function authorizePackageUiDatabaseCheckpoint(): StoreContextEnvelope {
   if (!packageUiReadOnlyRuntime) {
     throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_DISABLED');
@@ -1735,10 +1898,16 @@ function assertUserVisibleBrowserRuntimeClosed(): void {
 
 async function closeUserVisibleBrowserRuntimeForTransition(): Promise<void> {
   const pendingControllers = invalidatePendingBrowserLogin();
-  await Promise.all([
-    closeVisibleBrowserRegistryStrictly(),
-    closeBrowserControllers(pendingControllers),
-  ]);
+  const runtimeId = visibleBrowserRuntimeRegistry.read()?.runtimeId;
+  if (runtimeId) expectedVisibleRuntimeCloseIds.add(runtimeId);
+  try {
+    await Promise.all([
+      closeVisibleBrowserRegistryStrictly(),
+      closeBrowserControllers(pendingControllers),
+    ]);
+  } finally {
+    if (runtimeId) expectedVisibleRuntimeCloseIds.delete(runtimeId);
+  }
   clearBrowserLoginState();
   assertUserVisibleBrowserRuntimeClosed();
 }
@@ -1807,6 +1976,7 @@ function invalidatePendingBrowserLogin(storeId?: string): BrowserController[] {
   if (storeId && pendingBrowserLogin?.context.storeId !== storeId) return [];
   browserLoginAttempt += 1;
   pendingAmazonAdsIdentityConfirmation = null;
+  pendingAmazonAdsIdentityRetry = null;
   const controllers = pendingBrowserLogin ? [...pendingBrowserLogin.controllers] : [];
   pendingBrowserLogin = null;
   return controllers;
@@ -1822,6 +1992,539 @@ function assertBrowserLoginAttempt(attemptId: number, context: StoreContextEnvel
   state.storeCoordinator.assertActiveStoreContext(context);
 }
 
+type CurrentAmazonAdsRetryConnections = Omit<BrowserLoginProviderConnections, 'amazon_ads'> & {
+  amazon_ads: StoreConnection;
+};
+
+function isCurrentAmazonAdsRetryContinuation(
+  request: BrowserLoginRequest,
+  context: StoreContextEnvelope,
+): boolean {
+  if (request.credentialSource !== 'saved'
+    || request.rememberPassword !== true
+    || !state.settingsRepo
+    || !state.storeRepo
+    || !state.isLoggedIn
+    || state.loginSession?.erpSessionReady !== true
+    || state.loginSession.adsSessionReady === true
+    || state.loginSession.sessionIdentityVerified !== true
+    || pendingAmazonAdsIdentityConfirmation !== null) {
+    return false;
+  }
+  const runtime = visibleBrowserRuntimeRegistry.read();
+  const retainedIdentity = pendingAmazonAdsIdentityRetry;
+  const lingxingSession = state.storeRepo.getSessionMetadata(context.storeId, 'lingxing');
+  if (!runtime
+    || runtime.purpose !== 'operator_full'
+    || runtime.providerIdentityStatus.lingxing !== 'verified'
+    || runtime.providerIdentityStatus.amazonAds !== 'pending'
+    || !runtime.controllers.amazonAds
+    || !retainedIdentity
+    || retainedIdentity.runtimeId !== runtime.runtimeId
+    || retainedIdentity.runtimeEpoch !== runtime.epoch
+    || !sameExactStoreContext(retainedIdentity.context, context)
+    || !sameExactStoreContext(runtime.context, context)
+    || !lingxingSession
+    || lingxingSession.status !== 'ready'
+    || lingxingSession.browserProfileId !== context.browserProfileId
+    || lingxingSession.sessionGeneration !== context.sessionGeneration) {
+    return false;
+  }
+  try {
+    const saved = readSavedLoginCredentialStatus(
+      createStoreScopedLoginCredentialStore(state.settingsRepo, context.storeId),
+      electronLoginCredentialCipher,
+    );
+    return saved.passwordAvailable
+      && saved.rememberPassword
+      && saved.username.trim() === request.username.trim();
+  } catch {
+    return false;
+  }
+}
+
+function assertCurrentAmazonAdsRetryAuthority(
+  runtimeId: string,
+  runtimeEpoch: number,
+  context: StoreContextEnvelope,
+  controller: BrowserController,
+  lease: BrowserLease,
+): VisibleBrowserRuntime {
+  browserOperationLeases.assertCurrent(lease);
+  const active = state.storeCoordinator?.assertActiveStoreContext(context);
+  const runtime = visibleBrowserRuntimeRegistry.read();
+  if (!active
+    || !runtime
+    || runtime.runtimeId !== runtimeId
+    || runtime.epoch !== runtimeEpoch
+    || runtime.purpose !== 'operator_full'
+    || runtime.providerIdentityStatus.lingxing !== 'verified'
+    || runtime.providerIdentityStatus.amazonAds !== 'pending'
+    || !sameExactStoreContext(runtime.context, active)
+    || browserControllerFromVisibleRuntime(runtime, 'amazon_ads') !== controller
+    || state.loginSession?.erpSessionReady !== true
+    || state.loginSession.adsSessionReady === true) {
+    throw new Error('Ads 重试期间当前店铺或浏览器身份已变化，操作已阻断。');
+  }
+  return runtime;
+}
+
+function isRecoverableAmazonAdsEntryFailure(error: unknown): boolean {
+  return /可见浏览器|可信 ERP 页面|SSO|restartLogin|尚未登录|已关闭|没有检测到可见 Ads|限定时间内未出现/u
+    .test(error instanceof Error ? error.message : String(error));
+}
+
+function isExpectedLingxingSessionResetNavigation(error: unknown): boolean {
+  return isTransientLingxingAdsNavigationError(error);
+}
+
+async function resetConfiguredLingxingSessionIfAuthorized(input: Readonly<{
+  configured: boolean;
+  sessionReused: boolean;
+  authorized: boolean;
+  port: Parameters<typeof recoverLingxingEnrollmentSession>[0]['port'];
+}>): Promise<boolean> {
+  if (!input.configured || !input.sessionReused || !input.authorized) return false;
+
+  await input.port.bringToFront();
+  await input.port.clearStoreSession();
+  await input.port.navigateToLogin();
+  if (!await input.port.isLoginFormReady()) {
+    throw new Error('当前店铺领星会话已重置，但未进入可见登录页；请重试，身份确认继续阻断。');
+  }
+  return true;
+}
+
+async function reopenAmazonAdsControllerForRetry(input: Readonly<{
+  controller: BrowserController;
+  runtimeId: string;
+  username: string;
+  password: string;
+}>): Promise<Page> {
+  expectedVisibleRuntimeCloseIds.add(input.runtimeId);
+  try {
+    await input.controller.close();
+  } finally {
+    expectedVisibleRuntimeCloseIds.delete(input.runtimeId);
+  }
+  const navigationPlan = getLingxingSessionNavigationPlan();
+  await input.controller.launch();
+  await input.controller.navigate(navigationPlan.initialUrl);
+  await input.controller.waitForTimeout(1_000);
+  const erpPage = getControllerPageOrThrow(input.controller);
+  await ensureLingxingErpAuthenticated(erpPage, {
+    username: input.username,
+    password: input.password,
+  });
+  return openLingxingAdsFromErp(input.controller);
+}
+
+function publishAmazonAdsRetryResult(
+  context: StoreContextEnvelope,
+  runtimeId: string,
+  result: BrowserLoginResult,
+): BrowserLoginResult {
+  state.isLoggedIn = true;
+  state.currentStore = result.currentStore;
+  state.loginSession = result;
+  const view = state.storeCoordinator?.getActiveStoreWorkspaceView();
+  if (!view || !sameExactStoreContext(view.context, context)) {
+    throw new Error('Ads 重试完成后的店铺 Authority 回读不一致，操作已阻断。');
+  }
+  publishStoreContextChanged(view);
+  bindCompletedLoginPageLiveness(runtimeId, context);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return result;
+}
+
+async function withPackageUiVisibleLoginContinuationMutation<Result>(
+  operation: string,
+  context: StoreContextEnvelope,
+  work: () => Promise<Result>,
+): Promise<Result> {
+  if (operation !== 'browser:retry-ads'
+    && operation !== 'browser:confirm-ads-identity') {
+    throw new Error('正式验收登录后的连接动作不在允许范围内，操作已阻断。');
+  }
+  const mainRuntime = state.storeCollectionMainRuntime;
+  const visibleRuntime = visibleBrowserRuntimeRegistry.read();
+  const activeContext = state.storeCoordinator?.assertActiveStoreContext(context);
+  const runtimeStatus = mainRuntime?.readStatus();
+  const packageUiSchedulerSnapshot = packageUiSchedulerAudit.snapshot();
+  const packageUiSuppressedStartupSafe = Boolean(
+    runtimeStatus
+    && runtimeStatus.packageUiReadOnly === true
+    && runtimeStatus.startupRecoveryConfirmed === false
+    && runtimeStatus.lifecycle === 'startup_unknown'
+    && runtimeStatus.automationStarted === false
+    && runtimeStatus.drainProven === false
+    && runtimeStatus.registryClosed === false
+    && packageUiSchedulerSnapshot.guards.startupReconcileSuppressed
+    && packageUiSchedulerSnapshot.guards.readOnlyInvariantPassed
+    && !packageUiSchedulerSnapshot.guards.localSchedulerStarted
+    && !packageUiSchedulerSnapshot.guards.storeCollectionSchedulerStarted
+  );
+  const expectedAdsStatus = 'pending';
+  if (!packageUiReadOnlyRuntime
+    || !mainRuntime
+    || !runtimeStatus
+    || !packageUiSuppressedStartupSafe
+    || runtimeStatus.orchestratorTransitionLocked
+    || runtimeStatus.mutationLane.held
+    || runtimeStatus.mutationLane.stickyUnknown
+    || !activeContext
+    || !visibleRuntime
+    || visibleRuntime.purpose !== 'operator_full'
+    || visibleRuntime.providerIdentityStatus.lingxing !== 'verified'
+    || visibleRuntime.providerIdentityStatus.amazonAds !== expectedAdsStatus
+    || !sameExactStoreContext(visibleRuntime.context, context)
+    || !state.isLoggedIn
+    || state.loginSession?.erpSessionReady !== true
+    || !hasPackageUiFreshTypedProof(
+      context.storeId,
+      packageUiFreshTypedProof?.username,
+    )) {
+    throw new Error('正式验收登录后的当前店铺、浏览器或新鲜凭证证明已变化，操作已阻断。');
+  }
+
+  const owner = `package-ui-visible-login:${operation}`;
+  const capability = Object.freeze({});
+  storeMutationLane.registerAuthority({ kind: 'user', owner, capability });
+  let claim;
+  try {
+    claim = storeMutationLane.claim({ kind: 'user', owner, capability });
+  } catch (error) {
+    if (!(error instanceof StoreMutationLaneError && error.code === 'LANE_HELD')) {
+      storeMutationLane.markSafetyStateUnknown();
+    }
+    throw error;
+  }
+
+  let result: Result | undefined;
+  let workFailure: unknown;
+  try {
+    result = await work();
+  } catch (error) {
+    workFailure = error;
+  }
+  try {
+    const receipt = storeMutationLane.release(claim);
+    if (!receipt.released
+      || receipt.claimCapability !== claim.claimCapability
+      || receipt.sequence !== claim.sequence) {
+      throw new Error('正式验收登录后动作的共享变更通道未能精确释放。');
+    }
+  } catch (releaseError) {
+    storeMutationLane.markSafetyStateUnknown();
+    throw new AggregateError(
+      workFailure === undefined ? [releaseError] : [workFailure, releaseError],
+      '正式验收登录后动作未能证明共享变更通道已安全释放。',
+    );
+  }
+  if (workFailure !== undefined) {
+    storeMutationLane.markSafetyStateUnknown();
+    throw workFailure;
+  }
+  return result as Result;
+}
+
+async function retryCurrentAmazonAdsSession(
+  request: BrowserLoginRequest,
+  context: StoreContextEnvelope,
+  connections: CurrentAmazonAdsRetryConnections,
+  lease: BrowserLease,
+): Promise<BrowserLoginResult> {
+  if (!state.settingsRepo || !state.storeRepo || !state.db || !state.storeCoordinator) {
+    throw new Error('Ads 重试所需的本机仓储尚未就绪。');
+  }
+  const initialRuntime = visibleBrowserRuntimeRegistry.read();
+  const controller = initialRuntime
+    ? browserControllerFromVisibleRuntime(initialRuntime, 'amazon_ads')
+    : null;
+  if (!initialRuntime || !controller) {
+    throw new Error('当前店铺的 Ads 可见浏览器不存在，请重新连接 ERP 与 Ads。');
+  }
+  const retainedIdentity = pendingAmazonAdsIdentityRetry;
+  if (!retainedIdentity
+    || retainedIdentity.runtimeId !== initialRuntime.runtimeId
+    || retainedIdentity.runtimeEpoch !== initialRuntime.epoch
+    || !sameExactStoreContext(retainedIdentity.context, context)) {
+    throw new Error('当前 Ads 重试身份已失效，请重新连接 ERP 与 Ads。');
+  }
+  assertCurrentAmazonAdsRetryAuthority(
+    initialRuntime.runtimeId,
+    initialRuntime.epoch,
+    context,
+    controller,
+    lease,
+  );
+  const currentSession = state.loginSession!;
+  const storeAlias = connections.lingxing.collectionStoreName;
+  if (!storeAlias || !connections.lingxing.accountLabel) {
+    throw new Error('当前领星连接缺少登录账号或美国站店铺映射，Ads 重试已阻断。');
+  }
+  const password = resolveSavedLoginPassword(
+    createStoreScopedLoginCredentialStore(state.settingsRepo, context.storeId),
+    electronLoginCredentialCipher,
+    request.username,
+  );
+  let adsVisibleSession: AdsSessionResult | null = currentSession.adsUrl
+    ? {
+        entryMode: 'erp_ads_entry',
+        adsUrl: currentSession.adsUrl,
+        adsTitle: currentSession.adsTitle || currentSession.adsUrl,
+      }
+    : null;
+  const identityClaim = retainedIdentity.claim;
+  let identityClaimSettled = false;
+
+  try {
+    let adsPage: Page;
+    try {
+      adsPage = await openLingxingAdsFromErp(controller);
+    } catch (entryError) {
+      if (!isRecoverableAmazonAdsEntryFailure(entryError)) throw entryError;
+      adsPage = await reopenAmazonAdsControllerForRetry({
+        controller,
+        runtimeId: initialRuntime.runtimeId,
+        username: request.username,
+        password,
+      });
+    }
+    const visibleState = await readLingxingPageState(adsPage);
+    adsVisibleSession = adsSessionResultFromPageState(visibleState);
+    assertCurrentAmazonAdsRetryAuthority(
+      initialRuntime.runtimeId,
+      initialRuntime.epoch,
+      context,
+      controller,
+      lease,
+    );
+    const detected = await readLingxingAdsProfileEvidence(adsPage, storeAlias);
+    await navigateToLingxingDownloadCenter(
+      controller,
+      readDownloadCenterPageModel(),
+      storeAlias,
+    );
+    adsPage = getControllerPageOrThrow(controller);
+    const detectedAdsSession = adsSessionResultFromPageState(await readLingxingPageState(adsPage));
+    assertCurrentAmazonAdsRetryAuthority(
+      initialRuntime.runtimeId,
+      initialRuntime.epoch,
+      context,
+      controller,
+      lease,
+    );
+
+    if (connections.lingxingIdentityReadiness === 'enrollment_pending') {
+      const stableExternalAccountId = resolveLingxingStableIdentityFromVerifiedContinuation({
+        accountLabel: connections.lingxing.accountLabel,
+        collectionStoreName: storeAlias,
+        evidence: detected,
+        continuation: {
+          credentialSource: 'saved',
+          credentialPersistence: currentSession.credentialPersistence,
+          sessionIdentityVerified: currentSession.sessionIdentityVerified,
+          username: request.username,
+        },
+      });
+      const observedAt = new Date().toISOString();
+      state.db.transaction(() => {
+        const connection = state.storeRepo!.enrollLingxingStableExternalAccount({
+          id: connections.lingxing.id,
+          storeId: context.storeId,
+          provider: 'lingxing',
+          externalAccountId: stableExternalAccountId,
+          expectedUpdatedAt: connections.lingxing.updatedAt,
+        });
+        state.storeRepo!.saveSessionMetadata({
+          storeId: context.storeId,
+          browserProfileId: context.browserProfileId,
+          provider: 'lingxing',
+          status: 'ready',
+          sessionGeneration: context.sessionGeneration,
+          observedAt,
+          accountLabel: connection.accountLabel,
+          externalAccountId: connection.externalAccountId,
+          verifiedAt: observedAt,
+        });
+      })();
+      assertCurrentAmazonAdsRetryAuthority(
+        initialRuntime.runtimeId,
+        initialRuntime.epoch,
+        context,
+        controller,
+        lease,
+      );
+    }
+
+    if (connections.amazonAdsIdentityReadiness === 'configured') {
+      if (connections.amazon_ads.normalizedExternalAccountId !== detected.externalAccountId) {
+        throw new Error('领星 Ads 美国站店铺身份与当前店铺绑定不一致，真实广告执行已阻断。');
+      }
+      const observedAt = new Date().toISOString();
+      const readyConnection = state.db.transaction(() => {
+        const connection = state.storeRepo!.updateConnection({
+          id: connections.amazon_ads.id,
+          storeId: context.storeId,
+          status: 'ready',
+          lastVerifiedAt: observedAt,
+          lastFailureCode: '',
+          expectedUpdatedAt: connections.amazon_ads.updatedAt,
+        });
+        state.storeRepo!.saveSessionMetadata({
+          storeId: context.storeId,
+          browserProfileId: context.browserProfileId,
+          provider: 'amazon_ads',
+          status: 'ready',
+          sessionGeneration: context.sessionGeneration,
+          observedAt,
+          accountLabel: connection.accountLabel,
+          externalAccountId: connection.externalAccountId,
+          verifiedAt: observedAt,
+        });
+        return connection;
+      })();
+      visibleBrowserRuntimeRegistry.verifyAmazonAdsIdentity(identityClaim, readyConnection);
+      identityClaimSettled = true;
+      pendingAmazonAdsIdentityRetry = null;
+      const {
+        adsIdentityCandidate: _candidate,
+        adsUnavailableReason: _reason,
+        adsEntryMode: _entryMode,
+        adsUrl: _adsUrl,
+        adsTitle: _adsTitle,
+        ...sessionBase
+      } = currentSession;
+      return publishAmazonAdsRetryResult(context, initialRuntime.runtimeId, {
+        ...sessionBase,
+        ok: true,
+        currentStore: state.currentStore,
+        erpSessionReady: true,
+        adsSessionReady: true,
+        adsEntryMode: detectedAdsSession.entryMode,
+        adsUrl: detectedAdsSession.adsUrl,
+        adsTitle: detectedAdsSession.adsTitle,
+      });
+    }
+
+    const token = crypto.randomUUID();
+    pendingAmazonAdsIdentityConfirmation = {
+      token,
+      context: Object.freeze({ ...context }),
+      runtimeId: initialRuntime.runtimeId,
+      runtimeEpoch: initialRuntime.epoch,
+      claim: identityClaim,
+      connection: connections.amazon_ads,
+      detectedExternalAccountId: detected.externalAccountId,
+      detectedAccountLabel: detected.alias,
+      expectedStoreAlias: storeAlias,
+      profileEvidenceUrl: visibleState.url,
+      adsSession: detectedAdsSession,
+    };
+    pendingAmazonAdsIdentityRetry = null;
+    identityClaimSettled = true;
+    state.storeRepo.saveSessionMetadata({
+      storeId: context.storeId,
+      browserProfileId: context.browserProfileId,
+      provider: 'amazon_ads',
+      status: 'blocked',
+      sessionGeneration: context.sessionGeneration,
+      observedAt: new Date().toISOString(),
+      failureCode: 'ADS_IDENTITY_CONFIRMATION_REQUIRED',
+    });
+    const {
+      adsIdentityCandidate: _oldCandidate,
+      adsUnavailableReason: _oldReason,
+      adsEntryMode: _oldEntryMode,
+      adsUrl: _oldAdsUrl,
+      adsTitle: _oldAdsTitle,
+      ...sessionBase
+    } = currentSession;
+    return publishAmazonAdsRetryResult(context, initialRuntime.runtimeId, {
+      ...sessionBase,
+      ok: true,
+      currentStore: state.currentStore,
+      erpSessionReady: true,
+      adsSessionReady: false,
+      adsEntryMode: detectedAdsSession.entryMode,
+      adsUrl: detectedAdsSession.adsUrl,
+      adsTitle: detectedAdsSession.adsTitle,
+      adsUnavailableReason: '已从领星 Ads 的美国站店铺列表识别当前店铺；人工确认绑定前，真实广告执行保持阻断。',
+      adsIdentityCandidate: {
+        confirmationToken: token,
+        detectedExternalAccountId: detected.externalAccountId,
+        detectedAccountLabel: detected.alias,
+      },
+    });
+  } catch (caught) {
+    browserOperationLeases.assertCurrent(lease);
+    state.storeCoordinator.assertActiveStoreContext(context);
+    pendingAmazonAdsIdentityConfirmation = null;
+    const retryRuntime = visibleBrowserRuntimeRegistry.read();
+    if (!identityClaimSettled
+      && retryRuntime
+      && retryRuntime.runtimeId === initialRuntime.runtimeId
+      && retryRuntime.epoch === initialRuntime.epoch
+      && retryRuntime.providerIdentityStatus.amazonAds === 'pending'
+      && sameExactStoreContext(retryRuntime.context, context)) {
+      pendingAmazonAdsIdentityRetry = {
+        context: Object.freeze({ ...context }),
+        runtimeId: retryRuntime.runtimeId,
+        runtimeEpoch: retryRuntime.epoch,
+        claim: identityClaim,
+      };
+    } else if (!identityClaimSettled) {
+      pendingAmazonAdsIdentityRetry = null;
+    }
+    const message = caught instanceof Error ? caught.message : String(caught);
+    const observedAt = new Date().toISOString();
+    const currentConnection = state.storeRepo.listConnections(context.storeId)
+      .find((connection) => connection.provider === 'amazon_ads');
+    state.db.transaction(() => {
+      if (currentConnection) {
+        state.storeRepo!.updateConnection({
+          id: currentConnection.id,
+          storeId: context.storeId,
+          status: 'attention_required',
+          lastFailureCode: 'ADS_SESSION_NOT_READY',
+          expectedUpdatedAt: currentConnection.updatedAt,
+        });
+      }
+      state.storeRepo!.saveSessionMetadata({
+        storeId: context.storeId,
+        browserProfileId: context.browserProfileId,
+        provider: 'amazon_ads',
+        status: 'blocked',
+        sessionGeneration: context.sessionGeneration,
+        observedAt,
+        failureCode: 'ADS_SESSION_NOT_READY',
+      });
+    })();
+    const {
+      adsIdentityCandidate: _oldCandidate,
+      adsUnavailableReason: _oldReason,
+      adsEntryMode: _oldEntryMode,
+      adsUrl: _oldAdsUrl,
+      adsTitle: _oldAdsTitle,
+      ...sessionBase
+    } = currentSession;
+    return publishAmazonAdsRetryResult(context, initialRuntime.runtimeId, {
+      ...sessionBase,
+      ok: true,
+      currentStore: state.currentStore,
+      erpSessionReady: true,
+      adsSessionReady: false,
+      ...(adsVisibleSession ? {
+        adsEntryMode: adsVisibleSession.entryMode,
+        adsUrl: adsVisibleSession.adsUrl,
+        adsTitle: adsVisibleSession.adsTitle,
+      } : {}),
+      adsUnavailableReason: `领星广告会话尚未就绪：${message.slice(0, 240)} ERP 已连接，可继续只读采集；请再次点击“重试 Ads”，真实广告执行保持阻断。`,
+    });
+  }
+}
+
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
   if (!state.storeCoordinator || !state.executionAuthorityService
     || !state.storeCollectionMainRuntime) {
@@ -1833,6 +2536,57 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
   const preflightConnections = requireBrowserLoginProviderConnections(
     state.storeRepo.listConnections(preflightContext.storeId),
   );
+  if (isCurrentAmazonAdsRetryContinuation(request, preflightContext)) {
+    const amazonAdsConnection = ensureAmazonAdsEnrollmentConnection(
+      preflightContext,
+      preflightConnections.amazon_ads,
+    );
+    const retryConnections: CurrentAmazonAdsRetryConnections = {
+      ...preflightConnections,
+      amazon_ads: amazonAdsConnection,
+    };
+    const retryMutationScope = {
+      operation: 'browser:retry-ads',
+      targetStoreId: String(preflightContext.storeId),
+    };
+    const retryCurrent = async (): Promise<BrowserLoginResult> => {
+      const lease = browserOperationLeases.acquire({
+        storeId: preflightContext.storeId,
+        purpose: 'external_write',
+        owner: 'browser-login-ads-retry',
+        ttlMs: 10 * 60 * 1_000,
+      });
+      try {
+        return await retryCurrentAmazonAdsSession(
+          request,
+          preflightContext,
+          retryConnections,
+          lease,
+        );
+      } finally {
+        browserOperationLeases.release(lease);
+      }
+    };
+    const result = packageUiReadOnlyRuntime
+      ? await withPackageUiVisibleLoginContinuationMutation(
+          'browser:retry-ads',
+          preflightContext,
+          retryCurrent,
+        )
+      : await state.storeCollectionMainRuntime.withUserStoreMutation(
+          retryMutationScope,
+          retryCurrent,
+        );
+    if (result.adsSessionReady) {
+      await state.executionAuthorityService.resumePolicyGrantDispatches(
+        preflightContext,
+        'session_ready',
+      ).catch(() => {
+        console.error('[Execution] persisted policy-grant recovery failed after Ads retry readiness');
+      });
+    }
+    return result;
+  }
   if (preflightConnections.lingxingIdentityReadiness === 'enrollment_pending'
     && request.credentialSource !== 'typed') {
     throw new Error('领星稳定身份尚未建立，请手动输入本次凭证完成首次绑定。');
@@ -1901,6 +2655,7 @@ async function performBrowserLoginInUserLane(
   request: BrowserLoginRequest,
 ): Promise<BrowserLoginResult> {
   if (packageUiFreshTypedProofRequired
+    && !hasPackageUiFreshTypedProof(request.storeContext.storeId, request.username)
     && (request.credentialSource !== 'typed'
       || request.rememberPassword !== true
       || typeof request.password !== 'string'
@@ -1989,6 +2744,7 @@ async function performBrowserLoginInUserLane(
   });
   pendingBrowserLogin.controllers.add(lingxingController);
   pendingBrowserLogin.controllers.add(amazonAdsController);
+  let erpStageCommitted = false;
 
   try {
     await lingxingController.launch();
@@ -2001,24 +2757,33 @@ async function performBrowserLoginInUserLane(
     let needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
     let erpSessionReused = !needsLogin;
 
+    let sessionResetPort: Parameters<typeof recoverLingxingEnrollmentSession>[0]['port'];
+    const explicitTypedSessionResetAuthorized = request.credentialSource === 'typed'
+      && request.resetLingxingSessionForEnrollment === true;
     const enrollmentSessionRecovered = await recoverLingxingEnrollmentSession({
       enrollmentPending: connections.lingxingIdentityReadiness === 'enrollment_pending',
       sessionReused: erpSessionReused,
       resetConfirmed: request.credentialSource === 'typed'
         && request.resetLingxingSessionForEnrollment === true,
-      port: {
+      port: sessionResetPort = {
         bringToFront: () => lingxingController.bringToFront(),
         clearStoreSession: async () => {
           const browserContext = lingxingController.getContext();
           if (!browserContext) throw new Error('该店铺领星浏览器会话不存在，无法执行已确认的重置。');
-          await page.evaluate(async () => {
-            window.localStorage.clear();
-            window.sessionStorage.clear();
-            if ('caches' in window) {
-              const keys = await window.caches.keys();
-              await Promise.all(keys.map((key) => window.caches.delete(key)));
-            }
-          });
+          try {
+            await page.evaluate(async () => {
+              window.localStorage.clear();
+              window.sessionStorage.clear();
+              if ('caches' in window) {
+                const keys = await window.caches.keys();
+                await Promise.all(keys.map((key) => window.caches.delete(key)));
+              }
+            });
+          } catch (error) {
+            if (!isExpectedLingxingSessionResetNavigation(error)) throw error;
+            await page.waitForLoadState('domcontentloaded', { timeout: 5_000 })
+              .catch(() => undefined);
+          }
           await browserContext.clearCookies();
         },
         navigateToLogin: async () => {
@@ -2031,7 +2796,19 @@ async function performBrowserLoginInUserLane(
         ),
       },
     });
-    if (enrollmentSessionRecovered) {
+    const configuredSavedSessionRecoveryAuthorized =
+      connections.lingxingIdentityReadiness === 'configured'
+      && request.credentialSource === 'saved'
+      && connections.lingxing.session?.status === 'signed_out'
+      && connections.lingxing.session?.failureCode === 'operator_session_reset_requested'
+      && connections.lingxing.session.sessionGeneration === loginContext.sessionGeneration - 1;
+    const configuredSessionRecovered = await resetConfiguredLingxingSessionIfAuthorized({
+      configured: connections.lingxingIdentityReadiness === 'configured',
+      sessionReused: erpSessionReused,
+      authorized: configuredSavedSessionRecoveryAuthorized || explicitTypedSessionResetAuthorized,
+      port: sessionResetPort,
+    });
+    if (enrollmentSessionRecovered || configuredSessionRecovered) {
       needsLogin = true;
       erpSessionReused = false;
     }
@@ -2072,50 +2849,147 @@ async function performBrowserLoginInUserLane(
       !credentialPolicy.sessionIdentityVerified
       && !packageUiSavedSessionContinuationAllowed
     ) {
-      throw new Error('当前领星会话身份未经本次凭证验证；请在自动化浏览器中退出旧会话后重试。');
+      throw new Error('当前领星会话身份未经本次凭证验证；请在应用中使用“重置当前店铺会话（保留本机密码）”，再重新连接。');
     }
-    let lingxingIdentityPageUrl = erpLoginState.url;
-    if (connections.lingxingIdentityReadiness === 'enrollment_pending') {
-      await navigateToLingxingDownloadCenter(
-        lingxingController,
-        readDownloadCenterPageModel(),
+    const { credentialAction } = credentialPolicy;
+    const lingxingStoreAlias = connections.lingxing.collectionStoreName;
+    if (!lingxingStoreAlias || !connections.lingxing.accountLabel) {
+      throw new Error('领星连接缺少登录账号或美国站店铺映射，登录已阻断。');
+    }
+    const erpObservedAt = new Date().toISOString();
+    const stagedLingxingConnection = state.db!.transaction(() => {
+      state.storeRepo!.saveSessionMetadata({
+        storeId: loginContext.storeId,
+        browserProfileId: loginContext.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: loginContext.sessionGeneration,
+        observedAt: erpObservedAt,
+        accountLabel: connections.lingxing.accountLabel,
+        externalAccountId: connections.lingxing.externalAccountId,
+        verifiedAt: erpObservedAt,
+      });
+      return connections.lingxing;
+    })();
+    erpStageCommitted = true;
+
+    let credentialPersistenceCommitted = false;
+    if (
+      connections.lingxingIdentityReadiness === 'configured'
+      && request.credentialSource === 'typed'
+      && (credentialAction === 'save' || credentialAction === 'clear')
+    ) {
+      if (!state.settingsRepo) {
+        throw new Error('本机凭证存储尚未就绪，本次登录未完成。');
+      }
+      try {
+        const credentialStore = createStoreScopedLoginCredentialStore(state.settingsRepo, loginContext.storeId);
+        saveLoginCredentials(
+          credentialStore,
+          { username, password, rememberPassword },
+          electronLoginCredentialCipher,
+        );
+        const savedCredentialStatus = readSavedLoginCredentialStatus(
+          credentialStore,
+          electronLoginCredentialCipher,
+        );
+        if (rememberPassword
+          ? savedCredentialStatus.credentialState !== 'encrypted_ready'
+            || !savedCredentialStatus.passwordAvailable
+            || !savedCredentialStatus.rememberPassword
+            || savedCredentialStatus.username.trim() !== username.trim()
+          : savedCredentialStatus.passwordAvailable
+            || savedCredentialStatus.rememberPassword
+            || savedCredentialStatus.credentialState !== 'none') {
+          throw new Error('本机安全区凭证回读不一致。');
+        }
+        credentialPersistenceCommitted = true;
+        if (packageUiFreshTypedProofRequired
+          && request.credentialSource === 'typed'
+          && rememberPassword
+          && credentialPolicy.sessionIdentityVerified) {
+          packageUiFreshTypedProof = Object.freeze({
+            storeId: String(loginContext.storeId),
+            username: username.trim(),
+          });
+        }
+      } catch {
+        throw new Error(rememberPassword
+          ? '登录已确认，但密码未能安全保存；本次会话已关闭，请取消“记住密码”后重试。'
+          : '登录已确认，但旧凭证未能安全清除；本次会话已关闭，请重试。');
+      }
+    }
+
+    let lingxingStableExternalAccountId = stagedLingxingConnection.externalAccountId;
+    let adsRecognitionFailure: string | undefined;
+    let adsVisibleSession: AdsSessionResult | null = null;
+    try {
+      const lingxingAdsPage = await openLingxingAdsFromErp(lingxingController);
+      const lingxingAdsState = await readLingxingPageState(lingxingAdsPage);
+      adsVisibleSession = adsSessionResultFromPageState(lingxingAdsState);
+      const lingxingAdsProfile = await readLingxingAdsProfileEvidence(
+        lingxingAdsPage,
+        lingxingStoreAlias,
       );
-      await lingxingController.waitForTimeout(1000);
-      lingxingIdentityPageUrl = page.url();
+      const navigateVerifiedLingxingDownloadCenter = async () => {
+        await navigateToLingxingDownloadCenter(
+          lingxingController,
+          readDownloadCenterPageModel(),
+          lingxingStoreAlias,
+        );
+      };
+      await navigateVerifiedLingxingDownloadCenter();
+      const scopedLingxingAdsPage = getControllerPageOrThrow(lingxingController);
+      lingxingStableExternalAccountId = resolveLingxingStableIdentityFromAdsProfile({
+        accountLabel: connections.lingxing.accountLabel,
+        collectionStoreName: lingxingStoreAlias,
+        configuredExternalAccountId: connections.lingxing.externalAccountId,
+        evidence: lingxingAdsProfile,
+        credentialSubmission: request.credentialSource === 'typed' && needsLogin
+          ? {
+              credentialSource: 'typed',
+              credentialsSubmitted: true,
+              username,
+            }
+          : undefined,
+      });
+      await selectOnlyLingxingAdsStore(scopedLingxingAdsPage, lingxingStoreAlias);
+    } catch (error) {
+      adsRecognitionFailure = error instanceof Error ? error.message : String(error);
     }
-    const lingxingIdentityEvidence = await assertProviderPageActiveIdentity({
-      connection: connections.lingxing,
-      page,
-      pageUrl: lingxingIdentityPageUrl,
-      credentialSubmission: request.credentialSource === 'typed' && needsLogin
-        ? {
-            credentialSource: 'typed',
-            credentialsSubmitted: true,
-            username,
-          }
-        : undefined,
-    });
+    if (!adsRecognitionFailure) {
+      try {
+        await navigateToLingxingDownloadCenter(
+          lingxingController,
+          readDownloadCenterPageModel(),
+          lingxingStoreAlias,
+    );
+      } catch (error) {
+        adsRecognitionFailure = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (adsRecognitionFailure) {
+      const erpRestored = await restoreAuthenticatedLingxingErpPage(lingxingController);
+      if (!erpRestored) throw new Error(adsRecognitionFailure);
+    }
     assertBrowserLoginAttempt(attemptId, loginContext);
 
     let lingxingConnection = connections.lingxing;
-    if (connections.lingxingIdentityReadiness === 'enrollment_pending') {
-      const enrolledExternalAccountId = lingxingIdentityEvidence.lingxingStableExternalAccountId;
-      if (!enrolledExternalAccountId) {
-        throw new Error('领星稳定身份首次绑定没有得到唯一可信证据，登录已阻断。');
-      }
+    if (connections.lingxingIdentityReadiness === 'enrollment_pending'
+      && lingxingStableExternalAccountId) {
       lingxingConnection = state.storeRepo.enrollLingxingStableExternalAccount({
         id: connections.lingxing.id,
         storeId: loginContext.storeId,
         provider: 'lingxing',
-        externalAccountId: enrolledExternalAccountId,
+        externalAccountId: lingxingStableExternalAccountId,
         expectedUpdatedAt: connections.lingxing.updatedAt,
       });
       assertBrowserLoginAttempt(attemptId, loginContext);
     }
 
-    const { credentialAction } = credentialPolicy;
     if (
-      request.credentialSource === 'typed'
+      !credentialPersistenceCommitted
+      && request.credentialSource === 'typed'
       && (credentialAction === 'save' || credentialAction === 'clear')
     ) {
       if (!state.settingsRepo) {
@@ -2127,6 +3001,7 @@ async function performBrowserLoginInUserLane(
           { username, password, rememberPassword },
           electronLoginCredentialCipher,
         );
+        credentialPersistenceCommitted = true;
       } catch {
         throw new Error(rememberPassword
           ? '登录已确认，但密码未能安全保存；本次会话已关闭，请取消“记住密码”后重试。'
@@ -2134,6 +3009,15 @@ async function performBrowserLoginInUserLane(
       }
     }
     assertBrowserLoginAttempt(attemptId, loginContext);
+    if (packageUiFreshTypedProofRequired
+      && request.credentialSource === 'typed'
+      && rememberPassword
+      && credentialPolicy.sessionIdentityVerified) {
+      packageUiFreshTypedProof = Object.freeze({
+        storeId: String(loginContext.storeId),
+        username: username.trim(),
+      });
+    }
 
     const lingxingObservedAt = new Date().toISOString();
     const readyLingxingConnection = state.db!.transaction(() => {
@@ -2204,23 +3088,31 @@ async function performBrowserLoginInUserLane(
       context: lingxingVerifiedRuntime.context,
     });
     try {
+      if (adsRecognitionFailure) throw new Error(adsRecognitionFailure);
       await amazonAdsController.launch();
-      await amazonAdsController.navigate('https://ads.lingxing.com/');
+      await amazonAdsController.navigate(navigationPlan.initialUrl);
+      await amazonAdsController.waitForTimeout(1_000);
+      const adsErpPage = getControllerPageOrThrow(amazonAdsController);
+      await ensureLingxingErpAuthenticated(adsErpPage, { username, password });
+      assertBrowserLoginAttempt(attemptId, loginContext);
+      const adsPage = await openLingxingAdsFromErp(amazonAdsController);
+      const visibleAdsState = await readLingxingPageState(adsPage);
+      adsVisibleSession = adsSessionResultFromPageState(visibleAdsState);
+      const detected = await readLingxingAdsProfileEvidence(adsPage, lingxingStoreAlias);
+      await navigateToLingxingDownloadCenter(
+        amazonAdsController,
+        readDownloadCenterPageModel(),
+        lingxingStoreAlias,
+      );
+      const verifiedAdsPage = getControllerPageOrThrow(amazonAdsController);
+      const amazonAdsState = await readLingxingPageState(verifiedAdsPage);
+      const detectedAdsSession = adsSessionResultFromPageState(amazonAdsState);
+      assertBrowserLoginAttempt(attemptId, loginContext);
       if (connections.amazonAdsIdentityReadiness === 'configured') {
-        const amazonAdsState = await waitForLingxingAdsSessionReady(
-          amazonAdsController,
-          () => assertBrowserLoginAttempt(attemptId, loginContext),
-          AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS,
-        );
-        if (!amazonAdsState) throw new Error('ADS_SESSION_NOT_READY');
-        const adsPage = getControllerPageOrThrow(amazonAdsController);
-        await assertProviderPageActiveIdentity({
-          connection: adsConnection,
-          page: adsPage,
-          pageUrl: amazonAdsState.url,
-        });
-        assertBrowserLoginAttempt(attemptId, loginContext);
-        adsSession = adsSessionResultFromPageState(amazonAdsState);
+        if (adsConnection.normalizedExternalAccountId !== detected.externalAccountId) {
+          throw new Error('领星 Ads 美国站店铺身份与当前店铺绑定不一致，真实广告执行已阻断。');
+        }
+        adsSession = detectedAdsSession;
         const adsObservedAt = new Date().toISOString();
         adsConnection = state.db!.transaction(() => {
           const connection = state.storeRepo!.updateConnection({
@@ -2245,15 +3137,9 @@ async function performBrowserLoginInUserLane(
           return connection;
         })();
         visibleBrowserRuntimeRegistry.verifyAmazonAdsIdentity(adsIdentityClaim, adsConnection);
+        pendingAmazonAdsIdentityRetry = null;
       } else {
-        const detected = await waitForLingxingAdsIdentityEvidence(
-          amazonAdsController,
-          () => assertBrowserLoginAttempt(attemptId, loginContext),
-          AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS,
-        );
-        assertBrowserLoginAttempt(attemptId, loginContext);
         const token = crypto.randomUUID();
-        const detectedAdsSession = adsSessionResultFromPageState(detected.pageState);
         pendingAmazonAdsIdentityConfirmation = {
           token,
           context: Object.freeze({ ...loginContext }),
@@ -2262,15 +3148,18 @@ async function performBrowserLoginInUserLane(
           claim: adsIdentityClaim,
           connection: adsConnection,
           detectedExternalAccountId: detected.externalAccountId,
-          ...(detected.accountLabel ? { detectedAccountLabel: detected.accountLabel } : {}),
+          detectedAccountLabel: detected.alias,
+          expectedStoreAlias: lingxingStoreAlias,
+          profileEvidenceUrl: visibleAdsState.url,
           adsSession: detectedAdsSession,
         };
+        pendingAmazonAdsIdentityRetry = null;
         adsIdentityCandidate = {
           confirmationToken: token,
           detectedExternalAccountId: detected.externalAccountId,
-          ...(detected.accountLabel ? { detectedAccountLabel: detected.accountLabel } : {}),
+          detectedAccountLabel: detected.alias,
         };
-        adsUnavailableReason = '已从可见 Ads 页面自动识别广告账户；确认绑定到当前店铺前，真实广告执行保持阻断。';
+        adsUnavailableReason = '已从领星 Ads 的美国站店铺列表识别当前店铺；人工确认绑定前，真实广告执行保持阻断。';
         state.storeRepo!.saveSessionMetadata({
           storeId: loginContext.storeId,
           browserProfileId: loginContext.browserProfileId,
@@ -2285,12 +3174,15 @@ async function performBrowserLoginInUserLane(
       // A store switch/cancel must still tear down the whole stale runtime.
       assertBrowserLoginAttempt(attemptId, loginContext);
       pendingAmazonAdsIdentityConfirmation = null;
-      visibleBrowserRuntimeRegistry.blockAmazonAdsIdentity(adsIdentityClaim);
+      pendingAmazonAdsIdentityRetry = {
+        context: Object.freeze({ ...loginContext }),
+        runtimeId: lingxingVerifiedRuntime.runtimeId,
+        runtimeEpoch: lingxingVerifiedRuntime.epoch,
+        claim: adsIdentityClaim,
+      };
       adsSession = null;
       const caughtMessage = caught instanceof Error ? caught.message : String(caught);
-      adsUnavailableReason = /无法自动识别唯一广告账户/.test(caughtMessage)
-        ? caughtMessage
-        : '领星广告账户会话尚未就绪，真实广告执行保持阻断。';
+      adsUnavailableReason = `领星广告会话尚未就绪：${caughtMessage.slice(0, 240)} 请点击“重试 Ads”；真实广告执行保持阻断。`;
       const adsObservedAt = new Date().toISOString();
       state.db!.transaction(() => {
         state.storeRepo!.updateConnection({
@@ -2313,6 +3205,7 @@ async function performBrowserLoginInUserLane(
     }
     assertBrowserLoginAttempt(attemptId, loginContext);
 
+    const adsPageEvidence = adsSession ?? adsVisibleSession;
     const loginResult: BrowserLoginResult = {
       ok: true,
       credentialSource: request.credentialSource,
@@ -2321,17 +3214,23 @@ async function performBrowserLoginInUserLane(
       erpSessionReused,
       sessionIdentityVerified: credentialPolicy.sessionIdentityVerified,
       adsSessionReady: Boolean(adsSession),
-      ...(adsSession ? {
-        adsEntryMode: adsSession.entryMode,
-        adsUrl: adsSession.adsUrl,
-        adsTitle: adsSession.adsTitle,
-      } : {
+      ...(adsPageEvidence ? {
+        adsEntryMode: adsPageEvidence.entryMode,
+        adsUrl: adsPageEvidence.adsUrl,
+        adsTitle: adsPageEvidence.adsTitle,
+      } : {}),
+      ...(!adsSession ? {
         adsUnavailableReason,
         ...(adsIdentityCandidate ? { adsIdentityCandidate } : {}),
-      }),
+      } : {}),
       credentialPersistence: credentialPolicy.credentialPersistence,
     };
     state.loginSession = loginResult;
+    rereadAndPublishActiveStoreAuthority(String(loginContext.storeId));
+    bindCompletedLoginPageLiveness(
+      visibleBrowserRuntimeRegistry.read()?.runtimeId ?? lingxingVerifiedRuntime.runtimeId,
+      loginContext,
+    );
     if (pendingBrowserLogin?.attemptId === attemptId) {
       pendingBrowserLogin = null;
     }
@@ -2341,23 +3240,114 @@ async function performBrowserLoginInUserLane(
       const observedAt = new Date().toISOString();
       try {
         state.storeCoordinator.assertStoreContext(loginContext);
-        for (const provider of ['lingxing', 'amazon_ads'] as const) {
+        if (!erpStageCommitted) {
           state.storeRepo.saveSessionMetadata({
             storeId: loginContext.storeId,
             browserProfileId: loginContext.browserProfileId,
-            provider,
+            provider: 'lingxing',
             status: 'blocked',
             sessionGeneration: loginContext.sessionGeneration,
             observedAt,
             failureCode: 'LOGIN_FAILED',
           });
         }
+        state.storeRepo.saveSessionMetadata({
+          storeId: loginContext.storeId,
+          browserProfileId: loginContext.browserProfileId,
+          provider: 'amazon_ads',
+          status: 'blocked',
+          sessionGeneration: loginContext.sessionGeneration,
+          observedAt,
+          failureCode: 'LOGIN_FAILED',
+        });
       } catch (metadataError) {
         console.error('[StoreSession] failed to persist blocked login state', metadataError);
       }
     }
     throw error;
   }
+}
+
+function enrollConfirmedAmazonAdsConnection(input: Readonly<{
+  context: StoreContextEnvelope;
+  connection: StoreConnection;
+  accountLabel: string;
+  externalAccountId: string;
+  expectedStoreAlias: string;
+  observedAt: string;
+}>): StoreConnection {
+  if (!state.db || !state.storeRepo) {
+    throw new Error('Amazon Ads 首次身份登记所需的本机仓储尚未就绪。');
+  }
+  if (input.connection.provider !== 'amazon_ads') {
+    throw new Error('Amazon Ads 首次身份登记不能写入其他连接。');
+  }
+  const current = state.storeRepo.getConnection(input.context.storeId, 'amazon_ads');
+  if (!current
+    || current.id !== input.connection.id
+    || current.updatedAt !== input.connection.updatedAt
+    || current.externalAccountId !== undefined
+    || current.normalizedExternalAccountId !== undefined) {
+    throw new Error('Amazon Ads 首次身份登记条件已变化，请重新启动当前店铺连接。');
+  }
+  const normalizedExternalAccountId = normalizeProviderExternalAccountId('amazon_ads', input.externalAccountId);
+  const normalizedExpectedAlias = normalizeLingxingCollectionStoreName(input.expectedStoreAlias);
+  const normalizedObservedAlias = normalizeLingxingCollectionStoreName(input.accountLabel);
+  if (!normalizedExternalAccountId
+    || !normalizedExpectedAlias
+    || normalizedObservedAlias !== normalizedExpectedAlias) {
+    throw new Error('Amazon Ads 首次身份登记证据无效，请重新启动当前店铺连接。');
+  }
+  const previousRevisionMs = Date.parse(current.updatedAt);
+  const observedAtMs = Date.parse(input.observedAt);
+  if (!Number.isFinite(previousRevisionMs) || !Number.isFinite(observedAtMs)) {
+    throw new Error('Amazon Ads 首次身份登记时间证据无效，请重新启动当前店铺连接。');
+  }
+  const updatedAt = new Date(Math.max(observedAtMs, previousRevisionMs + 1)).toISOString();
+  try {
+    const updated = state.db.prepare(`
+      UPDATE store_connections
+      SET status = 'ready',
+          account_label = @accountLabel,
+          external_account_id = @externalAccountId,
+          normalized_external_account_id = @normalizedExternalAccountId,
+          last_verified_at = @observedAt,
+          last_failure_code = NULL,
+          updated_at = @updatedAt
+      WHERE id = @id
+        AND store_id = @storeId
+        AND provider = 'amazon_ads'
+        AND updated_at = @expectedUpdatedAt
+        AND external_account_id IS NULL
+        AND normalized_external_account_id IS NULL
+    `).run({
+      id: current.id,
+      storeId: input.context.storeId,
+      accountLabel: input.accountLabel,
+      externalAccountId: input.externalAccountId,
+      normalizedExternalAccountId,
+      observedAt: input.observedAt,
+      updatedAt,
+      expectedUpdatedAt: current.updatedAt,
+    });
+    if (updated.changes !== 1) {
+      throw new Error('Amazon Ads 首次身份登记条件已变化，请重新启动当前店铺连接。');
+    }
+  } catch (error) {
+    if (/UNIQUE constraint failed: store_connections\.provider, store_connections\.normalized_external_account_id/i
+      .test(error instanceof Error ? error.message : String(error))) {
+      throw new Error('该 Amazon Ads 账户已绑定到其他店铺，当前店铺连接已阻断。');
+    }
+    throw error;
+  }
+  const enrolled = state.storeRepo.getConnection(input.context.storeId, 'amazon_ads');
+  if (!enrolled
+    || enrolled.id !== current.id
+    || enrolled.status !== 'ready'
+    || enrolled.normalizedExternalAccountId !== normalizedExternalAccountId) {
+    throw new Error('Amazon Ads 首次身份登记回读不一致，请重新启动当前店铺连接。');
+  }
+  return enrolled;
 }
 
 async function handleConfirmBrowserLoginAdsIdentity(
@@ -2387,28 +3377,48 @@ async function handleConfirmBrowserLoginAdsIdentity(
       || runtime.providerIdentityStatus.amazonAds !== 'pending') {
       throw new Error('Amazon Ads 自动识别确认已失效，请重新启动当前店铺连接。');
     }
-    const adsPage = browserControllerFromVisibleRuntime(runtime, 'amazon_ads')?.getPage();
-    if (!adsPage) throw new Error('Amazon Ads 可见浏览器已关闭，请重新启动当前店铺连接。');
-    const observed = readAmazonAdsProfileIdentityEvidence({
-      pageUrl: adsPage.url(),
-      domObservations: await readProviderActiveIdentityDomObservations(adsPage),
-    });
+    const adsController = browserControllerFromVisibleRuntime(runtime, 'amazon_ads');
+    const adsPage = adsController?.getPage();
+    if (!adsController || !adsPage) {
+      throw new Error('Amazon Ads 可见浏览器已关闭，请重新启动当前店铺连接。');
+    }
+    try {
+      new URL(pending.profileEvidenceUrl);
+    } catch {
+      throw new Error('Amazon Ads 首次身份页面地址无效，请重新启动当前店铺连接。');
+    }
+    const profileEvidenceUrl = new URL(pending.profileEvidenceUrl);
+    if (profileEvidenceUrl.origin !== 'https://ads.lingxing.com'
+      || /\/restartLogin(?:\/|$)/i.test(profileEvidenceUrl.pathname)) {
+      throw new Error('Amazon Ads 首次身份页面已失效，请重新启动当前店铺连接。');
+    }
+    await adsController.navigate(profileEvidenceUrl.href);
+    await adsController.waitForTimeout(1_000);
+    await navigateToLingxingDownloadCenter(
+      adsController,
+      readDownloadCenterPageModel(),
+      pending.expectedStoreAlias,
+    );
+    const verifiedAdsPage = getControllerPageOrThrow(adsController);
+    const observed = await readLingxingAdsProfileEvidence(
+      verifiedAdsPage,
+      pending.expectedStoreAlias,
+    );
     if (observed.externalAccountId !== pending.detectedExternalAccountId) {
       throw new Error('可见 Ads 窗口已切换到其他广告账户，本次店铺绑定已停止。');
     }
     const observedAt = new Date().toISOString();
     const readyConnection = state.db!.transaction(() => {
-      const connection = state.storeRepo!.updateConnection({
-        id: pending.connection.id,
-        storeId: context.storeId,
-        status: 'ready',
-        accountLabel: observed.accountLabel
+      const connection = enrollConfirmedAmazonAdsConnection({
+        context,
+        connection: pending.connection,
+        accountLabel: observed.alias
           || pending.detectedAccountLabel
-          || pending.connection.accountLabel,
+          || pending.connection.accountLabel
+          || pending.expectedStoreAlias,
         externalAccountId: pending.detectedExternalAccountId,
-        lastVerifiedAt: observedAt,
-        lastFailureCode: '',
-        expectedUpdatedAt: pending.connection.updatedAt,
+        expectedStoreAlias: pending.expectedStoreAlias,
+        observedAt,
       });
       state.storeRepo!.saveSessionMetadata({
         storeId: context.storeId,
@@ -2437,6 +3447,7 @@ async function handleConfirmBrowserLoginAdsIdentity(
       adsTitle: pending.adsSession.adsTitle,
     };
     pendingAmazonAdsIdentityConfirmation = null;
+    pendingAmazonAdsIdentityRetry = null;
     state.isLoggedIn = true;
     state.loginSession = loginResult;
     const view = state.storeCoordinator!.getActiveStoreWorkspaceView();
@@ -2450,7 +3461,11 @@ async function handleConfirmBrowserLoginAdsIdentity(
     return loginResult;
   };
   return packageUiReadOnlyRuntime
-    ? state.storeCollectionMainRuntime.withPackageUiSetupMutation(mutationScope, confirm)
+    ? withPackageUiVisibleLoginContinuationMutation(
+        'browser:confirm-ads-identity',
+        context,
+        confirm,
+      )
     : state.storeCollectionMainRuntime.withUserStoreMutation(mutationScope, confirm);
 }
 
@@ -2490,6 +3505,7 @@ async function handleBrowserLogout(): Promise<void> {
                   status: 'signed_out',
                   sessionGeneration: invalidated.sessionGeneration,
                   observedAt,
+                  failureCode: 'operator_session_reset_requested',
                 });
               }
             })();
@@ -4456,6 +5472,56 @@ function initializeStoreCollectionProductionRuntime(): void {
         headless: false,
         userDataDir: input.userDataDir,
       }),
+      inspectLingxingIdentity: async ({ page, connection: inspectedConnection }) => {
+        const runtime = visibleBrowserRuntimeRegistry.read();
+        const controller = runtime
+          ? browserControllerFromVisibleRuntime(runtime, 'lingxing')
+          : null;
+        if (!runtime
+          || runtime.purpose !== 'collection_only'
+          || !controller
+          || controller.getPage() !== page) {
+          throw new Error('采集专用领星窗口与当前店铺会话不一致，身份确认已阻断。');
+        }
+        state.storeCoordinator!.assertActiveStoreContext(runtime.context);
+        const connection = state.storeRepo!
+          .listConnections(runtime.context.storeId)
+          .find((candidate) => candidate.provider === 'lingxing');
+        const collectionStoreName = connection?.collectionStoreName?.trim();
+        if (!connection
+          || connection.status !== 'ready'
+          || !connection.accountLabel?.trim()
+          || !connection.externalAccountId
+          || !collectionStoreName
+          || connection.accountLabel !== inspectedConnection.accountLabel
+          || connection.externalAccountId !== inspectedConnection.externalAccountId) {
+          throw new Error('当前店铺领星连接缺少已验证的账号、店铺或稳定身份，采集已阻断。');
+        }
+
+        const adsPage = await openLingxingAdsFromErp(controller);
+        const evidence = await readLingxingAdsProfileEvidence(
+          adsPage,
+          collectionStoreName,
+        );
+        resolveLingxingStableIdentityFromAdsProfile({
+          accountLabel: connection.accountLabel,
+          collectionStoreName: connection.collectionStoreName!,
+          configuredExternalAccountId: connection.externalAccountId,
+          evidence,
+        });
+        await navigateToLingxingDownloadCenter(
+          controller,
+          readDownloadCenterPageModel(),
+          collectionStoreName,
+        );
+        const scopedPage = getControllerPageOrThrow(controller);
+        return Object.freeze({
+          status: 'ready' as const,
+          pageUrl: scopedPage.url(),
+          title: await scopedPage.title(),
+          domObservations: Object.freeze([]),
+        });
+      },
     },
     sessionMetadata: {
       withLingxingReadyMetadataTransaction: (work) => state.db!.transaction(() => work({
@@ -4695,7 +5761,25 @@ async function handleCollectLingxingReports(input: unknown) {
   // protected semantic attempt and durable duplicate check. The Renderer
   // requestId is deliberately not forwarded as scheduler identity, so changing
   // it cannot create a second Store/Profile/businessDate/window attempt.
-  const schedule = await state.storeCollectionSchedulerReadModel.runNow(context);
+  const currentRuntime = visibleBrowserRuntimeRegistry.read();
+  const expectedClosedRuntimeId = currentRuntime
+    && currentRuntime.purpose === 'operator_full'
+    && sameExactStoreContext(currentRuntime.context, context)
+      ? currentRuntime.runtimeId
+      : undefined;
+  if (expectedClosedRuntimeId) {
+    expectedVisibleRuntimeCloseIds.add(expectedClosedRuntimeId);
+  }
+  let schedule: Awaited<ReturnType<
+    NonNullable<typeof state.storeCollectionSchedulerReadModel>['runNow']
+  >>;
+  try {
+    schedule = await state.storeCollectionSchedulerReadModel.runNow(context);
+  } finally {
+    if (expectedClosedRuntimeId) {
+      expectedVisibleRuntimeCloseIds.delete(expectedClosedRuntimeId);
+    }
+  }
   if (!schedule.job) {
     throw new Error(
       `领星完整采集未形成可回读的 durable 任务：${schedule.projection.detail}`,
@@ -5848,25 +6932,53 @@ function reportContextKey(report: { type: LingxingReportType }, dateRange: { sta
 
 async function waitForDownloadCenterListPage(page: NonNullable<ReturnType<BrowserController['getPage']>>): Promise<boolean> {
   await page.waitForTimeout(1500);
-  const state = await page.evaluate(() => ({
-    url: window.location.href,
-    title: document.title,
-    bodyText: document.body?.innerText ?? '',
-  }));
+  const state = await readLingxingAdsPageStateAfterNavigation(page);
+  if (isLingxingAdsExplicitlyLoggedOutPage(state)) return false;
   return state.url.includes('/ak_download/download_center/download_report_log/index')
     && state.bodyText.includes('下载中心')
     && state.bodyText.includes('创建报告');
 }
 
-async function navigateToLingxingDownloadCenter(controller: BrowserController, model: DownloadCenterPageModel): Promise<void> {
-  const page = getControllerPageOrThrow(controller);
+async function finalizeLingxingDownloadCenterPage(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  storeName: string,
+): Promise<boolean> {
+  if (!await waitForDownloadCenterListPage(page)) return false;
+  await dismissLingxingAdsChangeAnnouncements(page);
+  await selectOnlyLingxingAdsStore(page, storeName);
+  return true;
+}
+
+async function navigateToLingxingDownloadCenter(
+  controller: BrowserController,
+  model: DownloadCenterPageModel,
+  storeName: string,
+): Promise<void> {
+  let page = getControllerPageOrThrow(controller);
+
+  try {
+    if (new URL(page.url()).origin !== 'https://ads.lingxing.com'
+      || /^https:\/\/ads\.lingxing\.com\/restartLogin(?:\/|$)/i.test(page.url())) {
+      page = await openLingxingAdsFromErp(controller);
+    }
+  } catch (error) {
+    if (/可信 ERP 页面|Ads SSO|可见浏览器/u.test(error instanceof Error ? error.message : String(error))) {
+      throw error;
+    }
+    page = await openLingxingAdsFromErp(controller);
+  }
 
   // Report collection is authorized by the verified Lingxing ERP session and
   // may follow Lingxing's own SSO into the read-only download center. Real Ads
   // writes still use the separate amazon_ads Profile and its strict runtime
   // gate; this navigation helper must not require or reuse that write session.
   await page.goto(model.candidateUrls[0], { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
-  if (await waitForDownloadCenterListPage(page)) return;
+  if (await finalizeLingxingDownloadCenterPage(page, storeName)) return;
+  if (/^https:\/\/ads\.lingxing\.com\/restartLogin(?:\/|$)/i.test(page.url())) {
+    page = await openLingxingAdsFromErp(controller);
+    await page.goto(model.candidateUrls[0], { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+    if (await finalizeLingxingDownloadCenterPage(page, storeName)) return;
+  }
 
   const menuSelectors = [
     'a.fa-download_menu[href="/ak_download/download_center/download_report_log/index"]',
@@ -5881,14 +6993,14 @@ async function navigateToLingxingDownloadCenter(controller: BrowserController, m
       page.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined),
       locator.click({ timeout: 15000 }),
     ]);
-    if (await waitForDownloadCenterListPage(page)) return;
+    if (await finalizeLingxingDownloadCenterPage(page, storeName)) return;
   }
 
   await page.evaluate(() => {
     window.location.href = '/ak_download/download_center/download_report_log/index';
   });
   await page.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
-  if (await waitForDownloadCenterListPage(page)) return;
+  if (await finalizeLingxingDownloadCenterPage(page, storeName)) return;
   throw new Error(`无法进入领星广告下载中心，当前页面：${await page.title().catch(() => page.url())}`);
 }
 
@@ -6012,7 +7124,7 @@ function createDownloadCenterAutomation(
 
   return {
     async navigateToDownloadCenter() {
-      await navigateToLingxingDownloadCenter(controller, model);
+      await navigateToLingxingDownloadCenter(controller, model, target.storeName);
     },
     async createReport(report, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
@@ -6109,7 +7221,7 @@ function createDownloadCenterAutomation(
       if (await okButton.isVisible({ timeout: 5000 }).catch(() => false)) {
         await okButton.click();
       }
-      await navigateToLingxingDownloadCenter(controller, model);
+      await navigateToLingxingDownloadCenter(controller, model, target.storeName);
       const createdRow = page.locator('tr').filter({
         hasText: context.generatedReportName || report.displayName,
       }).first();
@@ -6668,7 +7780,7 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
 
   try {
     operation.assertStepCurrent();
-    await navigateToLingxingDownloadCenter(controller, model);
+    await navigateToLingxingDownloadCenter(controller, model, target.storeName);
     const selectorMatches: Record<string, boolean> = {};
     for (const hint of model.verifySelectors) {
       selectorMatches[hint.selector] = await controller.evaluate<boolean>((selector: string) => {
@@ -7249,7 +8361,10 @@ async function collectDownloadCenterDiagnosticActionSelectorChecks(
     names: createPageSelectorNames,
     context,
   });
-  await navigateToLingxingDownloadCenter(controller, model);
+  if (!context.storeName) {
+    throw new Error('下载中心诊断缺少当前店铺名称，无法恢复唯一店铺筛选。');
+  }
+  await navigateToLingxingDownloadCenter(controller, model, context.storeName);
   return [...listChecks, ...createChecks];
 }
 
@@ -11803,7 +12918,7 @@ function registerIpcHandlers(): void {
     schedulerEvidenceIpc,
     packageUiReadOnlyRuntime
       ? {
-          get: (context) => state.storeCollectionSchedulerReadModel!.get(context),
+          get: (context) => readPackageUiStoreCollectionSchedule(context),
           runNow: async () => {
             throw new Error(
               'PACKAGE_UI_EVIDENCE_READ_ONLY: package UI evidence may read scheduler state but may not execute collection.',
@@ -12198,7 +13313,7 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
     await closeBrowserControllers(pendingControllers);
     clearBrowserLoginState();
     if (db && packageUiReadOnlyRuntime) {
-      packageUiSchedulerAudit.capturePreCloseTerminalDatabaseCheckpoint();
+      packageUiSchedulerAudit.capturePreCloseTerminalDatabaseCheckpointIfReady();
     }
     await db?.close();
     state.scheduler = null;

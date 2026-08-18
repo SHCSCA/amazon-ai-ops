@@ -138,6 +138,9 @@ function buildWindowsPackage(injected = {}) {
         installerSha256: buildResult.freshOutputs.installer.sha256,
         portablePath: buildResult.freshOutputs.portable.path,
         portableSha256: buildResult.freshOutputs.portable.sha256,
+        folderZipPath: buildResult.freshOutputs.folderZip.path,
+        folderZipSha256: buildResult.freshOutputs.folderZip.sha256,
+        defaultNoInstallDelivery: 'folder_zip',
         blockmapPath: buildResult.freshOutputs.blockmap.path,
         blockmapSha256: buildResult.freshOutputs.blockmap.sha256,
         sqliteSha256: buildResult.packagePreparation.bindings.sqlite.sha256,
@@ -173,6 +176,7 @@ function resolveExpectedPackageOutputs(packageExe = DEFAULT_PACKAGE_EXE) {
     executablePath,
     installerPath: path.join(releaseRoot, `${artifactBase}.exe`),
     portablePath: path.join(releaseRoot, `${artifactBase}-portable.exe`),
+    folderZipPath: path.join(releaseRoot, `${artifactBase}.zip`),
     blockmapPath: path.join(releaseRoot, `${artifactBase}.exe.blockmap`),
   });
 }
@@ -371,6 +375,7 @@ function inspectFreshPackageOutputs(outputs) {
     executable: artifactInfo(outputs.executablePath, 'fresh packaged executable'),
     installer: artifactInfo(outputs.installerPath, 'fresh NSIS installer'),
     portable: artifactInfo(outputs.portablePath, 'fresh portable executable'),
+    folderZip: artifactInfo(outputs.folderZipPath, 'fresh extracted-folder ZIP'),
     blockmap: artifactInfo(outputs.blockmapPath, 'fresh NSIS blockmap'),
   });
 }
@@ -391,6 +396,11 @@ function packageOutputEntries(outputs) {
       name: 'portable',
       kind: 'file',
       path: path.resolve(outputs.portablePath),
+    }),
+    Object.freeze({
+      name: 'folder-zip',
+      kind: 'file',
+      path: path.resolve(outputs.folderZipPath),
     }),
     Object.freeze({
       name: 'blockmap',
@@ -423,6 +433,10 @@ function resolveWindowsBuildSteps(builderEnvironment = {}) {
     desktopRequire.resolve('electron-builder/cli.js'),
     'electron-builder CLI',
   );
+  const electronBuilderWrapper = regularFile(
+    path.join(ROOT, 'scripts', 'run-electron-builder-windows.js'),
+    'Electron builder Windows wrapper',
+  );
   return Object.freeze([
     commandStep(
       'build-main',
@@ -453,7 +467,7 @@ function resolveWindowsBuildSteps(builderEnvironment = {}) {
     commandStep(
       'electron-builder-windows',
       process.execPath,
-      [electronBuilderCli, '--win'],
+      [electronBuilderWrapper, electronBuilderCli, '--win'],
       builderEnvironment,
     ),
   ]);

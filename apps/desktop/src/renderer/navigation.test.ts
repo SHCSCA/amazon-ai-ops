@@ -82,7 +82,7 @@ describe('ten-workspace information architecture', () => {
       '经营实验',
       '实时执行',
       '因果记忆',
-      '店铺与广告对象',
+      '产品与广告对象',
       '数据采集',
       '策略与风控',
       '系统设置',
@@ -126,6 +126,15 @@ describe('ten-workspace information architecture', () => {
     expect(WORKSPACE_SUBVIEW_TABS.objects.map((tab) => tab.id)).toEqual([
       'products', 'targets', 'keywords', 'listing',
     ]);
+    const operatorCopy = [
+      ...VISIBLE_WORKSPACES.flatMap((workspace) => [workspace.label, workspace.description]),
+      ...Object.values(WORKSPACE_SUBVIEW_TABS).flatMap((tabs) => (
+        tabs.flatMap((tab) => [tab.label, tab.description])
+      )),
+    ].join(' ');
+    expect(WORKSPACE_SUBVIEW_TABS.missions.find((tab) => tab.id === 'overview')?.label)
+      .toBe('运营任务队列');
+    expect(operatorCopy).not.toMatch(/Mission 队列|DAILY MISSION CONTROL|MISSION CONTROL|Crux/);
   });
 
   it('fails closed for invalid structured targets', () => {

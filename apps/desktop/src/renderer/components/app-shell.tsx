@@ -100,7 +100,6 @@ export function Sidebar({
       data-navigation-busy={navigationBusy || undefined}
     >
       <div className="app-sidebar-scroll">
-        {storeScopeControl}
         {NAVIGATION_SECTION_DEFINITIONS.map((section, groupIndex) => {
           const groupLabelId = navGroupLabelId(groupIndex);
 
@@ -159,17 +158,20 @@ export function Sidebar({
         })}
       </div>
 
-      {onToggleCollapsed && (
+      {(storeScopeControl || onToggleCollapsed) && (
         <div className="app-sidebar-footer">
-          <button
-            aria-label={collapsed ? '展开主导航' : '收起主导航'}
-            className="sidebar-collapse-button"
-            onClick={onToggleCollapsed}
-            type="button"
-          >
-            <SidebarSimple aria-hidden="true" size={18} />
-            <span>{collapsed ? '展开' : '收起导航'}</span>
-          </button>
+          {storeScopeControl}
+          {onToggleCollapsed && (
+            <button
+              aria-label={collapsed ? '展开主导航' : '收起主导航'}
+              className="sidebar-collapse-button"
+              onClick={onToggleCollapsed}
+              type="button"
+            >
+              <SidebarSimple aria-hidden="true" size={18} />
+              <span>{collapsed ? '展开' : '收起导航'}</span>
+            </button>
+          )}
         </div>
       )}
     </nav>

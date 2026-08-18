@@ -58,7 +58,7 @@ describe('page header copy contract', () => {
     const pageSource = readFileSync(new URL('pages/product-management-page.tsx', import.meta.url), 'utf8');
 
     expect(workspaceSource).toContain('<PageFrame');
-    expect(workspaceSource).toContain("title={activeSubview === 'products' ? '店铺与广告对象' : surface.title}");
+    expect(workspaceSource).toContain("title={activeSubview === 'products' ? '产品与广告对象' : surface.title}");
     expect(pageSource).not.toContain('<PageHeader');
     expect(pageSource).not.toContain('PAGE_HEADER_TITLES');
   });

@@ -1464,6 +1464,31 @@ button:disabled {
   border-left-color: var(--green);
 }
 
+.operation-scope-save-feedback {
+  min-height: 38px;
+  margin: 10px 0 0;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  background: #eff6ff;
+  padding: 9px 12px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 18px;
+}
+
+.operation-scope-save-feedback[data-tone="success"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.operation-scope-save-feedback[data-tone="error"] {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .operation-scope-editor-panel .form-table {
   margin-top: 2px;
 }

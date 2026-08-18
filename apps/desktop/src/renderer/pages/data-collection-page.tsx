@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   missionControlContextKey,
+  normalizeStoreContextEnvelope,
   type LingxingCollectionJobSnapshot,
   type LingxingCollectionProgressEvent,
   type LingxingCollectionReportCheckpoint,
+  type StoreCollectionScheduleProjection,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { DEFAULT_BUSINESS_REPORT_OPTIONS, useBusinessDataPipeline } from '../components/business-data';
@@ -18,7 +20,8 @@ import {
   type ProductionCollectionReportBinding,
 } from '../lingxing-collection-lineage';
 import { useMissionControlStoreContext } from '../mission-control/store-context';
-import type { AppRoute, BusinessReportFile } from '../types';
+import { useScopeStore } from '../scope-store';
+import type { AppRoute, BusinessReportFile, OperationScope } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
@@ -243,6 +246,36 @@ export function collectionJobBelongsToStore(
     && stored.currency === currentContext.currency;
 }
 
+export function collectionActionFeedbackBelongsToAuthority(
+  capturedContext: StoreContextEnvelope | null | undefined,
+  currentContext: StoreContextEnvelope | null | undefined,
+): boolean {
+  if (!capturedContext || !currentContext) return false;
+  try {
+    const captured = normalizeStoreContextEnvelope(capturedContext);
+    const current = normalizeStoreContextEnvelope(currentContext);
+    return captured.storeId === current.storeId
+      && captured.browserProfileId === current.browserProfileId
+      && captured.marketplace === current.marketplace
+      && captured.currency === current.currency
+      && captured.businessTimezone === current.businessTimezone
+      && captured.businessDate === current.businessDate
+      && current.sessionGeneration >= captured.sessionGeneration;
+  } catch {
+    return false;
+  }
+}
+
+export function retainCollectionActionFeedback<T>(
+  capturedContext: StoreContextEnvelope | null | undefined,
+  currentContext: StoreContextEnvelope | null | undefined,
+  feedback: T | null,
+): T | null {
+  return collectionActionFeedbackBelongsToAuthority(capturedContext, currentContext)
+    ? feedback
+    : null;
+}
+
 export function upsertCollectionJobSnapshot(
   jobs: readonly LingxingCollectionJobSnapshot[],
   next: LingxingCollectionJobSnapshot,
@@ -366,11 +399,20 @@ export function buildCollectionJobWorkspaceRow(
 export function createLingxingCollectionRequestId(
   action: string,
   now = Date.now(),
-  randomToken: string = globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2),
+  randomToken?: string,
 ): string {
+  const resolvedRandomToken = randomToken ?? createCollectionRandomToken();
   const safeAction = action.trim().replace(SAFE_COLLECTION_REQUEST_PART, '-').replace(/^-+|-+$/g, '') || 'action';
-  const safeRandom = randomToken.replace(SAFE_COLLECTION_REQUEST_PART, '').slice(0, 32) || 'local';
+  const safeRandom = resolvedRandomToken.replace(SAFE_COLLECTION_REQUEST_PART, '').slice(0, 32) || 'local';
   return `lx:${safeAction}:${Math.max(0, Math.trunc(now)).toString(36)}:${safeRandom}`.slice(0, 128);
+}
+
+function createCollectionRandomToken(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  return Math.random().toString(36).slice(2);
 }
 
 export function buildAuthoritativeCollectionDateRange(input: {
@@ -392,6 +434,71 @@ export function buildAuthoritativeCollectionDateRange(input: {
     storeContext: { ...input.storeContext },
     storeName: input.storeName,
     marketplaceCode: 'US',
+  };
+}
+
+type CollectionScheduleApi = {
+  getStoreCollectionSchedule?: (context: StoreContextEnvelope) => Promise<StoreCollectionScheduleProjection>;
+};
+
+function validCollectionIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export async function resolveAuthoritativeCollectionCapture(input: {
+  action: string;
+  api: CollectionScheduleApi | null | undefined;
+  scope: OperationScope;
+  storeContext: StoreContextEnvelope;
+  storeName: string;
+}): Promise<{
+  authorityKey: string;
+  dateRange: AuthoritativeCollectionDateRange;
+  refreshScope: OperationScope;
+}> {
+  if (!input.api?.getStoreCollectionSchedule) {
+    throw new Error('当前店铺采集窗口读取接口未就绪，请刷新应用后重试。');
+  }
+  let projection: StoreCollectionScheduleProjection;
+  try {
+    projection = await input.api.getStoreCollectionSchedule({ ...input.storeContext });
+  } catch {
+    throw new Error('当前店铺采集窗口读取失败，请刷新当前店铺后重试。');
+  }
+  if (projection.storeId !== input.storeContext.storeId
+    || projection.businessDate !== input.storeContext.businessDate) {
+    throw new Error('采集窗口与当前店铺不一致，操作已阻断；请刷新当前店铺后重试。');
+  }
+  if (!projection.enabled) {
+    throw new Error(projection.state === 'archived'
+      ? '当前店铺采集计划已归档，请先在定时任务中恢复配置。'
+      : '当前店铺尚未配置采集计划，请先在定时任务中完成配置。');
+  }
+  if (!validCollectionIsoDate(projection.dateStart)
+    || !validCollectionIsoDate(projection.dateEnd)
+    || projection.dateStart > projection.dateEnd) {
+    throw new Error('当前店铺采集窗口尚未就绪，请刷新当前店铺或检查采集配置。');
+  }
+  const dateRange = buildAuthoritativeCollectionDateRange({
+    action: input.action,
+    dateStart: projection.dateStart,
+    dateEnd: projection.dateEnd,
+    storeContext: input.storeContext,
+    storeName: input.storeName,
+  });
+  return {
+    authorityKey: missionControlContextKey(input.storeContext),
+    dateRange,
+    refreshScope: {
+      ...input.scope,
+      dateFrom: projection.dateStart,
+      dateTo: projection.dateEnd,
+      storeName: input.storeName,
+      marketplaceCode: 'US',
+      currency: 'USD',
+    },
   };
 }
 
@@ -1110,6 +1217,10 @@ export function collectionActionError(mode: Exclude<CollectionActionMode, 'impor
   const raw = rawErrorMessage(error);
   if (!raw) return '采集未完成。';
 
+  if (/IDENTITY_UNVERIFIED|Lingxing page identity is unverified|identity verification.*Lingxing/i.test(raw)) {
+    return '领星当前页面身份尚未确认：请保持当前店铺的领星浏览器打开，确认已登录且页面属于当前店铺，然后重试采集。';
+  }
+
   if (/browser session is not ready|请先启动并登录领星|not logged in|browser_session_ready/i.test(raw)) {
     return '领星浏览器会话未就绪：请先在本应用完成 ERP 登录，并从 ERP 广告入口进入 Ads 后重试。';
   }
@@ -1122,6 +1233,10 @@ export function collectionActionError(mode: Exclude<CollectionActionMode, 'impor
     return mode === 'download-existing'
       ? '下载并导入已创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，确认日期、店铺、站点和领星页面一致后再下载。'
       : '重新创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，刷新截图、DOM 和页面模型证据后再创建。';
+  }
+
+  if (/唯一业务窗口不一致|采集窗口与当前店铺不一致/i.test(raw)) {
+    return '当前页面范围已过期：系统已阻断本次采集。请刷新当前店铺，待页面同步最新采集日期后重试。';
   }
 
   if (/(missing|not found|缺少|没有|未找到|不存在)/i.test(raw) && /(report|file|path|batch|报表|文件|路径|批次)/i.test(raw)) {
@@ -1415,7 +1530,7 @@ export function CollectionJobWorkspace({
       <div className="business-split">
         <div>
           <div className="business-scope-line">仅显示当前美国站店铺最近任务</div>
-          <p className="muted-line">新建、读取、恢复和取消都绑定当前 StoreContext；终态历史作为审计记录保留，不提供物理删除。切店后重新读取，不复用旧店响应。</p>
+          <p className="muted-line">新建、读取、恢复和取消都绑定当前店铺会话；终态历史作为审计记录保留，不提供物理删除。切店后重新读取，不复用旧店响应。</p>
         </div>
         <button
           aria-busy={loading}
@@ -1431,7 +1546,7 @@ export function CollectionJobWorkspace({
       {previewOnly && (
         <p className="warning-line" role="status">开发预览不会注入伪造采集任务或生产成功；Windows 桌面端会从当前店铺数据库读取真实任务。</p>
       )}
-      {error && <p className="blocked-line" role="alert">任务读取失败：{error}</p>}
+      {error && <><p className="blocked-line" role="alert">任务读取失败。请确认当前店铺连接后点击“刷新任务”；若仍失败，请展开诊断详情。</p><details><summary>诊断详情</summary><code>任务读取失败：{error}</code></details></>}
       <div className="table-wrap">
         <table className="business-table data-table--compact data-table--striped" aria-label="当前店铺领星采集任务">
           <thead>
@@ -1441,13 +1556,13 @@ export function CollectionJobWorkspace({
               <th>任务血缘</th>
               <th>状态</th>
               <th>生产入库</th>
-              <th>阻断 / UNKNOWN</th>
+              <th>阻断 / 需人工核对</th>
               <th>最近更新</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {rows.map((row, index) => {
               const lineage = buildCollectionJobLineagePresentation(row.job);
               const resumeKey = `resume:${row.job.jobId}`;
               const cancelKey = `cancel:${row.job.jobId}`;
@@ -1457,7 +1572,8 @@ export function CollectionJobWorkspace({
                 <tr key={row.job.jobId}>
                   <td>
                     <strong>{row.job.request.dateStart} → {row.job.request.dateEnd}</strong>
-                    <div className="table-subtext">任务 {row.job.jobId}</div>
+                    <div className="table-subtext">采集记录 {index + 1}</div>
+                    <details><summary>诊断详情</summary><code>{row.job.jobId}</code></details>
                     {row.canary && <StatusPill tone="warning">Canary（不入生产）</StatusPill>}
                   </td>
                   <td>
@@ -1466,7 +1582,8 @@ export function CollectionJobWorkspace({
                   </td>
                   <td>
                     <StatusPill tone={lineage.tone}>{lineage.label}</StatusPill>
-                    <div className="table-subtext">{lineage.detail}</div>
+                    <div className="table-subtext">{lineage.tone === 'blocked' ? '来源关系需人工核对' : '来源关系已记录'}</div>
+                    <details><summary>诊断详情</summary><code>{lineage.detail}</code></details>
                   </td>
                   <td><StatusPill tone={row.statusTone}>{row.statusLabel}</StatusPill></td>
                   <td>
@@ -1517,7 +1634,7 @@ export function CollectionJobWorkspace({
                       )}
                       {row.action === 'manual-reconciliation' && (
                         <button
-                          aria-label={`任务 ${row.job.jobId} 需人工核对，禁止继续采集`}
+                          aria-label="当前采集任务需人工核对，禁止继续采集"
                           className="secondary-button compact-button"
                           disabled
                           type="button"
@@ -1548,6 +1665,7 @@ export function CollectionJobWorkspace({
 
 export function DataCollectionPage() {
   const { data, error, loading, scope } = useBusinessDataPipeline();
+  const setScope = useScopeStore((state) => state.setScope);
   const storeAuthority = useMissionControlStoreContext();
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -1567,11 +1685,16 @@ export function DataCollectionPage() {
   const [reportSelectorOpen, setReportSelectorOpen] = useState(false);
   const [selectedReportFile, setSelectedReportFile] = useState<BusinessReportFile | null>(null);
   const authorityKeyRef = useRef(storeAuthority.authorityKey);
+  const authorityContextRef = useRef(storeAuthority.authoritativeContext);
+  const collectionFeedbackAuthorityContextRef = useRef<StoreContextEnvelope | null>(
+    storeAuthority.authoritativeContext ? { ...storeAuthority.authoritativeContext } : null,
+  );
   const collectionRequestIdRef = useRef<string | null>(null);
   const manualReconciliationRequestIdRef = useRef<string | null>(null);
   const collectionJobsLoadSequenceRef = useRef(0);
   const collectionJobActionTokenRef = useRef<string | null>(null);
   authorityKeyRef.current = storeAuthority.authorityKey;
+  authorityContextRef.current = storeAuthority.authoritativeContext;
   const reportSelectorDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
     onDismiss: () => setReportSelectorOpen(false),
     open: reportSelectorOpen,
@@ -1743,12 +1866,21 @@ export function DataCollectionPage() {
   );
 
   useEffect(() => {
+    const previousFeedbackContext = collectionFeedbackAuthorityContextRef.current;
+    const nextFeedbackContext = storeAuthority.authoritativeContext
+      ? { ...storeAuthority.authoritativeContext }
+      : null;
+    collectionFeedbackAuthorityContextRef.current = nextFeedbackContext;
     ++collectionJobsLoadSequenceRef.current;
     collectionJobActionTokenRef.current = null;
     collectionRequestIdRef.current = null;
     manualReconciliationRequestIdRef.current = null;
-    setActionNotice(null);
-    setActionError(null);
+    setActionNotice((currentNotice) => (
+      retainCollectionActionFeedback(previousFeedbackContext, nextFeedbackContext, currentNotice)
+    ));
+    setActionError((currentError) => (
+      retainCollectionActionFeedback(previousFeedbackContext, nextFeedbackContext, currentError)
+    ));
     setRunningAction(null);
     setFeedbackActionGroup(null);
     setOpeningArtifactKey(null);
@@ -1920,28 +2052,37 @@ export function DataCollectionPage() {
     };
   }
 
-  function captureCollectionRange(action: string): {
+  async function captureCollectionRange(action: string): Promise<{
     authorityKey: string;
     dateRange: AuthoritativeCollectionDateRange;
-  } {
-    const dateRange = buildAuthoritativeCollectionDateRange({
+    refreshScope: typeof scope;
+  }> {
+    const captured = captureCurrentStoreAuthority();
+    const resolved = await resolveAuthoritativeCollectionCapture({
       action,
-      dateStart: scope.dateFrom,
-      dateEnd: scope.dateTo,
-      storeContext: storeAuthority.authoritativeContext,
+      api: (window as any).electronAPI,
+      scope,
+      storeContext: captured.storeContext,
       storeName: storeAuthority.activeStore?.displayName || scope.storeName,
     });
-    const authorityKey = missionControlContextKey(dateRange.storeContext);
-    collectionRequestIdRef.current = dateRange.requestId;
+    if (!isCapturedAuthorityCurrent(resolved.authorityKey)) {
+      throw new Error('读取采集窗口期间当前店铺已变化，操作已阻断；请在新店铺中重试。');
+    }
+    setScope(resolved.refreshScope);
+    collectionRequestIdRef.current = resolved.dateRange.requestId;
     if (action !== 'diagnose') {
       manualReconciliationRequestIdRef.current = null;
       setLiveCollectionProgress(null);
     }
-    return { authorityKey, dateRange };
+    return resolved;
   }
 
   function isCapturedAuthorityCurrent(authorityKey: string): boolean {
     return authorityKeyRef.current === authorityKey;
+  }
+
+  function isCapturedFeedbackAuthorityCurrent(capturedContext: StoreContextEnvelope): boolean {
+    return collectionActionFeedbackBelongsToAuthority(capturedContext, authorityContextRef.current);
   }
 
   async function resumeCollectionJob(job: LingxingCollectionJobSnapshot): Promise<void> {
@@ -1983,10 +2124,10 @@ export function DataCollectionPage() {
     setLastDiagnostic(null);
     setActionError(null);
     setActionNotice(view.action === 'supplement-import'
-      ? `正在补导任务 ${job.jobId} 的真实报表；系统会复用已验证文件，不会重新创建领星报表。`
+      ? '正在补导当前采集任务的真实报表；系统会复用已验证文件，不会重新创建领星报表。'
       : view.canary
-      ? `正在从 Canary 任务 ${job.jobId} 的已确认检查点继续；结果只用于诊断，不会导入生产指标。`
-      : `正在从任务 ${job.jobId} 的已确认检查点继续采集；已下载文件会先重新校验，不会盲目重复下载。`);
+      ? '正在从当前诊断任务的已确认检查点继续；结果只用于诊断，不会导入生产指标。'
+      : '正在从当前采集任务的已确认检查点继续；已下载文件会先重新校验，不会盲目重复下载。');
     setRunningAction(view.action === 'supplement-import'
       ? 'import'
       : job.request.mode === 'download-existing'
@@ -2057,7 +2198,7 @@ export function DataCollectionPage() {
     collectionJobActionTokenRef.current = actionToken;
     setCollectionJobActionBusyKey(`cancel:${job.jobId}`);
     setActionError(null);
-    setActionNotice(`正在提交任务 ${job.jobId} 的取消请求...`);
+    setActionNotice('正在提交当前采集任务的取消请求...');
     try {
       if (!api?.cancelLingxingCollection) {
         throw new Error('取消采集接口未暴露，请检查 preload IPC。');
@@ -2109,9 +2250,9 @@ export function DataCollectionPage() {
 
   async function runVerifyDownloadCenter() {
     const api = (window as any).electronAPI;
-    let captured: ReturnType<typeof captureCollectionRange>;
+    let captured: Awaited<ReturnType<typeof captureCollectionRange>>;
     try {
-      captured = captureCollectionRange('diagnose');
+      captured = await captureCollectionRange('diagnose');
     } catch (caught) {
       setActionError(toUserFacingError(caught, '当前店铺授权不可用。'));
       setActionNotice('验证页面未开始。');
@@ -2168,9 +2309,9 @@ export function DataCollectionPage() {
     const selectedLabels = reportOptions
       .filter((item) => targetTypes.includes(item.type))
       .map((item) => item.label);
-    let captured: ReturnType<typeof captureCollectionRange>;
+    let captured: Awaited<ReturnType<typeof captureCollectionRange>>;
     try {
-      captured = captureCollectionRange(mode);
+      captured = await captureCollectionRange(mode);
     } catch (caught) {
       setActionError(toUserFacingError(caught, '当前店铺授权不可用。'));
       setActionNotice('采集动作未开始。');
@@ -2212,7 +2353,9 @@ export function DataCollectionPage() {
       });
       if (!isCapturedAuthorityCurrent(authorityKey)) return;
       if (manualReconciliationRequestIdRef.current === dateRange.requestId) return;
-      const refreshed = await api.getBusinessUiDataPipeline?.(scope);
+      // Refresh against the same captured range. Referencing the live component
+      // scope here previously produced an unbound identifier in the package.
+      const refreshed = await api.getBusinessUiDataPipeline?.(captured.refreshScope);
       if (!isCapturedAuthorityCurrent(authorityKey)) return;
       window.dispatchEvent(new Event('business-ui:data-updated'));
       const realFileCount = refreshed?.collection?.realReportFiles?.length ?? 0;
@@ -2225,7 +2368,8 @@ export function DataCollectionPage() {
       setLastActionResult(actionResult);
       setActionNotice(collectionCompletionNotice(actionResult));
     } catch (caught) {
-      if (!isCapturedAuthorityCurrent(authorityKey)) return;
+      if (!isCapturedAuthorityCurrent(authorityKey)
+        && !isCapturedFeedbackAuthorityCurrent(dateRange.storeContext)) return;
       if (manualReconciliationRequestIdRef.current === dateRange.requestId) return;
       const message = collectionActionError(mode, caught);
       setActionError(message);

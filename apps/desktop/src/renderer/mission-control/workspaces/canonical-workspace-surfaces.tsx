@@ -16,6 +16,7 @@ import {
   Warning,
 } from '@phosphor-icons/react';
 import type {
+  MissionControlCapabilityProjection,
   MissionControlViewId,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -24,7 +25,16 @@ import {
   canonicalWorkspaceFixtureForStore,
   type CanonicalWorkspaceFixture,
 } from './canonical-workspace-fixtures';
-import { ExecutionWorkspace } from './execution-workspace';
+import { EXECUTION_CAPABILITY_IDS, ExecutionWorkspace } from './execution-workspace';
+
+const CANONICAL_EXECUTION_PREVIEW_CAPABILITIES = Object.values(EXECUTION_CAPABILITY_IDS).map((capabilityId) => ({
+  capabilityId,
+  workspace: 'execution',
+  view: 'execution/live',
+  action: capabilityId === EXECUTION_CAPABILITY_IDS.view ? 'view' : 'update',
+  state: 'PROTOTYPE_ONLY',
+  detail: '显式开发预览能力',
+})) as readonly MissionControlCapabilityProjection[];
 
 export type CanonicalWorkspaceSurfaceKind =
   | 'today'
@@ -99,11 +109,11 @@ function TodaySurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
     return (
       <div className="canonical-today-grid" data-canonical-surface="today">
         <section className="canonical-control-board">
-          <header><span>MISSION CONTROL</span><strong>等待当前店铺的今日 Mission</strong></header>
-          <div className="canonical-mission-chain" role="list" aria-label="今日 Mission 主链路">
-            {['Mission', 'Crux 决策', '经营实验', '可见执行'].map((label, index) => (
+          <header><span>今日运营总览</span><strong>等待当前店铺的今日运营任务</strong></header>
+          <div className="canonical-mission-chain" role="list" aria-label="今日运营任务主链路">
+            {['运营任务', '关键决策', '经营实验', '可见执行'].map((label, index) => (
               <div className="canonical-chain-step" key={label} role="listitem">
-                <span>{index + 1}</span><strong>{label}</strong><small>等待 Main</small>
+                <span>{index + 1}</span><strong>{label}</strong><small>等待确认</small>
               </div>
             ))}
           </div>
@@ -118,8 +128,8 @@ function TodaySurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
 
   const { fixture } = props;
   const chain = [
-    { label: 'Mission', detail: '目标已锁定', icon: ListChecks, tone: 'ready' },
-    { label: 'Crux 决策', detail: `${fixture.mission.cruxCount} 项待判断`, icon: GitBranch, tone: 'attention' },
+    { label: '运营任务', detail: '目标已锁定', icon: ListChecks, tone: 'ready' },
+    { label: '关键决策', detail: `${fixture.mission.cruxCount} 项待判断`, icon: GitBranch, tone: 'attention' },
     { label: '经营实验', detail: `观察第 ${fixture.mission.observationDay}/${fixture.mission.observationTotal} 天`, icon: Flask, tone: 'ready' },
     { label: '可见执行', detail: '等待真实授权', icon: MonitorPlay, tone: 'blocked' },
   ] as const;
@@ -129,11 +139,11 @@ function TodaySurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
       <div className="canonical-today-grid">
         <section className="canonical-control-board">
           <header className="canonical-board-heading">
-            <div><span>ACTIVE MISSION · {fixture.mission.id}</span><strong>{fixture.mission.title}</strong></div>
+            <div><span>当前运营任务</span><strong>{fixture.mission.title}</strong></div>
             <b>推进度 {fixture.mission.progress}%</b>
           </header>
-          <div className="canonical-progress" aria-label={`示例 Mission 推进度 ${fixture.mission.progress}%`}><span style={{ width: `${fixture.mission.progress}%` }} /></div>
-          <div className="canonical-mission-chain" role="list" aria-label="今日 Mission 主链路">
+          <div className="canonical-progress" aria-label={`示例运营任务推进度 ${fixture.mission.progress}%`}><span style={{ width: `${fixture.mission.progress}%` }} /></div>
+          <div className="canonical-mission-chain" role="list" aria-label="今日运营任务主链路">
             {chain.map(({ label, detail, icon: Icon, tone }, index) => (
               <div className="canonical-chain-step" data-tone={tone} key={label} role="listitem">
                 <span><Icon aria-hidden="true" size={17} weight="duotone" /></span>
@@ -157,7 +167,7 @@ function TodaySurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
       <section className="canonical-next-actions">
         <h3>下一推进动作</h3>
         <ol>
-          <li><Warning size={18} weight="fill" /><span><strong>处理 {fixture.mission.cruxCount} 项 Crux 决策</strong><small>确认 {fixture.primaryAsin} 的建议依据与人工审批边界。</small></span><DisabledAction reason={props.blockedReason}>去处理</DisabledAction></li>
+          <li><Warning size={18} weight="fill" /><span><strong>处理 {fixture.mission.cruxCount} 项关键决策</strong><small>确认 {fixture.primaryAsin} 的建议依据与人工审批边界。</small></span><DisabledAction reason={props.blockedReason}>去处理</DisabledAction></li>
           <li><MonitorPlay size={18} /><span><strong>准备真实可见执行</strong><small>必须保留 before、after 与 reload 回读。</small></span><DisabledAction reason={props.blockedReason}>打开执行</DisabledAction></li>
         </ol>
       </section>
@@ -170,10 +180,10 @@ function MissionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
     return (
       <div className="canonical-mission-layout" data-canonical-surface="missions">
         <section className="canonical-flight-plan">
-          <h3>Mission 检查点</h3>
-          <EmptyAuthority description="等待店铺级 Mission 查询、检查点和版本合同。" reason={props.blockedReason} title="暂无可验证 Mission" />
+          <h3>运营任务检查点</h3>
+          <EmptyAuthority description="等待店铺级运营任务查询、检查点和版本合同。" reason={props.blockedReason} title="暂无可验证运营任务" />
         </section>
-        <aside className="canonical-agent-state"><h3>Agent 状态</h3><p>没有 Main Authority 时不创建临时 Mission。</p></aside>
+        <aside className="canonical-agent-state"><h3>智能体状态</h3><p>运营任务来源尚未确认时不创建临时任务。</p></aside>
       </div>
     );
   }
@@ -181,7 +191,7 @@ function MissionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
   const { fixture } = props;
   const checkpoints = [
     ['01', '建立事实基线', `已确认 ${fixture.mission.reportCount} 类报表`],
-    ['02', '识别 Crux', `${fixture.mission.cruxCount} 项等待判断`],
+    ['02', '识别关键决策', `${fixture.mission.cruxCount} 项等待判断`],
     ['03', '运行经营实验', `观察第 ${fixture.mission.observationDay}/${fixture.mission.observationTotal} 天`],
     ['04', '执行与回读', '等待真实授权'],
   ];
@@ -196,8 +206,8 @@ function MissionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
       </dl>
       <div className="canonical-mission-layout">
         <section className="canonical-flight-plan">
-          <header><div><span>MISSION · {fixture.mission.id} · {fixture.primaryAsin}</span><h3>{fixture.mission.title}</h3></div><DisabledAction reason={props.blockedReason}>编辑 Mission</DisabledAction></header>
-          <div className="canonical-checkpoint-list" role="list" aria-label="Mission 示例检查点">
+          <header><div><span>运营任务 · {fixture.primaryAsin}</span><h3>{fixture.mission.title}</h3></div><DisabledAction reason={props.blockedReason}>编辑运营任务</DisabledAction></header>
+          <div className="canonical-checkpoint-list" role="list" aria-label="运营任务示例检查点">
             {checkpoints.map(([number, title, detail], index) => (
               <article data-state={index < 1 ? 'ready' : index < 3 ? 'active' : 'blocked'} key={number} role="listitem">
                 <span>{index < 1 ? <CheckCircle size={18} weight="fill" /> : index < 3 ? <Clock size={18} /> : <LockKey size={18} />}</span>
@@ -207,10 +217,10 @@ function MissionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
           </div>
         </section>
         <aside className="canonical-agent-state">
-          <h3>Agent 状态</h3>
-          <strong>停驻在 Crux 决策 · {fixture.batchId}</strong>
+          <h3>智能体状态</h3>
+          <strong>停驻在关键决策</strong>
           <p>{fixture.mission.cruxCount} 项广告调整仍需运营者确认；不会自动进入真实写入。</p>
-          <DisabledAction reason={props.blockedReason}>暂停 Mission</DisabledAction>
+          <DisabledAction reason={props.blockedReason}>暂停运营任务</DisabledAction>
         </aside>
       </div>
     </div>
@@ -227,7 +237,7 @@ function DecisionsSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
     return (
       <div className="canonical-decisions-shell" data-canonical-surface="decisions">
         <nav aria-label="决策视图"><b data-active="true">{activeLabel}</b></nav>
-        <EmptyAuthority description="等待原子建议、revision 与审批签名从 Main 返回。" reason={props.blockedReason} title="暂无权威决策对象" />
+        <EmptyAuthority description="等待本机安全进程返回原子建议、版本校验与审批签名。" reason={props.blockedReason} title="暂无权威决策对象" />
       </div>
     );
   }
@@ -301,6 +311,7 @@ function ExecutionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
   return (
     <ExecutionWorkspace
       blockedReason={props.blockedReason}
+      capabilities={props.previewEnabled ? CANONICAL_EXECUTION_PREVIEW_CAPABILITIES : []}
       onInspectBoundary={props.onInspectBoundary}
       previewEnabled={props.previewEnabled}
       storeContext={props.storeContext}
@@ -321,7 +332,7 @@ function MemorySurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
   const records = [
     ['广告事实', fixture.experiment.analysis, `${fixture.primaryAsin} · 真实来源待接入`],
     ['量化推断', fixture.experiment.analysis, `AI 推断示例 · ${fixture.batchId}`],
-    ['Crux 决策', `降低出价 ${fixture.experiment.bidReduction} 并观察订单`, '待人工批准'],
+    ['关键决策', `降低出价 ${fixture.experiment.bidReduction} 并观察订单`, '待人工批准'],
     ['真实动作', `${fixture.execution.searchTerm} · ${fixture.execution.campaign} 等待可见浏览器执行`, '未执行'],
     ['Reload 回读', '等待同对象重新读取', '未生成'],
     ['经营效果', '7 日窗口结束后评估', '未知'],

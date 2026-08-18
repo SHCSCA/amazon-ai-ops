@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   MissionControlCapabilityProjection,
   MissionControlTodayProjection,
+  StoreConnection,
   StoreContextEnvelope,
   StoreRecord,
 } from '@amazon-ai-ops/shared-types';
@@ -15,11 +16,14 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import {
   STORE_MANAGEMENT_CAPABILITY_IDS,
+  NativeCrudSlot,
   StoreManagementPanel,
   buildArchiveStoreInput,
   buildCreateStoreInput,
   buildRestoreStoreInput,
   buildUpdateStoreInput,
+  storeConnectionDisplayLabel,
+  storeConnectionDisplayState,
   summarizeViewCapability,
   validateStoreDraft,
 } from '../components';
@@ -28,6 +32,7 @@ import {
   MISSION_CONTROL_WORKSPACE_REGISTRY,
   missionControlViewIdForIntent,
 } from './registry';
+import { annotateMissionControlSidebarScrollOwner } from '../mission-control-shell';
 
 const context = {
   storeId: 'store-one',
@@ -89,6 +94,15 @@ function capability(
   };
 }
 
+function ordinaryVisibleText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+    .replace(/<[^>]+hidden=""[^>]*>[\s\S]*?<\/[^>]+>/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 describe('Mission Control workspace registry', () => {
   it('registers the exact ten workspaces and every qualified view once', () => {
     expect(MISSION_CONTROL_WORKSPACE_REGISTRY.map((workspace) => workspace.id)).toEqual([
@@ -126,6 +140,49 @@ describe('Mission Control workspace registry', () => {
 });
 
 describe('action-level capability rendering', () => {
+  it('keeps native operation loading and blockers operator-facing while retaining diagnostics', () => {
+    const loading = renderToStaticMarkup(
+      <NativeCrudSlot
+        blockedReason="等待 Main Settings Authority 提供 CRUD 处理器。"
+        capabilityIds={{
+          create: 'settings.store-config.create',
+          update: 'settings.store-config.update',
+          archive: 'settings.store-config.archive',
+        }}
+        createLabel="新建设置"
+        description="管理店铺设置"
+        slotId="settings-crud"
+        title="店铺设置"
+      />,
+    );
+    const blocked = renderToStaticMarkup(
+      <NativeCrudSlot
+        blockedReason="等待 Main Settings Authority 提供 CRUD 处理器。"
+        capabilities={[]}
+        capabilityIds={{
+          create: 'settings.store-config.create',
+          update: 'settings.store-config.update',
+          archive: 'settings.store-config.archive',
+        }}
+        createLabel="新建设置"
+        description="管理店铺设置"
+        slotId="settings-crud"
+        title="店铺设置"
+      />,
+    );
+
+    expect(ordinaryVisibleText(loading)).toContain('正在确认可用操作');
+    expect(ordinaryVisibleText(loading)).toContain('请稍候，确认完成后即可继续。');
+    expect(ordinaryVisibleText(blocked)).toContain('店铺设置操作暂不可用');
+    expect(ordinaryVisibleText(blocked)).toContain('请刷新后重试；仍不可用时查看诊断详情。');
+    expect(ordinaryVisibleText(`${loading}${blocked}`))
+      .not.toMatch(/Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER/i);
+    expect(`${loading}${blocked}`).toContain('诊断详情');
+    expect(`${loading}${blocked}`).toContain('settings.store-config.create');
+    expect(loading).toMatch(/<button[^>]*disabled=""/);
+    expect(blocked).toMatch(/<button[^>]*disabled=""/);
+  });
+
   it('uses a pessimistic badge summary while preserving exact action rows', () => {
     const capabilities = [
       capability('objects/products', 'view', 'LEGACY_ADAPTER'),
@@ -136,7 +193,7 @@ describe('action-level capability rendering', () => {
     expect(summary?.projection?.action).toBe('update');
   });
 
-  it('renders the Mission CRUD shell but fails closed when the explicit preview adapter is absent', () => {
+  it('renders the operator-facing task shell but fails closed when the explicit preview adapter is absent', () => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
         autonomy={{ currentMode: 'manual_approval', manualApprovalAvailable: true, policyAutoAvailable: false }}
@@ -153,8 +210,10 @@ describe('action-level capability rendering', () => {
     expect(markup).toContain('任务中心');
     expect(markup).toContain('仅开发预览');
     expect(markup).toContain('显式内存 adapter');
-    expect(markup).toContain('Mission 队列');
-    expect(markup).toContain('失败关闭');
+    const text = ordinaryVisibleText(markup);
+    expect(text).toContain('运营任务队列');
+    expect(text).not.toMatch(/Mission 队列|DAILY MISSION CONTROL|MISSION CONTROL|Crux/);
+    expect(markup).toContain('不可用');
     expect(markup).not.toContain('MISSION · US-SP-ACOS-001');
     expect(markup).toContain('查看接入边界');
     expect(markup).toContain('task-banner');
@@ -233,6 +292,22 @@ describe('action-level capability rendering', () => {
     expect(markup).not.toContain('data-capability-state="LEGACY_ADAPTER"');
   });
 
+  it('renders the production today surface without internal Mission Control vocabulary', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'PRODUCTION_NATIVE')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+        today={todayProjection}
+      />,
+    );
+    const text = ordinaryVisibleText(markup);
+    expect(text).toContain('今日任务');
+    expect(text).not.toMatch(/Mission 队列|DAILY MISSION CONTROL|MISSION CONTROL|Crux/);
+  });
+
   it('routes Today events to the production-native store event surface and never mounts the old event page', () => {
     const capabilities = [
       capability('today/events', 'view', 'PRODUCTION_NATIVE', 'today.events.view'),
@@ -258,6 +333,49 @@ describe('action-level capability rendering', () => {
     expect(markup).not.toContain('新建产品');
     expect(markup).not.toContain('OLD OPERATION EVENTS PAGE');
     expect(markup).not.toContain('data-legacy-route="operation-events"');
+  });
+
+  it('routes a production-native decision view to the native decision workspace', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[
+          capability('decisions/recommendations', 'view', 'PRODUCTION_NATIVE', 'decisions.recommendations.view'),
+          capability('decisions/recommendations', 'create', 'PRODUCTION_NATIVE', 'decisions.recommendations.create'),
+        ]}
+        intent={{ workspace: 'decisions', subview: 'recommendations' }}
+        legacySlot={<div>OLD DECISION ADAPTER</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('data-canonical-surface="decisions"');
+    expect(markup).toContain('>建议与审批</h1>');
+    expect(markup).toContain('data-action-priority="primary"');
+    expect(markup).not.toContain('OLD DECISION ADAPTER');
+    expect(markup).not.toContain('当前功能未放行');
+  });
+
+  it('mounts the production-native execution evidence surface without the legacy adapter blocker', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[
+          capability('execution/evidence', 'view', 'PRODUCTION_NATIVE', 'execution.evidence.view'),
+        ]}
+        intent={{ workspace: 'execution', subview: 'evidence' }}
+        legacySlot={<div>OLD READBACK ADAPTER</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('data-canonical-view="execution/evidence"');
+    expect(markup.match(/data-action="open-technical-inspector"/g)).toHaveLength(1);
+    expect(markup).not.toContain('data-legacy-route="readback"');
+    expect(markup).not.toContain('OLD READBACK ADAPTER');
+    expect(markup).not.toContain('当前功能未放行');
   });
 
   it('fails Today events closed when any exact native event action is missing', () => {
@@ -298,6 +416,9 @@ describe('action-level capability rendering', () => {
     expect(markup).toContain('当前不是显式开发预览');
     expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
     expect(markup).toContain('workspace-state--blocked');
+    expect(ordinaryVisibleText(markup)).toContain('今日页面已安全暂停，请返回正式入口或刷新后重试。');
+    expect(ordinaryVisibleText(markup))
+      .not.toMatch(/Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER|PROTOTYPE_ONLY/i);
     expect(markup).not.toContain('data-preview-today-projection');
     expect(markup).not.toContain('仅开发预览示例');
     expect(markup).not.toContain('ACTIVE MISSION');
@@ -325,7 +446,7 @@ describe('action-level capability rendering', () => {
     );
 
     expect(preview).toContain('data-preview-today-projection="store-one"');
-    expect(preview).toContain('ACTIVE STORE');
+    expect(preview).toContain('当前店铺');
     expect(preview).toContain('data-mutations-disabled="true"');
     expect(preview).not.toContain('data-production-today-projection');
 
@@ -337,9 +458,9 @@ describe('action-level capability rendering', () => {
 
 describe('prototype-aligned canonical first screens', () => {
   it.each([
-    [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', 'ACTIVE STORE'],
-    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', 'Mission 队列'],
-    [{ workspace: 'missions', subview: 'facts' }, 'missions/facts', 'missions', 'Mission 事实链'],
+    [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', '当前店铺'],
+    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', '运营任务队列'],
+    [{ workspace: 'missions', subview: 'facts' }, 'missions/facts', 'missions', '运营任务事实链'],
     [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', 'AI 建议'],
     [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', '实验台账'],
     [{ workspace: 'execution', subview: 'live' }, 'execution/live', 'execution', 'MISSIONGRANT → SERIAL EXECUTION'],
@@ -379,7 +500,7 @@ describe('prototype-aligned canonical first screens', () => {
     expect(markup).toContain(copy);
     expect(markup).toMatch(/(?:Amazon )?US [/.·] USD/);
     if (surface === 'missions' || surface === 'decisions' || surface === 'experiments' || surface === 'memory' || surface === 'policy') {
-      expect(markup).toContain('内存 adapter');
+      expect(markup).toMatch(/(?:内存 adapter|预览数据)/);
       expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
       expect(markup).toContain('接入边界');
       expect(markup).not.toContain('data-mutations-disabled="true"');
@@ -512,6 +633,67 @@ describe('StoreManagementPanel', () => {
     });
   });
 
+  it('distinguishes saved configuration from a verified live browser session', () => {
+    const configured = {
+      provider: 'lingxing',
+      status: 'ready',
+      accountLabel: 'operator',
+      collectionStoreName: 'Northstar Home',
+    } as StoreConnection;
+    const connected = {
+      ...configured,
+      session: { status: 'ready' },
+    } as StoreConnection;
+
+    expect(storeConnectionDisplayState(configured)).toBe('configured');
+    expect(storeConnectionDisplayLabel(storeConnectionDisplayState(configured))).toBe('已配置，未连接');
+    expect(storeConnectionDisplayState(connected)).toBe('connected');
+    expect(storeConnectionDisplayLabel(storeConnectionDisplayState(connected))).toBe('已连接');
+  });
+
+  it('keeps store errors and settings copy business-safe with raw diagnostics collapsed', () => {
+    const markup = renderToStaticMarkup(
+      <StoreManagementPanel
+        activeStoreId={store.storeId}
+        error="Main StoreContext Profile update failed"
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onUpdate={vi.fn()}
+        stores={[store]}
+        syncWarning="Renderer Authority sync failed"
+      />,
+    );
+    const ordinary = ordinaryVisibleText(markup);
+
+    expect(ordinary).toContain('店铺操作失败，请重试；仍失败时查看诊断详情。');
+    expect(ordinary).toContain('店铺数据同步未完成，请刷新后重试；仍失败时查看诊断详情。');
+    expect(ordinary)
+      .not.toMatch(/Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER/i);
+    expect(markup).toContain('诊断详情');
+    expect(markup).toContain('Main StoreContext Profile update failed');
+    expect(markup).toContain('Renderer Authority sync failed');
+  });
+
+  it('sanitizes packaged runtime and remote-method errors before showing them to operators', () => {
+    const raw = "Error invoking remote method 'stores:connections:remove': StoreCollectionMainRuntimeError: Package UI setup mutations are allowed only before visible login starts";
+    const markup = renderToStaticMarkup(
+      <StoreManagementPanel
+        activeStoreId={store.storeId}
+        error={raw}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onUpdate={vi.fn()}
+        stores={[store]}
+      />,
+    );
+
+    expect(ordinaryVisibleText(markup)).toContain('店铺操作失败，请重试；仍失败时查看诊断详情。');
+    expect(ordinaryVisibleText(markup))
+      .not.toMatch(/Package UI|StoreCollectionMainRuntimeError|remote method/i);
+    expect(markup).toContain('诊断详情');
+    expect(markup).toContain('Package UI setup mutations are allowed only before visible login starts');
+  });
+
   it('renders fixed US/USD identity and capability-bound CRUD without hard delete', () => {
     const archived = {
       ...store,
@@ -548,12 +730,12 @@ describe('StoreManagementPanel', () => {
       'utf8',
     );
     expect(source).toContain('lingxingConnection?.collectionStoreName');
-    expect(source).toContain('aria-label="领星稳定身份只读状态"');
+    expect(source).toContain('aria-label="领星连接验证状态"');
     expect(source).toContain("setConfirmUnbind({ ...lingxingConnection })");
     expect(source).toContain("setConfirmUnbind({ ...amazonAdsConnection })");
     expect(source).toContain('confirmUnbind.collectionStoreName');
     expect(source).toContain('confirmUnbind.externalAccountId');
-    expect(source).toContain('待首次新鲜登录识别');
+    expect(source).toContain('待启动可见连接验证');
     expect(source).not.toMatch(/onChange=.*externalAccountId/);
   });
 });
@@ -571,6 +753,23 @@ describe('Mission Control namespaced visual contract', () => {
     expect(stylesheet).toMatch(/\.mission-control-shell \.app-sidebar \.nav-item-index\s*\{[^}]*position:\s*static/s);
     expect(stylesheet).toMatch(/\.nav-item-index svg\s*\{[^}]*width:\s*1[89]px/s);
     expect(stylesheet).toContain('.mission-control-shell .app-sidebar .nav-group-governance');
+  });
+
+  it('labels the compact main-navigation scroller as an explicit accessible scroll owner', () => {
+    const attributes = new Map<string, string>();
+    const scrollOwner = {
+      setAttribute: vi.fn((name: string, value: string) => attributes.set(name, value)),
+    };
+    const root = {
+      querySelector: vi.fn(() => scrollOwner),
+    };
+
+    annotateMissionControlSidebarScrollOwner(root as unknown as ParentNode);
+
+    expect(root.querySelector).toHaveBeenCalledWith('.app-sidebar-scroll');
+    expect(attributes.get('data-scroll-owner')).toBe('main-navigation');
+    expect(attributes.get('role')).toBe('region');
+    expect(attributes.get('aria-label')).toBe('主业务导航滚动区');
   });
 
   it('keeps the new surface light, namespaced, and free of gradient or purple styling', () => {

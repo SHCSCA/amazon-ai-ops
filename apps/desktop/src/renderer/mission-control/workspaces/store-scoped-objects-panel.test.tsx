@@ -92,15 +92,26 @@ describe('StoreScopedObjectsPanel', () => {
     expect(markup).toContain('产品与成本');
     expect(markup).toContain('运营事件');
     expect(markup).toContain('新建产品');
-    expect(markup).toContain('store-one · US / USD');
+    expect(markup).toContain('data-action-priority="primary"');
+    expect(markup).toContain('当前店铺 · 美国站 / USD');
+    expect(markup).not.toContain('>store-one · US / USD<');
     expect(markup).toContain('查询 ASIN / 标题 / SKU');
     expect(markup).not.toContain('PRODUCT DIRECTORY ADAPTER');
   });
 
   it('fails closed when there is no authoritative store context', () => {
     const markup = renderToStaticMarkup(<StoreScopedObjectsPanel storeContext={null} />);
-    expect(markup).toContain('尚无权威 StoreContext');
+    expect(markup).toContain('尚未确认当前店铺');
+    expect(markup).toContain('请先选择并确认店铺，确认后才会开放该店铺的产品与运营事件读写。');
+    expect(markup).not.toMatch(/Main|StoreContext/);
     expect(markup).not.toContain('新建产品');
+  });
+
+  it('explains percentage inputs without exposing the internal save process', () => {
+    const source = readFileSync(new URL('./store-scoped-objects-panel.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('界面按百分比填写，保存时自动换算，无需手动输入小数');
+    expect(source).not.toContain('Main 保存为 0–1 比率');
   });
 
   it('builds USD product writes and keeps the displayed revision as the CAS precondition', () => {

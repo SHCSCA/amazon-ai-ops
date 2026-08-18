@@ -126,7 +126,25 @@ function initialDraft(store?: StoreRecord | null): StoreDraft {
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
-  return '操作未完成，请检查 Main 返回的详细错误。';
+  return '操作未完成，请重试；仍失败时查看诊断详情。';
+}
+
+const INTERNAL_STORE_TERM = /(?:\b(?:Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER|PROTOTYPE_ONLY|UNKNOWN|IPC|electronAPI)\b|Package UI|Error invoking remote method|RuntimeError|remote method)/i;
+
+function operatorStoreManagementMessage(value: string, fallback: string): string {
+  const firstLine = value.trim().split(/\r?\n/)[0];
+  if (!firstLine || INTERNAL_STORE_TERM.test(firstLine)) return fallback;
+  return firstLine.slice(0, 240);
+}
+
+function StoreManagementDiagnostic({ raw, visible }: { raw: string; visible: string }) {
+  if (raw === visible) return null;
+  return (
+    <details>
+      <summary>诊断详情</summary>
+      <code>{raw}</code>
+    </details>
+  );
 }
 
 function StoreStatus({ store }: { store: StoreRecord }) {
@@ -136,6 +154,42 @@ function StoreStatus({ store }: { store: StoreRecord }) {
       ? '已停用'
       : '运行中';
   return <span className="mission-control-store-status" data-store-status={store.status}>{label}</span>;
+}
+
+export type StoreConnectionDisplayState =
+  | 'missing'
+  | 'configured'
+  | 'connecting'
+  | 'connected'
+  | 'attention'
+  | 'blocked';
+
+export function storeConnectionDisplayState(
+  connection?: StoreConnection | null,
+): StoreConnectionDisplayState {
+  if (!connection) return 'missing';
+  if (connection.status === 'checking' || connection.session?.status === 'checking') return 'connecting';
+  if (connection.status === 'blocked' || ['blocked', 'expired'].includes(connection.session?.status ?? '')) {
+    return 'blocked';
+  }
+  if (connection.status === 'attention_required') return 'attention';
+  if (connection.status === 'ready' && connection.session?.status === 'ready') return 'connected';
+  if (
+    connection.accountLabel
+    || connection.collectionStoreName
+    || connection.externalAccountId
+    || connection.status === 'ready'
+  ) return 'configured';
+  return 'missing';
+}
+
+export function storeConnectionDisplayLabel(state: StoreConnectionDisplayState): string {
+  if (state === 'connected') return '已连接';
+  if (state === 'configured') return '已配置，未连接';
+  if (state === 'connecting') return '连接中';
+  if (state === 'attention') return '需要确认';
+  if (state === 'blocked') return '连接失败';
+  return '未连接';
 }
 
 export function StoreManagementPanel({
@@ -163,10 +217,24 @@ export function StoreManagementPanel({
     return left.displayName.localeCompare(right.displayName, 'zh-CN');
   }), [stores]);
   const busy = pending !== null || connectionPending !== null;
-  const visibleError = runtimeError ?? externalError ?? null;
+  const rawVisibleError = runtimeError ?? externalError ?? null;
+  const visibleError = rawVisibleError
+    ? operatorStoreManagementMessage(
+      rawVisibleError,
+      '店铺操作失败，请重试；仍失败时查看诊断详情。',
+    )
+    : null;
+  const visibleSyncWarning = syncWarning
+    ? operatorStoreManagementMessage(
+      syncWarning,
+      '店铺数据同步未完成，请刷新后重试；仍失败时查看诊断详情。',
+    )
+    : null;
   const activeStore = rows.find((store) => String(store.storeId) === String(activeStoreId ?? '')) ?? null;
   const lingxingConnection = connections.find((connection) => connection.provider === 'lingxing');
   const amazonAdsConnection = connections.find((connection) => connection.provider === 'amazon_ads');
+  const lingxingDisplayState = storeConnectionDisplayState(lingxingConnection);
+  const amazonAdsDisplayState = storeConnectionDisplayState(amazonAdsConnection);
   const connectionUnbindFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
     dismissDisabled: connectionPending !== null,
     onDismiss: () => setConfirmUnbind(null),
@@ -231,13 +299,13 @@ export function StoreManagementPanel({
   const columns: Array<PriorityDataTableColumn<StoreRecord>> = [
     {
       key: 'store',
-      header: '店铺数据域',
+      header: '店铺',
       priority: 'anchor',
       width: '30%',
       cell: (store) => (
         <div className="mission-control-store-identity">
           <span className="mission-control-store-identity__icon"><Storefront aria-hidden="true" size={18} /></span>
-          <span><strong>{store.displayName}</strong><small>{String(store.storeId)}</small></span>
+          <span><strong>{store.displayName}</strong><small>Amazon 美国站</small></span>
         </div>
       ),
     },
@@ -250,10 +318,10 @@ export function StoreManagementPanel({
     },
     {
       key: 'profile',
-      header: '独立 Profile',
+      header: '浏览器隔离',
       priority: 'supporting',
       width: '20%',
-      cell: (store) => <code className="mission-control-store-profile">{String(store.browserProfileId)}</code>,
+      cell: () => <span className="mission-control-store-profile">已启用</span>,
     },
     {
       key: 'status',
@@ -317,15 +385,15 @@ export function StoreManagementPanel({
   return (
     <div className="mission-control-store-management" data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.view}>
       <WorkbenchPanel
-        description="映射只属于当前 Store + Amazon US；提交后采用 Main 回传值，后台再同步权威视图。解绑映射不会清除本机保存的密码。"
+        description="这里展示当前店铺的真实连接结果；仅填写账号或店铺名称不会被标记为已连接。解绑不会清除本机保存的密码。"
         status={<span>{activeStore ? `${activeStore.displayName} · US` : '等待当前店铺'}</span>}
-        title="当前店铺连接映射"
+        title="当前店铺连接状态"
       >
         {!activeStore ? (
           <WorkspaceState
             description="先从左侧“店铺与站点”显式选择一个运行中的美国站店铺。"
             kind="blocked"
-            title="尚无当前店铺 authority"
+            title="尚未选择当前店铺"
           />
         ) : (
           <div className="store-connection-mapping-grid">
@@ -333,8 +401,8 @@ export function StoreManagementPanel({
               <header>
                 <div>
                   <strong id="store-lingxing-mapping-title">领星 ERP</strong>
-                  <span data-connection-state={lingxingConnection?.status || 'missing'}>
-                    {lingxingConnection ? '已建立映射' : '尚未绑定'}
+                  <span data-connection-state={lingxingDisplayState}>
+                    {storeConnectionDisplayLabel(lingxingDisplayState)}
                   </span>
                 </div>
                 <small>连接修改与可见浏览器启动统一在上方“当前店铺外部连接”工作台完成。</small>
@@ -344,11 +412,13 @@ export function StoreManagementPanel({
                 <div><dt>下载中心店铺</dt><dd>{lingxingConnection?.collectionStoreName || '未配置'}</dd></div>
               </dl>
               <div className="store-connection-stable-identity" role="status" aria-live="polite">
-                <span>稳定身份（Main 首次新鲜登录识别）</span>
-                <output aria-label="领星稳定身份只读状态">
-                  {lingxingConnection?.externalAccountId
-                    ? `已识别：${lingxingConnection.externalAccountId}`
-                    : '待首次新鲜登录识别'}
+                <span>连接验证</span>
+                <output aria-label="领星连接验证状态">
+                  {lingxingDisplayState === 'connected'
+                    ? '当前会话已验证'
+                    : lingxingConnection?.externalAccountId
+                      ? '账户已识别，等待重新连接'
+                      : '待启动可见连接验证'}
                 </output>
               </div>
               <div className="store-connection-mapping__actions">
@@ -369,18 +439,20 @@ export function StoreManagementPanel({
               <header>
                 <div>
                   <strong id="store-amazon-ads-mapping-title">领星广告账户（自动识别）</strong>
-                  <span data-connection-state={amazonAdsConnection?.status || 'missing'}>
-                    {amazonAdsConnection ? '已建立映射' : '尚未绑定'}
+                  <span data-connection-state={amazonAdsDisplayState}>
+                    {storeConnectionDisplayLabel(amazonAdsDisplayState)}
                   </span>
                 </div>
-                <small>不要求运营人员查找或填写内部编号；Main 只接受受信页面证据与确认动作。</small>
+                <small>不要求运营人员查找或填写内部编号；系统只接受受信页面证据与当前店铺确认。</small>
               </header>
               <div className="store-connection-stable-identity" role="status" aria-live="polite">
-                <span>可信身份（只读）</span>
-                <output aria-label="领星广告账户自动识别身份只读状态">
-                  {amazonAdsConnection?.externalAccountId
-                    ? `已验证：${amazonAdsConnection.accountLabel || amazonAdsConnection.externalAccountId}`
-                    : '尚未确认；真实广告执行保持阻断'}
+                <span>连接验证</span>
+                <output aria-label="领星广告账户连接验证状态">
+                  {amazonAdsDisplayState === 'connected'
+                    ? `当前会话已验证${amazonAdsConnection?.accountLabel ? `：${amazonAdsConnection.accountLabel}` : ''}`
+                    : amazonAdsConnection?.externalAccountId
+                      ? '广告账户已识别，等待重新连接'
+                      : '尚未确认；真实广告执行保持阻断'}
                 </output>
               </div>
               <div className="store-connection-mapping__actions">
@@ -399,23 +471,33 @@ export function StoreManagementPanel({
           </div>
         )}
         {connectionFeedback && <div className="store-connection-feedback" role="status">{connectionFeedback}</div>}
-        {syncWarning && <div className="store-post-commit-sync-warning" role="status">{syncWarning}</div>}
+        {visibleSyncWarning && (
+          <div className="store-post-commit-sync-warning" role="status">
+            <span>{visibleSyncWarning}</span>
+            <StoreManagementDiagnostic raw={syncWarning!} visible={visibleSyncWarning} />
+          </div>
+        )}
       </WorkbenchPanel>
 
       <WorkbenchPanel
-        description="第一版固定 Amazon US / USD。每个店铺使用独立数据域、浏览器 Profile 与会话代次。"
+        description="第一版固定 Amazon US / USD。每个店铺的数据和浏览器会话会自动隔离。"
         status={<span>{rows.length} 个店铺</span>}
-        title="店铺数据域"
+        title="店铺列表"
       >
-        {visibleError && <div className="mission-control-store-error" role="alert">{visibleError}</div>}
+        {visibleError && rawVisibleError && (
+          <div className="mission-control-store-error" role="alert">
+            <span>{visibleError}</span>
+            <StoreManagementDiagnostic raw={rawVisibleError} visible={visibleError} />
+          </div>
+        )}
         <PriorityDataTable
-          caption="可配置美国站店铺数据域"
+          caption="可配置美国站店铺"
           columns={columns}
           emptyState={(
             <WorkspaceState
-              description="创建第一个美国站店铺后，Main 会分配逻辑 storeId 与独立浏览器 Profile。"
+              description="创建第一个美国站店铺后，系统会自动隔离其数据和浏览器会话。"
               kind="empty"
-              title="还没有店铺数据域"
+              title="还没有店铺"
             />
           )}
           getRowKey={(store) => store.storeId}
@@ -434,14 +516,13 @@ export function StoreManagementPanel({
           >
             <header>
               <div>
-                <span>STORE AUTHORITY</span>
+                <span>店铺配置</span>
                 <h2 id="mission-control-store-editor-title">编辑店铺</h2>
-                <p id="mission-control-store-editor-description">站点和币种固定为 US / USD，数据将由 Main 按店铺隔离。</p>
+                <p id="mission-control-store-editor-description">站点和币种固定为 US / USD，系统会自动隔离各店铺数据。</p>
               </div>
               <button aria-label="关闭店铺编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
             </header>
             <div className="mission-control-store-form">
-              <label><span>店铺 ID</span><input readOnly value={String(editor.store.storeId)} /></label>
               <label>
                 <span>店铺名称</span>
                 <input
@@ -496,9 +577,9 @@ export function StoreManagementPanel({
           <section aria-labelledby="mission-control-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog">
             <header>
               <div>
-                <span>ARCHIVE STORE</span>
+                <span>归档店铺</span>
                 <h2 id="mission-control-archive-title">归档 {confirmArchive.displayName}？</h2>
-                <p>归档是可恢复操作，不会硬删除店铺、因果事件或执行证据。Main 会在变更前再次校验状态。</p>
+                <p>归档是可恢复操作，不会硬删除店铺、因果事件或执行证据。系统会在变更前再次校验状态。</p>
               </div>
             </header>
             <footer>
@@ -540,22 +621,22 @@ export function StoreManagementPanel({
           >
             <header>
               <div>
-                <span>REMOVE STORE MAPPING</span>
+                <span>解除店铺连接</span>
                 <h2 id="store-connection-unbind-title">
                   解绑{confirmUnbind.provider === 'lingxing' ? '领星下载中心店铺映射' : '领星广告账户'}？
                 </h2>
                 <p id="store-connection-unbind-description">
-                  Main 会使该 provider 会话失效。解绑不等于清除本机保存的领星密码。
+                  系统会使该服务的当前会话失效。解绑不等于清除本机保存的领星密码。
                 </p>
                 <dl className="store-connection-unbind-facts">
                   <div><dt>账号</dt><dd>{confirmUnbind.accountLabel || '未记录'}</dd></div>
                   {confirmUnbind.provider === 'lingxing' ? (
                     <>
                       <div><dt>下载中心店铺名称</dt><dd>{confirmUnbind.collectionStoreName || '未记录'}</dd></div>
-                      <div><dt>稳定身份</dt><dd>{confirmUnbind.externalAccountId || '待首次新鲜登录识别'}</dd></div>
+                      <div><dt>连接验证</dt><dd>{confirmUnbind.externalAccountId ? '已识别并受保护' : '尚未验证'}</dd></div>
                     </>
                   ) : (
-                    <div><dt>自动识别身份</dt><dd>{confirmUnbind.externalAccountId || '未记录'}</dd></div>
+                    <div><dt>连接验证</dt><dd>{confirmUnbind.externalAccountId ? '已识别并受保护' : '尚未验证'}</dd></div>
                   )}
                 </dl>
               </div>

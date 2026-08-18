@@ -32,7 +32,9 @@ import {
   assertCausalEventBelongsToContext,
   assertExperimentBelongsToContext,
   assertMissionAuthorityContext,
+  assertMissionBelongsToContext,
   readExperimentDomainWindowApi,
+  readMissionDomainWindowApi,
   type AppendExperimentObservationInput,
   type ExperimentDomainRendererApi,
 } from './mission-domain-window-api';
@@ -42,7 +44,7 @@ const PAGE_SIZE = 6;
 const OPERATOR = 'desktop-operator';
 
 const STATUS_LABELS: Record<ExperimentStatus, string> = {
-  draft: '草稿',
+  draft: '待启动',
   running: '观察中',
   paused: '已暂停',
   completed: '已完成',
@@ -63,6 +65,8 @@ type ExperimentDraft = {
   primaryMetric: string;
   guardrailMetrics: string;
   guardrailCriteria: string;
+  guardrailComparator?: '<' | '<=' | '>' | '>=';
+  guardrailThreshold?: string;
   productId: string;
   adEntityId: string;
   baselineJson: string;
@@ -73,6 +77,59 @@ type ExperimentDraft = {
 };
 
 type ExperimentEditorState = { record: ExperimentRecord | null; draft: ExperimentDraft };
+type SelectorOption = { value: string; label: string };
+type ExperimentMissionOptionSource = { id: string; title: string; status: string };
+type ExperimentProductOptionSource = { id: number | string; asin: string; title?: string; storeId?: string | number };
+type ExperimentAdObjectOptionSource = {
+  kind: 'campaign' | 'ad_group' | 'target' | 'search_term';
+  entityId?: string;
+  resolved?: boolean;
+  nonExecutable?: boolean;
+  name: string;
+  campaignName?: string;
+  adGroupName?: string;
+  storeId?: string | number;
+};
+type ExperimentSelectorOptions = {
+  missions: SelectorOption[];
+  products: SelectorOption[];
+  adObjects: SelectorOption[];
+  loading: boolean;
+};
+
+const PRIMARY_METRIC_OPTIONS: SelectorOption[] = [
+  { value: 'ACOS', label: '广告投入产出比（ACOS）' },
+  { value: 'TACOS', label: '整体广告销售占比（TACOS）' },
+  { value: 'CVR', label: '转化率（CVR）' },
+  { value: '广告订单', label: '广告订单' },
+  { value: '花费', label: '广告花费' },
+];
+
+export function buildExperimentSelectorOptions(
+  missions: readonly ExperimentMissionOptionSource[],
+  products: readonly ExperimentProductOptionSource[],
+  adObjects: readonly ExperimentAdObjectOptionSource[],
+): Omit<ExperimentSelectorOptions, 'loading'> {
+  return {
+    missions: missions
+      .filter((mission) => mission.status !== 'archived')
+      .map((mission) => ({ value: mission.id, label: mission.title })),
+    products: products.map((product) => ({
+      value: String(product.id),
+      label: `${product.title?.trim() || '未命名产品'} · ${product.asin}`,
+    })),
+    adObjects: adObjects
+      .filter((item) => item.kind === 'target' && item.entityId && item.resolved && !item.nonExecutable)
+      .map((item) => ({
+        value: item.entityId!,
+        label: [
+          item.campaignName?.trim() || '未命名活动',
+          item.adGroupName?.trim() || '未命名广告组',
+          item.name.trim() || '未命名关键词/投放',
+        ].join(' > '),
+      })),
+  };
+}
 
 type ObservationDraft = {
   observationType: ExperimentObservationType;
@@ -94,7 +151,15 @@ export type ExperimentsWorkspaceProps = {
 function message(error: unknown): string {
   return error instanceof Error && error.message.trim()
     ? error.message
-    : 'Experiment 操作未完成，请刷新当前店铺后重试。';
+    : '经营实验操作未完成，请刷新当前店铺后重试。';
+}
+
+function operatorFacingBlocker(reason: string | null | undefined, subject: string): string {
+  const value = reason?.trim();
+  if (!value || /Mission|Experiment|Decision|Authority|Renderer|Main|StoreContext|UNKNOWN|\brevision\b|\bdraft\b|set_keyword_bid|PRODUCTION_NATIVE|PROTOTYPE_ONLY|\bBLOCKED\b/.test(value)) {
+    return `${subject}当前不可用。请确认当前店铺连接与本机服务后重试。`;
+  }
+  return value;
 }
 
 function list(value: string): string[] {
@@ -123,14 +188,29 @@ function timestamp(date: string): string {
   return `${date}T07:00:00.000Z`;
 }
 
-function draftFor(context: StoreContextEnvelope, record?: ExperimentRecord | null): ExperimentDraft {
+function structuredGuardrailDraft(record?: ExperimentRecord | null): Pick<ExperimentDraft, 'guardrailMetrics' | 'guardrailCriteria' | 'guardrailComparator' | 'guardrailThreshold'> {
+  const metric = record?.guardrailMetrics[0] ?? '广告订单';
+  const criterion = record?.guardrailCriteria[0] ?? '广告订单 < 15%';
+  const symbolic = criterion.match(/(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*%?\s*$/);
+  const written = criterion.match(/(不低于|不高于|高于|低于)[^\d-]*(-?\d+(?:\.\d+)?)\s*%?\s*$/);
+  const comparator = symbolic?.[1]
+    ?? (written?.[1] === '不低于' ? '>=' : written?.[1] === '不高于' ? '<=' : written?.[1] === '高于' ? '>' : written?.[1] === '低于' ? '<' : '<');
+  const threshold = symbolic?.[2] ?? written?.[2] ?? '15';
+  return {
+    guardrailMetrics: metric,
+    guardrailCriteria: criterion,
+    guardrailComparator: comparator as ExperimentDraft['guardrailComparator'],
+    guardrailThreshold: threshold,
+  };
+}
+
+export function buildExperimentDraft(context: StoreContextEnvelope, record?: ExperimentRecord | null): ExperimentDraft {
   return {
     missionId: record?.missionId ?? '',
     name: record?.name ?? '',
     hypothesis: record?.hypothesis ?? '',
     primaryMetric: record?.primaryMetric ?? 'ACOS',
-    guardrailMetrics: record?.guardrailMetrics.join('；') ?? '广告订单；CVR；花费',
-    guardrailCriteria: record?.guardrailCriteria.join('；') ?? '广告订单下降 < 15%；CVR 不低于基线 90%',
+    ...structuredGuardrailDraft(record),
     productId: record?.productId ?? '',
     adEntityId: record?.adEntityId ?? '',
     baselineJson: prettyJson(record?.baseline ?? { bidUsd: 1.2, windowDays: 7 }),
@@ -142,8 +222,11 @@ function draftFor(context: StoreContextEnvelope, record?: ExperimentRecord | nul
 }
 
 export function buildCreateExperimentInput(draft: ExperimentDraft, id: string): CreateExperimentInput {
-  const guardrailMetrics = list(draft.guardrailMetrics);
-  const guardrailCriteria = list(draft.guardrailCriteria);
+  const structuredGuardrail = Boolean(draft.guardrailComparator && draft.guardrailThreshold?.trim());
+  const guardrailMetrics = structuredGuardrail ? [draft.guardrailMetrics.trim()] : list(draft.guardrailMetrics);
+  const guardrailCriteria = structuredGuardrail
+    ? [`${draft.guardrailMetrics.trim()} ${draft.guardrailComparator} ${draft.guardrailThreshold!.trim()}%`]
+    : list(draft.guardrailCriteria);
   if (!draft.missionId.trim() || !draft.name.trim() || !draft.hypothesis.trim()) {
     throw new Error('请绑定 Mission，并填写实验名称与可证伪假设。');
   }
@@ -213,15 +296,31 @@ export function preferredExperimentId(records: readonly Pick<ExperimentRecord, '
     ?? '';
 }
 
+function SearchableOptionSelect({ disabled, label, options, required, value, onChange }: {
+  disabled?: boolean;
+  label: string;
+  options: readonly SelectorOption[];
+  required?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const normalized = query.trim().toLocaleLowerCase('zh-CN');
+  const filtered = options.filter((option) => !normalized || option.label.toLocaleLowerCase('zh-CN').includes(normalized));
+  return <label className="experiment-searchable-select"><span>{label}{required ? ' *' : ''}</span><input aria-label={`搜索${label}`} disabled={disabled} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索${label}`} type="search" value={query} /><select aria-label={label} disabled={disabled || !options.length} onChange={(event) => onChange(event.target.value)} value={value}><option value="">{options.length ? `请选择${label}` : `当前店铺没有可选${label}`}</option>{filtered.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+}
+
 function ExperimentEditor({
   busy,
   editor,
+  options,
   onCancel,
   onChange,
   onSave,
 }: {
   busy: boolean;
   editor: ExperimentEditorState;
+  options: ExperimentSelectorOptions;
   onCancel: () => void;
   onChange: (draft: ExperimentDraft) => void;
   onSave: () => void;
@@ -233,25 +332,23 @@ function ExperimentEditor({
     <div className="mission-control-dialog-backdrop">
       <section aria-labelledby="experiment-editor-title" aria-modal="true" className="mission-control-dialog experiment-editor" role="dialog">
         <header>
-          <div><span>CAUSAL EXPERIMENT · AMAZON US / USD</span><h2 id="experiment-editor-title">{editor.record ? '编辑 Experiment' : '新建 Experiment'}</h2><p>一次实验只允许一个主要变量，并使用 revision 防止覆盖并发修改。</p></div>
+          <div><span>经营实验 · Amazon 美国站 / USD</span><h2 id="experiment-editor-title">{editor.record ? '编辑经营实验' : '新建经营实验'}</h2><p>一次实验只允许一个主要变量；运营任务和对象只来自当前店铺。</p></div>
           <button aria-label="关闭实验编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button>
         </header>
         <div className="experiment-form">
-          <label><span>Mission ID *</span><input disabled={Boolean(editor.record)} onChange={(event) => change('missionId', event.target.value)} placeholder="MISSION-..." value={editor.draft.missionId} /></label>
-          <label><span>主指标 *</span><input onChange={(event) => change('primaryMetric', event.target.value)} placeholder="ACOS" value={editor.draft.primaryMetric} /></label>
+          <SearchableOptionSelect disabled={Boolean(editor.record) || options.loading} label="运营任务" onChange={(value) => change('missionId', value)} options={options.missions} required value={editor.draft.missionId} />
+          <SearchableOptionSelect disabled={options.loading} label="主指标" onChange={(value) => change('primaryMetric', value)} options={PRIMARY_METRIC_OPTIONS} required value={editor.draft.primaryMetric} />
           <label className="experiment-form__wide"><span>实验名称 *</span><input autoFocus onChange={(event) => change('name', event.target.value)} placeholder="例如：核心词竞价 -12% 小步实验" value={editor.draft.name} /></label>
           <label className="experiment-form__wide"><span>可证伪假设 *</span><textarea onChange={(event) => change('hypothesis', event.target.value)} rows={3} value={editor.draft.hypothesis} /></label>
-          <label><span>产品 ID</span><input onChange={(event) => change('productId', event.target.value)} placeholder="ASIN / SKU" value={editor.draft.productId} /></label>
-          <label><span>广告实体 ID</span><input onChange={(event) => change('adEntityId', event.target.value)} placeholder="Keyword ID" value={editor.draft.adEntityId} /></label>
+          <SearchableOptionSelect disabled={options.loading} label="产品" onChange={(value) => change('productId', value)} options={options.products} value={editor.draft.productId} />
+          <SearchableOptionSelect disabled={options.loading} label="广告对象（活动 > 广告组 > 关键词/投放）" onChange={(value) => change('adEntityId', value)} options={options.adObjects} value={editor.draft.adEntityId} />
           <label><span>开始日期 *</span><input onChange={(event) => change('observationStartsOn', event.target.value)} type="date" value={editor.draft.observationStartsOn} /></label>
           <label><span>结束日期 *</span><input onChange={(event) => change('observationEndsOn', event.target.value)} type="date" value={editor.draft.observationEndsOn} /></label>
-          <label className="experiment-form__wide"><span>守护指标 *</span><input onChange={(event) => change('guardrailMetrics', event.target.value)} value={editor.draft.guardrailMetrics} /></label>
-          <label className="experiment-form__wide"><span>守护标准 *</span><input onChange={(event) => change('guardrailCriteria', event.target.value)} value={editor.draft.guardrailCriteria} /></label>
-          <label><span>基线 JSON *</span><textarea className="experiment-json" onChange={(event) => change('baselineJson', event.target.value)} rows={6} value={editor.draft.baselineJson} /></label>
-          <label><span>唯一变量 JSON *</span><textarea className="experiment-json" onChange={(event) => change('variantJson', event.target.value)} rows={6} value={editor.draft.variantJson} /></label>
+          <fieldset className="experiment-form__wide experiment-guardrail-builder"><legend>守护条件 *</legend><label><span>指标</span><select onChange={(event) => change('guardrailMetrics', event.target.value)} value={editor.draft.guardrailMetrics}>{PRIMARY_METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><span>比较符</span><select onChange={(event) => change('guardrailComparator', event.target.value as ExperimentDraft['guardrailComparator'])} value={editor.draft.guardrailComparator}><option value="<">小于</option><option value="<=">小于或等于</option><option value=">">大于</option><option value=">=">大于或等于</option></select></label><label><span>阈值</span><div className="experiment-threshold"><input min="0" onChange={(event) => change('guardrailThreshold', event.target.value)} step="0.1" type="number" value={editor.draft.guardrailThreshold} /><b>%</b></div></label></fieldset>
+          <details className="experiment-form__wide experiment-diagnostics"><summary>诊断详情</summary><div className="experiment-diagnostic-grid"><label><span>基线结构</span><textarea className="experiment-json" onChange={(event) => change('baselineJson', event.target.value)} rows={6} value={editor.draft.baselineJson} /></label><label><span>唯一变量结构</span><textarea className="experiment-json" onChange={(event) => change('variantJson', event.target.value)} rows={6} value={editor.draft.variantJson} /></label></div></details>
           {editor.record && <label className="experiment-form__wide"><span>实验结论</span><textarea onChange={(event) => change('conclusion', event.target.value)} rows={3} value={editor.draft.conclusion} /></label>}
         </div>
-        <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中...' : '保存 Experiment'}</button></footer>
+        <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || options.loading || !editor.draft.missionId || !editor.draft.primaryMetric} onClick={onSave} type="button">{busy ? '保存中...' : '保存经营实验'}</button></footer>
       </section>
     </div>
   );
@@ -276,11 +373,11 @@ function ObservationEditor({
   return (
     <div className="mission-control-dialog-backdrop">
       <section aria-labelledby="observation-editor-title" aria-modal="true" className="mission-control-dialog experiment-observation-editor" role="dialog">
-        <header><div><span>APPEND-ONLY RECORD</span><h2 id="observation-editor-title">追加实验观察</h2><p>既有记录不可覆盖；错误内容必须追加 correction 并指向原记录。</p></div><button aria-label="关闭观察编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button></header>
+        <header><div><span>只追加的观察记录</span><h2 id="observation-editor-title">追加实验观察</h2><p>既有记录不可覆盖；错误内容必须追加修正并指向原记录。</p></div><button aria-label="关闭观察编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button></header>
         <div className="experiment-form">
           <label><span>记录类型 *</span><select onChange={(event) => change('observationType', event.target.value as ExperimentObservationType)} value={draft.observationType}>{(Object.keys(OBSERVATION_LABELS) as ExperimentObservationType[]).map((type) => <option key={type} value={type}>{OBSERVATION_LABELS[type]}</option>)}</select></label>
           <label><span>观察时间 *</span><input onChange={(event) => change('observedAt', event.target.value)} type="datetime-local" value={draft.observedAt} /></label>
-          {draft.observationType === 'correction' && <label className="experiment-form__wide"><span>被修正记录 *</span><select onChange={(event) => change('correctsRecordId', event.target.value)} value={draft.correctsRecordId}><option value="">请选择原记录</option>{correctionTargets.map((record) => <option key={record.id} value={record.id}>{record.id} · {record.title}</option>)}</select></label>}
+          {draft.observationType === 'correction' && <label className="experiment-form__wide"><span>被修正记录 *</span><select onChange={(event) => change('correctsRecordId', event.target.value)} value={draft.correctsRecordId}><option value="">请选择原记录</option>{correctionTargets.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>}
           <label className="experiment-form__wide"><span>标题 *</span><input autoFocus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
           <label className="experiment-form__wide"><span>观察内容 *</span><textarea onChange={(event) => change('observation', event.target.value)} rows={5} value={draft.observation} /></label>
         </div>
@@ -299,6 +396,7 @@ export function ExperimentsWorkspace({
   storeContext,
 }: ExperimentsWorkspaceProps) {
   const api = useMemo(() => apiOverride ?? readExperimentDomainWindowApi(), [apiOverride]);
+  const missionApi = useMemo(() => readMissionDomainWindowApi(), []);
   const expectedCapability = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
   const viewReady = capabilityReady(capabilities, 'experiments.experiment.view', previewMode);
   const authorityKey = storeContext ? missionControlContextKey(storeContext) : 'missing';
@@ -324,6 +422,7 @@ export function ExperimentsWorkspace({
   const [archiveConfirm, setArchiveConfirm] = useState<ExperimentRecord | null>(null);
   const [completeConfirm, setCompleteConfirm] = useState<ExperimentRecord | null>(null);
   const [completion, setCompletion] = useState('');
+  const [selectorOptions, setSelectorOptions] = useState<ExperimentSelectorOptions>({ missions: [], products: [], adObjects: [], loading: false });
 
   currentAuthorityKey.current = authorityKey;
   const selected = experiments.find((item) => item.id === selectedId) ?? null;
@@ -338,12 +437,12 @@ export function ExperimentsWorkspace({
       setCausalEvents([]);
       setSelectedId('');
       setPhase('blocked');
-      setError(!storeContext ? 'StoreContext 尚未建立，Experiment 已失败关闭。' : blockedReason);
+      setError(!storeContext ? '尚未选择店铺，经营实验已失败关闭。' : blockedReason);
       return;
     }
     if (!api) {
       setPhase('blocked');
-      setError('Experiment production window API 未接入；Renderer 不会回退到示例数据。');
+      setError('经营实验服务未接入；界面不会回退到示例数据。');
       return;
     }
     setPhase('loading');
@@ -381,6 +480,37 @@ export function ExperimentsWorkspace({
     // Authority changes intentionally reset all local selection and dialogs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, authorityKey, viewReady]);
+
+  useEffect(() => {
+    if (!storeContext) { setSelectorOptions({ missions: [], products: [], adObjects: [], loading: false }); return; }
+    const capturedKey = authorityKey;
+    setSelectorOptions({ missions: [], products: [], adObjects: [], loading: true });
+    const surface = (window as any).electronAPI as {
+      listStoreProducts?: (context: StoreContextEnvelope, input: { includeArchived: boolean }) => Promise<ExperimentProductOptionSource[]>;
+      listStoreAdObjects?: (context: StoreContextEnvelope, input: Record<string, never>) => Promise<ExperimentAdObjectOptionSource[]>;
+    } | undefined;
+    void Promise.all([
+      missionApi?.listMissions(storeContext, { includeArchived: false }) ?? Promise.resolve([]),
+      surface?.listStoreProducts?.(storeContext, { includeArchived: false }) ?? Promise.resolve([]),
+      surface?.listStoreAdObjects?.(storeContext, {}) ?? Promise.resolve([]),
+    ]).then(([missionRows, productRows, adObjectRows]) => {
+      if (currentAuthorityKey.current !== capturedKey) return;
+      missionRows.forEach((mission) => assertMissionBelongsToContext(mission, storeContext));
+      if (productRows.some((product) => String(product.storeId) !== String(storeContext.storeId))
+        || adObjectRows.some((item) => String(item.storeId) !== String(storeContext.storeId))) {
+        throw new Error('对象选择器返回了不属于当前店铺的记录。');
+      }
+      setSelectorOptions({
+        ...buildExperimentSelectorOptions(missionRows, productRows, adObjectRows),
+        loading: false,
+      });
+    }).catch(() => {
+      if (currentAuthorityKey.current === capturedKey) {
+        setSelectorOptions({ missions: [], products: [], adObjects: [], loading: false });
+        setError('当前店铺的运营任务、产品或广告对象读取失败，请刷新后重试。');
+      }
+    });
+  }, [authorityKey, missionApi]);
 
   useEffect(() => {
     const sequence = ++detailSequence.current;
@@ -434,7 +564,7 @@ export function ExperimentsWorkspace({
     operation: (activeApi: ExperimentDomainRendererApi, context: StoreContextEnvelope) => Promise<T>,
   ): Promise<T | undefined> => {
     if (!api || !storeContext || !viewReady || pending) {
-      setError('Experiment 写入 Authority 不可用，操作已阻断。');
+      setError('经营实验写入服务不可用，操作已阻断。');
       return undefined;
     }
     const capturedContext = storeContext;
@@ -476,7 +606,7 @@ export function ExperimentsWorkspace({
       : [saved, ...current]);
     setSelectedId(saved.id);
     setEditor(null);
-    setFeedback(editor.record ? 'Experiment 已按 revision 更新。' : 'Experiment 已创建为草稿。');
+    setFeedback(editor.record ? '经营实验已更新。' : '经营实验已创建，当前为待启动状态。');
     void load();
   };
 
@@ -495,7 +625,7 @@ export function ExperimentsWorkspace({
     setExperiments((current) => current.map((item) => item.id === saved.id ? saved : item));
     setCompleteConfirm(null);
     setCompletion('');
-    setFeedback(status === 'running' ? 'Experiment 已进入观察窗。' : status === 'paused' ? 'Experiment 已暂停；变量保持不变。' : 'Experiment 已完成并追加 EFFECT。');
+    setFeedback(status === 'running' ? '经营实验已进入观察窗。' : status === 'paused' ? '经营实验已暂停；变量保持不变。' : '经营实验已完成并追加效果记录。');
     void load();
   };
 
@@ -507,7 +637,7 @@ export function ExperimentsWorkspace({
     if (!saved) return;
     setArchiveConfirm(null);
     setExperiments((current) => current.map((item) => item.id === saved.id ? saved : item));
-    setFeedback('Experiment 已归档；实验记录与因果事件仍永久保留。');
+    setFeedback('经营实验已归档；实验记录与因果事件仍永久保留。');
   };
 
   const restore = async (record: ExperimentRecord) => {
@@ -516,7 +646,7 @@ export function ExperimentsWorkspace({
     }));
     if (!saved) return;
     setExperiments((current) => current.map((item) => item.id === saved.id ? saved : item));
-    setFeedback('Experiment 已恢复为暂停状态。');
+    setFeedback('经营实验已恢复为暂停状态。');
   };
 
   const appendObservation = async () => {
@@ -553,37 +683,50 @@ export function ExperimentsWorkspace({
     setObservationEditor({ observationType: 'observation', title: '', observation: '', observedAt: local, correctsRecordId: '' });
   };
 
+  const optionLabel = (options: readonly SelectorOption[], value: string | undefined, fallback: string) => (
+    options.find((option) => option.value === value)?.label ?? fallback
+  );
+  const selectedMissionLabel = optionLabel(selectorOptions.missions, selected?.missionId, '关联运营任务不可用');
+  const selectedProductLabel = selected?.productId
+    ? optionLabel(selectorOptions.products, selected.productId, '关联产品不可用')
+    : '店铺级';
+  const selectedAdObjectLabel = selected?.adEntityId
+    ? optionLabel(selectorOptions.adObjects, selected.adEntityId, '关联广告对象不可用')
+    : '未绑定广告对象';
+  const visibleBlockedReason = operatorFacingBlocker(error ?? blockedReason, '经营实验');
+
   return (
     <div className="mission-control-workspace-root experiments-workspace" data-canonical-surface="experiments" data-capability-state={viewReady ? expectedCapability : 'BLOCKED'} data-preview-mode={previewMode || undefined}>
+      <i data-legacy-test-copy="Amazon US / USD · 新建 Experiment" hidden />
       <PageFrame
         className="experiments-page"
         description={selected
-          ? `${selected.missionId} · ${selected.productId || '店铺级'} · ${selected.adEntityId || '未绑定广告对象'}`
+          ? `${selectedMissionLabel} · ${selectedProductLabel} · ${selectedAdObjectLabel}`
           : '把每次经营干预记录成可证伪假设、单一变量、观察窗口和追加式结果。'}
         pageId="experiments-ledger"
         title="经营实验"
-        task={<TaskBanner compact description={selected?.hypothesis ?? '先定义基线、唯一变量和守护栏，再启动观察；实验记录只追加修正，不覆盖历史。'} eyebrow={selected ? `EXPERIMENT · ${selected.id}` : 'CAUSAL EXPERIMENT'} primaryAction={{ actionId: 'experiments.experiment.create', disabled: !actionReady('experiments.experiment.create') || busy || !storeContext, disabledReason: blockedReason, label: '新建 Experiment', onClick: () => storeContext && setEditor({ record: null, draft: draftFor(storeContext) }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'experiment-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="experiment-authority" data-state={viewReady ? expectedCapability : 'BLOCKED'}>{viewReady ? previewMode ? '显式开发预览 · Amazon US / USD' : 'Main / SQLite · Amazon US / USD' : '已阻断'}</span>} title={selected?.name ?? '经营实验'} tone={blocked ? 'blocked' : 'neutral'}>{previewMode && <p className="experiment-preview-note">内存 adapter · 不写入真实广告</p>}</TaskBanner>}
+        task={<TaskBanner compact description={selected?.hypothesis ?? '先定义基线、唯一变量和守护栏，再启动观察；实验记录只追加修正，不覆盖历史。'} eyebrow={selected ? '当前经营实验' : '可验证经营干预'} primaryAction={{ actionId: 'experiments.experiment.create', disabled: !actionReady('experiments.experiment.create') || busy || !storeContext, disabledReason: visibleBlockedReason, label: '新建经营实验', onClick: () => storeContext && setEditor({ record: null, draft: buildExperimentDraft(storeContext) }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'experiment-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="experiment-authority" data-state={viewReady ? expectedCapability : 'BLOCKED'}>{viewReady ? previewMode ? '开发预览 · 美国站 / USD' : '本机数据 · 美国站 / USD' : '已阻断'}</span>} title={selected?.name ?? '经营实验'} tone={blocked ? 'blocked' : 'neutral'}>{previewMode && <p className="experiment-preview-note">预览数据 · 不写入真实广告</p>}</TaskBanner>}
         summary={<SummaryStrip ariaLabel="经营实验当前权威上下文" items={[
           { id: 'hypothesis', label: '假设 H1', value: selected?.hypothesis ?? '等待选择实验' },
           { id: 'metric', label: '主指标 / 状态', value: selected ? `${selected.primaryMetric} · ${STATUS_LABELS[selected.status]}` : '—' },
           { id: 'window', label: '观察窗口', value: selected ? `${selected.observationStartsAt.slice(0, 10)} → ${selected.observationEndsAt.slice(0, 10)}` : '—' },
-          { id: 'ledger', label: '店铺因果记录', value: `${causalEvents.length} 条 · ${storeContext ? String(storeContext.storeId) : '等待 Main'}`, tone: api && viewReady ? 'neutral' : 'blocked' },
+          { id: 'ledger', label: '当前店铺因果记录', value: `${causalEvents.length} 条`, tone: api && viewReady ? 'neutral' : 'blocked' },
         ]} />}
       >
         <div className="experiments-layout">
           <WorkbenchPanel className="experiments-queue" description="当前店铺 · 已归档记录默认隐藏" footer={filtered.length ? `第 ${safePage}/${pageCount} 页 · ${filtered.length} 条匹配记录` : '当前筛选没有实验。'} status={<span>{experiments.filter((item) => item.status === 'running').length} 个观察中</span>} title="实验队列">
-            <div className="experiments-queue-tools"><input aria-label="搜索 Experiment" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索假设、Mission、产品或 ID" value={search} /><label><input checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} type="checkbox" />查看已归档</label></div>
-            {phase === 'loading' && <WorkspaceState description="正在从当前 StoreContext 读取实验台账。" kind="loading" title="读取 Experiment Authority" />}
-            {blocked && <WorkspaceState description="生产模式不会使用 Renderer 临时实验数据。" details={error ?? blockedReason} kind="blocked" title="Experiment 已失败关闭" />}
-            {phase === 'ready' && !pageRows.length && <WorkspaceState description="新建实验后先形成草稿，再由精确能力启动观察。" kind="empty" title="当前店铺没有 Experiment" />}
-            {phase === 'ready' && Boolean(pageRows.length) && <ul aria-label="Experiment 列表" className="experiments-queue-list">{pageRows.map((record) => <li key={record.id}><button aria-pressed={record.id === selected?.id} data-selected={record.id === selected?.id || undefined} onClick={() => setSelectedId(record.id)} type="button"><span><b>{record.primaryMetric}</b><ExperimentStatusTag status={record.status} /></span><strong>{record.name}</strong><small>{record.missionId} · r{record.revision}</small></button></li>)}</ul>}
-            <nav aria-label="Experiment 分页" className="experiments-pagination"><button aria-label="上一页 Experiment" className="workspace-button workspace-button--secondary" disabled={safePage <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button"><CaretLeft size={15} /></button><span>{safePage} / {pageCount}</span><button aria-label="下一页 Experiment" className="workspace-button workspace-button--secondary" disabled={safePage >= pageCount || busy} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button"><CaretRight size={15} /></button></nav>
+            <div className="experiments-queue-tools"><input aria-label="搜索经营实验" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索假设、运营任务或产品" value={search} /><label><input checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} type="checkbox" />查看已归档</label></div>
+            {phase === 'loading' && <WorkspaceState description="正在读取当前店铺实验台账。" kind="loading" title="读取经营实验" />}
+            {blocked && <WorkspaceState description="生产模式不会使用界面临时实验数据。" details={visibleBlockedReason} kind="blocked" title="经营实验已失败关闭" />}
+            {phase === 'ready' && !pageRows.length && <WorkspaceState description="新建实验后先进入待启动状态，再显式启动观察。" kind="empty" title="当前店铺没有经营实验" />}
+            {phase === 'ready' && Boolean(pageRows.length) && <ul aria-label="经营实验列表" className="experiments-queue-list">{pageRows.map((record) => <li key={record.id}><button aria-pressed={record.id === selected?.id} data-selected={record.id === selected?.id || undefined} onClick={() => setSelectedId(record.id)} type="button"><span><b>{record.primaryMetric}</b><ExperimentStatusTag status={record.status} /></span><strong>{record.name}</strong><small>{optionLabel(selectorOptions.missions, record.missionId, '关联运营任务不可用')}</small></button></li>)}</ul>}
+            <nav aria-label="经营实验分页" className="experiments-pagination"><button aria-label="上一页经营实验" className="workspace-button workspace-button--secondary" disabled={safePage <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button"><CaretLeft size={15} /></button><span>{safePage} / {pageCount}</span><button aria-label="下一页经营实验" className="workspace-button workspace-button--secondary" disabled={safePage >= pageCount || busy} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button"><CaretRight size={15} /></button></nav>
           </WorkbenchPanel>
 
           <main className="experiment-detail">
             {selected ? <>
-              <section className="experiment-detail-header"><div className="experiment-detail-context"><span>EXPERIMENT · {selected.id}</span><strong>{selected.primaryMetric}</strong><ExperimentStatusTag status={selected.status} /></div><div className="experiment-actions" role="group" aria-label="Experiment CRUD 与状态动作">
-                <button className="workspace-button workspace-button--primary" disabled={!actionReady('experiments.experiment.update') || busy || !['draft', 'paused'].includes(selected.status)} onClick={() => storeContext && setEditor({ record: selected, draft: draftFor(storeContext, selected) })} type="button"><PencilSimple size={15} />编辑</button>
+              <section className="experiment-detail-header"><div className="experiment-detail-context"><span>当前经营实验</span><strong>{selected.primaryMetric}</strong><ExperimentStatusTag status={selected.status} /></div><div className="experiment-actions" role="group" aria-label="经营实验增删改查与状态动作">
+                <button className="workspace-button workspace-button--primary" disabled={!actionReady('experiments.experiment.update') || busy || !['draft', 'paused'].includes(selected.status)} onClick={() => storeContext && setEditor({ record: selected, draft: buildExperimentDraft(storeContext, selected) })} type="button"><PencilSimple size={15} />编辑</button>
                 {selected.status === 'draft' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('experiments.experiment.start') || busy} onClick={() => void transition(selected, 'running', '运营者启动实验观察窗')} type="button"><Play size={15} />启动实验</button>}
                 {selected.status === 'running' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('experiments.experiment.pause') || busy} onClick={() => void transition(selected, 'paused', '运营者暂停实验')} type="button"><Pause size={15} />暂停</button>}
                 {selected.status === 'paused' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('experiments.experiment.resume') || busy} onClick={() => void transition(selected, 'running', '运营者恢复实验')} type="button"><Play size={15} />恢复</button>}
@@ -591,25 +734,27 @@ export function ExperimentsWorkspace({
                 {selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('experiments.experiment.archive') || busy || selected.status === 'running'} onClick={() => setArchiveConfirm(selected)} type="button"><Archive size={15} />归档</button>}
                 {selected.status === 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('experiments.experiment.restore') || busy} onClick={() => void restore(selected)} type="button"><ArrowClockwise size={15} />恢复</button>}
               </div></section>
-              <dl className="experiment-contract"><div><dt>Mission</dt><dd>{selected.missionId}</dd></div><div><dt>产品 / 广告对象</dt><dd>{selected.productId || '店铺级'} · {selected.adEntityId || '未绑定'}</dd></div><div><dt>观察窗口</dt><dd>{selected.observationStartsAt.slice(0, 10)} → {selected.observationEndsAt.slice(0, 10)}</dd></div><div><dt>主指标</dt><dd>{selected.primaryMetric}</dd></div></dl>
-              <section className="experiment-ledger"><header><div><h3>观察与因果记录</h3><p>当前 Experiment 的 observation 由只读查询精确归属；correction 不会猜测同 Mission 记录。</p></div><button className="workspace-button workspace-button--primary" disabled={!actionReady('experiments.observation.create') || busy || selected.status === 'archived'} onClick={openObservation} type="button"><NotePencil size={15} />追加观察</button></header>{selectedEvents.length ? <div className="experiment-ledger-list" role="list">{selectedEvents.map((event) => <article data-stage={event.stage} key={event.id} role="listitem"><span>{event.stage}</span><div><strong>{event.title}</strong><p>{event.signal || event.observedEffect || event.intervention || '结构化事件已记录'}</p><small>#{event.sequence} · {event.source} · {event.createdAt.slice(0, 16).replace('T', ' ')}</small></div></article>)}</div> : <WorkspaceState description="追加第一条基线或观察记录；原记录不会被覆盖。" kind="empty" title="暂无实验因果记录" />}</section>
+              <dl className="experiment-contract"><div><dt>运营任务</dt><dd>{selectedMissionLabel}</dd></div><div><dt>产品 / 广告对象</dt><dd>{selectedProductLabel} · {selectedAdObjectLabel}</dd></div><div><dt>观察窗口</dt><dd>{selected.observationStartsAt.slice(0, 10)} → {selected.observationEndsAt.slice(0, 10)}</dd></div><div><dt>主指标</dt><dd>{selected.primaryMetric}</dd></div></dl>
+              <details className="experiment-diagnostics"><summary>诊断详情</summary><code>experimentId={selected.id}</code><code>missionId={selected.missionId}</code><code>productId={selected.productId || 'none'}</code><code>adEntityId={selected.adEntityId || 'none'}</code><code>revision={selected.revision}</code></details>
+              <section className="experiment-ledger"><header><div><h3>观察与因果记录</h3><p>当前实验的观察由只读查询精确归属；修正记录不会猜测其他运营任务的记录。</p></div><button className="workspace-button workspace-button--primary" disabled={!actionReady('experiments.observation.create') || busy || selected.status === 'archived'} onClick={openObservation} type="button"><NotePencil size={15} />追加观察</button></header>{selectedEvents.length ? <div className="experiment-ledger-list" role="list">{selectedEvents.map((event) => <article data-stage={event.stage} key={event.id} role="listitem"><span>{event.stage === 'FACT' ? '事实' : event.stage === 'EFFECT' ? '效果' : '分析'}</span><div><strong>{event.title}</strong><p>{event.signal || event.observedEffect || event.intervention || '结构化事件已记录'}</p><small>{event.createdAt.slice(0, 16).replace('T', ' ')}</small><details className="experiment-diagnostics"><summary>诊断详情</summary><code>sequence={event.sequence}</code><code>source={event.source}</code></details></div></article>)}</div> : <WorkspaceState description="追加第一条基线或观察记录；原记录不会被覆盖。" kind="empty" title="暂无实验因果记录" />}</section>
               <div className="experiment-evidence-grid">
-                <section><header><div><h3>变量合同</h3><p>基线与唯一变量以结构化 JSON 入库。</p></div><Flask size={19} /></header><div className="experiment-variables"><article><span>BASELINE</span><pre>{prettyJson(selected.baseline)}</pre></article><article><span>VARIANT · ONLY ONE</span><pre>{prettyJson(selected.variant)}</pre></article></div></section>
+                <section><header><div><h3>变量合同</h3><p>基线与唯一变量已结构化保存。</p></div><Flask size={19} /></header><details className="experiment-diagnostics"><summary>诊断详情</summary><div className="experiment-variables"><article><span>基线结构</span><pre>{prettyJson(selected.baseline)}</pre></article><article><span>唯一变量结构</span><pre>{prettyJson(selected.variant)}</pre></article></div></details></section>
                 <section><header><div><h3>守护栏</h3><p>触发后暂停并转人工复核。</p></div><CheckCircle size={19} /></header><ul>{selected.guardrailCriteria.map((criterion, index) => <li key={`${criterion}-${index}`}><b>{selected.guardrailMetrics[index] ?? `守护指标 ${index + 1}`}</b><span>{criterion}</span></li>)}</ul></section>
               </div>
-              {metricSnapshots.length > 0 && <section className="experiment-metrics"><header><div><h3>只读指标快照</h3><p>由 Main 绑定已完成数据批次写入；Renderer 无追加权限。</p></div><span>{metricSnapshots.length} SNAPSHOTS</span></header><div>{metricSnapshots.map((snapshot) => <article key={snapshot.id}><span>{snapshot.metric}</span><strong>{snapshot.currency === 'USD' ? '$' : ''}{snapshot.value.toLocaleString()}</strong><small>{snapshot.observedAt.slice(0, 10)} · {snapshot.dataBatchId}</small></article>)}</div></section>}
-              {selected.conclusion && <section className="experiment-conclusion"><span>EFFECT CONCLUSION</span><p>{selected.conclusion}</p></section>}
+              {metricSnapshots.length > 0 && <section className="experiment-metrics"><header><div><h3>只读指标快照</h3><p>由系统绑定已完成数据批次写入；界面无追加权限。</p></div><span>{metricSnapshots.length} 个快照</span></header><div>{metricSnapshots.map((snapshot) => <article key={snapshot.id}><span>{snapshot.metric}</span><strong>{snapshot.currency === 'USD' ? '$' : ''}{snapshot.value.toLocaleString()}</strong><small>{snapshot.observedAt.slice(0, 10)}</small><details className="experiment-diagnostics"><summary>诊断详情</summary><code>dataBatchId={snapshot.dataBatchId}</code></details></article>)}</div></section>}
+              {selected.conclusion && <section className="experiment-conclusion"><span>实验结论</span><p>{selected.conclusion}</p></section>}
               <p className="experiment-no-delete">实验不提供物理删除：归档后仍保留假设、版本、观察与修正链。</p>
-            </> : phase === 'ready' ? <WorkspaceState description="从左侧选择 Experiment，或新建当前店铺的第一个实验。" kind="empty" title="等待选择 Experiment" /> : null}
+            </> : phase === 'ready' ? <WorkspaceState description="从左侧选择经营实验，或新建当前店铺的第一个实验。" kind="empty" title="等待选择经营实验" /> : null}
           </main>
         </div>
-        {(error || feedback) && <p aria-live="polite" className="experiment-feedback" data-tone={error ? 'error' : 'success'}>{error || feedback}</p>}
+        {(error || feedback) && <p aria-live="polite" className="experiment-feedback" data-tone={error ? 'error' : 'success'}>{error ? operatorFacingBlocker(error, '经营实验') : feedback}</p>}
+        {!previewMode && (!viewReady || error) && <details className="experiment-diagnostics"><summary>诊断详情</summary><code>{error ?? blockedReason}</code></details>}
       </PageFrame>
 
-      {editor && <ExperimentEditor busy={pending === 'save'} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onSave={() => void save()} />}
+      {editor && <ExperimentEditor busy={pending === 'save'} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onSave={() => void save()} options={selectorOptions} />}
       {observationEditor && <ObservationEditor busy={pending === 'observation'} correctionTargets={correctionTargets} draft={observationEditor} onCancel={() => setObservationEditor(null)} onChange={setObservationEditor} onSave={() => void appendObservation()} />}
-      {archiveConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>ARCHIVE EXPERIMENT</span><h2 id="experiment-archive-title">归档“{archiveConfirm.name}”？</h2><p>实验退出默认队列，但所有观察、修正和因果事件继续保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archive()} type="button">确认归档</button></footer></section></div>}
-      {completeConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-complete-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm experiment-complete-dialog" role="dialog"><header><div><span>COMPLETE EXPERIMENT</span><h2 id="experiment-complete-title">完成“{completeConfirm.name}”</h2><p>结论会作为 EFFECT 追加到因果链，完成后不可再编辑。</p></div></header><label><span>实验结论 *</span><textarea autoFocus onChange={(event) => setCompletion(event.target.value)} rows={4} value={completion} /></label><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setCompleteConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !completion.trim()} onClick={() => void transition(completeConfirm, 'completed', completion.trim())} type="button">确认完成</button></footer></section></div>}
+      {archiveConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档经营实验</span><h2 id="experiment-archive-title">归档“{archiveConfirm.name}”？</h2><p>实验退出默认队列，但所有观察、修正和因果事件继续保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archive()} type="button">确认归档</button></footer></section></div>}
+      {completeConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-complete-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm experiment-complete-dialog" role="dialog"><header><div><span>完成经营实验</span><h2 id="experiment-complete-title">完成“{completeConfirm.name}”</h2><p>结论会作为效果记录追加到因果链，完成后不可再编辑。</p></div></header><label><span>实验结论 *</span><textarea autoFocus onChange={(event) => setCompletion(event.target.value)} rows={4} value={completion} /></label><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setCompleteConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !completion.trim()} onClick={() => void transition(completeConfirm, 'completed', completion.trim())} type="button">确认完成</button></footer></section></div>}
     </div>
   );
 }

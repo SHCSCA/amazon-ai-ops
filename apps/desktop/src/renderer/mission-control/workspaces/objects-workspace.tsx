@@ -1,5 +1,5 @@
 import React from 'react';
-import { Database, Package, ShieldCheck } from '@phosphor-icons/react';
+import { Package } from '@phosphor-icons/react';
 import type {
   MissionControlCapabilityAction,
   MissionControlCapabilityProjection,
@@ -12,7 +12,6 @@ import {
 } from '../../components/workspace';
 import {
   CapabilityStateBadge,
-  NativeCrudSlot,
   summarizeViewCapability,
 } from '../components';
 import { StoreScopedObjectsPanel } from './store-scoped-objects-panel';
@@ -56,9 +55,9 @@ const OBJECT_SURFACES: Record<ObjectsWorkspaceSubview, {
       { capabilityId: 'objects.events.update', action: 'update' },
       { capabilityId: 'objects.events.delete', action: 'delete' },
     ],
-    eyebrow: 'PRODUCT DIRECTORY',
+    eyebrow: '产品目录',
     title: '产品与经营目标',
-    description: '产品、USD 成本目标与运营事件均通过 Main 的当前店铺授权边界读写。',
+    description: '产品、美元成本目标与运营事件均在当前店铺范围内读写。',
   },
   events: {
     view: 'today/events',
@@ -69,21 +68,21 @@ const OBJECT_SURFACES: Record<ObjectsWorkspaceSubview, {
       { capabilityId: 'today.events.archive', action: 'archive' },
       { capabilityId: 'today.events.restore', action: 'restore' },
     ],
-    eyebrow: 'CAUSAL CONTEXT',
+    eyebrow: '运营背景',
     title: '运营事件',
     description: '记录当前店铺会影响销量、转化与广告判断的真实运营动作，并保留可恢复历史。',
   },
   targets: {
     view: 'objects/targets',
     requirements: [{ capabilityId: 'objects.targets.view', action: 'view' }],
-    eyebrow: 'AD OBJECT FACTS',
+    eyebrow: '广告对象事实',
     title: '广告对象事实',
-    description: 'Campaign、广告组、Target 与 Search Term 只从当前 store_id 的真实入库指标聚合。',
+    description: '广告活动、广告组、投放对象与搜索词只汇总当前店铺已经入库的真实指标。',
   },
   keywords: {
     view: 'objects/keywords',
     requirements: [{ capabilityId: 'objects.keywords.view', action: 'view' }],
-    eyebrow: 'KEYWORD FACTS',
+    eyebrow: '关键词事实',
     title: '关键词事实与机会',
     description: '合并当前店铺关键词指标与机会证据，不读取待归属历史行。',
   },
@@ -95,11 +94,27 @@ const OBJECT_SURFACES: Record<ObjectsWorkspaceSubview, {
       { capabilityId: 'objects.listing.update', action: 'update' },
       { capabilityId: 'objects.listing.delete', action: 'delete' },
     ],
-    eyebrow: 'LISTING CONTENT',
-    title: 'Listing 内容库',
-    description: '按当前店铺维护 Listing 内容与版本历史；本阶段只保存在本地，不自动发布 Amazon。',
+    eyebrow: '商品详情内容',
+    title: '商品详情内容库',
+    description: '按当前店铺维护商品详情内容与版本历史；本阶段只保存在本地，不自动发布到 Amazon。',
   },
 };
+
+function objectCapabilityBusinessDetail(
+  summary: ReturnType<typeof summarizeViewCapability>,
+): string {
+  if (!summary) return '正在确认当前店铺的对象能力。';
+  switch (summary.state) {
+    case 'PRODUCTION_NATIVE':
+      return '当前店铺的对象读写能力已确认。';
+    case 'LEGACY_ADAPTER':
+      return '当前店铺的对象能力正在兼容运行，请谨慎核对后操作。';
+    case 'PROTOTYPE_ONLY':
+      return '当前视图仅供预览，暂不开放真实数据写入。';
+    case 'BLOCKED':
+      return '当前视图暂不可用，请先完成店铺连接或稍后重试。';
+  }
+}
 
 /**
  * Composes native Store Authority with Main-authorized, store-scoped product
@@ -111,7 +126,6 @@ export function ObjectsWorkspace({
   storeContext,
   capabilities,
   previewMode = false,
-  storeCrudSlot,
   activeSubview = 'products',
 }: ObjectsWorkspaceProps) {
   const surface = OBJECT_SURFACES[activeSubview];
@@ -158,12 +172,12 @@ export function ObjectsWorkspace({
       pageId={`mission-control-objects-${activeSubview}`}
       summary={(
         <SummaryStrip
-          ariaLabel="店铺与广告对象当前范围"
+          ariaLabel="产品与广告对象当前范围"
           items={[
             {
               id: 'store',
-              label: '当前店铺数据域',
-              value: storeContext ? String(storeContext.storeId) : '等待 Main',
+              label: '当前店铺',
+              value: storeContext ? '已选择' : '等待选择',
             },
             {
               id: 'market',
@@ -172,8 +186,8 @@ export function ObjectsWorkspace({
             },
             {
               id: 'profile',
-              label: '独立浏览器 Profile',
-              value: storeContext ? String(storeContext.browserProfileId) : '未确认',
+              label: '店铺隔离',
+              value: storeContext ? '已启用' : '未确认',
             },
             {
               id: 'adapter',
@@ -184,44 +198,9 @@ export function ObjectsWorkspace({
           ]}
         />
       )}
-      title={activeSubview === 'products' ? '店铺与广告对象' : surface.title}
+      title={activeSubview === 'products' ? '产品与广告对象' : surface.title}
     >
       <div className="mission-control-objects-flow">
-        {activeSubview === 'products' && <section
-          aria-label="店铺数据域"
-          className="mission-control-objects-domain mission-control-objects-domain--store"
-          data-objects-domain="store"
-        >
-          <div className="mission-control-objects-domain__intro" role="note">
-            <span className="mission-control-objects-domain__icon"><Database aria-hidden="true" size={18} /></span>
-            <span>
-              <strong>店铺数据域</strong>
-              <small>店铺、业务数据、可见浏览器 Profile 与会话代次相互隔离。</small>
-            </span>
-            <span className="mission-control-objects-domain__fixed"><ShieldCheck aria-hidden="true" size={15} /> Amazon US · USD</span>
-          </div>
-          <NativeCrudSlot
-            blockedReason="等待 Main Store Authority 提供创建、编辑、归档和切换处理器。"
-            capabilities={capabilities}
-            capabilityIds={{
-              view: 'objects.store.view',
-              create: 'objects.store.create',
-              update: 'objects.store.update',
-              archive: 'objects.store.archive',
-              restore: 'objects.store.restore',
-              switch: 'objects.store.switch',
-            }}
-            capabilityView="objects/products"
-            createLabel="新建美国站店铺"
-            description="第一版固定 Amazon US / USD，每店使用独立数据域与可见浏览器 Profile。"
-            previewMode={previewMode}
-            slotId="store-crud"
-            title="店铺数据域"
-          >
-            {storeCrudSlot}
-          </NativeCrudSlot>
-        </section>}
-
         <section
           aria-labelledby="mission-control-objects-product-title"
           className="mission-control-objects-domain mission-control-objects-domain--products"
@@ -241,10 +220,10 @@ export function ObjectsWorkspace({
           {activeSubview === 'products' && (
             <div className="mission-control-objects-adapter-context" role="note">
               <span>当前范围</span>
-              <strong>{storeContext ? String(storeContext.storeId) : '等待店铺'}</strong>
+              <strong>{storeContext ? '当前店铺' : '等待店铺'}</strong>
               <span>{storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : 'US / USD'}</span>
               <span aria-hidden="true" className="mission-control-objects-adapter-context__separator">·</span>
-              <small>{summary?.detail ?? '正在从 Main 读取店铺对象能力投影。'}</small>
+              <small>{objectCapabilityBusinessDetail(summary)}</small>
             </div>
           )}
 

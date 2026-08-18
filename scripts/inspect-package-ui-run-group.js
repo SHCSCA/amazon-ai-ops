@@ -143,6 +143,10 @@ function normalizedPath(value) {
   return path.resolve(value).replace(/\\/g, '/').toLowerCase();
 }
 
+function lexicalWindowsPath(value) {
+  return path.win32.normalize(String(value || '')).replace(/[\\/]+$/, '').toLowerCase();
+}
+
 function samePath(left, right) {
   return normalizedPath(left) === normalizedPath(right);
 }
@@ -431,7 +435,7 @@ function currentAuthorityBinding(databasePath, receiptSha256, canonicalDatabaseP
   return {
     authoritySelectionReceiptSha256: receiptSha256,
     canonicalDatabasePathSha256: sha256Buffer(Buffer.from(
-      normalizedPath(canonicalDatabasePath),
+      lexicalWindowsPath(canonicalDatabasePath),
       'utf8',
     )),
     databaseFileIdentity: {
@@ -1049,13 +1053,14 @@ function validateAuthoritySelectionFromPureChild({
     "const input=JSON.parse(fs.readFileSync(0,'utf8')||'{}');",
     "const verifier=require(input.verifierPath);",
     'const stable=(value)=>Array.isArray(value)?`[${value.map(stable).join(",")}]`:value&&typeof value==="object"?`{${Object.keys(value).sort().map((key)=>`${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`:JSON.stringify(value);',
+    'const comparable=(selection)=>{const copy=JSON.parse(JSON.stringify(selection));const selected=copy?.selected;if(selected?.sidecarObservation?.shmMayChangeForReadonlyWalLocking===true&&selected?.sidecars?.shm?.exists===true&&selected?.sidecarsBefore?.shm?.exists===true){delete selected.sidecars.shm.mtimeMs;delete selected.sidecarsBefore.shm.mtimeMs;}return copy;};',
     'const samePath=(left,right)=>path.resolve(left).replace(/[\\\\/]+$/,"").toLowerCase()===path.resolve(right).replace(/[\\\\/]+$/,"").toLowerCase();',
     'const bytes=fs.readFileSync(input.receiptPath);',
     'const receipt=JSON.parse(bytes.toString("utf8"));',
     'const mainSha=String(receipt?.selection?.selected?.mainFileSha256||"").toUpperCase();',
     'const current=verifier.inspectProductionAuthoritySelection({dbPath:input.protectedDatabasePath,expectedUserDataDir:input.canonicalPaths.userDataDir,expectedMainSha256:mainSha},{env:{APPDATA:input.canonicalPaths.roamingAppData,USERPROFILE:input.canonicalPaths.userProfile},writeStdout:()=>{}});',
     'const logical=current?.selection?.selected?.logicalCapture;',
-    'const passed=receipt?.kind===verifier.KIND&&receipt?.schemaVersion===verifier.SCHEMA_VERSION&&["SELECTED_SCHEMA_READY","SELECTED_MIGRATION_REQUIRED"].includes(receipt?.status)&&receipt.status===current.status&&receipt.formalEvidence===false&&receipt.authorityDatabaseMutated===false&&receipt.adsExecutionInvoked===false&&new Date(Date.parse(receipt.generatedAt)).toISOString()===receipt.generatedAt&&stable(receipt.selection)===stable(current.selection)&&samePath(current.selection?.expectedUserDataDir,input.canonicalPaths.userDataDir)&&samePath(current.selection?.expectedDatabasePath,input.protectedDatabasePath)&&samePath(current.selection?.selected?.absolutePath,input.protectedDatabasePath)&&samePath(current.selection?.selected?.realPath,input.protectedDatabasePath);',
+    'const passed=receipt?.kind===verifier.KIND&&receipt?.schemaVersion===verifier.SCHEMA_VERSION&&["SELECTED_SCHEMA_READY","SELECTED_MIGRATION_REQUIRED"].includes(receipt?.status)&&receipt.status===current.status&&receipt.formalEvidence===false&&receipt.authorityDatabaseMutated===false&&receipt.adsExecutionInvoked===false&&new Date(Date.parse(receipt.generatedAt)).toISOString()===receipt.generatedAt&&stable(comparable(receipt.selection))===stable(comparable(current.selection))&&samePath(current.selection?.expectedUserDataDir,input.canonicalPaths.userDataDir)&&samePath(current.selection?.expectedDatabasePath,input.protectedDatabasePath)&&samePath(current.selection?.selected?.absolutePath,input.protectedDatabasePath)&&samePath(current.selection?.selected?.realPath,input.protectedDatabasePath);',
     'process.stdout.write(JSON.stringify({logicalArtifact:logical?{method:logical.method,remainingPages:logical.remainingPages,schemaVersion:logical.schemaVersion,sha256:logical.logicalBackupSha256,sizeBytes:logical.logicalBackupSizeBytes,totalPages:logical.totalPages}:null,passed,receiptSha256:crypto.createHash("sha256").update(bytes).digest("hex").toUpperCase(),status:current?.status||null}));',
   ].join('');
   const result = spawnSync(process.execPath, ['-e', childSource], {

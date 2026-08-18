@@ -6,6 +6,7 @@ import { createPreviewDecisionDomainApi } from './mission-domain-window-api';
 import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-api';
 import {
   DecisionsWorkspace,
+  DecisionDialog,
   analysisActionBatchOptions,
   authorizationMissionIds,
   buildAnalysisBatchAuthorizationRequest,
@@ -13,10 +14,14 @@ import {
   buildReviseDecisionInput,
   decisionCapabilityReady,
   decisionActionVisibility,
+  decisionListScopeLabel,
+  decisionOperatorCopy,
+  decisionRevisionDisplayLabel,
   formatDecisionMoney,
   preferredDecisionId,
   responseMatchesDecisionDetail,
   type DecisionWorkspaceView,
+  type DecisionDraft,
 } from './decisions-workspace';
 
 const context = {
@@ -57,15 +62,19 @@ describe('DecisionsWorkspace', () => {
     expect(markup).toContain(`<h1 id="workspace-page-${view.replace('/', '-')}-title">建议与审批</h1>`);
     expect(markup).toContain(title);
     expect(markup).toContain(marker);
-    expect(markup).toContain('Amazon US');
+    expect(markup).toContain('Amazon 美国站');
     expect(markup).toContain('task-banner--compact');
     expect(markup).toContain('decision-domain-layout');
     expect(markup).toContain('decision-domain-list-panel');
     expect(markup).toContain('decision-domain-detail');
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    expect(ordinaryText).not.toContain('Amazon US');
+    expect(ordinaryText).not.toMatch(/Mission|Decision|Authority|Renderer|Main|StoreContext|UNKNOWN|\brevision\b|\bdraft\b|set_keyword_bid|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|adapter|ACTION|READBACK|EFFECT/i);
     expect(markup).not.toContain('已执行</button>');
     expect(markup).not.toContain('已回读</button>');
     if (view === 'decisions/decided') {
-      expect(markup).toContain('选择授权 Mission');
+      expect(markup).toContain('选择授权运营任务');
       expect(markup).toContain('选择最新动作批次');
       expect(markup).toContain('无需选中某条已决策记录');
       expect(markup).not.toContain('加入授权批次');
@@ -84,6 +93,68 @@ describe('DecisionsWorkspace', () => {
     expect(markup).toContain('data-capability-state="BLOCKED"');
     expect(markup).toContain('失败关闭');
     expect(markup).not.toContain('显式内存 adapter');
+  });
+
+  it('keeps internal decision and mission terms out of the production ordinary surface', () => {
+    const productionCapabilities = [
+      capability('decisions.recommendations.view', 'decisions/recommendations', 'PRODUCTION_NATIVE'),
+      ...actionCapabilities.map((item) => ({ ...item, state: 'PRODUCTION_NATIVE' as const })),
+    ];
+    const markup = renderToStaticMarkup(<DecisionsWorkspace
+      apiOverride={createPreviewDecisionDomainApi()}
+      blockedReason=""
+      capabilities={productionCapabilities}
+      previewMode={false}
+      storeContext={context}
+      view="decisions/recommendations"
+    />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(ordinaryText).not.toMatch(/\b(?:MissionGrant|Mission|Decision|Grant|Authority|Renderer|Main|revision|draft|set_keyword_bid)\b/);
+    expect(ordinaryText).toContain('经营决策');
+    expect(ordinaryText).toContain('运营任务');
+  });
+
+  it('translates underscore-delimited authority codes before they reach operators', () => {
+    expect(decisionOperatorCopy(
+      'AUTHORITY_REVISION_MISMATCH: MAIN_STORE_CONTEXT_UNKNOWN',
+      '当前店铺的决策证据不一致，请刷新后重试。',
+    )).toBe('当前店铺的决策证据不一致，请刷新后重试。');
+    expect(decisionOperatorCopy('审批已记录，请刷新列表。', 'fallback'))
+      .toBe('审批已记录，请刷新列表。');
+  });
+
+  it('keeps relation ids, revisions and action values inside the decision dialog diagnostics', () => {
+    const draft: DecisionDraft = {
+      title: '核心词降价', missionId: 'MISSION-1', dataBatchId: 'BATCH-1', policyVersionId: 'POLICY-V3',
+      policyRevision: '2', actionRevision: '7', rationale: '高花费低转化', recommendation: '降价 10%',
+      facts: '7 天花费 $120', alternatives: '保持竞价', expectedEffect: '降低浪费', validUntil: '2026-07-29',
+      actionType: 'set_keyword_bid', adEntityId: 'KW-1', productId: 'ASIN-1', currentValue: '1.20',
+      recommendedValue: '1.08', confidence: '0.86', status: 'needs_approval',
+    };
+    const markup = renderToStaticMarkup(<DecisionDialog
+      busy={false}
+      draft={draft}
+      onChange={() => undefined}
+      onClose={() => undefined}
+      onSave={() => undefined}
+      record={null}
+    />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(markup).toContain('<summary>诊断详情</summary>');
+    expect(ordinaryText).not.toMatch(/MISSION-1|BATCH-1|POLICY-V3|KW-1|ASIN-1|set_keyword_bid|\brevision\b|Mission|Decision/);
+    expect(ordinaryText).toContain('新建经营决策');
+  });
+
+  it('shows business scope and version checks instead of ids and action values in decision rows', () => {
+    expect(decisionListScopeLabel({ productId: 'ASIN-INTERNAL-1', actionType: 'set_keyword_bid' }))
+      .toBe('指定产品 · 调整关键词竞价');
+    expect(decisionListScopeLabel({ actionType: 'set_keyword_bid' }))
+      .toBe('店铺级 · 调整关键词竞价');
+    expect(decisionRevisionDisplayLabel(7)).toBe('版本已校验');
   });
 
   it('builds immutable Decision creation and CAS revision inputs', () => {

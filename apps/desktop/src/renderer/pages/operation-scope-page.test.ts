@@ -140,6 +140,8 @@ describe('operation scope task state', () => {
     expect(source).toContain('aria-label="运营范围结束日期"');
     expect(source).toContain('aria-label="运营范围 ASIN"');
     expect(source).toContain('aria-label="当前锁定店铺站点币种"');
+    expect(source).toContain('店铺、站点和币种已按当前店铺锁定，不能跨店修改。');
+    expect(source).not.toContain('Main StoreContext');
     expect(source).toContain('void confirmScope(draft)');
     expect(source).toContain('title="范围字段确认"');
     expect(source).toContain('className="operation-scope-field-card"');

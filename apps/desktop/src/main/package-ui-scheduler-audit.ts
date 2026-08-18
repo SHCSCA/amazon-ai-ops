@@ -176,6 +176,38 @@ export class PackageUiSchedulerAudit {
     );
   }
 
+  capturePreCloseTerminalDatabaseCheckpointIfReady(): PackageUiDatabaseCheckpoint | null {
+    if (!this.options.enabled) {
+      throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_DISABLED');
+    }
+    const baseline = this.databaseCheckpoints[0];
+    const navigation = this.databaseCheckpoints[1];
+    const terminal = this.databaseCheckpoints[2];
+    const hasAuthorizedBinding = Boolean(
+      this.baselineReceiptIssued
+      && this.boundContextDigestSha256
+      && this.boundDatabase,
+    );
+    if (
+      hasAuthorizedBinding
+      && this.databaseCheckpoints.length === 3
+      && baseline?.phase === 'post-bootstrap'
+      && navigation?.phase === 'post-navigation'
+      && terminal?.phase === 'pre-close-terminal'
+    ) {
+      return cloneDatabaseCheckpoint(terminal);
+    }
+    if (
+      !hasAuthorizedBinding
+      || this.databaseCheckpoints.length !== 2
+      || baseline?.phase !== 'post-bootstrap'
+      || navigation?.phase !== 'post-navigation'
+    ) {
+      return null;
+    }
+    return this.capturePreCloseTerminalDatabaseCheckpoint();
+  }
+
   wrapRegistrar<T extends PackageUiSchedulerAuditRegistrar>(registrar: T): T {
     if (!this.options.enabled) return registrar;
     return {

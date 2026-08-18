@@ -34,6 +34,17 @@ describe('toUserFacingError', () => {
     )).toBe('页面模型仍在人工复核状态：需完成 8 类单报表验证和启用审计后再放行完整采集。');
   });
 
+  it('turns execution identity mismatch into a store-connection next step', () => {
+    const message = toUserFacingError(
+      new Error("Error invoking remote method 'execution-authority:list-batches': ExecutionAuthorityRepositoryError: Amazon Ads account/session identity is not ready or does not match exactly."),
+      '实时执行读取失败',
+    );
+
+    expect(message).toContain('系统设置');
+    expect(message).toContain('ERP 与 Ads 已连接');
+    expect(message).not.toMatch(/remote method|RepositoryError/i);
+  });
+
   it('summarizes selector failures without exposing raw locator text', () => {
     const message = toUserFacingError(
       new Error('locator.click: Timeout 30000ms exceeded while waiting for selector .JS-download-report'),

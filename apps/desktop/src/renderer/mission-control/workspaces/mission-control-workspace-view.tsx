@@ -7,6 +7,7 @@ import type { MissionControlWorkspaceViewProps } from './types';
 import { capabilityForAction } from '../components';
 import { TodayWorkspace } from './today-workspace';
 import { ObjectsWorkspace } from './objects-workspace';
+import { ReadbackPage } from '../../pages/readback-page';
 
 const CANONICAL_KIND_BY_VIEW = {
   'today/overview': 'today',
@@ -39,12 +40,21 @@ export function MissionControlWorkspaceView({
   const definition = subviewDefinitionForIntent(intent);
   const kind = CANONICAL_KIND_BY_VIEW[definition.view as keyof typeof CANONICAL_KIND_BY_VIEW];
   const viewCapability = capabilityForAction(capabilities, definition.view, 'view');
-  const legacyAuthorityReady = viewCapability?.state === 'LEGACY_ADAPTER'
-    || viewCapability?.state === 'PRODUCTION_NATIVE';
+  const legacyAuthorityReady = viewCapability?.state === 'LEGACY_ADAPTER';
   const useCanonicalSurface = definition.kind === 'canonical'
     || (Boolean(kind) && !legacyAuthorityReady);
   let content: React.ReactNode;
-  if (definition.view === 'today/overview' && viewCapability?.state !== 'LEGACY_ADAPTER') {
+  if (definition.view === 'execution/evidence' && viewCapability?.state === 'PRODUCTION_NATIVE') {
+    content = (
+      <div
+        className="mission-control-workspace-root"
+        data-canonical-view="execution/evidence"
+        data-workspace="execution"
+      >
+        <ReadbackPage />
+      </div>
+    );
+  } else if (definition.view === 'today/overview' && viewCapability?.state !== 'LEGACY_ADAPTER') {
     const expectedState = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
     const capabilityReady = viewCapability?.state === expectedState;
     const capabilityError = capabilities === undefined
@@ -52,14 +62,16 @@ export function MissionControlWorkspaceView({
       : capabilityReady
         ? null
         : !previewMode && viewCapability?.state === 'PROTOTYPE_ONLY'
-          ? '当前不是显式开发预览，PROTOTYPE_ONLY 今日投影已失败关闭。'
+          ? '当前不是显式开发预览，今日页面已安全暂停，请返回正式入口或刷新后重试。'
           : viewCapability?.state === 'BLOCKED'
-            ? `今日控制面已失败关闭：${viewCapability.detail}`
-            : `今日视图需要 ${expectedState} 能力，当前投影为 ${viewCapability?.state ?? 'MISSING'}。`;
+            ? '今日控制面已失败关闭：今日数据暂不可用，请刷新当前店铺后重试。'
+            : '今日页面状态不一致，已安全暂停；请刷新当前店铺后重试。';
     content = (
       <TodayWorkspace
         capabilities={capabilities}
-        error={capabilityError || bridgeError || (capabilityReady && !today && bridgePhase === 'ready' ? 'Main 未返回当前店铺的今日真实投影。' : null)}
+        error={capabilityError || bridgeError || (capabilityReady && !today && bridgePhase === 'ready'
+          ? '当前店铺的今日数据尚未返回，请刷新后重试。'
+          : null)}
         loading={bridgePhase === 'loading' || bridgePhase === 'idle' || capabilities === undefined}
         onNavigate={onNavigate}
         previewMode={previewMode}
@@ -81,15 +93,24 @@ export function MissionControlWorkspaceView({
       throw new Error(`Canonical Mission Control view ${definition.view} has no renderer`);
     }
     content = (
-      <CanonicalWorkspace
-        autonomy={autonomy}
-        capabilities={capabilities}
-        kind={kind}
-        onRefreshAuthority={onRefreshAuthority}
-        previewMode={previewMode}
-        storeContext={storeContext}
-        view={definition.view}
-      />
+      <>
+        <CanonicalWorkspace
+          autonomy={autonomy}
+          capabilities={capabilities}
+          kind={kind}
+          onRefreshAuthority={onRefreshAuthority}
+          previewMode={previewMode}
+          storeContext={storeContext}
+          view={definition.view}
+        />
+        {viewCapability?.detail && (
+          <details className="mission-control-capability-diagnostics">
+            <summary>诊断详情</summary>
+            {viewCapability.state === 'PROTOTYPE_ONLY' && <span>开发预览数据 · </span>}
+            <code>{viewCapability.detail}</code>
+          </details>
+        )}
+      </>
     );
   } else {
     if (!definition.legacyRoute) {

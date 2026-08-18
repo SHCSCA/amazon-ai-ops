@@ -14,9 +14,12 @@ export {
   buildCreateStoreInput,
   buildRestoreStoreInput,
   buildUpdateStoreInput,
+  storeConnectionDisplayLabel,
+  storeConnectionDisplayState,
   validateStoreDraft,
 } from './store-management-panel';
 export type {
+  StoreConnectionDisplayState,
   StoreDraft,
   StoreDraftErrors,
   StoreManagementPanelProps,

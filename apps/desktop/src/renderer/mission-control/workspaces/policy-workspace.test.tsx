@@ -1,14 +1,18 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { MissionControlCapabilityProjection, PolicyRecord, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { createPreviewPolicyDomainApi } from './mission-domain-window-api';
 import {
   PolicyWorkspace,
+  StrategyWizardDialog,
   VersionDialog,
+  buildPolicyScopeOptions,
   buildCreatePolicyInput,
   buildPolicyVersionDraft,
   buildPolicyVersionInput,
+  formatPolicyActionBoundary,
   formatExecutionWindowSummary,
   responseMatchesPolicyDetail,
 } from './policy-workspace';
@@ -29,7 +33,59 @@ const previewCapabilities = [
   'policy.kill-switch.clear', 'policy.runtime.mode.set',
 ].map((id) => capability(id));
 
+function ordinaryText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 describe('PolicyWorkspace', () => {
+  it('states exact priority semantics in the operator four-step dialog', () => {
+    const markup = renderToStaticMarkup(<StrategyWizardDialog
+      busy={false}
+      draft={{
+        step: 1,
+        policy: { name: '守护利润', scope: 'store', priority: '10' },
+        scopeLevel: 'store',
+        scopeValue: 'store',
+        version: buildPolicyVersionDraft(null, context.businessTimezone),
+      }}
+      onChange={() => undefined}
+      onClose={() => undefined}
+      onSave={() => undefined}
+      scopeOptions={[{ value: 'store', level: 'store', label: '当前店铺', allowedAdEntityIds: [] }]}
+    />);
+    expect(ordinaryText(markup)).toContain('数字越小越优先');
+  });
+
+  it('derives five store-scoped selector levels without exposing identifiers in labels', () => {
+    const options = buildPolicyScopeOptions('当前店铺', [{ asin: 'B0TEST0001', title: '测试产品' }], [
+      { kind: 'campaign', objectKey: 'opaque-campaign', name: '品牌活动' },
+      { kind: 'ad_group', objectKey: 'opaque-group', name: '核心广告组', campaignName: '品牌活动' },
+      { kind: 'target', objectKey: 'opaque-target', entityId: 'opaque-keyword', resolved: true, nonExecutable: false, name: 'running shoes', campaignName: '品牌活动', adGroupName: '核心广告组', asin: 'B0TEST0001' },
+    ]);
+    expect(new Set(options.map((option) => option.level))).toEqual(new Set(['store', 'product', 'campaign', 'ad_group', 'keyword']));
+    expect(options.find((option) => option.level === 'product')).toMatchObject({ label: '测试产品 · B0TEST0001', allowedAdEntityIds: ['opaque-keyword'] });
+    expect(options.find((option) => option.level === 'keyword')?.label).toBe('品牌活动 > 核心广告组 > running shoes');
+    expect(options.map((option) => option.label).join(' ')).not.toContain('opaque-');
+  });
+
+  it('presents the operator strategy flow as four Chinese steps with a visible enable path', () => {
+    const source = readFileSync(new URL('./policy-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('对象范围');
+    expect(source).toContain('允许动作');
+    expect(source).toContain('变更、预算、次数、冷却与时段限制');
+    expect(source).toContain('中文证据与停止条件');
+    expect(source).toContain('数字越小越先匹配');
+    expect(source).toContain('调整关键词竞价');
+    expect(source).toContain('查看启用条件');
+    expect(source).toContain('创建草稿版本');
+    expect(source).toContain('检查边界');
+    expect(source).toContain('启用策略');
+  });
+
   it('renders immutable policy authority with limited runtime controls', () => {
     const markup = renderToStaticMarkup(<PolicyWorkspace
       apiOverride={createPreviewPolicyDomainApi()}
@@ -62,6 +118,18 @@ describe('PolicyWorkspace', () => {
     expect(markup).not.toContain('显式内存 adapter');
   });
 
+  it('keeps production ordinary copy operator-facing when the blocker contains internal terms', () => {
+    const markup = renderToStaticMarkup(<PolicyWorkspace
+      blockedReason="Policy Main Authority 未接入；UNKNOWN revision draft set_keyword_bid"
+      capabilities={[capability('policy.version.view', 'BLOCKED')]}
+      previewMode={false}
+      storeContext={context}
+    />);
+    const text = ordinaryText(markup);
+    expect(text).toContain('策略');
+    expect(text).not.toMatch(/Mission|Experiment|Decision|Authority|Renderer|Main|UNKNOWN|\brevision\b|\bdraft\b|set_keyword_bid/);
+  });
+
   it('accepts an empty entity allowlist as zero execution authority', () => {
     const policy = {
       ...buildCreatePolicyInput({ name: '安全空白策略', scope: 'store', priority: '10' }, 'POLICY-EMPTY'),
@@ -85,6 +153,18 @@ describe('PolicyWorkspace', () => {
       },
     });
     expect(formatExecutionWindowSummary(version.rules)).toContain('25 次/日');
+  });
+
+  it('summarizes lower and upper action bounds with every runtime limit', () => {
+    const policy = {
+      ...buildCreatePolicyInput({ name: '完整边界策略', scope: 'store', priority: '10' }, 'POLICY-BOUNDARY'),
+      storeId: context.storeId, status: 'draft', revision: 1,
+      createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+    } as PolicyRecord;
+    const version = buildPolicyVersionInput(policy, buildPolicyVersionDraft(null, context.businessTimezone), 'POLICY-BOUNDARY-V1');
+    expect(formatPolicyActionBoundary(version.rules)).toBe(
+      '单次高于 0% 且不超过 15% · 批次 0–50 USD · 25 次/日 · 冷却 30 分钟 · 周一至周五 08:00–18:00 · America/Los_Angeles',
+    );
   });
 
   it('renders and validates immutable daily limit, cooldown, timezone and execution-window fields', () => {

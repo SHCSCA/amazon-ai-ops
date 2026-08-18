@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 import { missionControlContextKey, normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { TodayWorkspace } from './today-workspace';
 
+function ordinaryText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const productionCapabilities = [{
   capabilityId: 'missions.mission.facts.view',
   workspace: 'missions' as const,
@@ -117,8 +125,35 @@ describe('TodayWorkspace', () => {
       />,
     );
     expect(markup).toContain('今日投影不可用');
-    expect(markup).toContain('StoreContext 不一致');
+    expect(markup).toContain('今日数据与当前店铺范围不一致');
+    expect(markup).not.toContain('StoreContext');
     expect(markup).not.toContain('data-production-today-projection');
+  });
+
+  it('keeps projection implementation terms inside diagnostics instead of ordinary copy', () => {
+    const technicalProjection = {
+      ...projection,
+      readiness: projection.readiness.map((item, index) => index === 0
+        ? { ...item, detail: 'Renderer sequence UNKNOWN' }
+        : item),
+      blockers: ['Main StoreContext Authority fingerprint'],
+      attentionItems: ['append-only correction READBACK EFFECT'],
+      nextAction: {
+        ...projection.nextAction,
+        detail: '生产下一动作必须由 Main 的店铺 Authority 投影给出。',
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <TodayWorkspace
+        capabilities={productionCapabilities}
+        loading={false}
+        onNavigate={() => undefined}
+        projection={technicalProjection}
+        storeContext={context}
+      />,
+    );
+    expect(ordinaryText(markup)).not.toMatch(/Main|StoreContext|Authority|Renderer|UNKNOWN|fingerprint|sequence|append-only|correction|READBACK|EFFECT/i);
+    expect(markup).toContain('诊断详情');
   });
 
   it('fails closed when the same store advances to another browser session generation', () => {

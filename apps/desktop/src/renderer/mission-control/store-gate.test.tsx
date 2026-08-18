@@ -31,6 +31,12 @@ function render(overrides: Partial<Parameters<typeof MissionControlStoreGateView
   );
 }
 
+function ordinaryText(markup: string): string {
+  return markup
+    .replace(/<details[\s\S]*?<\/details>/g, '')
+    .replace(/<[^>]+>/g, ' ');
+}
+
 describe('Mission Control StoreGate', () => {
   it('keeps the shared left StoreScopeSwitcher as the only create and switch entry', () => {
     const markup = render();
@@ -58,11 +64,16 @@ describe('Mission Control StoreGate', () => {
   it('exposes safe loading, switching, and error states without a second CRUD form', () => {
     expect(render({ phase: 'loading' })).toContain('正在读取店铺范围');
     expect(render({ phase: 'switching', stores: [store] })).toContain('正在切换店铺');
-    const failed = render({ phase: 'error', error: 'Main unavailable' });
+    const failed = render({ phase: 'error', error: 'Main unavailable for StoreContext Profile' });
     expect(failed).toContain('店铺上下文暂不可用');
     expect(failed).toContain('Main unavailable');
+    expect(failed).toContain('诊断详情');
     expect(failed).toContain('重试');
     expect(failed).not.toContain('mission-control-store-gate__create-form');
+    expect(ordinaryText(failed)).toContain('店铺范围读取失败，请点击“重试”再次确认当前店铺。');
+    expect(ordinaryText(failed)).not.toMatch(/Main|StoreContext|Profile|Authority/i);
+    expect(ordinaryText(render({ phase: 'loading' }))).not.toMatch(/Main|StoreContext|Profile|Authority/i);
+    expect(ordinaryText(render({ phase: 'switching', stores: [store] }))).not.toMatch(/Main|StoreContext|Profile|Authority/i);
   });
 
   it('renders the real workspace only after Main reports a ready authority', () => {

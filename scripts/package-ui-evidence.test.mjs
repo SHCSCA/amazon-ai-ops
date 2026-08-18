@@ -90,10 +90,12 @@ const {
   packageUiAttemptDiagnosticsSnapshotMatches,
   profileLineageStateMatches,
   markRunnerElectronCloseRequested,
+  openStoreScopedConnectionWorkbench,
   recordPackageUiProfileAttempt,
   releasePackageUiRunGroupLease,
   resolvePackageUiProfileCursor,
   sanitizeDiagnosticText,
+  setElectronViewport,
   selectDeterministicEvidenceStoreCandidate,
   validateOverlayKeyboardEvidence,
   validateWorkspaceTabKeyboardEvidence,
@@ -115,6 +117,7 @@ const {
   validateWorkspaceRuntimeMetrics,
   validRunDiagnostics,
   waitForPackageProcessCleanup,
+  waitForBoundedElectronClose,
   waitForProfileBrowserProcessCleanup,
   waitForInteractiveAuthenticatedWorkspace,
   waitForRendererComposite,
@@ -123,6 +126,58 @@ const {
   writePackageUiProfileCheckpoint,
 } = evidenceModule;
 const { main: runPackageUiEvidenceCli } = runnerModule;
+
+describe('bounded packaged Electron shutdown', () => {
+  it('fails closed when the packaged Electron close promise never settles', async () => {
+    const electronApp = {
+      close: () => new Promise(() => undefined),
+    };
+
+    await expect(waitForBoundedElectronClose(electronApp, 20)).rejects.toThrow(
+      /PACKAGE_UI_ELECTRON_CLOSE_TIMEOUT/,
+    );
+  });
+});
+
+describe('packaged Electron viewport restoration', () => {
+  it('waits through a delayed Windows unmaximize restore and returns only after the requested content size is stable', async () => {
+    let maximized = true;
+    let contentSize = [1200, 785];
+    const requestedSizes = [];
+    const window = {
+      focus() {},
+      getContentSize: () => [...contentSize],
+      isDestroyed: () => false,
+      isFullScreen: () => false,
+      isMaximized: () => maximized,
+      setContentSize(width, height) {
+        requestedSizes.push({ height, maximized, width });
+        contentSize = [width, height];
+      },
+      show() {},
+      unmaximize() {
+        setTimeout(() => {
+          maximized = false;
+        }, 5);
+        setTimeout(() => {
+          contentSize = [1200, 785];
+        }, 25);
+      },
+    };
+    const electronApp = {
+      evaluate: async (callback, argument) => callback({
+        BrowserWindow: { getAllWindows: () => [window] },
+      }, argument),
+    };
+
+    await setElectronViewport(electronApp, { height: 700, width: 1200 });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(contentSize).toEqual([1200, 700]);
+    expect(requestedSizes.length).toBeGreaterThan(0);
+    expect(requestedSizes.every((entry) => entry.maximized === false)).toBe(true);
+  });
+});
 
 describe('workspace authentication probe', () => {
   it('treats a bounded locator timeout as an unauthenticated result without masking the login error', () => {
@@ -134,8 +189,18 @@ describe('workspace authentication probe', () => {
     expect(isWorkspaceProbeAbsenceError(new Error('renderer crashed'))).toBe(false);
   });
 
-  it('requires a visible workspace with the visible login surface gone', async () => {
-    const page = (visibility) => ({
+  it('requires a visible workspace with a ready Main session even while the store connection workbench remains visible', async () => {
+    const readyAttestation = {
+      adsSessionReady: true,
+      credentialPersistence: 'saved',
+      credentialSource: 'typed',
+      erpSessionReady: true,
+      erpSessionReused: false,
+      ok: true,
+      sessionIdentityVerified: true,
+    };
+    const page = (visibility, attestation) => ({
+      evaluate: async () => attestation,
       locator: (selector) => ({
         isVisible: async () => visibility[selector] === true,
         waitFor: async () => {
@@ -152,16 +217,16 @@ describe('workspace authentication probe', () => {
 
     await expect(hasAuthenticatedWorkspace(page({
       [workspaceSelector]: true,
-      [loginSelector]: false,
-    }))).resolves.toBe(true);
+      [loginSelector]: true,
+    }, readyAttestation))).resolves.toBe(true);
     await expect(hasAuthenticatedWorkspace(page({
       [workspaceSelector]: false,
       [loginSelector]: false,
-    }))).resolves.toBe(false);
+    }, readyAttestation))).resolves.toBe(false);
     await expect(hasAuthenticatedWorkspace(page({
       [workspaceSelector]: true,
       [loginSelector]: true,
-    }))).resolves.toBe(false);
+    }, { ...readyAttestation, adsSessionReady: false }))).resolves.toBe(false);
   });
 
   it('classifies an operator-window close during the visible login handoff', async () => {
@@ -182,6 +247,108 @@ describe('workspace authentication probe', () => {
       .rejects.toThrow(/PACKAGE_UI_OPERATOR_WINDOW_CLOSED/);
   });
 
+  it('accepts a newly attested login while the store-scoped connection workbench remains visible', async () => {
+    let tick = 0;
+    const attestation = {
+      adsSessionReady: true,
+      credentialPersistence: 'saved',
+      credentialSource: 'typed',
+      erpSessionReady: true,
+      erpSessionReused: false,
+      ok: true,
+      sessionIdentityVerified: true,
+    };
+    const page = {
+      evaluate: async () => attestation,
+      isClosed: () => false,
+      locator: (selector) => ({
+        isVisible: async () => (
+          selector === 'nav[aria-label="主业务导航"]'
+          || selector === '[data-login-connection-status]'
+          || selector === '.login-submit-button[aria-busy="true"]'
+        ),
+      }),
+      waitForTimeout: async (duration) => {
+        tick += Math.max(1, Math.floor(duration / 2));
+      },
+    };
+
+    await expect(waitForInteractiveAuthenticatedWorkspace(page, 10, {
+      monotonicNow: () => tick,
+      now: () => Date.parse('2026-08-05T09:00:00.000Z'),
+    })).resolves.toEqual(attestation);
+  });
+
+  it('opens the current store connection workbench from an existing Mission Control workspace', async () => {
+    let workbenchVisible = false;
+    const workbench = {
+      isVisible: async () => workbenchVisible,
+      waitFor: async () => {
+        if (!workbenchVisible) throw new Error('workbench was not opened');
+      },
+    };
+    const navButton = {
+      click: async () => {
+        workbenchVisible = true;
+      },
+      first: () => navButton,
+      getAttribute: async () => null,
+      waitFor: async () => undefined,
+    };
+    const page = {
+      locator: (selector) => {
+        if (selector === '[data-login-connection-status]') return workbench;
+        if (selector === 'nav[aria-label="主业务导航"]') {
+          return { waitFor: async () => undefined };
+        }
+        if (selector === 'nav[aria-label="主业务导航"] button.nav-item') {
+          return { filter: () => navButton };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      },
+    };
+
+    await expect(openStoreScopedConnectionWorkbench(page)).resolves.toEqual({
+      navigated: true,
+      surface: 'store-scoped-connection-workbench',
+    });
+  });
+
+  it('uses the production System Settings navigation entry that owns the connection workbench', async () => {
+    let selectedLabel = null;
+    const workbench = {
+      isVisible: async () => false,
+      waitFor: async () => undefined,
+    };
+    const navButton = {
+      click: async () => undefined,
+      first: () => navButton,
+      getAttribute: async () => 'page',
+      waitFor: async () => undefined,
+    };
+    const page = {
+      locator: (selector) => {
+        if (selector === '[data-login-connection-status]') return workbench;
+        if (selector === 'nav[aria-label="主业务导航"]') {
+          return { waitFor: async () => undefined };
+        }
+        if (selector === 'nav[aria-label="主业务导航"] button.nav-item') {
+          return {
+            filter: ({ hasText }) => {
+              selectedLabel = hasText;
+              return navButton;
+            },
+          };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      },
+    };
+
+    await openStoreScopedConnectionWorkbench(page);
+
+    expect(selectedLabel).toBe('系统设置');
+  });
+
   it('selects the first explicit active Store Gate option deterministically without retaining an unbounded label', () => {
     expect(selectDeterministicEvidenceStoreCandidate([
       { label: '请选择店铺', value: '' },
@@ -194,6 +361,16 @@ describe('workspace authentication probe', () => {
     });
     expect(selectDeterministicEvidenceStoreCandidate(null)).toBeNull();
     expect(selectDeterministicEvidenceStoreCandidate([{ label: '请选择店铺', value: '' }])).toBeNull();
+  });
+
+  it('keeps the explicitly selected store when an isolated profile contains multiple active stores', () => {
+    expect(selectDeterministicEvidenceStoreCandidate([
+      { label: 'Store A', selected: false, value: 'store-a' },
+      { label: 'Store B', selected: true, value: 'store-b' },
+    ])).toEqual({
+      label: 'Store B',
+      value: 'store-b',
+    });
   });
 
   it('handles the first-run Store Gate through visible controls before probing saved login', () => {
@@ -214,7 +391,7 @@ describe('workspace authentication probe', () => {
     expect(storeGateBody).toContain("getByRole('dialog', { name: '新增美国站店铺' })");
     expect(storeGateBody).toContain("getByRole('button', { name: '创建店铺', exact: true })");
     expect(storeGateBody).toContain(".store-scope-switcher__option[data-store-scope-id]");
-    expect(storeGateBody).toContain("hasText: '切换并登录'");
+    expect(storeGateBody).toContain("hasText: '切换到新店铺'");
     expect(storeGateBody).toContain('created-and-selected-isolated-evidence-store');
     expect(storeGateBody).toContain('selected-existing-store');
     expect(storeGateBody).not.toMatch(/window\.(?:api|electron|electronAPI)|ipcRenderer|stores:create/);
@@ -222,8 +399,10 @@ describe('workspace authentication probe', () => {
     expect(connectionBody).toContain('[data-package-ui-evidence-action="bind-lingxing-connection"]');
     expect(connectionBody).toContain('bound-isolated-evidence-lingxing-connection');
     expect(connectionBody).not.toMatch(/window\.(?:api|electron|electronAPI)|ipcRenderer|stores:connections:create/);
-    expect(authenticationBody.indexOf("entrySurface?.kind === 'store-gate'")).toBeGreaterThan(-1);
+    expect(authenticationBody).toContain("['store-gate', 'workspace'].includes(entrySurface?.kind)");
     expect(authenticationBody.indexOf('ensureEvidenceStoreContext(page, options.diagnostics)'))
+      .toBeLessThan(authenticationBody.indexOf('hasAuthenticatedWorkspace(page)'));
+    expect(authenticationBody.indexOf('openStoreScopedConnectionWorkbench(page)'))
       .toBeLessThan(authenticationBody.indexOf('hasAuthenticatedWorkspace(page)'));
   });
 
@@ -248,6 +427,22 @@ describe('workspace authentication probe', () => {
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(true);
     run.diagnostics.login.outcome = 'failed';
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+  });
+
+  it('accepts the unique Electron app-close callback after a clean process exit', () => {
+    const run = validRun(EXPECTED_PACKAGE_UI_SCALES[0]);
+    const events = run.diagnostics.lifecycle.events;
+    const appClosedIndex = events.findIndex((event) => event.kind === 'electron-app-closed');
+    const processExitIndex = events.findIndex((event) => event.kind === 'electron-process-exit');
+    const appClosed = events[appClosedIndex];
+    const processExit = events[processExitIndex];
+
+    processExit.at = '2026-07-17T06:00:00.850Z';
+    run.diagnostics.lifecycle.processExit.at = processExit.at;
+    appClosed.at = '2026-07-17T06:00:00.900Z';
+    events.splice(appClosedIndex, 2, processExit, appClosed);
+
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(true);
   });
 
   it.each([
@@ -283,6 +478,20 @@ describe('workspace authentication probe', () => {
     }],
     ['detached process-exit timestamp', (run) => {
       run.diagnostics.lifecycle.processExit.at = '2026-07-17T06:00:00.901Z';
+    }],
+    ['missing app-close callback', (run) => {
+      const events = run.diagnostics.lifecycle.events;
+      const appClosedIndex = events.findIndex(
+        (event) => event.kind === 'electron-app-closed',
+      );
+      events.splice(appClosedIndex, 1);
+    }],
+    ['duplicate app-close callback', (run) => {
+      const events = run.diagnostics.lifecycle.events;
+      const appClosedIndex = events.findIndex(
+        (event) => event.kind === 'electron-app-closed',
+      );
+      events.splice(appClosedIndex, 0, { ...events[appClosedIndex] });
     }],
     ['non-monotonic event order', (run) => {
       const events = run.diagnostics.lifecycle.events;
@@ -1477,7 +1686,7 @@ describe('saved-login navigation retry contract', () => {
 
   it('requires typed-and-saved identity proof for the first handoff and a bounded saved-session continuation afterwards', () => {
     expect(INTERACTIVE_LOGIN_CONTRACT).toEqual(expect.objectContaining({
-      authorizationStartSignal: 'visible-login-submit-aria-busy-or-authenticated-workspace',
+      authorizationStartSignal: 'durable-login-attempt-sequence-or-visible-login-submit-aria-busy-or-authenticated-workspace',
       deadlineClock: 'monotonic-performance-now',
       durationEvidence: 'monotonic-elapsed-ms',
       firstRunFreshTypedIdentityProof: true,
@@ -1643,6 +1852,216 @@ describe('saved-login navigation retry contract', () => {
     }));
   });
 
+  it('starts authorization from a durable submit sequence when the aria-busy pulse was missed', async () => {
+    const appSource = readFileSync(
+      new URL('../apps/desktop/src/renderer/App.tsx', import.meta.url),
+      'utf8',
+    );
+    const loginWorkbenchSource = appSource.slice(
+      appSource.indexOf('function StoreConnectionWorkbench'),
+      appSource.indexOf('function MissionControlRuntime'),
+    );
+    let monotonicTime = 0;
+    const phaseTransitions = [];
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: monotonicTime >= 1_000,
+        credentialPersistence: monotonicTime >= 1_000 ? 'saved' : null,
+        credentialSource: monotonicTime >= 1_000 ? 'typed' : null,
+        erpSessionReady: monotonicTime >= 1_000,
+        erpSessionReused: false,
+        ok: monotonicTime >= 1_000,
+        sessionIdentityVerified: monotonicTime >= 1_000,
+      }),
+      locator: (selector) => ({
+        getAttribute: async (attribute) => {
+          if (selector !== '[data-login-connection-status]') return null;
+          if (attribute !== 'data-login-attempt-sequence') return null;
+          return monotonicTime >= 500 ? '1' : '0';
+        },
+        isVisible: async () => {
+          if (selector === 'nav[aria-label="主业务导航"]') return true;
+          if (selector === '[data-login-connection-status]') return true;
+          if (selector === '.login-submit-button[aria-busy="true"]') return false;
+          return false;
+        },
+      }),
+      waitForTimeout: async (waitMs) => {
+        monotonicTime += waitMs;
+      },
+    }, 1_100, {
+      monotonicNow: () => monotonicTime,
+      now: () => Date.parse('2026-08-07T05:00:00.000Z') + monotonicTime,
+      onPhaseChange: (transition) => phaseTransitions.push(transition),
+    });
+
+    expect(phaseTransitions.map(({ phase }) => phase)).toEqual([
+      'preparation',
+      'authorization',
+    ]);
+    expect(loginWorkbenchSource).toContain('data-login-attempt-sequence={loginAttemptSequence}');
+    expect(loginWorkbenchSource).toContain('setLoginAttemptSequence((current) => current + 1);');
+    expect(loginWorkbenchSource.indexOf('setLoginAttemptSequence((current) => current + 1);'))
+      .toBeLessThan(loginWorkbenchSource.indexOf('setLoading(true);'));
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      credentialPersistence: 'saved',
+      credentialSource: 'typed',
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
+  it('keeps authorization active when an authority remount drops the local busy button', async () => {
+    let monotonicTime = 0;
+    const phaseTransitions = [];
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: monotonicTime >= 1_500,
+        credentialPersistence: monotonicTime >= 1_500 ? 'saved' : null,
+        credentialSource: monotonicTime >= 1_500 ? 'typed' : null,
+        erpSessionReady: monotonicTime >= 1_500,
+        erpSessionReused: false,
+        ok: monotonicTime >= 1_500,
+        sessionIdentityVerified: monotonicTime >= 1_500,
+      }),
+      locator: (selector) => ({
+        getAttribute: async (attribute) => {
+          if (selector !== '[data-login-connection-status]') return null;
+          if (attribute === 'data-login-attempt-sequence') {
+            return monotonicTime >= 500 ? '1' : '0';
+          }
+          if (attribute === 'data-login-attempt-active') {
+            return monotonicTime >= 500 && monotonicTime < 1_500 ? 'true' : 'false';
+          }
+          return null;
+        },
+        isVisible: async () => {
+          if (selector === 'nav[aria-label="主业务导航"]') return true;
+          if (selector === '[data-login-connection-status]') return true;
+          if (selector === '.login-submit-button[aria-busy="true"]') {
+            return monotonicTime >= 500 && monotonicTime < 600;
+          }
+          if (selector === '.login-submit-button:not([aria-busy="true"]):not([disabled])') {
+            return monotonicTime >= 600;
+          }
+          return false;
+        },
+      }),
+      waitForTimeout: async (waitMs) => {
+        monotonicTime += waitMs;
+      },
+    }, 1_100, {
+      monotonicNow: () => monotonicTime,
+      now: () => Date.parse('2026-08-07T09:00:00.000Z') + monotonicTime,
+      onPhaseChange: (transition) => phaseTransitions.push(transition),
+    });
+
+    expect(phaseTransitions.map(({ phase }) => phase)).toEqual([
+      'preparation',
+      'authorization',
+    ]);
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
+  it('keeps the store-scoped submit sequence above authority-keyed workspace remounts', () => {
+    const appSource = readFileSync(
+      new URL('../apps/desktop/src/renderer/App.tsx', import.meta.url),
+      'utf8',
+    );
+    const loginWorkbenchSource = appSource.slice(
+      appSource.indexOf('function StoreConnectionWorkbench'),
+      appSource.indexOf('function MissionControlRuntime'),
+    );
+    const runtimeSource = appSource.slice(
+      appSource.indexOf('function MissionControlRuntime'),
+      appSource.indexOf('function AppContent'),
+    );
+    const authorityKeyedWorkspaceIndex = runtimeSource.indexOf('<div key={store.authorityKey}');
+    const durableAttemptStateIndex = runtimeSource.indexOf('const [storeLoginAttemptEvidence');
+
+    expect(authorityKeyedWorkspaceIndex).toBeGreaterThan(-1);
+    expect(durableAttemptStateIndex).toBeGreaterThan(-1);
+    expect(durableAttemptStateIndex).toBeLessThan(authorityKeyedWorkspaceIndex);
+    expect(loginWorkbenchSource).not.toContain('const [loginAttemptSequence, setLoginAttemptSequence] = useState(0);');
+    expect(loginWorkbenchSource).toContain('loginAttemptSequence: number;');
+    expect(loginWorkbenchSource).toContain('setLoginAttemptSequence: React.Dispatch<React.SetStateAction<number>>;');
+    expect(loginWorkbenchSource.indexOf('setLoginAttemptSequence((current) => current + 1);'))
+      .toBeLessThan(loginWorkbenchSource.indexOf('setLoading(true);'));
+    expect(runtimeSource).toContain('storeId: credentialDraftStoreId');
+    expect(runtimeSource).toContain('const currentSequence = current.storeId === credentialDraftStoreId');
+    expect(runtimeSource).toContain('loginAttemptSequence={scopedLoginAttemptSequence}');
+    expect(runtimeSource).toContain('setLoginAttemptSequence={setScopedLoginAttemptSequence}');
+    expect(loginWorkbenchSource).toContain('data-login-attempt-active={loading}');
+    expect(loginWorkbenchSource).not.toContain('const [loading, setLoading] = useState(false);');
+    expect(runtimeSource).toContain('loginAttemptPending={scopedLoginAttemptEvidence.pending}');
+    expect(runtimeSource).toContain('setLoginAttemptPending={setScopedLoginAttemptPending}');
+  });
+
+  it('returns to operator preparation after a failed login attempt becomes visibly retryable', async () => {
+    let monotonicTime = 0;
+    const phaseTransitions = [];
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: monotonicTime >= 2_000,
+        credentialPersistence: monotonicTime >= 2_000 ? 'saved' : null,
+        credentialSource: monotonicTime >= 2_000 ? 'typed' : null,
+        erpSessionReady: monotonicTime >= 2_000,
+        erpSessionReused: false,
+        ok: monotonicTime >= 2_000,
+        sessionIdentityVerified: monotonicTime >= 2_000,
+      }),
+      locator: (selector) => ({
+        getAttribute: async (attribute) => {
+          if (selector !== '[data-login-connection-status]') return null;
+          if (attribute === 'data-login-attempt-sequence') {
+            return monotonicTime >= 1_500 ? '2' : monotonicTime >= 500 ? '1' : '0';
+          }
+          if (attribute === 'data-login-attempt-active') {
+            return ((monotonicTime >= 500 && monotonicTime < 1_000)
+              || (monotonicTime >= 1_500 && monotonicTime < 2_000)) ? 'true' : 'false';
+          }
+          return null;
+        },
+        isVisible: async () => {
+          if (selector === 'nav[aria-label="主业务导航"]') return true;
+          if (selector === '[data-login-connection-status]') return true;
+          if (selector === '.login-submit-button[aria-busy="true"]') {
+            return (monotonicTime >= 500 && monotonicTime < 1_000)
+              || (monotonicTime >= 1_500 && monotonicTime < 2_000);
+          }
+          if (selector === '.login-submit-button:not([aria-busy="true"]):not([disabled])') {
+            return monotonicTime >= 1_000 && monotonicTime < 1_500;
+          }
+          return false;
+        },
+      }),
+      waitForTimeout: async (waitMs) => {
+        monotonicTime += waitMs;
+      },
+    }, 1_100, {
+      monotonicNow: () => monotonicTime,
+      now: () => Date.parse('2026-08-06T01:00:00.000Z') + monotonicTime,
+      onPhaseChange: (transition) => phaseTransitions.push(transition),
+    });
+
+    expect(phaseTransitions.map(({ phase }) => phase)).toEqual([
+      'preparation',
+      'authorization',
+      'preparation',
+      'authorization',
+    ]);
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
   it('uses a monotonic deadline even when the wall clock jumps forward', async () => {
     let wallTime = Date.parse('2026-07-17T06:00:00.000Z');
     let monotonicTime = 0;
@@ -1747,6 +2166,7 @@ function validMetrics(expected, overrides = {}) {
     aria: { brokenReferences: [], duplicateIds: [] },
     h1: { count: 1, labels: [expected.heading] },
     horizontalOverflow: { violations: [] },
+    operatorCopy: { forbiddenMatches: [], textLength: 128, textSha256: HASH_A },
     primaryAction: { count: 1, labels: ['继续'] },
     previewMarkers: [],
     rendererUrl: 'file:///D:/resources/app/dist/renderer/index.html',
@@ -2460,6 +2880,8 @@ function validSchedulerSubviewEvidence() {
       busyControlCount: 0,
       confirmRunDialogCount: 0,
       fixedScopeText: 'US USD',
+      fixedScopeTexts: ['US USD'],
+      fixedScopeVisibleCount: 1,
       heading: expected.heading,
       headingCount: 1,
       legacyBoundaryCount: 1,
@@ -4212,6 +4634,8 @@ describe('package workspace runtime contract', () => {
   it('matches Decisions tabs by their dynamic loaded-count accessible names', () => {
     expect(decisionsTabAccessibleNamePattern('已决策').test('已决策（已载入 12）')).toBe(true);
     expect(decisionsTabAccessibleNamePattern('待判断').test('待判断（已载入 0）')).toBe(true);
+    expect(decisionsTabAccessibleNamePattern('待判断').test('待判断 生产')).toBe(true);
+    expect(decisionsTabAccessibleNamePattern('待判断').test('待判断 任意状态')).toBe(false);
     expect(decisionsTabAccessibleNamePattern('已决策').test('已决策')).toBe(false);
   });
 
@@ -4232,7 +4656,7 @@ describe('package workspace runtime contract', () => {
       { workspace: 'experiments', subview: 'ledger', label: '经营实验', heading: '经营实验', tabs: ['ledger'] },
       { workspace: 'execution', subview: 'live', label: '实时执行', heading: '实时执行', tabs: ['live', 'evidence'] },
       { workspace: 'memory', subview: 'timeline', label: '因果记忆', heading: '因果记忆', tabs: ['timeline'] },
-      { workspace: 'objects', subview: 'products', label: '店铺与广告对象', heading: '店铺与广告对象', tabs: ['products', 'targets', 'keywords', 'listing'] },
+      { workspace: 'objects', subview: 'products', label: '产品与广告对象', heading: '产品与广告对象', tabs: ['products', 'targets', 'keywords', 'listing'] },
       { workspace: 'collection', subview: 'scope', label: '数据采集', heading: '工作范围', tabs: ['scope', 'reports', 'import-check'] },
       { workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: ['rules'] },
       { workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: ['ai-and-local', 'scheduler', 'delivery'] },
@@ -4373,6 +4797,117 @@ describe('package workspace runtime contract', () => {
     }
   });
 
+  it('restores the requested viewport after authentication before any workspace evidence is captured', () => {
+    const source = readFileSync(new URL('./package-ui-evidence.js', import.meta.url), 'utf8');
+    const compactStart = source.indexOf('async function runScaleEvidenceCore');
+    const compactEnd = source.indexOf('async function runWideProfileEvidenceCore', compactStart);
+    const compact = source.slice(compactStart, compactEnd);
+    const wideStart = compactEnd;
+    const wideEnd = source.indexOf('async function runScaleEvidence', wideStart);
+    const wide = source.slice(wideStart, wideEnd);
+
+    for (const runner of [compact, wide]) {
+      const authentication = runner.indexOf('const session = await ensureAuthenticatedWorkspace');
+      const viewportRestore = runner.indexOf('await restoreElectronViewportAfterAuthentication', authentication);
+      const navigation = runner.indexOf('for (const workspace', authentication);
+      expect(authentication).toBeGreaterThan(0);
+      expect(viewportRestore).toBeGreaterThan(authentication);
+      expect(navigation).toBeGreaterThan(viewportRestore);
+    }
+  });
+
+  it('captures a fresh scheduler workspace bootstrap inside the read-only ledger delta', () => {
+    const source = readFileSync(new URL('./package-ui-evidence.js', import.meta.url), 'utf8');
+    const compactStart = source.indexOf('async function runScaleEvidenceCore');
+    const compactEnd = source.indexOf('async function runWideProfileEvidenceCore', compactStart);
+    const compact = source.slice(compactStart, compactEnd);
+    const subviewLoop = compact.indexOf('for (const subview of EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS)');
+    const navigationBoundary = compact.indexOf(
+      'await prepareReadOnlySubviewNavigationBoundary(page, subview, options.settleMs)',
+      subviewLoop,
+    );
+    const ledgerBefore = compact.indexOf(
+      'const schedulerLedgerBefore = readPackageUiSchedulerAudit(options.userDataDir)',
+      subviewLoop,
+    );
+    const rendererReload = compact.indexOf(
+      'await reloadAuthenticatedWorkspaceForSubviewEvidence(page)',
+      subviewLoop,
+    );
+    const schedulerNavigation = compact.indexOf(
+      'const settleEvidence = await navigateToReadOnlySubview(page, subview, options.settleMs)',
+      subviewLoop,
+    );
+
+    expect(subviewLoop).toBeGreaterThan(0);
+    expect(navigationBoundary).toBeGreaterThan(subviewLoop);
+    expect(ledgerBefore).toBeGreaterThan(navigationBoundary);
+    expect(rendererReload).toBeGreaterThan(ledgerBefore);
+    expect(schedulerNavigation).toBeGreaterThan(rendererReload);
+
+    const helperStart = source.indexOf('async function prepareReadOnlySubviewNavigationBoundary');
+    const helperEnd = source.indexOf('async function navigateToReadOnlySubview', helperStart);
+    const helper = source.slice(helperStart, helperEnd);
+    expect(helperStart).toBeGreaterThan(0);
+    expect(helper).toContain('candidate.workspace !== expected.workspace');
+    expect(helper).toContain('await navigateToWorkspace(page, boundaryWorkspace, settleMs)');
+
+    const reloadHelperStart = source.indexOf('async function reloadAuthenticatedWorkspaceForSubviewEvidence');
+    const reloadHelperEnd = source.indexOf('async function prepareReadOnlySubviewNavigationBoundary', reloadHelperStart);
+    const reloadHelper = source.slice(reloadHelperStart, reloadHelperEnd);
+    expect(reloadHelperStart).toBeGreaterThan(0);
+    expect(reloadHelper).toContain("await page.reload({ waitUntil: 'domcontentloaded' })");
+    expect(reloadHelper).toContain('await hasAuthenticatedWorkspace(page, 15_000)');
+  });
+
+  it('reads scheduler store identity from the visible authority summary with separated scope tokens', () => {
+    const evidenceSource = readFileSync(new URL('./package-ui-evidence.js', import.meta.url), 'utf8');
+    const shellSource = readFileSync(
+      new URL('../apps/desktop/src/renderer/mission-control/mission-control-shell.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(shellSource).toContain('data-store-id={activeStoreId}');
+    expect(evidenceSource).toContain('const storeSummary = document.querySelector(');
+    expect(evidenceSource).toContain(
+      '.mission-control-store-select--readonly[aria-label="当前店铺权威摘要"][data-store-id]',
+    );
+    expect(evidenceSource).toContain(
+      "selectedStoreId: storeSummary?.getAttribute('data-store-id') || null",
+    );
+    expect(evidenceSource).toContain('Array.from(fixedScope.children)');
+    expect(evidenceSource).toContain('.map((node) => compactText(node))');
+    expect(evidenceSource).toContain(".join(' ')");
+  });
+
+  it('collects every visible responsive scheduler scope surface and ignores hidden duplicates', () => {
+    const evidenceSource = readFileSync(new URL('./package-ui-evidence.js', import.meta.url), 'utf8');
+
+    expect(evidenceSource).toContain('const fixedScopeSurfaces = Array.from(document.querySelectorAll(');
+    expect(evidenceSource).toContain(
+      "'.mission-control-fixed-scope, .mission-control-legacy-adapter__context',",
+    );
+    expect(evidenceSource).toContain(')).filter(visible);');
+    expect(evidenceSource).toContain('fixedScopeTexts,');
+    expect(evidenceSource).toContain('fixedScopeVisibleCount: fixedScopeSurfaces.length');
+  });
+
+  it('rejects absent or conflicting visible responsive scheduler scope surfaces', () => {
+    const absent = validSchedulerSubviewEvidence();
+    absent.dom.fixedScopeTexts = [];
+    absent.dom.fixedScopeVisibleCount = 0;
+    expect(validateSchedulerSubviewEvidence(absent).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCHEDULER_FIXED_SCOPE_MISSING' }),
+    ]));
+
+    const conflicting = validSchedulerSubviewEvidence();
+    conflicting.dom.fixedScopeTexts = ['US USD', 'US USDT'];
+    conflicting.dom.fixedScopeVisibleCount = 2;
+    expect(validateSchedulerSubviewEvidence(conflicting).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCHEDULER_FIXED_SCOPE_MISSING' }),
+    ]));
+  });
+
   it.each([
     ['reordered checkpoints', (audit) => audit.checkpoints.reverse()],
     ['duplicate checkpoint phase', (audit) => {
@@ -4435,6 +4970,13 @@ describe('package workspace runtime contract', () => {
         evidence.dom.alertDialogCount = 1;
       },
       'SCHEDULER_UNSAFE_CAPTURE_STATE',
+    ],
+    [
+      'missing zero-valued retention attribute',
+      (evidence) => {
+        evidence.dom.retentionCandidateCount = null;
+      },
+      'SCHEDULER_DOM_MAIN_RESPONSE_BINDING_MISMATCH',
     ],
   ])('fails closed for scheduler %s', (_label, mutate, code) => {
     const evidence = validSchedulerSubviewEvidence();
@@ -4546,6 +5088,52 @@ describe('package workspace runtime contract', () => {
     ]));
   });
 
+  it('locks the visible operator-copy collector to the complete technical vocabulary', () => {
+    const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+    const collectorStart = source.indexOf('async function collectPackageWorkspaceMetrics');
+    const collectorEnd = source.indexOf('async function waitForNavigationIdle', collectorStart);
+    const collectorSource = source.slice(collectorStart, collectorEnd);
+    const vocabularyStart = collectorSource.indexOf('const forbiddenOperatorCopy = [');
+    const vocabularyEnd = collectorSource.indexOf('];', vocabularyStart);
+    const vocabularySource = collectorSource.slice(vocabularyStart, vocabularyEnd);
+    const vocabulary = vocabularySource
+      .split(/\r?\n/)
+      .map((line) => line.match(/\{ token: '([^']+)', pattern: (\/.+\/[a-z]*) \},/))
+      .filter(Boolean)
+      .map((match) => [match[1], match[2]]);
+
+    expect(vocabulary).toEqual([
+      ['Mission', '/\\bMission\\b/gi'],
+      ['Experiment', '/\\bExperiment\\b/gi'],
+      ['UNKNOWN', '/\\bUNKNOWN\\b/g'],
+      ['revision', '/\\brevision\\b/gi'],
+      ['draft', '/\\bdraft\\b/gi'],
+      ['set_keyword_bid', '/\\bset_keyword_bid\\b/g'],
+      ['Main', '/\\bMain\\b/gi'],
+      ['StoreContext', '/\\bStoreContext\\b/gi'],
+      ['Authority', '/\\bAuthority\\b/gi'],
+      ['Profile', '/\\bProfile\\b/gi'],
+      ['dry-run', '/\\bdry-run\\b/gi'],
+      ['manifest', '/\\bmanifest\\b/gi'],
+      ['fingerprint', '/\\bfingerprint\\b/gi'],
+      ['Renderer', '/\\bRenderer\\b/gi'],
+      ['CRUD', '/\\bCRUD\\b/gi'],
+      ['PRODUCTION_NATIVE', '/\\bPRODUCTION_NATIVE\\b/gi'],
+      ['PROTOTYPE_ONLY', '/\\bPROTOTYPE_ONLY\\b/gi'],
+      ['LEGACY_ADAPTER', '/\\bLEGACY_ADAPTER\\b/gi'],
+      ['sequence', '/\\bsequence\\b/gi'],
+      ['append-only', '/\\bappend-only\\b/gi'],
+      ['correction', '/\\bcorrection\\b/gi'],
+      ['DECISION', '/\\bDECISION\\b/gi'],
+      ['ACTION', '/\\bACTION\\b/gi'],
+      ['READBACK', '/\\bREADBACK\\b/gi'],
+      ['EFFECT', '/\\bEFFECT\\b/gi'],
+    ]);
+    expect(collectorSource).toContain(
+      `parent.closest('details, [hidden], [aria-hidden="true"], script, style, template')`,
+    );
+  });
+
   it.each([
     ['workspace identity', { root: { count: 1, workspace: 'product', subview: 'products' } }, 'WORKSPACE_IDENTITY_MISMATCH'],
     ['heading', { h1: { count: 2, labels: ['今日任务', '重复标题'] } }, 'H1_CONTRACT'],
@@ -4556,6 +5144,8 @@ describe('package workspace runtime contract', () => {
     ['nested scroll', { scrollOwnership: { defaultOwner: { declared: true, matchCount: 1 }, unlabelledActiveOwners: [{ selector: '.table-wrap' }] } }, 'UNLABELLED_SCROLL_OWNER'],
     ['workspace retained scroll position', { scrollOwnership: { defaultOwner: { declared: true, matchCount: 1, scrollTop: 120 }, unlabelledActiveOwners: [] } }, 'WORKSPACE_NOT_AT_TOP'],
     ['preview marker', { previewMarkers: ['仅开发预览'] }, 'PREVIEW_MARKER_PRESENT'],
+    ['missing operator-copy audit', { operatorCopy: null }, 'OPERATOR_COPY_AUDIT_MISSING'],
+    ['operator-facing internal copy', { operatorCopy: { forbiddenMatches: [{ token: 'Mission', text: 'Mission 队列' }], textLength: 128, textSha256: HASH_A } }, 'OPERATOR_INTERNAL_COPY_VISIBLE'],
   ])('rejects %s', (_label, overrides, code) => {
     const expected = EXPECTED_PACKAGE_UI_WORKSPACES[0];
     const result = validateWorkspaceRuntimeMetrics(validMetrics(expected, overrides), expected);
@@ -4802,6 +5392,8 @@ describe('read-only interactions and evidence completeness', () => {
     expect(schedulerCollector).toContain('ledgerBefore');
     expect(schedulerCollector).toContain('ledgerAfter');
     expect(schedulerCollector).toContain("getAttribute('data-schedule-state')");
+    expect(schedulerCollector).toContain("root.querySelectorAll('.mission-control-retention-metrics')");
+    expect(schedulerCollector).not.toContain('证据保留 dry-run 摘要');
     expect(schedulerCollector).not.toContain('window.electronAPI');
     expect(schedulerCollector).not.toContain('missionControl.query');
     expect(schedulerCollector).not.toContain('getStoreCollectionSchedule');
@@ -4820,6 +5412,38 @@ describe('read-only interactions and evidence completeness', () => {
       tagName: 'button',
       triggerCount: 1,
     })).toEqual({ passed: true, violations: [] });
+  });
+
+  it('pins the Decisions overlay to the canonical read-only capability boundary', () => {
+    const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+    const overlayRunner = source.slice(
+      source.indexOf('async function runOverlayChecks'),
+      source.indexOf('async function collectElectronIdentity'),
+    );
+    expect(overlayRunner).toContain("page.locator('#decisions-workspace-tab-recommendations')");
+    expect(overlayRunner).toContain("expectedActionId: 'decision-boundary'");
+    expect(overlayRunner).toContain("dialogName: '决策与审批接入边界'");
+    expect(overlayRunner).toContain('仅展示本机安全进程返回的店铺范围和动作级能力。');
+    expect(overlayRunner).toContain("name: '决策与审批接入边界', exact: true");
+    expect(overlayRunner).toContain('[data-action-id="decision-boundary"]');
+    expect(overlayRunner).not.toContain('open-controlled-review-inspector');
+    expect(overlayRunner).not.toContain('decisions-inspector-form-title');
+  });
+
+  it('pins the Readback overlay to the canonical evidence tab and stable read-only action', () => {
+    const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+    const overlayRunner = source.slice(
+      source.indexOf('async function runOverlayChecks'),
+      source.indexOf('async function collectElectronIdentity'),
+    );
+    expect(overlayRunner).toContain("page.locator('#execution-workspace-tab-evidence')");
+    expect(overlayRunner).toContain('[data-workspace="readback"][data-workspace-subview="evidence"]');
+    expect(overlayRunner).toContain('await page.locator(readbackAdapterRootSelector).waitFor');
+    expect(overlayRunner).toContain('[data-action="open-technical-inspector"]');
+    expect(overlayRunner).toContain('trigger: page.locator(`${readbackAdapterRootSelector} [data-action="open-technical-inspector"]`)');
+    expect(overlayRunner).toContain("expectedActionId: 'open-technical-inspector'");
+    expect(overlayRunner).not.toContain("page.getByRole('button', { name: '查看技术与证据详情', exact: true })");
+    expect(source).toContain("actionId: node.getAttribute('data-action-id') || node.getAttribute('data-action')");
   });
 
   it('fails closed before clicking when the controlled-review row is absent or the primary action is mutating', () => {

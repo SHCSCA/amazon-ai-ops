@@ -15,6 +15,10 @@ const browserLoginRequestSource = fs.readFileSync(
   path.join(__dirname, 'browser-login-request.ts'),
   'utf8',
 );
+const lingxingAdsSsoSource = fs.readFileSync(
+  path.join(__dirname, 'lingxing-ads-sso.ts'),
+  'utf8',
+);
 
 describe('Electron external-distribution security wiring', () => {
   it('installs navigation, redirect, and external-open guards before loading the renderer', () => {
@@ -73,17 +77,16 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain(
       '&& !packageUiSavedSessionContinuationAllowed',
     );
-    expect(source).toContain('await assertProviderPageActiveIdentity({');
-    expect(source).toContain('connection: connections.lingxing,');
-    expect(source).toContain('connection: adsConnection,');
+    expect(source).toContain('await openLingxingAdsFromErp(lingxingController)');
+    expect(source).toContain('await readLingxingAdsProfileEvidence(');
+    expect(source).toContain('resolveLingxingStableIdentityFromAdsProfile({');
+    expect(source).toContain('configuredExternalAccountId: connections.lingxing.externalAccountId');
     expect(source).toContain(
       "credentialSubmission: request.credentialSource === 'typed' && needsLogin",
     );
     expect(source).toContain('credentialsSubmitted: true,');
     expect(source).not.toContain('assertProviderIdentity(');
-    expect(source).not.toMatch(
-      /assertProviderPageActiveIdentity\(\{[\s\S]*?(?:bodyText|title):\s*erpLoginState\./,
-    );
+    expect(source).not.toContain("amazonAdsController.navigate('https://ads.lingxing.com/');");
     expect(source.match(/assertBrowserLoginAttempt\(attemptId, loginContext\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
     expect(source).toContain('credentialSource: request.credentialSource');
@@ -92,17 +95,12 @@ describe('Electron external-distribution security wiring', () => {
   });
 
   it('keeps active identity evidence Main-only and exact-match bounded', () => {
-    expect(source).toContain('PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map');
-    expect(source).toContain("element.closest('[hidden], [aria-hidden=\"true\"], [inert]')");
-    expect(source).toContain('.slice(0, 2)');
-    expect(providerActiveIdentitySource).toContain("origin: 'https://erp.lingxing.com'");
-    expect(providerActiveIdentitySource).toContain("queryParameters: ['seller_id', 'store_id']");
-    expect(providerActiveIdentitySource).toContain("origin: 'https://ads.lingxing.com'");
-    expect(providerActiveIdentitySource).toContain("queryParameters: ['profile_id']");
-    expect(providerActiveIdentitySource).toContain('stableProfileEvidence.length === 0');
-    expect(providerActiveIdentitySource).toContain(
-      'stableProfileEvidence.some((candidate) => candidate !== expectedProfileId)',
-    );
+    expect(lingxingAdsSsoSource).toContain("responseUrl.origin === 'https://ads.lingxing.com'");
+    expect(lingxingAdsSsoSource).toContain("responseUrl.pathname === ADS_PROFILE_LIST_PATH");
+    expect(lingxingAdsSsoSource).toContain("response.request().method() === 'POST'");
+    expect(lingxingAdsSsoSource).toContain("record.country !== 'US'");
+    expect(lingxingAdsSsoSource).toContain('normalizeProviderExternalAccountId(\'amazon_ads\', record.profile_id)');
+    expect(lingxingAdsSsoSource).toContain('if (unique.length !== 1)');
     expect(providerActiveIdentitySource).not.toContain('bodyText');
     expect(providerActiveIdentitySource).not.toContain('document.title');
     expect(providerActiveIdentitySource).not.toContain('innerText');
@@ -142,12 +140,13 @@ describe('Electron external-distribution security wiring', () => {
     expect(login).toContain('requireBrowserLoginProviderConnections');
     expect(login).not.toContain('request.amazonAdsProfileId');
     expect(login).toContain('ensureAmazonAdsEnrollmentConnection');
-    expect(login).toContain('waitForLingxingAdsSessionReady');
-    expect(login).toContain('waitForLingxingAdsIdentityEvidence');
+    expect(login).toContain('ensureLingxingErpAuthenticated(adsErpPage, { username, password })');
+    expect(login).toContain('openLingxingAdsFromErp(amazonAdsController)');
+    expect(login).toContain('readLingxingAdsProfileEvidence(adsPage, lingxingStoreAlias)');
     expect(login).toContain('pendingAmazonAdsIdentityConfirmation');
     expect(login).toContain('handleConfirmBrowserLoginAdsIdentity');
     expect(login).toContain('verifyAmazonAdsIdentity(pending.claim, readyConnection)');
-    expect(login).toContain('AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
+    expect(login).not.toContain("amazonAdsController.navigate('https://ads.lingxing.com/');");
     expect(login).toContain('adsSessionReady: Boolean(adsSession)');
     const packageLogin = source.slice(
       source.indexOf('async function handleBrowserLogin'),

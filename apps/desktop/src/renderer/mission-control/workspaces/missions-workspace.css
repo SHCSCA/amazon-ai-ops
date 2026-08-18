@@ -758,13 +758,54 @@
 
 .mission-domain-editor {
   width: min(760px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 32px));
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.mission-domain-page .workspace-button,
+.mission-domain-editor .workspace-button,
+.mission-domain-checkpoint-form + footer .workspace-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.mission-domain-dependency-gates {
+  display: grid;
+  gap: 6px;
+  padding: 0 14px 8px;
+}
+.mission-domain-dependency-gates:empty { display: none; }
+.mission-domain-dependency-gates p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid #efd39a;
+  border-radius: 7px;
+  background: #fff8e8;
+  padding: 7px 9px;
+  color: #7b5417;
+  font-size: 11px;
+}
+.mission-domain-dependency-gates button {
+  border: 0;
+  background: transparent;
+  color: #1f5bc9;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .mission-domain-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  max-height: min(58vh, 560px);
+  min-height: 0;
+  max-height: none;
   padding: 14px;
   overflow-y: auto;
 }
@@ -831,4 +872,23 @@
   .mission-domain-proposal-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.mission-domain-diagnostics {
+  width: fit-content;
+  max-width: 100%;
+  font-size: 10px;
+}
+
+.mission-domain-diagnostics summary {
+  cursor: pointer;
+  color: #1f5bc9;
+  font-weight: 800;
+}
+
+.mission-domain-diagnostics code {
+  display: block;
+  margin-top: 4px;
+  color: #69758b;
+  overflow-wrap: anywhere;
 }

@@ -9,6 +9,8 @@ import {
   normalizeRetentionSummary,
   readStoreAutomationRendererApi,
   resolveStoreAutomationAccess,
+  schedulerFailureReviewLabel,
+  schedulerOperatorMessage,
   schedulerRunNowPolicy,
   storeAutomationRequestMatches,
   STORE_AUTOMATION_CAPABILITY_IDS,
@@ -69,22 +71,54 @@ describe('store automation plan', () => {
       'succeeded',
       'failed',
     ]);
+    expect(STORE_AUTOMATION_STATES.map((item) => item.detail).join(' '))
+      .not.toMatch(/UNKNOWN|Main|StoreContext|Profile|fingerprint/);
   });
 
   it('allows run-now only before a terminal or claimed state', () => {
-    expect(schedulerRunNowPolicy(projection('waiting')).allowed).toBe(true);
+    expect(schedulerRunNowPolicy(projection('waiting'))).toEqual({
+      allowed: true,
+      reason: '需要二次确认；系统会再次核对当前店铺与可见领星会话。',
+    });
     expect(schedulerRunNowPolicy(projection('due')).allowed).toBe(true);
     expect(schedulerRunNowPolicy(projection('claimed')).allowed).toBe(false);
     expect(schedulerRunNowPolicy(projection('succeeded')).allowed).toBe(false);
     expect(schedulerRunNowPolicy(projection('failed'))).toEqual({
       allowed: false,
-      reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。',
+      reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。',
     });
   });
 
   it('guides missing and archived configurations instead of offering run-now', () => {
     expect(schedulerRunNowPolicy(projection('not_configured')).reason).toContain('AI 与本地设置');
     expect(schedulerRunNowPolicy(projection('archived')).reason).toContain('恢复配置');
+  });
+
+  it('describes unconfirmed and failed outcomes in operator-facing Chinese', () => {
+    expect(schedulerFailureReviewLabel('failed')).toBe('同采集口径关闭 · 不重试');
+    expect(schedulerFailureReviewLabel('waiting')).toBe('状态无法确认或采集失败时，均需人工核对');
+    expect(schedulerFailureReviewLabel('waiting')).not.toMatch(/UNKNOWN|Main|StoreContext/);
+  });
+
+  it('keeps dynamic technical errors out of ordinary scheduler feedback', () => {
+    const fallback = '读取失败，请刷新当前店铺后重试。';
+    expect(schedulerOperatorMessage('Main StoreContext revision mismatch', fallback)).toBe(fallback);
+    expect(schedulerOperatorMessage('当前店铺计划尚未生成，请稍后刷新。', fallback))
+      .toBe('当前店铺计划尚未生成，请稍后刷新。');
+  });
+
+  it('sanitizes capability details before using them as scheduler button guidance', () => {
+    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toMatch(
+      /const runNowDisabledReason = !access\.runNow\.allowed\s*\? schedulerOperatorMessage\(\s*access\.runNow\.capability\?\.detail,\s*'立即采集暂不可用，请刷新或检查运行设置。',\s*\)\s*: runPolicy\.reason/,
+    );
+    expect(source).toMatch(
+      /title=\{!access\.retentionPreview\.allowed\s*\? schedulerOperatorMessage\(\s*access\.retentionPreview\.capability\?\.detail,\s*'证据保留预览暂不可用，请刷新或检查运行设置。',\s*\)\s*: undefined\}/,
+    );
+    expect(source).not.toMatch(
+      /(?:disabledReason|title)=\{[^}]*\?\s*access\.(?:runNow|retentionPreview)\.capability\?\.detail\s*\?\?/,
+    );
   });
 });
 
@@ -205,11 +239,34 @@ describe('store automation Renderer API', () => {
     expect(source).toContain('data-blocker-count={retention.blockers.length}');
     expect(source).toContain('data-marketplace={retention.marketplace}');
     expect(source).toContain('data-currency={retention.currency}');
-    expect(source).toContain('调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint');
+    expect(source).toContain('调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识');
+    for (const exposedCopy of [
+      'UNKNOWN / 失败均人工核对',
+      'DRY-RUN · deletionSupported=false',
+      'RUN NOW · STORE CONTEXT ONLY',
+      'Main 正在复核 StoreContext',
+      '当前浏览器 Profile',
+      "previewMode ? 'PROTOTYPE_ONLY · 当前店铺计划'",
+    ]) {
+      expect(source).not.toContain(exposedCopy);
+    }
     expect(source).toContain('onKeyDown={handleConfirmDialogKeyDown}');
     expect(source).toContain('data-confirm-initial');
     expect(source).toContain("event.key === 'Escape'");
     expect(source.match(/<TaskBanner\b/g)).toHaveLength(1);
+  });
+
+  it('keeps retention implementation terms and blocker codes out of ordinary copy', () => {
+    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+    for (const exposedCopy of [
+      '正在生成 dry-run',
+      '证据保留 dry-run 摘要',
+      '存在阻塞时 manifest 仅用于排查',
+    ]) {
+      expect(source).not.toContain(exposedCopy);
+    }
+    expect(source).not.toMatch(/<li[^>]*>\s*<code>\{blocker\.code\}<\/code>/);
+    expect(source).toMatch(/<details[^>]*>\s*<summary>诊断详情<\/summary>\s*<code>\{blocker\.code\}<\/code>/);
   });
 
   it('resets retention busy state on every context sequence and ignores stale store responses', () => {

@@ -244,6 +244,10 @@ describe('Phase 5 delivery user task surface', () => {
     expect(source).toContain('<ProgressiveDetails title="技术支持细节">');
     expect(source).not.toContain('<Panel title="证据治理"');
     expect(source).not.toContain('<ProgressiveDetails title="文件与技术入口">');
+    expect(source).toContain('最终能否交付仍以最终验收汇总和安装包证据为准。');
+    expect(source).toContain('最终验收汇总已生成');
+    expect(source).not.toContain('最终能否交付仍以 manifest 驱动');
+    expect(source).not.toContain("'manifest 已生成'");
   });
 
   it('keeps ProgressiveDetails as siblings instead of nesting native details disclosures', () => {

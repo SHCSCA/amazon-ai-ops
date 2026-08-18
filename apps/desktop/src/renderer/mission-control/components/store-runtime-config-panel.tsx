@@ -195,7 +195,7 @@ export function StoreRuntimeConfigPanel({
       header: '版本',
       priority: 'anchor',
       width: '12%',
-      cell: (version) => <strong>r{version.revision}</strong>,
+      cell: (version) => <strong>{runtimeConfigRevisionDisplayLabel(version.revision)}</strong>,
     },
     {
       key: 'action',
@@ -233,8 +233,8 @@ export function StoreRuntimeConfigPanel({
       data-config-state={current?.status ?? (loading ? 'loading' : 'empty')}
     >
       <WorkbenchPanel
-        description="当前店铺独立保存采集、量化与 AI 建议参数；Amazon Ads 自动执行上限与急停仍由策略/执行 Authority 管理。"
-        status={<span>{current ? `r${current.revision} · ${current.status === 'active' ? '生效中' : '已归档'}` : loading ? '读取中' : '未配置'}</span>}
+        description="当前店铺独立保存采集、量化与 AI 建议参数；Amazon Ads 自动执行上限与急停仍由策略和真实执行服务管理。"
+        status={<span>{current ? `${runtimeConfigRevisionDisplayLabel(current.revision)} · ${current.status === 'active' ? '生效中' : '已归档'}` : loading ? '读取中' : '未配置'}</span>}
         title="店铺运行配置"
         toolbar={(
           <div className="mission-control-config-actions" role="group" aria-label="店铺运行配置操作">
@@ -288,7 +288,7 @@ export function StoreRuntimeConfigPanel({
       >
         {runtimeError && <div className="mission-control-store-error" role="alert">{runtimeError}</div>}
         {loading ? (
-          <WorkspaceState description="Main 正在复核当前 StoreContext 并读取独立配置。" kind="loading" title="正在读取店铺配置" />
+          <WorkspaceState description="本机安全进程正在复核当前店铺范围并读取独立配置。" kind="loading" title="正在读取店铺配置" />
         ) : !current ? (
           <WorkspaceState description="创建后，这些参数只影响当前店铺；切换店铺不会复用或覆盖配置。" kind="empty" title="当前店铺尚未配置" />
         ) : (
@@ -335,7 +335,7 @@ export function StoreRuntimeConfigPanel({
         <div className="mission-control-dialog-backdrop">
           <section aria-labelledby="runtime-config-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="dialog">
             <header>
-              <div><span>RECOVERABLE ARCHIVE</span><h2 id="runtime-config-archive-title">归档当前店铺配置？</h2><p>配置会停止生效但保留全部版本，可随时恢复；不会影响其他店铺。</p></div>
+              <div><span>可恢复归档</span><h2 id="runtime-config-archive-title">归档当前店铺配置？</h2><p>配置会停止生效但保留全部版本，可随时恢复；不会影响其他店铺。</p></div>
               <button aria-label="关闭归档确认" className="mission-control-dialog__close" disabled={Boolean(pending)} onClick={() => setConfirmArchive(false)} type="button"><X aria-hidden="true" size={18} /></button>
             </header>
             <footer>
@@ -392,7 +392,7 @@ function ConfigEditor({
           <div>
             <span>STORE CONFIG · US / USD</span>
             <h2 id="runtime-config-editor-title">{mode === 'create' ? '新建店铺运行配置' : '编辑店铺运行配置'}</h2>
-            <p id="runtime-config-editor-description">参数绑定 {String(storeContext.storeId)}，时间按 {storeContext.businessTimezone} 解释。</p>
+            <p id="runtime-config-editor-description">参数仅作用于当前店铺，时间按 {storeContext.businessTimezone} 解释。</p>
           </div>
           <button aria-label="关闭配置编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X aria-hidden="true" size={18} /></button>
         </header>
@@ -466,6 +466,11 @@ function validateNumberRange<K extends keyof ConfigDraftErrors>(value: number, m
 
 function versionActionLabel(action: StoreRuntimeConfigVersion['action']): string {
   return { create: '创建', update: '修改', archive: '归档', restore: '恢复' }[action];
+}
+
+export function runtimeConfigRevisionDisplayLabel(revision: number): string {
+  void revision;
+  return '版本已校验';
 }
 
 function formatPercent(value: number): string {

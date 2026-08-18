@@ -516,7 +516,7 @@ export function buildEvidenceGovernanceFacts(input: {
   return [
     {
       label: '权威来源',
-      value: readiness?.manifestDriven ? 'manifest 驱动' : '不是权威验收',
+      value: readiness?.manifestDriven ? '最终验收汇总驱动' : '不是权威验收',
       tone: readiness?.manifestDriven ? 'ready' : 'blocked',
     },
     {
@@ -539,18 +539,18 @@ export function buildEvidenceGovernanceFacts(input: {
 
 function evidenceGovernanceSummary(readiness: DeliveryReadinessView | null): string {
   if (readiness?.appReady && readiness?.manifestDriven) {
-    return '交付判断以 manifest 驱动的最终验收为准，README 和用户指南只是摘要说明。';
+    return '交付判断以最终验收汇总为准，README 和用户指南只是摘要说明。';
   }
   if (readiness?.manifestDriven === false) {
-    return '当前最终验收不是 manifest 驱动，不能作为可交付声明来源。';
+    return '当前最终验收不是由最终验收汇总驱动，不能作为可交付声明来源。';
   }
-  return '先生成 manifest 驱动的最终验收，再导出交付包并运行 READY safety。';
+  return '先生成最终验收汇总，再导出交付包并运行可交付安全检查。';
 }
 
 function evidenceGovernanceRules(readiness: DeliveryReadinessView | null): string[] {
   const rules = [
     '真实领星报表才算数据来源；截图、HTML、审计 JSON 只能作为辅助证据。',
-    'UI smoke 和文档状态不能替代 manifest 驱动的 final readiness。',
+    '界面检查和文档状态不能替代最终验收汇总。',
     '安装版和免安装版校验码必须来自当前包索引。',
   ];
   if (!readiness?.manifestDriven) {
@@ -1459,7 +1459,7 @@ export function DeliveryPage() {
               <div>
                 <span>最终验收</span>
                 <strong>{readinessStatus(readiness)}</strong>
-                <small>{readiness?.path ? 'manifest 已生成' : '等待生成'}</small>
+                <small>{readiness?.path ? '最终验收汇总已生成' : '等待生成'}</small>
               </div>
               <div>
                 <span>交付包</span>
@@ -1477,7 +1477,7 @@ export function DeliveryPage() {
             <div className="delivery-summary-data-line">
               <span>{deliveryDataFact.label}</span>
               <strong>{deliveryDataFact.value}</strong>
-              <small>最终能否交付仍以 manifest 驱动的最终验收和安装包证据为准。</small>
+              <small>最终能否交付仍以最终验收汇总和安装包证据为准。</small>
             </div>
           )}
           {deliveryReady ? (

@@ -93,6 +93,10 @@ const PACKAGE_UI_PROFILE_LOCK_INTERNAL_DEADLINE_MS = 45_000;
 const PACKAGE_UI_SQLITE_TEMP_ROOT_PREFIX =
   'amazon-ai-ops-package-ui-sqlite-';
 const DEFAULT_INTERACTIVE_LOGIN_TIMEOUT_MS = 900_000;
+const PACKAGE_UI_ELECTRON_CLOSE_TIMEOUT_MS = 20_000;
+const PACKAGE_UI_VIEWPORT_RESTORE_TIMEOUT_MS = 5_000;
+const PACKAGE_UI_VIEWPORT_STABILITY_MS = 250;
+const PACKAGE_UI_VIEWPORT_STATE_POLL_MS = 25;
 const DIAGNOSTIC_MESSAGE_LIMIT = 2_000;
 const DIAGNOSTIC_STACK_LIMIT = 4_000;
 const DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT = 100;
@@ -118,7 +122,7 @@ const EXPECTED_PACKAGE_UI_WORKSPACES = Object.freeze([
   Object.freeze({ workspace: 'experiments', subview: 'ledger', label: '经营实验', heading: '经营实验', tabs: Object.freeze(['ledger']) }),
   Object.freeze({ workspace: 'execution', subview: 'live', label: '实时执行', heading: '实时执行', tabs: Object.freeze(['live', 'evidence']) }),
   Object.freeze({ workspace: 'memory', subview: 'timeline', label: '因果记忆', heading: '因果记忆', tabs: Object.freeze(['timeline']) }),
-  Object.freeze({ workspace: 'objects', subview: 'products', label: '店铺与广告对象', heading: '店铺与广告对象', tabs: Object.freeze(['products', 'targets', 'keywords', 'listing']) }),
+  Object.freeze({ workspace: 'objects', subview: 'products', label: '产品与广告对象', heading: '产品与广告对象', tabs: Object.freeze(['products', 'targets', 'keywords', 'listing']) }),
   Object.freeze({ workspace: 'collection', subview: 'scope', label: '数据采集', heading: '工作范围', tabs: Object.freeze(['scope', 'reports', 'import-check']) }),
   Object.freeze({ workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: Object.freeze(['rules']) }),
   Object.freeze({ workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: Object.freeze(['ai-and-local', 'scheduler', 'delivery']) }),
@@ -232,8 +236,8 @@ const READ_ONLY_INTERACTION_PLAN = Object.freeze([
   Object.freeze({
     id: 'decisions-controlled-review-inspector',
     kind: 'overlay',
-    target: '当前首条需复核建议的受控复核与 Ads 身份核验表单',
-    trigger: '首屏唯一主动作',
+    target: '当前店铺的决策能力与会话隔离边界',
+    trigger: '查看接入边界',
   }),
   Object.freeze({
     id: 'readback-technical-drawer',
@@ -252,7 +256,7 @@ const INTERACTIVE_LOGIN_CONTRACT = Object.freeze({
     'ok',
     'sessionIdentityVerified',
   ]),
-  authorizationStartSignal: 'visible-login-submit-aria-busy-or-authenticated-workspace',
+  authorizationStartSignal: 'durable-login-attempt-sequence-or-visible-login-submit-aria-busy-or-authenticated-workspace',
   boundedTimeout: true,
   credentialStorageOwner: 'electron-main-safe-storage',
   deadlineClock: 'monotonic-performance-now',
@@ -293,7 +297,9 @@ const OVERLAY_FOCUSABLE_SELECTOR = [
 
 function decisionsTabAccessibleNamePattern(label) {
   const escaped = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped}（已载入 \\d+）$`);
+  return new RegExp(
+    `^${escaped}(?:（已载入 \\d+）|\\s+(?:生产|适配|原型|受阻|读取中))$`,
+  );
 }
 
 function fail(message, details) {
@@ -322,6 +328,38 @@ function parsePositiveInteger(value, name, minimum = 1) {
     fail(`${name} must be an integer greater than or equal to ${minimum}.`);
   }
   return parsed;
+}
+
+async function waitForBoundedElectronClose(
+  electronApp,
+  timeoutMs = PACKAGE_UI_ELECTRON_CLOSE_TIMEOUT_MS,
+) {
+  if (!electronApp || typeof electronApp.close !== 'function') {
+    fail('PACKAGE_UI_ELECTRON_CLOSE_INVALID: Packaged Electron close is unavailable.');
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    fail('PACKAGE_UI_ELECTRON_CLOSE_INVALID: Close timeout must be a positive integer.');
+  }
+
+  let timeoutId;
+  try {
+    const outcome = await Promise.race([
+      Promise.resolve()
+        .then(() => electronApp.close())
+        .then(() => 'closed'),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve('timeout'), timeoutMs);
+      }),
+    ]);
+    if (outcome === 'timeout') {
+      fail(
+        'PACKAGE_UI_ELECTRON_CLOSE_TIMEOUT',
+        `Packaged Electron did not close within ${timeoutMs}ms.`,
+      );
+    }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function normalizeRunGroupId(value, name) {
@@ -612,6 +650,26 @@ function authorityLogicalArtifactFromSelection(evidence) {
   };
 }
 
+function packageUiComparableAuthoritySelection(selection) {
+  const comparable = JSON.parse(JSON.stringify(selection));
+  const selected = comparable?.selected;
+  const readOnlyShmMtimeMayChange = (
+    selected?.sidecarObservation?.shmMayChangeForReadonlyWalLocking === true
+    && selected?.sidecars?.shm?.exists === true
+    && selected?.sidecarsBefore?.shm?.exists === true
+  );
+  if (readOnlyShmMtimeMayChange) {
+    delete selected.sidecars.shm.mtimeMs;
+    delete selected.sidecarsBefore.shm.mtimeMs;
+  }
+  return comparable;
+}
+
+function packageUiAuthoritySelectionsMatch(receiptSelection, currentSelection) {
+  return canonicalJson(packageUiComparableAuthoritySelection(receiptSelection))
+    === canonicalJson(packageUiComparableAuthoritySelection(currentSelection));
+}
+
 function validatePackageUiAuthoritySelection({
   authoritySelectionPath,
   canonicalPaths = canonicalPackageUiAuthorityPaths(),
@@ -667,7 +725,7 @@ function validatePackageUiAuthoritySelection({
     || receipt.formalEvidence !== false
     || receipt.authorityDatabaseMutated !== false
     || receipt.adsExecutionInvoked !== false
-    || canonicalJson(receipt.selection) !== canonicalJson(current?.selection)
+    || !packageUiAuthoritySelectionsMatch(receipt.selection, current?.selection)
     || lexicalWindowsPath(current?.selection?.expectedDatabasePath)
       !== lexicalWindowsPath(protectedDatabasePath)
     || lexicalWindowsPath(current?.selection?.selected?.realPath)
@@ -1295,11 +1353,17 @@ function validSuccessfulElectronLifecycle(lifecycle, startedAt, completedAt) {
   const processExitEvents = Array.isArray(events)
     ? events.filter((event) => event.kind === 'electron-process-exit')
     : [];
+  const appClosedEvents = Array.isArray(events)
+    ? events.filter((event) => event.kind === 'electron-app-closed')
+    : [];
   const runnerCloseIndex = Array.isArray(events)
     ? events.findIndex((event) => event.kind === 'runner-close-requested')
     : -1;
   const processExitIndex = Array.isArray(events)
     ? events.findIndex((event) => event.kind === 'electron-process-exit')
+    : -1;
+  const appClosedIndex = Array.isArray(events)
+    ? events.findIndex((event) => event.kind === 'electron-app-closed')
     : -1;
   return lifecycle?.limit === DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
     && lifecycle?.droppedCount === 0
@@ -1331,8 +1395,14 @@ function validSuccessfulElectronLifecycle(lifecycle, startedAt, completedAt) {
     && processExitEvents[0].code === lifecycle.processExit.code
     && processExitEvents[0].signal === lifecycle.processExit.signal
     && processExitEvents[0].at === lifecycle.processExit.at
+    && appClosedEvents.length === 1
     && runnerCloseIndex >= 0
-    && processExitIndex === events.length - 1
+    && processExitIndex > runnerCloseIndex
+    && appClosedIndex > runnerCloseIndex
+    && (processExitIndex === events.length - 1 || appClosedIndex === events.length - 1)
+    && events.slice(processExitIndex + 1).every(
+      (event) => event.kind === 'electron-app-closed',
+    )
     && events.every((event, index) => (
       !terminalKinds.has(event.kind) || index > runnerCloseIndex
     ))
@@ -3342,6 +3412,26 @@ function validateWorkspaceRuntimeMetrics(metrics, expected, requestedViewport = 
   if ((metrics.previewMarkers || []).length > 0) {
     violations.push(violation('PREVIEW_MARKER_PRESENT', 'A packaged production renderer must not expose preview identity markers.', metrics.previewMarkers));
   }
+  const operatorCopy = metrics.operatorCopy;
+  if (
+    !operatorCopy
+    || !Array.isArray(operatorCopy.forbiddenMatches)
+    || !Number.isSafeInteger(operatorCopy.textLength)
+    || operatorCopy.textLength < 1
+    || !/^[A-F0-9]{64}$/.test(String(operatorCopy.textSha256 || ''))
+  ) {
+    violations.push(violation(
+      'OPERATOR_COPY_AUDIT_MISSING',
+      'Each packaged workspace must include a hash-bound audit of visible operator-facing copy.',
+      operatorCopy ?? null,
+    ));
+  } else if (operatorCopy.forbiddenMatches.length > 0) {
+    violations.push(violation(
+      'OPERATOR_INTERNAL_COPY_VISIBLE',
+      'Ordinary packaged UI must not expose internal workflow names or technical status values.',
+      operatorCopy.forbiddenMatches,
+    ));
+  }
   const workspaceDeviceScaleFactor = Number.isFinite(Number(metrics.deviceScaleFactor))
     ? Number(metrics.deviceScaleFactor)
     : 1;
@@ -3918,13 +4008,39 @@ function validateSchedulerSubviewEvidence(input, expected = EXPECTED_PACKAGE_UI_
   const fixedScopeText = String(dom.fixedScopeText || '').replace(/\s+/g, ' ').trim();
   const fixedScopeTokens = fixedScopeText.split(/[^A-Za-z0-9]+/).filter(Boolean);
   const fixedScopeIdentityTokens = fixedScopeTokens.filter((token) => /^[A-Z]{2,4}$/.test(token));
-  if (canonicalJson(fixedScopeIdentityTokens) !== canonicalJson(['US', 'USD'])) {
+  const fixedScopeTexts = Array.isArray(dom.fixedScopeTexts)
+    ? dom.fixedScopeTexts.map((value) => String(value || '').replace(/\s+/g, ' ').trim())
+    : [];
+  const fixedScopeVisibleCount = Number(dom.fixedScopeVisibleCount);
+  const visibleFixedScopeIdentityTokens = fixedScopeTexts.map((value) => value
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .filter((token) => /^[A-Z]{2,4}$/.test(token)));
+  if (
+    canonicalJson(fixedScopeIdentityTokens) !== canonicalJson(['US', 'USD'])
+    || !Number.isInteger(fixedScopeVisibleCount)
+    || fixedScopeVisibleCount < 1
+    || fixedScopeTexts.length !== fixedScopeVisibleCount
+    || visibleFixedScopeIdentityTokens.some(
+      (tokens) => canonicalJson(tokens) !== canonicalJson(['US', 'USD']),
+    )
+  ) {
     violations.push(violation(
       'SCHEDULER_FIXED_SCOPE_MISSING',
-      'The packaged scheduler must visibly retain exactly the US marketplace and USD currency without another uppercase marketplace/currency token.',
-      { fixedScopeIdentityTokens, fixedScopeText },
+      'Every visible packaged scheduler scope surface must retain exactly the US marketplace and USD currency without another uppercase marketplace/currency token.',
+      {
+        fixedScopeIdentityTokens,
+        fixedScopeText,
+        fixedScopeTexts,
+        fixedScopeVisibleCount,
+        visibleFixedScopeIdentityTokens,
+      },
     ));
   }
+  const domRetentionCandidateCountValid = typeof dom.retentionCandidateCount === 'string'
+    && /^(?:0|[1-9]\d*)$/.test(dom.retentionCandidateCount);
+  const domRetentionBlockerCountValid = typeof dom.retentionBlockerCount === 'string'
+    && /^(?:0|[1-9]\d*)$/.test(dom.retentionBlockerCount);
   if (
     String(dom.scheduleStoreId ?? '') !== String(schedule.storeId ?? '')
     || String(dom.scheduleBusinessDate ?? '') !== String(schedule.businessDate ?? '')
@@ -3934,7 +4050,9 @@ function validateSchedulerSubviewEvidence(input, expected = EXPECTED_PACKAGE_UI_
     || dom.scheduleCurrency !== 'USD'
     || String(dom.retentionStoreId ?? '') !== String(retention.storeId ?? '')
     || String(dom.retentionProfileId ?? '') !== String(retention.profileId ?? '')
+    || !domRetentionCandidateCountValid
     || Number(dom.retentionCandidateCount) !== retention.candidateCount
+    || !domRetentionBlockerCountValid
     || Number(dom.retentionBlockerCount) !== retention.blockerCount
     || dom.retentionMarketplace !== 'US'
     || dom.retentionCurrency !== 'USD'
@@ -7862,7 +7980,7 @@ function validatePackageFreshness({ buildContent, packagedDistContent, sourceWat
 }
 
 async function collectPackageWorkspaceMetrics(page, expected) {
-  return page.evaluate((settings) => {
+  const metrics = await page.evaluate((settings) => {
     const tolerance = 1;
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
@@ -7973,12 +8091,67 @@ async function collectPackageWorkspaceMetrics(page, expected) {
       .map((element) => ({ selector: selectorFor(element), text: compactText(element) }));
     if (/仅开发预览/.test(document.body?.innerText || '')) previewMarkers.push({ selector: 'body-text', text: '仅开发预览' });
 
+    const visibleOperatorText = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let textNode = walker.nextNode(); textNode; textNode = walker.nextNode()) {
+      const parent = textNode.parentElement;
+      const text = String(textNode.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!parent || !text) continue;
+      if (parent.closest('details, [hidden], [aria-hidden="true"], script, style, template')) continue;
+      if (!rendered(parent)) continue;
+      visibleOperatorText.push(text);
+    }
+    const normalizedOperatorText = visibleOperatorText.join(' ').replace(/\s+/g, ' ').trim();
+    const forbiddenOperatorCopy = [
+      { token: 'Mission', pattern: /\bMission\b/gi },
+      { token: 'Experiment', pattern: /\bExperiment\b/gi },
+      { token: 'UNKNOWN', pattern: /\bUNKNOWN\b/g },
+      { token: 'revision', pattern: /\brevision\b/gi },
+      { token: 'draft', pattern: /\bdraft\b/gi },
+      { token: 'set_keyword_bid', pattern: /\bset_keyword_bid\b/g },
+      { token: 'Main', pattern: /\bMain\b/gi },
+      { token: 'StoreContext', pattern: /\bStoreContext\b/gi },
+      { token: 'Authority', pattern: /\bAuthority\b/gi },
+      { token: 'Profile', pattern: /\bProfile\b/gi },
+      { token: 'dry-run', pattern: /\bdry-run\b/gi },
+      { token: 'manifest', pattern: /\bmanifest\b/gi },
+      { token: 'fingerprint', pattern: /\bfingerprint\b/gi },
+      { token: 'Renderer', pattern: /\bRenderer\b/gi },
+      { token: 'CRUD', pattern: /\bCRUD\b/gi },
+      { token: 'PRODUCTION_NATIVE', pattern: /\bPRODUCTION_NATIVE\b/gi },
+      { token: 'PROTOTYPE_ONLY', pattern: /\bPROTOTYPE_ONLY\b/gi },
+      { token: 'LEGACY_ADAPTER', pattern: /\bLEGACY_ADAPTER\b/gi },
+      { token: 'sequence', pattern: /\bsequence\b/gi },
+      { token: 'append-only', pattern: /\bappend-only\b/gi },
+      { token: 'correction', pattern: /\bcorrection\b/gi },
+      { token: 'DECISION', pattern: /\bDECISION\b/gi },
+      { token: 'ACTION', pattern: /\bACTION\b/gi },
+      { token: 'READBACK', pattern: /\bREADBACK\b/gi },
+      { token: 'EFFECT', pattern: /\bEFFECT\b/gi },
+    ];
+    const forbiddenMatches = [];
+    for (const entry of forbiddenOperatorCopy) {
+      for (const match of normalizedOperatorText.matchAll(entry.pattern)) {
+        const index = Number(match.index || 0);
+        forbiddenMatches.push({
+          token: entry.token,
+          text: normalizedOperatorText.slice(Math.max(0, index - 24), Math.min(normalizedOperatorText.length, index + 56)),
+        });
+        if (forbiddenMatches.length >= 20) break;
+      }
+      if (forbiddenMatches.length >= 20) break;
+    }
+
     return {
       activeNavigation: { count: activeNavigation.length, label: compactText(activeNavigation[0]) },
       aria: { brokenReferences, duplicateIds },
       deviceScaleFactor: window.devicePixelRatio,
       h1: { count: h1Elements.length, labels: h1Elements.map(compactText) },
       horizontalOverflow: { measurements: horizontalMeasurements, violations: horizontalViolations },
+      operatorCopy: {
+        forbiddenMatches,
+        normalizedText: normalizedOperatorText,
+      },
       primaryAction: { count: primaryActions.length, labels: primaryActions.map(compactText) },
       previewMarkers,
       rendererUrl: window.location.href,
@@ -8001,6 +8174,13 @@ async function collectPackageWorkspaceMetrics(page, expected) {
       viewport: { width: viewportWidth, height: viewportHeight },
     };
   }, expected);
+  const normalizedOperatorText = String(metrics?.operatorCopy?.normalizedText || '');
+  metrics.operatorCopy = {
+    forbiddenMatches: metrics?.operatorCopy?.forbiddenMatches || [],
+    textLength: normalizedOperatorText.length,
+    textSha256: sha256Buffer(Buffer.from(normalizedOperatorText, 'utf8')),
+  };
+  return metrics;
 }
 
 async function waitForNavigationIdle(page) {
@@ -8190,6 +8370,29 @@ async function exerciseWorkspaceTabKeyboard(page, expected) {
   return evidence;
 }
 
+async function reloadAuthenticatedWorkspaceForSubviewEvidence(page) {
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (!await hasAuthenticatedWorkspace(page, 15_000)) {
+    fail(
+      'Read-only subview reload did not restore the authenticated workspace with a valid Main session attestation',
+    );
+  }
+  await waitForNavigationIdle(page);
+}
+
+async function prepareReadOnlySubviewNavigationBoundary(page, expected, settleMs) {
+  const boundaryWorkspace = EXPECTED_PACKAGE_UI_WORKSPACES.find(
+    (candidate) => candidate.workspace !== expected.workspace,
+  );
+  if (!boundaryWorkspace) {
+    fail(
+      'Read-only subview requires a distinct canonical workspace navigation boundary',
+      `${expected.workspace}/${expected.subview}`,
+    );
+  }
+  await navigateToWorkspace(page, boundaryWorkspace, settleMs);
+}
+
 async function navigateToReadOnlySubview(page, expected, settleMs) {
   const defaultWorkspace = EXPECTED_PACKAGE_UI_WORKSPACES.find(
     (workspace) => workspace.workspace === expected.workspace,
@@ -8261,7 +8464,7 @@ async function collectSchedulerSubviewEvidence(
       ? Array.from(root.querySelectorAll('[aria-label="店铺自动化七状态计划"]')).filter(visible)
       : [];
     const retentionSummaries = root
-      ? Array.from(root.querySelectorAll('[aria-label="证据保留 dry-run 摘要"]')).filter(visible)
+      ? Array.from(root.querySelectorAll('.mission-control-retention-metrics')).filter(visible)
       : [];
     const scheduleProjection = root
       ? Array.from(root.querySelectorAll('.mission-control-automation-window')).find(visible) || null
@@ -8281,8 +8484,23 @@ async function collectSchedulerSubviewEvidence(
       ? Array.from(root.querySelectorAll('button[aria-busy="true"]')).filter(visible)
       : [];
     const shell = document.querySelector('.mission-control-shell[data-store-context]');
-    const storeSelect = document.querySelector('select[aria-label="切换店铺"]');
-    const fixedScope = document.querySelector('.mission-control-fixed-scope');
+    const storeSummary = document.querySelector(
+      '.mission-control-store-select--readonly[aria-label="当前店铺权威摘要"][data-store-id]',
+    );
+    const fixedScopeSurfaces = Array.from(document.querySelectorAll(
+      '.mission-control-fixed-scope, .mission-control-legacy-adapter__context',
+    )).filter(visible);
+    const fixedScope = fixedScopeSurfaces[0] || null;
+    const fixedScopeText = fixedScope
+      ? Array.from(fixedScope.children)
+        .filter(visible)
+        .map((node) => compactText(node))
+        .join(' ')
+      : '';
+    const fixedScopeTexts = fixedScopeSurfaces.map((surface) => Array.from(surface.children)
+      .filter(visible)
+      .map((node) => compactText(node))
+      .join(' '));
     const previewMarkers = root
       ? Array.from(root.querySelectorAll('[data-workspace-preview-notice], [data-preview-scenario], [data-readback-mode="preview-readonly"]')).filter(visible)
       : [];
@@ -8292,7 +8510,9 @@ async function collectSchedulerSubviewEvidence(
     return {
       alertDialogCount: dialogs.length,
       confirmRunDialogCount: confirmRunDialogs.length,
-      fixedScopeText: compactText(fixedScope),
+      fixedScopeText,
+      fixedScopeTexts,
+      fixedScopeVisibleCount: fixedScopeSurfaces.length,
       heading: compactText(headings[0]),
       headingCount: headings.length,
       legacyBoundaryCount: legacyBoundaries.length,
@@ -8323,7 +8543,7 @@ async function collectSchedulerSubviewEvidence(
       scheduleState: scheduleProjection?.getAttribute('data-schedule-state') || null,
       scheduleStoreId: scheduleProjection?.getAttribute('data-store-id') || null,
       schedulerErrorCount: schedulerErrors.length,
-      selectedStoreId: storeSelect?.value || null,
+      selectedStoreId: storeSummary?.getAttribute('data-store-id') || null,
       selectedTabCapabilityState: selectedTabState?.getAttribute('data-capability-state') || null,
       selectedTabCount: selectedTabs.length,
       selectedTabId: selectedTab?.id || null,
@@ -8351,18 +8571,47 @@ function isWorkspaceProbeAbsenceError(error) {
 
 async function hasAuthenticatedWorkspace(page, timeoutMs = 0) {
   const workspace = page.locator('nav[aria-label="主业务导航"]');
-  const login = page.locator('[data-login-connection-status]');
   try {
     if (timeoutMs > 0) {
       await workspace.waitFor({ state: 'visible', timeout: timeoutMs });
     } else if (!await workspace.isVisible()) {
       return false;
     }
-    return !await login.isVisible();
+    const attestation = await collectLoginSessionAttestation(page);
+    return validateLoginSessionAttestation(
+      attestation,
+      'existing-authenticated-session',
+    ).passed;
   } catch (error) {
     if (isWorkspaceProbeAbsenceError(error)) return false;
     throw error;
   }
+}
+
+async function openStoreScopedConnectionWorkbench(page) {
+  const status = page.locator('[data-login-connection-status]');
+  if (await status.isVisible().catch(() => false)) {
+    return {
+      navigated: false,
+      surface: 'store-scoped-connection-workbench',
+    };
+  }
+  await page.locator('nav[aria-label="主业务导航"]').waitFor({
+    state: 'visible',
+    timeout: 10_000,
+  });
+  const settingsButton = page
+    .locator('nav[aria-label="主业务导航"] button.nav-item')
+    .filter({ hasText: '系统设置' })
+    .first();
+  await settingsButton.waitFor({ state: 'visible', timeout: 10_000 });
+  const alreadyCurrent = await settingsButton.getAttribute('aria-current') === 'page';
+  if (!alreadyCurrent) await settingsButton.click();
+  await status.waitFor({ state: 'visible', timeout: 15_000 });
+  return {
+    navigated: !alreadyCurrent,
+    surface: 'store-scoped-connection-workbench',
+  };
 }
 
 function validateLoginSessionAttestation(attestation, mode) {
@@ -8500,6 +8749,42 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
   let phase = 'preparation';
   let phaseDeadline = handoffStartedTick + phaseTimeoutMs;
   let nextProgressAt = 0;
+  let consumedLoginAttemptSequence = 0;
+
+  const probeLoginAttemptSequence = async () => {
+    const locator = page.locator('[data-login-connection-status]');
+    if (typeof locator.getAttribute !== 'function') {
+      return { timedOut: false, value: 0 };
+    }
+    const probe = await runBoundedHandoffProbe(
+      () => locator.getAttribute('data-login-attempt-sequence'),
+      phaseDeadline,
+      monotonicNow,
+    );
+    if (probe.timedOut) return probe;
+    const sequence = Number(probe.value);
+    return {
+      timedOut: false,
+      value: Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 0,
+    };
+  };
+
+  const probeLoginAttemptActivity = async () => {
+    const locator = page.locator('[data-login-connection-status]');
+    if (typeof locator.getAttribute !== 'function') {
+      return { timedOut: false, value: null };
+    }
+    const probe = await runBoundedHandoffProbe(
+      () => locator.getAttribute('data-login-attempt-active'),
+      phaseDeadline,
+      monotonicNow,
+    );
+    if (probe.timedOut) return probe;
+    return {
+      timedOut: false,
+      value: probe.value === 'true' ? true : probe.value === 'false' ? false : null,
+    };
+  };
 
   const transitionTo = (nextPhase, startedTick = monotonicNow()) => {
     if (phase === nextPhase) return;
@@ -8538,8 +8823,10 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
       );
       if (surfaceProbe.timedOut) return null;
       const [workspaceVisible, loginVisible] = surfaceProbe.value;
-      if (workspaceVisible && !loginVisible) {
-        if (phase === 'preparation') transitionTo('authorization');
+      if (workspaceVisible && !loginVisible && phase === 'preparation') {
+        transitionTo('authorization');
+      }
+      if (workspaceVisible && phase === 'authorization') {
         const attestationProbe = await runBoundedHandoffProbe(
           () => collectLoginSessionAttestation(page),
           phaseDeadline,
@@ -8561,16 +8848,50 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
           }
           return loginSessionAttestation;
         }
+        if (loginVisible) {
+          const retryableSubmitProbe = await runBoundedHandoffProbe(
+            () => page
+              .locator('.login-submit-button:not([aria-busy="true"]):not([disabled])')
+              .isVisible(),
+            phaseDeadline,
+            monotonicNow,
+          );
+          if (retryableSubmitProbe.timedOut) return null;
+          if (retryableSubmitProbe.value) {
+            const [sequenceProbe, activityProbe] = await Promise.all([
+              probeLoginAttemptSequence(),
+              probeLoginAttemptActivity(),
+            ]);
+            if (sequenceProbe.timedOut) return null;
+            if (activityProbe.timedOut) return null;
+            consumedLoginAttemptSequence = Math.max(
+              consumedLoginAttemptSequence,
+              sequenceProbe.value,
+            );
+            if (activityProbe.value === false) transitionTo('preparation');
+          }
+        }
       }
       if (phase === 'preparation') {
-        const submitProbe = await runBoundedHandoffProbe(
-          () => page.locator('.login-submit-button[aria-busy="true"]').isVisible(),
-          phaseDeadline,
-          monotonicNow,
-        );
+        const [submitProbe, sequenceProbe] = await Promise.all([
+          runBoundedHandoffProbe(
+            () => page.locator('.login-submit-button[aria-busy="true"]').isVisible(),
+            phaseDeadline,
+            monotonicNow,
+          ),
+          probeLoginAttemptSequence(),
+        ]);
         if (submitProbe.timedOut) return null;
-        const authorizationStarted = submitProbe.value;
-        if (authorizationStarted) transitionTo('authorization');
+        if (sequenceProbe.timedOut) return null;
+        const sequenceAdvanced = sequenceProbe.value > consumedLoginAttemptSequence;
+        const authorizationStarted = submitProbe.value || sequenceAdvanced;
+        if (authorizationStarted) {
+          consumedLoginAttemptSequence = Math.max(
+            consumedLoginAttemptSequence,
+            sequenceProbe.value,
+          );
+          transitionTo('authorization');
+        }
       }
     } catch (error) {
       if (isInteractiveOperatorWindowClosedError(page, error)) {
@@ -8706,14 +9027,16 @@ async function ensureEvidenceLingxingConnection(page, loginDiagnostics) {
 
 function selectDeterministicEvidenceStoreCandidate(options) {
   if (!Array.isArray(options)) return null;
-  for (const option of options) {
-    if (option?.disabled === true) continue;
-    const value = String(option?.value || '').trim();
-    if (!value) continue;
-    return {
-      label: sanitizeDiagnosticText(option?.label || '', 160),
-      value,
-    };
+  for (const selected of [true, false]) {
+    for (const option of options) {
+      if (Boolean(option?.selected) !== selected || option?.disabled === true) continue;
+      const value = String(option?.value || '').trim();
+      if (!value) continue;
+      return {
+        label: sanitizeDiagnosticText(option?.label || '', 160),
+        value,
+      };
+    }
   }
   return null;
 }
@@ -8785,6 +9108,7 @@ async function ensureEvidenceStoreContext(page, diagnostics) {
   const candidates = await storeOptions.evaluateAll((options) => options.map((option) => ({
     disabled: option instanceof HTMLButtonElement ? option.disabled : true,
     label: option.querySelector('strong')?.textContent || '',
+    selected: option.getAttribute('aria-selected') === 'true',
     value: option.getAttribute('data-store-scope-id') || '',
   })));
 
@@ -8826,7 +9150,7 @@ async function ensureEvidenceStoreContext(page, diagnostics) {
     candidate = selectDeterministicEvidenceStoreCandidate([creation]);
     createdEvidenceStore = true;
     switchButton = createDialog.locator('button[data-store-scope-id]').filter({
-      hasText: '切换并登录',
+      hasText: '切换到新店铺',
     }).first();
   }
   if (!candidate) {
@@ -8932,7 +9256,7 @@ async function ensureAuthenticatedWorkspace(page, options) {
     outcome: 'not-required',
     selectedStore: null,
   };
-  if (entrySurface?.kind === 'store-gate') {
+  if (['store-gate', 'workspace'].includes(entrySurface?.kind)) {
     setRunDiagnosticPhase(options.diagnostics, 'store-gate');
     storeGate = await ensureEvidenceStoreContext(page, options.diagnostics);
     entrySurface = await waitForPackageEntrySurface(page, 15_000);
@@ -8950,6 +9274,9 @@ async function ensureAuthenticatedWorkspace(page, options) {
       'Package did not reach a login or workspace surface after Store Gate handling',
       sanitizeDiagnosticText(entrySurface?.kind || 'unknown entry surface', 160),
     );
+  }
+  if (entrySurface?.kind === 'workspace') {
+    await openStoreScopedConnectionWorkbench(page);
   }
 
   setRunDiagnosticPhase(options.diagnostics, 'login');
@@ -9337,7 +9664,7 @@ async function exerciseOverlayFocus(page, options) {
       const style = window.getComputedStyle(node);
       const rect = node.getBoundingClientRect();
       return {
-        actionId: node.getAttribute('data-action-id'),
+        actionId: node.getAttribute('data-action-id') || node.getAttribute('data-action'),
         ariaDisabled: node.getAttribute('aria-disabled'),
         disabled: node.matches(':disabled'),
         rendered: style.display !== 'none'
@@ -9699,45 +10026,73 @@ async function runOverlayChecks(page, runOptions) {
 
   const decisions = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'decisions');
   await navigateToWorkspace(page, decisions, runOptions.settleMs);
-  await page.getByRole('tab', { name: decisionsTabAccessibleNamePattern('待判断') }).click();
+  const decisionsTab = page.locator('#decisions-workspace-tab-recommendations');
+  if (await decisionsTab.count() !== 1) {
+    fail('Expected exactly one canonical Decisions recommendations tab');
+  }
+  await decisionsTab.waitFor({ state: 'visible', timeout: 10_000 });
+  if (await decisionsTab.getAttribute('role') !== 'tab') {
+    fail('Canonical Decisions recommendations target is not a tab');
+  }
+  const decisionsTabText = String(await decisionsTab.innerText()).replace(/\s+/g, ' ').trim();
+  if (!decisionsTabAccessibleNamePattern('待判断').test(decisionsTabText)) {
+    fail('Canonical Decisions recommendations tab has an unexpected visible identity', decisionsTabText);
+  }
+  await decisionsTab.click();
   const recommendationsRootSelector = '[data-workspace-evidence-root][data-workspace="decisions"][data-workspace-subview="recommendations"]';
   await page.locator(recommendationsRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
   await waitForWorkspaceSettled(page, recommendationsRootSelector, runOptions.settleMs);
   const decisionsCheck = await exerciseOverlayFocus(page, {
-    dialogLocator: page.locator('.responsive-inspector[role="dialog"]'),
+    dialogName: '决策与审批接入边界',
     electronApp: runOptions.electronApp,
-    expectedActionId: 'open-controlled-review-inspector',
+    expectedActionId: 'decision-boundary',
     expectedInspectorMode: 'drawer',
     id: 'decisions-controlled-review-inspector',
     requiredTexts: [
-      '确认受控复核',
-      '此操作只会把建议从“需复核”恢复为“待审批”，不会批准建议，也不会执行 Ads 动作。',
-      'Ads 对象 ID',
-      '来源文件',
-      '唯一来源行',
-      '身份核验证据路径',
-      '身份核验说明',
+      '决策与审批接入边界',
+      '仅展示本机安全进程返回的店铺范围和动作级能力。',
+      '店铺',
+      '当前店铺',
+      '浏览器隔离',
+      '已启用',
+      '业务日期',
+      '会话代次',
     ],
     runDir: runOptions.runDir,
     scalePercent: runOptions.scalePercent,
-    screenshotAnchor: page.locator('#decisions-inspector-form-title'),
-    trigger: page.locator('[data-workspace="decisions"] .task-banner [data-action-id="open-controlled-review-inspector"]'),
+    screenshotAnchor: page.getByRole('heading', { name: '决策与审批接入边界', exact: true }),
+    trigger: page.locator('[data-workspace="decisions"] .task-banner [data-action-id="decision-boundary"]'),
   });
 
   const execution = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'execution');
   await navigateToWorkspace(page, execution, runOptions.settleMs);
-  await page.getByRole('tab', { name: /执行回读/ }).click();
+  const executionEvidenceTab = page.locator('#execution-workspace-tab-evidence');
+  if (await executionEvidenceTab.count() !== 1) {
+    fail('Expected exactly one canonical Execution evidence tab');
+  }
+  await executionEvidenceTab.waitFor({ state: 'visible', timeout: 10_000 });
+  if (await executionEvidenceTab.getAttribute('role') !== 'tab') {
+    fail('Canonical Execution evidence target is not a tab');
+  }
+  const executionEvidenceTabText = String(await executionEvidenceTab.innerText()).replace(/\s+/g, ' ').trim();
+  if (!decisionsTabAccessibleNamePattern('执行回读').test(executionEvidenceTabText)) {
+    fail('Canonical Execution evidence tab has an unexpected visible identity', executionEvidenceTabText);
+  }
+  await executionEvidenceTab.click();
   const readbackRootSelector = '[data-workspace-evidence-root][data-workspace="execution"][data-workspace-subview="evidence"]';
   await page.locator(readbackRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
-  await waitForWorkspaceSettled(page, readbackRootSelector, runOptions.settleMs);
+  const readbackAdapterRootSelector = `${readbackRootSelector} [data-workspace-evidence-root][data-workspace="readback"][data-workspace-subview="evidence"]`;
+  await page.locator(readbackAdapterRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
+  await waitForWorkspaceSettled(page, readbackAdapterRootSelector, runOptions.settleMs);
   const readbackCheck = await exerciseOverlayFocus(page, {
     dialogName: '技术与证据详情',
     electronApp: runOptions.electronApp,
+    expectedActionId: 'open-technical-inspector',
     expectedInspectorMode: 'drawer',
     id: 'readback-technical-drawer',
     runDir: runOptions.runDir,
     scalePercent: runOptions.scalePercent,
-    trigger: page.getByRole('button', { name: '查看技术与证据详情', exact: true }),
+    trigger: page.locator(`${readbackAdapterRootSelector} [data-action="open-technical-inspector"]`),
   });
   return [reportCheck, decisionsCheck, readbackCheck];
 }
@@ -10141,13 +10496,70 @@ async function requestPackageUiDatabaseCheckpoint(page, phase) {
 }
 
 async function setElectronViewport(electronApp, viewport) {
-  await electronApp.evaluate(({ BrowserWindow }, target) => {
+  await electronApp.evaluate(async ({ BrowserWindow }, settings) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
     if (!window) throw new Error('No BrowserWindow available for package UI evidence.');
-    window.setContentSize(target.width, target.height, false);
+
+    const delay = (milliseconds) => new Promise((resolve) => {
+      setTimeout(resolve, milliseconds);
+    });
+    const deadline = Date.now() + settings.restoreTimeoutMs;
+    const waitForWindowStateExit = async (label, isActive) => {
+      while (isActive()) {
+        if (window.isDestroyed()) {
+          throw new Error(`Package UI BrowserWindow closed while leaving ${label}.`);
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`Package UI BrowserWindow did not leave ${label} before viewport restore timeout.`);
+        }
+        await delay(settings.pollMs);
+      }
+    };
+
+    if (window.isFullScreen()) {
+      window.setFullScreen(false);
+      await waitForWindowStateExit('full-screen state', () => window.isFullScreen());
+    }
+    if (window.isMaximized()) {
+      window.unmaximize();
+      await waitForWindowStateExit('maximized state', () => window.isMaximized());
+    }
+
+    window.setContentSize(settings.width, settings.height, false);
+    let stableSince = null;
+    while (Date.now() < deadline) {
+      if (window.isDestroyed()) {
+        throw new Error('Package UI BrowserWindow closed while restoring the viewport.');
+      }
+      if (window.isFullScreen() || window.isMaximized()) {
+        stableSince = null;
+      } else {
+        const [actualWidth, actualHeight] = window.getContentSize();
+        if (actualWidth === settings.width && actualHeight === settings.height) {
+          stableSince ??= Date.now();
+          if (Date.now() - stableSince >= settings.stabilityMs) break;
+        } else {
+          stableSince = null;
+          window.setContentSize(settings.width, settings.height, false);
+        }
+      }
+      await delay(settings.pollMs);
+    }
+    if (stableSince === null || Date.now() - stableSince < settings.stabilityMs) {
+      const [actualWidth, actualHeight] = window.getContentSize();
+      throw new Error(
+        `Package UI BrowserWindow viewport did not stabilize at ${settings.width}x${settings.height}; actual ${actualWidth}x${actualHeight}.`,
+      );
+    }
     window.show();
     window.focus();
-  }, viewport);
+  }, {
+    height: viewport.height,
+    pollMs: PACKAGE_UI_VIEWPORT_STATE_POLL_MS,
+    restoreTimeoutMs: PACKAGE_UI_VIEWPORT_RESTORE_TIMEOUT_MS,
+    stabilityMs: PACKAGE_UI_VIEWPORT_STABILITY_MS,
+    width: viewport.width,
+  });
 }
 
 async function readElectronViewport(page) {
@@ -10156,6 +10568,50 @@ async function readElectronViewport(page) {
     height: window.innerHeight,
     width: window.innerWidth,
   }));
+}
+
+async function restoreElectronViewportAfterAuthentication(
+  electronApp,
+  page,
+  viewport,
+  expectedDeviceScaleFactor,
+) {
+  await setElectronViewport(electronApp, viewport);
+  const waitTarget = {
+    dpr: expectedDeviceScaleFactor,
+    tolerance: PACKAGE_UI_VIEWPORT_TOLERANCE,
+    viewport,
+  };
+  try {
+    await page.waitForFunction(({ viewport: target, dpr, tolerance }) => (
+      Math.abs(window.innerWidth - target.width) <= tolerance.width
+      && Math.abs(window.innerHeight - target.height) <= tolerance.height
+      && Math.abs(window.devicePixelRatio - dpr) <= tolerance.deviceScaleFactor
+    ), waitTarget, { timeout: 20_000 });
+  } catch (error) {
+    const actual = await readElectronViewport(page).catch(() => ({
+      deviceScaleFactor: null,
+      height: null,
+      width: null,
+    }));
+    fail('Packaged viewport did not recover after authentication', JSON.stringify({
+      actual,
+      requested: viewport,
+      timeoutError: String(error?.message || error),
+      tolerance: PACKAGE_UI_VIEWPORT_TOLERANCE,
+    }));
+  }
+  const actual = await readElectronViewport(page);
+  const contract = evaluatePackageViewportContract({
+    actual,
+    actualDeviceScaleFactor: actual.deviceScaleFactor,
+    expectedDeviceScaleFactor,
+    requested: viewport,
+  });
+  if (!contract.passed) {
+    fail('Packaged viewport contract failed after authentication', JSON.stringify(contract));
+  }
+  return contract;
 }
 
 function attachRendererDiagnostics(page, diagnostics, attachedPages) {
@@ -10288,6 +10744,12 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
 
     setRunDiagnosticPhase(diagnostics, 'login');
     const session = await ensureAuthenticatedWorkspace(page, { ...options, diagnostics });
+    await restoreElectronViewportAfterAuthentication(
+      electronApp,
+      page,
+      PACKAGE_UI_VIEWPORT,
+      scale.deviceScaleFactor,
+    );
     setRunDiagnosticPhase(diagnostics, 'chromium-lineage');
     const chromiumProcessLineage = collectActiveBundledChromiumLineage(options);
     if (!chromiumLineageEvidencePassed(chromiumProcessLineage)) {
@@ -10396,7 +10858,9 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
 
     for (const subview of EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS) {
       setRunDiagnosticPhase(diagnostics, `subview:${subview.workspace}/${subview.subview}`);
+      await prepareReadOnlySubviewNavigationBoundary(page, subview, options.settleMs);
       const schedulerLedgerBefore = readPackageUiSchedulerAudit(options.userDataDir);
+      await reloadAuthenticatedWorkspaceForSubviewEvidence(page);
       const settleEvidence = await navigateToReadOnlySubview(page, subview, options.settleMs);
       const rootSelector = `[data-workspace-evidence-root][data-workspace="${subview.workspace}"][data-workspace-subview="${subview.subview}"]`;
       const subviewRoot = page.locator(rootSelector);
@@ -10482,7 +10946,11 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       setRunDiagnosticPhase(diagnostics, 'electron-close');
       markRunnerElectronCloseRequested(diagnostics);
       try {
-        await electronApp.close();
+        await waitForBoundedElectronClose({
+          close: async () => {
+            await electronApp.close();
+          },
+        });
         processExitConfirmed = true;
       } catch (error) {
         diagnostics.cleanupErrors.push(createStructuredFailure(error, 'electron-close'));
@@ -10581,6 +11049,12 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
     if (!identity.passed) fail('Wide packaged runtime identity failed', JSON.stringify(identity.violations));
     setRunDiagnosticPhase(diagnostics, 'login');
     const session = await ensureAuthenticatedWorkspace(page, { ...options, diagnostics });
+    await restoreElectronViewportAfterAuthentication(
+      electronApp,
+      page,
+      profile.viewport,
+      profile.deviceScaleFactor,
+    );
     setRunDiagnosticPhase(diagnostics, 'chromium-lineage');
     const chromiumProcessLineage = collectActiveBundledChromiumLineage(options);
     if (!chromiumLineageEvidencePassed(chromiumProcessLineage)) {
@@ -10703,7 +11177,11 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       setRunDiagnosticPhase(diagnostics, 'electron-close');
       markRunnerElectronCloseRequested(diagnostics);
       try {
-        await electronApp.close();
+        await waitForBoundedElectronClose({
+          close: async () => {
+            await electronApp.close();
+          },
+        });
         processExitConfirmed = true;
       } catch (error) {
         diagnostics.cleanupErrors.push(createStructuredFailure(error, 'electron-close'));
@@ -11841,6 +12319,7 @@ module.exports = {
   hasAuthenticatedWorkspace,
   latestProductionSourceWatermark,
   markRunnerElectronCloseRequested,
+  openStoreScopedConnectionWorkbench,
   isWorkspaceProbeAbsenceError,
   isRetryableLoginNavigationError,
   selectDeterministicEvidenceStoreCandidate,
@@ -11851,6 +12330,7 @@ module.exports = {
   packageUiAttemptDiagnosticsSnapshotMatches,
   packageUiProfileLockIsolationPassed,
   packageUiProfileLockSnapshotPassed,
+  packageUiAuthoritySelectionsMatch,
   profileLineageStateMatches,
   acquirePackageUiRunGroupLease,
   consumePackageUiResumeInspectionReceipt,
@@ -11861,6 +12341,7 @@ module.exports = {
   runPackageUiEvidence,
   sanitizeDiagnosticText,
   screenshotRecord,
+  setElectronViewport,
   sha256Buffer,
   sha256File,
   releasePackageUiRunGroupLease,
@@ -11890,6 +12371,7 @@ module.exports = {
   waitForPackageProcessCleanup,
   waitForProfileBrowserProcessCleanup,
   waitForInteractiveAuthenticatedWorkspace,
+  waitForBoundedElectronClose,
   waitForRendererComposite,
   waitForWorkspaceSettled,
 };

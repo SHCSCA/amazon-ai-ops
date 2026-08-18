@@ -236,7 +236,7 @@ export async function readListingVersionHistoryForTarget(
   const result = await method(context, buildListingVersionHistoryInput(target));
   if (!Array.isArray(result)
     || result.some((row) => !storeListingVersionBelongsToContext(row, context, target))) {
-    throw new Error('Main 返回了不属于当前店铺或当前 Listing 的版本历史');
+    throw new Error('返回的版本历史与当前店铺或当前商品详情不一致');
   }
   return result;
 }
@@ -249,7 +249,7 @@ export async function readStoreListingVersionLedgerPage(
   const result = await method(context, buildStoreListingVersionLedgerInput(offset));
   if (!Array.isArray(result)
     || result.some((row) => !storeListingVersionBelongsToStoreContext(row, context))) {
-    throw new Error('Main 返回了不属于当前店铺的 Listing 版本账本');
+    throw new Error('返回的版本记录与当前店铺不一致');
   }
   return result;
 }
@@ -270,7 +270,7 @@ export function StoreScopedAdObjectsPanel({ storeContext, api }: StoreScopedPane
     const method = resolveApi(api).listStoreAdObjects;
     if (!method) {
       setRows([]);
-      setError('Renderer 尚未接通 store-ad-listing:ad-objects:list。');
+      setError('广告对象读取服务尚未就绪，请重新打开最新版本后重试。');
       return;
     }
     const request = ++requestRef.current;
@@ -285,7 +285,7 @@ export function StoreScopedAdObjectsPanel({ storeContext, api }: StoreScopedPane
       });
       if (request !== requestRef.current || capturedKey !== authorityKeyRef.current) return;
       if (!Array.isArray(result) || result.some((row) => !storeResultBelongsToContext(row, storeContext))) {
-        throw new Error('Main 返回了不属于当前店铺或非 US/USD 的广告对象');
+        throw new Error('返回的广告对象与当前店铺或美国站范围不一致');
       }
       setRows(result);
     } catch (caught) {
@@ -313,7 +313,7 @@ export function StoreScopedAdObjectsPanel({ storeContext, api }: StoreScopedPane
       cell: (row) => (
         <span className="store-fact-primary">
           <strong>{row.name}</strong>
-          <small>{objectHierarchy(row)} · {row.resolved === true && row.nonExecutable === false ? '稳定 ID 已解析' : '缺少稳定 ID，不可执行'}</small>
+          <small>{objectHierarchy(row)} · {row.resolved === true && row.nonExecutable === false ? '对象已唯一识别，可用于受控动作' : '对象尚未唯一识别，不可执行'}</small>
         </span>
       ),
     },
@@ -351,16 +351,16 @@ export function StoreScopedAdObjectsPanel({ storeContext, api }: StoreScopedPane
 
   return (
     <div className="store-scoped-ad-listing-panel" data-store-fact-surface="ad-objects">
-      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>{String(storeContext.storeId)}</strong><span>Amazon US · USD · 只读事实</span></div>
+      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>当前店铺</strong><span>Amazon US · USD · 只读事实</span></div>
       {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
       <WorkbenchPanel
-        description="按当前 store_id 聚合已入库广告事实；不会读取同名店铺或待归属历史行。"
+        description="只汇总当前店铺已经入库的广告事实；不会读取同名店铺或待归属历史行。"
         status={<span>{loading ? '读取中…' : `${rows.length} 个对象`}</span>}
         title="广告对象事实"
         toolbar={(
           <>
-            <label className="store-fact-filter"><span>对象层级</span><select aria-label="广告对象层级" onChange={(event) => setKind(event.target.value as AdObjectKind)} value={kind}><option value="campaign">Campaign</option><option value="ad_group">广告组</option><option value="target">Target</option><option value="search_term">Search Term</option></select></label>
-            <label className="store-fact-filter"><span>查询</span><input aria-label="查询广告对象" onChange={(event) => setQuery(event.target.value)} placeholder="名称 / Campaign" value={query} /></label>
+            <label className="store-fact-filter"><span>对象层级</span><select aria-label="广告对象层级" onChange={(event) => setKind(event.target.value as AdObjectKind)} value={kind}><option value="campaign">广告活动</option><option value="ad_group">广告组</option><option value="target">关键词/投放</option><option value="search_term">搜索词</option></select></label>
+            <label className="store-fact-filter"><span>查询</span><input aria-label="查询广告对象" onChange={(event) => setQuery(event.target.value)} placeholder="名称 / 广告活动" value={query} /></label>
             <button aria-busy={loading || undefined} className="workspace-button workspace-button--secondary" disabled={loading} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
           </>
         )}
@@ -393,7 +393,7 @@ export function StoreScopedKeywordFactsPanel({ storeContext, api }: StoreScopedP
     const method = resolveApi(api).listStoreKeywordFacts;
     if (!method) {
       setRows([]);
-      setError('Renderer 尚未接通 store-ad-listing:keyword-facts:list。');
+      setError('关键词事实读取服务尚未就绪，请重新打开最新版本后重试。');
       return;
     }
     const request = ++requestRef.current;
@@ -408,7 +408,7 @@ export function StoreScopedKeywordFactsPanel({ storeContext, api }: StoreScopedP
       });
       if (request !== requestRef.current || capturedKey !== authorityKeyRef.current) return;
       if (!Array.isArray(result) || result.some((row) => !storeResultBelongsToContext(row, storeContext))) {
-        throw new Error('Main 返回了不属于当前店铺或非 US/USD 的关键词事实');
+        throw new Error('返回的关键词事实与当前店铺或美国站范围不一致');
       }
       setRows(result);
     } catch (caught) {
@@ -469,7 +469,7 @@ export function StoreScopedKeywordFactsPanel({ storeContext, api }: StoreScopedP
 
   return (
     <div className="store-scoped-ad-listing-panel" data-store-fact-surface="keyword-facts">
-      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>{String(storeContext.storeId)}</strong><span>Amazon US · USD · 指标与机会合并</span></div>
+      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>当前店铺</strong><span>Amazon US · USD · 指标与机会合并</span></div>
       {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
       <WorkbenchPanel
         description="把当前店铺 keyword_metrics 与 keyword_opportunities 合并；待归属历史行不会进入结果。"
@@ -590,7 +590,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
     const method = resolveApi(api).listStoreListingContent;
     if (!method) {
       setRows([]);
-      setError('Renderer 尚未接通 store-ad-listing:listing:list。');
+      setError('商品详情读取服务尚未就绪，请重新打开最新版本后重试。');
       return;
     }
     const request = ++requestRef.current;
@@ -601,7 +601,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
       const result = await method(storeContext, { query: query.trim() || undefined, limit: 250 });
       if (request !== requestRef.current || capturedKey !== authorityKeyRef.current) return;
       if (!Array.isArray(result) || result.some((row) => !storeResultBelongsToContext(row, storeContext))) {
-        throw new Error('Main 返回了不属于当前店铺或非 US/USD 的 Listing 内容');
+        throw new Error('返回的商品详情与当前店铺或美国站范围不一致');
       }
       setRows(result);
     } catch (caught) {
@@ -645,7 +645,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
     });
     if (!method) {
       setVersionHistory((current) => current?.target.id === target.id
-        ? { ...current, loading: false, error: 'Renderer 尚未接通 store-ad-listing:listing:versions:list。' }
+        ? { ...current, loading: false, error: '版本历史读取服务尚未就绪，请重新打开最新版本后重试。' }
         : current);
       return;
     }
@@ -712,7 +712,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
           ...current,
           loading: false,
           loadingMore: false,
-          error: 'Renderer 尚未接通 store-ad-listing:listing:versions:list。',
+          error: '版本记录读取服务尚未就绪，请重新打开最新版本后重试。',
         }
         : current);
       return;
@@ -773,7 +773,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
       ? rendererApi.updateStoreListingContent
       : rendererApi.createStoreListingContent;
     if (!method) {
-      setError(`Renderer 尚未接通 Listing ${editor.current ? '更新' : '创建'}处理器。`);
+      setError(`商品详情${editor.current ? '更新' : '创建'}服务尚未就绪，请重新打开最新版本后重试。`);
       return;
     }
     if (!inspectAmazonAsin(editor.draft.asin).valid) {
@@ -797,7 +797,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
         );
       if (mutation !== mutationRef.current || capturedKey !== authorityKeyRef.current) return;
       if (!storeResultBelongsToContext(result, storeContext)) {
-        throw new Error('Main 返回了不属于当前店铺或非 US/USD 的 Listing 内容');
+        throw new Error('返回的商品详情与当前店铺或美国站范围不一致');
       }
       setEditor(null);
       setFeedback(`${result.asin} 已保存到当前店铺，本地内容不会自动发布到 Amazon。`);
@@ -819,7 +819,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
     }
     const method = resolveApi(api).deleteStoreListingContent;
     if (!method) {
-      setError('Renderer 尚未接通 store-ad-listing:listing:delete。');
+      setError('商品详情删除服务尚未就绪，请重新打开最新版本后重试。');
       return;
     }
     setPending('delete');
@@ -888,11 +888,11 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
 
   return (
     <div className="store-scoped-ad-listing-panel" data-store-fact-surface="listing-content">
-      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>{String(storeContext.storeId)}</strong><span>Amazon US · USD · 本地内容库</span></div>
+      <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>当前店铺</strong><span>Amazon US · USD · 本地内容库</span></div>
       {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
       {feedback && <div className="store-fact-feedback store-fact-feedback--success" role="status">{feedback}</div>}
       <WorkbenchPanel
-        description="Listing 内容按当前 store_id 与 ASIN 管理；更新、删除必须携带界面读取到的 revision。"
+        description="Listing 内容按当前店铺与 ASIN 管理；更新、删除必须通过界面读取版本的并发校验。"
         status={<span>{loading ? '读取中…' : `${rows.length} 个 Listing`}</span>}
         title="Listing 内容库"
         toolbar={(
@@ -968,7 +968,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
       )}
 
       {confirmDelete && (
-        <div className="store-fact-dialog-backdrop"><section aria-labelledby="store-listing-delete-title" aria-modal="true" className="store-fact-dialog store-fact-dialog--confirm" role="alertdialog"><header><div><span>DELETE LISTING CONTENT</span><h2 id="store-listing-delete-title">删除 {confirmDelete.asin}？</h2><p>当前内容行会删除，版本历史保留；Main 会用当前 revision 阻止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmDelete(null)} type="button">取消</button><button aria-busy={pending === 'delete' || undefined} className="workspace-button workspace-button--danger" disabled={Boolean(pending)} onClick={() => void remove()} type="button"><Trash aria-hidden="true" size={16} />{pending === 'delete' ? '删除中…' : '确认删除'}</button></footer></section></div>
+        <div className="store-fact-dialog-backdrop"><section aria-labelledby="store-listing-delete-title" aria-modal="true" className="store-fact-dialog store-fact-dialog--confirm" role="alertdialog"><header><div><span>删除商品内容</span><h2 id="store-listing-delete-title">删除 {confirmDelete.asin}？</h2><p>当前内容行会删除，版本历史保留；本机安全进程会通过版本校验阻止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmDelete(null)} type="button">取消</button><button aria-busy={pending === 'delete' || undefined} className="workspace-button workspace-button--danger" disabled={Boolean(pending)} onClick={() => void remove()} type="button"><Trash aria-hidden="true" size={16} />{pending === 'delete' ? '删除中…' : '确认删除'}</button></footer></section></div>
       )}
     </div>
   );
@@ -996,23 +996,24 @@ export function ListingVersionHistoryDialog({
   onClose,
 }: ListingVersionHistoryDialogProps) {
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
+  const visibleError = error ? userError(error, '版本历史读取失败') : null;
   return (
     <div className="store-fact-dialog-backdrop">
       <section aria-labelledby="store-listing-version-title" aria-modal="true" className="store-fact-dialog" role="dialog">
         <header>
           <div>
-            <span>STORE-SCOPED VERSION HISTORY</span>
+            <span>当前店铺版本历史</span>
             <h2 id="store-listing-version-title">{target.asin} 版本历史</h2>
-            <p>{String(target.storeId)} · Amazon US · USD · 历史快照只读，不会提交 Amazon 或改写领星。</p>
+            <p>当前店铺 · Amazon US · USD · 历史快照只读，不会提交 Amazon 或改写领星。</p>
           </div>
           <button aria-label="关闭 Listing 版本历史" onClick={onClose} type="button"><X aria-hidden="true" size={18} /></button>
         </header>
         <div className="store-listing-form">
           {loading ? (
             <div className="store-listing-form__wide"><WorkspaceState description="正在读取当前店铺的 Listing 版本历史。" kind="loading" title="读取版本历史" /></div>
-          ) : error ? (
+          ) : visibleError ? (
             <div className="store-listing-form__wide">
-              <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>
+              <div className="store-fact-feedback store-fact-feedback--error" role="alert">{visibleError}</div>
               <button className="workspace-button workspace-button--secondary" onClick={onRetry} type="button"><ArrowsClockwise aria-hidden="true" size={16} />重试</button>
             </div>
           ) : rows.length === 0 ? (
@@ -1029,7 +1030,7 @@ export function ListingVersionHistoryDialog({
                     type="button"
                   >
                     <span className="store-fact-primary">
-                      <strong>{row.versionLabel || `版本 #${row.id}`}</strong>
+                      <strong>{row.versionLabel || '未命名版本'}</strong>
                       <small>{row.createdAt || '时间未知'} · {listingSourceLabel(row.source)}</small>
                       <small>{row.changeSummary || '未填写变更说明'}</small>
                     </span>
@@ -1039,7 +1040,7 @@ export function ListingVersionHistoryDialog({
               {selected && (
                 <section aria-label="版本快照">
                   <span className="store-fact-primary"><strong>标题</strong><small>{selected.title || '未填写标题'}</small></span>
-                  <span className="store-fact-primary"><strong>Bullet Points</strong><small>{selected.bullets.length > 0 ? selected.bullets.join('；') : '未填写 Bullet Points'}</small></span>
+                  <span className="store-fact-primary"><strong>商品要点</strong><small>{selected.bullets.length > 0 ? selected.bullets.join('；') : '未填写商品要点'}</small></span>
                   <span className="store-fact-primary"><strong>后台搜索词</strong><small>{selected.backendTerms || '未填写后台搜索词'}</small></span>
                   <span className="store-fact-primary"><strong>来源与变更</strong><small>{listingSourceLabel(selected.source)} · {selected.changeSummary || '未填写变更说明'}</small></span>
                 </section>
@@ -1081,23 +1082,24 @@ export function StoreListingVersionLedgerDialog({
   onClose,
 }: StoreListingVersionLedgerDialogProps) {
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
+  const visibleError = error ? userError(error, '版本记录读取失败') : null;
   return (
     <div className="store-fact-dialog-backdrop">
       <section aria-labelledby="store-listing-ledger-title" aria-modal="true" className="store-fact-dialog" role="dialog">
         <header>
           <div>
-            <span>STORE-SCOPED VERSION LEDGER</span>
+            <span>当前店铺版本记录</span>
             <h2 id="store-listing-ledger-title">当前店铺 Listing 版本账本</h2>
-            <p>{String(storeContext.storeId)} · Amazon US · USD · 已删除 Listing 的历史快照也会保留在这里。</p>
+            <p>当前店铺 · Amazon US · USD · 已删除 Listing 的历史快照也会保留在这里。</p>
           </div>
           <button aria-label="关闭 Listing 版本账本" onClick={onClose} type="button"><X aria-hidden="true" size={18} /></button>
         </header>
         <div className="store-listing-form store-listing-version-layout">
           {loading ? (
             <div className="store-listing-form__wide"><WorkspaceState description="正在读取当前店铺的 Listing 版本账本。" kind="loading" title="读取版本账本" /></div>
-          ) : error && rows.length === 0 ? (
+          ) : visibleError && rows.length === 0 ? (
             <div className="store-listing-form__wide">
-              <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>
+              <div className="store-fact-feedback store-fact-feedback--error" role="alert">{visibleError}</div>
               <button className="workspace-button workspace-button--secondary" onClick={onRetry} type="button"><ArrowsClockwise aria-hidden="true" size={16} />重试</button>
             </div>
           ) : rows.length === 0 ? (
@@ -1108,7 +1110,7 @@ export function StoreListingVersionLedgerDialog({
                 <div className="store-listing-ledger-meta" role="status">已读取 {rows.length} 条历史快照</div>
                 {rows.map((row) => (
                   <button
-                    aria-label={`查看 ${row.asin} 的 ${row.versionLabel || `版本 #${row.id}`}`}
+                    aria-label={`查看 ${row.asin} 的 ${row.versionLabel || '未命名版本'}`}
                     aria-pressed={selected?.id === row.id}
                     className={`workspace-button ${selected?.id === row.id ? 'workspace-button--primary' : 'workspace-button--secondary'}`}
                     key={row.id}
@@ -1116,13 +1118,13 @@ export function StoreListingVersionLedgerDialog({
                     type="button"
                   >
                     <span className="store-fact-primary">
-                      <strong>{row.asin} · {row.versionLabel || `版本 #${row.id}`}</strong>
+                      <strong>{row.asin} · {row.versionLabel || '未命名版本'}</strong>
                       <small>{row.createdAt || '时间未知'} · {listingSourceLabel(row.source)}</small>
                       <small>{row.changeSummary || '未填写变更说明'}</small>
                     </span>
                   </button>
                 ))}
-                {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
+                {visibleError && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{visibleError}</div>}
                 {hasMore && (
                   <button
                     aria-busy={loadingMore || undefined}
@@ -1137,9 +1139,9 @@ export function StoreListingVersionLedgerDialog({
               </section>
               {selected && (
                 <section aria-label="店铺版本账本快照" className="store-listing-version-snapshot">
-                  <span className="store-fact-primary"><strong>ASIN / 历史对象</strong><small>{selected.asin} · Listing #{selected.listingContentId ?? '已解除关联'}</small></span>
+                  <span className="store-fact-primary"><strong>ASIN / 历史对象</strong><small>{selected.asin} · {selected.listingContentId ? '已关联历史版本' : '已解除关联'}</small></span>
                   <span className="store-fact-primary"><strong>标题</strong><small>{selected.title || '未填写标题'}</small></span>
-                  <span className="store-fact-primary"><strong>Bullet Points</strong><small>{selected.bullets.length > 0 ? selected.bullets.join('；') : '未填写 Bullet Points'}</small></span>
+                  <span className="store-fact-primary"><strong>商品要点</strong><small>{selected.bullets.length > 0 ? selected.bullets.join('；') : '未填写商品要点'}</small></span>
                   <span className="store-fact-primary"><strong>后台搜索词</strong><small>{selected.backendTerms || '未填写后台搜索词'}</small></span>
                   <span className="store-fact-primary"><strong>来源与变更</strong><small>{listingSourceLabel(selected.source)} · {selected.changeSummary || '未填写变更说明'}</small></span>
                 </section>
@@ -1157,9 +1159,9 @@ function MissingStoreContext({ subject }: { subject: string }) {
   return (
     <div className="store-scoped-ad-listing-panel">
       <WorkspaceState
-        description={`Main 尚未提供当前店铺的完整 StoreContext，${subject}读取已停止。`}
+        description={`当前店铺信息尚未完整确认，${subject}读取已停止。请刷新店铺状态后重试。`}
         kind="blocked"
-        title="尚无权威 StoreContext"
+        title="当前店铺尚未确认"
       />
     </div>
   );
@@ -1248,6 +1250,15 @@ function percent(value: unknown): string {
 }
 
 function userError(caught: unknown, fallback: string): string {
-  const message = caught instanceof Error ? caught.message.trim() : '';
-  return message ? `${fallback}：${message}` : fallback;
+  const message = caught instanceof Error
+    ? caught.message.trim()
+    : typeof caught === 'string'
+      ? caught.trim()
+      : '';
+  const internalCopy = /Main|StoreContext|Authority|Renderer|Profile|Mission|Decision|Experiment|UNKNOWN|revision|draft|set_keyword_bid|manifest|fingerprint|dry-run|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|append-only|correction|READBACK|EFFECT|remote method|store-ad-listing/i;
+  if (!message || internalCopy.test(message)) {
+    return `${fallback}：当前店铺数据校验未通过，请刷新后重试。`;
+  }
+  if (/请.+重试。?$/.test(message)) return message;
+  return `${fallback}：${message.replace(/[。；;:]?$/, '')}。请刷新后重试。`;
 }

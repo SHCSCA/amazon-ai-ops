@@ -121,7 +121,7 @@ describe('desktop scheduler scope contract', () => {
     expect(login).toContain('runtimeId: lingxingVerifiedRuntime.runtimeId');
     expect(login).toContain('epoch: lingxingVerifiedRuntime.epoch');
     expect(login).toContain('context: lingxingVerifiedRuntime.context');
-    expect(login).toContain('verifyAmazonAdsIdentity(adsIdentityClaim)');
+    expect(login).toContain('verifyAmazonAdsIdentity(adsIdentityClaim, adsConnection)');
     expect(login).toContain('blockAmazonAdsIdentity(adsIdentityClaim)');
 
     const execution = between('resolveBrowserRuntime: (context) => {', 'emitProgress:');
@@ -183,7 +183,7 @@ describe('desktop scheduler scope contract', () => {
     const registryClose = shutdown.indexOf('await mainRuntime?.closeRegistry(shutdownTimeoutMs)');
     const pendingClose = shutdown.indexOf('await closeBrowserControllers(pendingControllers)');
     const loginProjectionClear = shutdown.indexOf('clearBrowserLoginState()');
-    const checkpoint = shutdown.indexOf('capturePreCloseTerminalDatabaseCheckpoint()');
+    const checkpoint = shutdown.indexOf('capturePreCloseTerminalDatabaseCheckpointIfReady()');
     const database = shutdown.indexOf('await db?.close()');
 
     expect(barrierDeclaration).toBeGreaterThan(0);
@@ -202,6 +202,8 @@ describe('desktop scheduler scope contract', () => {
     expect(shutdown).not.toContain('Promise.resolve().then');
     expect(shutdown).toContain('throw new AggregateError(');
     expect(shutdown).toContain('await mainRuntime?.closeRegistry(shutdownTimeoutMs)');
+    expect(shutdown).toContain('capturePreCloseTerminalDatabaseCheckpointIfReady()');
+    expect(shutdown).not.toContain('capturePreCloseTerminalDatabaseCheckpoint()');
     expect(shutdown).toContain("cleanupFailurePolicy: 'fail-closed'");
     expect(source).toContain('pendingBrowserControllerCleanup.retain(controllers)');
     expect(source).toContain('pendingBrowserControllerCleanup.closeRetained()');

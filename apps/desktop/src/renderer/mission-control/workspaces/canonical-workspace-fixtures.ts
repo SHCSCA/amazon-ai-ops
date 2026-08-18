@@ -229,7 +229,7 @@ function buildIsolatedFallbackFixture(
   const suffix = stableStoreSuffix(String(storeContext.storeId));
   const asin = `B0${suffix.padStart(8, '0').slice(-8)}`;
   const batchDate = storeContext.businessDate.replaceAll('-', '').slice(-4);
-  const storeLabel = `${String(storeContext.storeId)} · 独立预览`;
+  const storeLabel = '当前店铺 · 独立预览';
   return {
     fixtureId: `STORE-${suffix}`,
     storeLabel,
@@ -237,7 +237,7 @@ function buildIsolatedFallbackFixture(
     batchId: `BATCH-${suffix}-${batchDate}`,
     mission: {
       id: `US-SP-${suffix}`,
-      title: `建立 ${String(storeContext.storeId)} 的独立广告事实基线`,
+      title: '建立当前店铺的独立广告事实基线',
       progress: 20,
       goalAcos: '待配置',
       budgetUsd: 0,

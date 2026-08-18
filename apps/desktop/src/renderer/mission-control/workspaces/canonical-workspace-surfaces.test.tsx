@@ -82,12 +82,12 @@ describe('canonical workspace store isolation', () => {
     },
   );
 
-  it('keeps the execution preview scoped by StoreContext without canonical fixture leakage', () => {
+  it('keeps the execution preview store-safe without exposing internal store identifiers', () => {
     const first = renderSurface('execution', shc001Context, 'execution/live');
     const second = renderSurface('execution', shc002Context, 'execution/live');
-    expect(first).toContain('preview-store-shc001');
+    expect(first).not.toContain('preview-store-shc001');
     expect(first).not.toContain('preview-store-shc002');
-    expect(second).toContain('preview-store-shc002');
+    expect(second).not.toContain('preview-store-shc002');
     expect(second).not.toContain('preview-store-shc001');
     expect(first).toContain('只演示降价且单次不超过 10%');
     expect(second).not.toContain(['USD 1.08', '1.30'].join(' → '));
@@ -101,7 +101,8 @@ describe('canonical workspace store isolation', () => {
     } as StoreContextEnvelope, 'today/overview');
 
     expect(third).toContain('data-preview-store-fixture="STORE-');
-    expect(third).toContain('preview-store-third · 独立预览');
+    expect(third).toContain('当前店铺 · 独立预览');
+    expect(third).not.toContain('preview-store-third · 独立预览');
     expect(third).not.toContain('B0GTTJFQTM');
     expect(third).not.toContain('B0SHC00201');
     expect(third).not.toContain('稳定智能门锁核心搜索词');

@@ -37,6 +37,16 @@ function renderLegacySlot(
   return typeof slot === 'function' ? slot(input) : slot;
 }
 
+function CapabilityDiagnosticDetails({ detail }: { detail?: string | null }) {
+  if (!detail) return null;
+  return (
+    <details>
+      <summary>诊断详情</summary>
+      <code>{detail}</code>
+    </details>
+  );
+}
+
 function LegacyBlockedState({
   capabilities,
   description,
@@ -46,6 +56,9 @@ function LegacyBlockedState({
 }: Pick<LegacyWorkspaceProps, 'capabilities' | 'description' | 'storeContext' | 'title' | 'view'>) {
   const summary = summarizeViewCapability(capabilities, view);
   const loading = capabilities === undefined;
+  const ordinaryDetail = loading
+    ? '正在确认当前页面可用状态，请稍候。'
+    : '当前页面暂不可用，请刷新后重试；仍失败时查看诊断详情。';
   return (
     <PageFrame
       className="mission-control-legacy-blocked-page"
@@ -54,16 +67,16 @@ function LegacyBlockedState({
       summary={(
         <SummaryStrip
           items={[
-            { id: 'store', label: '店铺数据域', value: storeContext ? String(storeContext.storeId) : '等待 Main' },
-            { id: 'market', label: '站点 / 币种', value: storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : '等待 Main' },
-            { id: 'route', label: '生产适配视图', value: view },
+            { id: 'store', label: '当前店铺', value: storeContext ? '已选择' : '等待选择' },
+            { id: 'market', label: '站点 / 币种', value: storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : '等待店铺' },
+            { id: 'route', label: '页面范围', value: '当前页面' },
             { id: 'state', label: '接入状态', value: summary?.label ?? '读取中', tone: summary?.state === 'BLOCKED' ? 'blocked' : 'attention' },
           ]}
         />
       )}
       task={(
         <TaskBanner
-          description={summary?.detail ?? '正在从 Main 读取当前店铺的能力投影。'}
+          description={ordinaryDetail}
           status={<CapabilityStateBadge summary={summary} />}
           title={loading ? '正在确认生产适配边界' : '旧页面已按安全边界阻断'}
           tone={loading ? 'attention' : 'blocked'}
@@ -72,8 +85,10 @@ function LegacyBlockedState({
       title={title}
     >
       <WorkspaceState
-        description={loading ? '请等待 Main 返回权威 StoreContext 与能力投影。' : '仅当 view 动作被标记为 PRODUCTION_NATIVE 或 LEGACY_ADAPTER 时，旧页面才会挂载。'}
-        details={loading ? undefined : summary?.detail}
+        description={loading
+          ? '请稍候；确认当前店铺和页面状态后即可继续。'
+          : '当前页面未通过安全校验，相关操作已暂停。请刷新后重试。'}
+        details={<CapabilityDiagnosticDetails detail={summary?.detail} />}
         kind={loading ? 'loading' : 'blocked'}
       />
     </PageFrame>
@@ -113,7 +128,6 @@ export function LegacyWorkspace({
           legacyContent={legacyContent}
           previewMode={previewMode}
           storeContext={storeContext}
-          storeCrudSlot={storeCrudSlot}
         />
       </div>
     );
@@ -122,7 +136,7 @@ export function LegacyWorkspace({
   const nativeSlot = intent.workspace === 'settings' && intent.subview === 'ai-and-local'
       ? (
         <NativeCrudSlot
-          blockedReason="等待 Main Settings Authority 提供店铺级读写处理器。"
+          blockedReason="等待当前店铺设置操作通过安全校验。"
           capabilities={capabilities}
           capabilityView={view}
           createLabel="新建店铺设置"
@@ -132,7 +146,7 @@ export function LegacyWorkspace({
             archive: 'settings.store-config.archive',
             restore: 'settings.store-config.restore',
           }}
-          description="店铺级 AI、本地任务和运行参数必须与当前 StoreContext 绑定。"
+          description="店铺级 AI、本地任务和运行参数必须与当前店铺绑定。"
           previewMode={previewMode}
           slotId="settings-crud"
           title="店铺级设置"
@@ -148,8 +162,21 @@ export function LegacyWorkspace({
       <div className="mission-control-workspace-root" data-legacy-route={route} data-workspace={intent.workspace}>
         <PageFrame
           className="mission-control-settings-page"
-          description="先确认当前美国站店铺的数据域，再维护该店铺的运行参数和系统级 AI 连接。站点固定为 US，币种固定为 USD。"
+          description="在这里管理店铺、领星与 Amazon Ads 连接，再维护运行参数和系统级 AI 连接。站点固定为 US，币种固定为 USD。"
           pageId="settings-ai-and-local"
+          task={(
+            <TaskBanner
+              compact
+              description="先核对当前店铺的 ERP 与 Ads 分阶段状态；未确认的广告身份仍保持真实执行阻断。"
+              primaryAction={{
+                actionId: 'settings.connection.inspect',
+                label: '检查店铺连接',
+                onClick: () => document.querySelector('[data-login-connection-status]')?.scrollIntoView({ block: 'start' }),
+              }}
+              title="确认当前店铺连接状态"
+              tone="attention"
+            />
+          )}
           title="店铺与运行设置"
         >
           {nativeSlot}
@@ -162,16 +189,26 @@ export function LegacyWorkspace({
             >
               <div className="mission-control-legacy-adapter__context" role="note">
                 <span>系统级连接</span>
-                <strong>{storeContext ? String(storeContext.storeId) : '等待店铺'}</strong>
+                <strong>{storeContext ? '当前店铺' : '等待店铺'}</strong>
                 <span>{storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : 'US / USD'}</span>
-                <small>{viewCapability?.detail ?? '当前视图缺少 Main 能力投影，已按受阻处理。'}</small>
+                <small>{viewCapability
+                  ? '当前页面已通过安全校验。'
+                  : '当前页面可用状态尚未确认，已安全暂停。'}</small>
+                <CapabilityDiagnosticDetails detail={viewCapability?.detail} />
               </div>
               {legacyContent}
             </section>
           ) : (
             <WorkspaceState
-              description={summary?.detail ?? '正在从 Main 读取系统级 AI 连接能力。'}
-              details={storeContext ? `${storeContext.marketplace} / ${storeContext.currency} · ${String(storeContext.storeId)}` : undefined}
+              description={capabilities === undefined
+                ? '正在确认系统连接能力，请稍候。'
+                : '系统连接暂不可用，请刷新后重试；仍失败时查看诊断详情。'}
+              details={(
+                <>
+                  {storeContext ? `${storeContext.marketplace} / ${storeContext.currency} · 当前店铺` : null}
+                  <CapabilityDiagnosticDetails detail={summary?.detail} />
+                </>
+              )}
               kind={capabilities === undefined ? 'loading' : 'blocked'}
               title={capabilities === undefined ? '正在确认设置边界' : '系统级连接尚未接入'}
             />
@@ -193,9 +230,12 @@ export function LegacyWorkspace({
         >
           <div className="mission-control-legacy-adapter__context" role="note">
             <span>生产适配</span>
-            <strong>{storeContext ? String(storeContext.storeId) : '等待店铺'}</strong>
+            <strong>{storeContext ? '当前店铺' : '等待店铺'}</strong>
             <span>{storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : 'US / USD'}</span>
-            <small>{viewCapability?.detail ?? '当前视图缺少 Main 能力投影，已按受阻处理。'}</small>
+            <small>{viewCapability
+              ? '当前页面已通过安全校验。'
+              : '当前页面可用状态尚未确认，已安全暂停。'}</small>
+            <CapabilityDiagnosticDetails detail={viewCapability?.detail} />
           </div>
           {legacyContent}
         </section>

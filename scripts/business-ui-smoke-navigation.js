@@ -1,5 +1,26 @@
 const { createRequire } = require('node:module');
+const net = require('node:net');
 const path = require('node:path');
+
+function selectAvailableLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once('error', reject);
+    probe.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
+      const address = probe.address();
+      if (!address || typeof address === 'string') {
+        probe.close();
+        reject(new Error('Business UI smoke port probe did not expose a TCP address.'));
+        return;
+      }
+      probe.close((error) => {
+        if (error) reject(error);
+        else resolve(address.port);
+      });
+    });
+  });
+}
 
 async function navigateLegacyRoute(page, route) {
   await page.evaluate((nextRoute) => {
@@ -9,13 +30,24 @@ async function navigateLegacyRoute(page, route) {
 
 async function startBusinessUiDevServer(repoRoot, scenario = 'diagnosis-ready') {
   const desktopRequire = createRequire(path.join(repoRoot, 'apps', 'desktop', 'package.json'));
-  const { createServer } = desktopRequire('vite');
+  const { createServer, loadConfigFromFile } = desktopRequire('vite');
+  const configFile = path.join(repoRoot, 'apps', 'desktop', 'vite.config.ts');
+  const loadedConfig = await loadConfigFromFile(
+    { command: 'serve', mode: 'test' },
+    configFile,
+  );
+  if (!loadedConfig) {
+    throw new Error('Business UI smoke could not load the desktop Vite configuration.');
+  }
+  const selectedPort = await selectAvailableLoopbackPort();
   const server = await createServer({
-    configFile: path.join(repoRoot, 'apps', 'desktop', 'vite.config.ts'),
+    ...loadedConfig.config,
+    configFile: false,
     logLevel: 'error',
     server: {
+      ...loadedConfig.config.server,
       host: '127.0.0.1',
-      port: 0,
+      port: selectedPort,
       strictPort: false,
     },
   });

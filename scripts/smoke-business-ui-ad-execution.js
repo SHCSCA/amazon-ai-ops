@@ -73,9 +73,9 @@ async function capture(page, evidence, key, label, runId) {
 }
 
 async function resolvePreviewIdentityAndCreateBatch(page) {
-  await page.getByRole('button', { name: '解析当前 Ads 页身份', exact: true }).click();
-  await expectVisibleText(page, '当前对象的可见 Ads 页身份已解析');
-  await page.getByRole('button', { name: '从完整 Grant 建队列', exact: true }).click();
+  await page.getByRole('button', { name: '核验当前广告对象', exact: true }).click();
+  await expectVisibleText(page, '当前对象的可见广告页面身份已核验');
+  await page.getByRole('button', { name: '从完整授权建队列', exact: true }).click();
 }
 
 async function main() {
@@ -114,10 +114,36 @@ async function main() {
     await assertWorkspace(page, 'decisions', 'recommendations');
     await assertGlobalGuards(page, 'decisions-recommendations');
     await expectVisibleText(page, '建议本身不代表已获执行授权');
-    await page.getByRole('button', { name: /新建 Decision/, exact: false }).first().dispatchEvent('click');
-    await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 10_000 });
-    for (const label of ['决策标题', 'Mission ID', '数据批次', '策略版本', '决策理由', '推荐动作']) {
+    await page.getByRole('button', { name: /新建经营决策/, exact: false }).first().dispatchEvent('click');
+    const decisionDialog = page.getByRole('dialog');
+    await decisionDialog.waitFor({ state: 'visible', timeout: 10_000 });
+    for (const label of [
+      '决策标题',
+      '关联运营任务、数据批次和策略版本在创建后保持冻结。',
+      '决策理由',
+      '推荐动作',
+      '可核验事实',
+      '保存经营决策',
+    ]) {
       await expectVisibleText(page, label);
+    }
+    const ordinaryDecisionDialogText = await decisionDialog.evaluate((root) => {
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('details, [hidden]').forEach((node) => node.remove());
+      return clone.innerText;
+    });
+    if (/Mission ID|Decision|set_keyword_bid|\brevision\b|\bdraft\b|UNKNOWN|(?:运营任务|数据批次|策略版本|广告对象|产品)标识/.test(ordinaryDecisionDialogText)) {
+      fail('Decision dialog ordinary UI exposes an internal value', ordinaryDecisionDialogText);
+    }
+    const decisionDiagnostics = await decisionDialog.locator('details').first().textContent();
+    for (const technicalContract of ['运营任务标识', '数据批次标识', '策略版本标识', '内部动作值']) {
+      if (!decisionDiagnostics?.includes(technicalContract)) {
+        fail('Decision dialog folded diagnostics lost an immutable technical contract', technicalContract);
+      }
+    }
+    const internalActionValue = await decisionDialog.locator('details input[readonly]').inputValue();
+    if (internalActionValue !== 'set_keyword_bid') {
+      fail('Decision dialog folded diagnostics lost the internal action value', internalActionValue);
     }
     await page.getByRole('button', { name: '关闭策略编辑器', exact: true })
       .or(page.getByRole('button', { name: '取消', exact: true }))
@@ -129,8 +155,8 @@ async function main() {
     await expectDecisionSubview(page, '人工审批');
     await assertWorkspace(page, 'decisions', 'approval');
     await assertGlobalGuards(page, 'decisions-approval');
-    await expectVisibleText(page, '批准只形成 Decision 状态，不代表已写入 Amazon Ads');
-    await expectVisibleText(page, 'append-only history');
+    await expectVisibleText(page, '批准只形成经营决策状态，不代表已写入 Amazon Ads');
+    await expectVisibleText(page, '只追加的历史');
     await capture(page, evidence, 'decisions-approval', '人工审批与不可变历史', runId);
 
     await navigateLegacyRoute(page, { workspace: 'decisions', subview: 'decided' });
@@ -138,8 +164,8 @@ async function main() {
     await assertWorkspace(page, 'decisions', 'decided');
     await assertGlobalGuards(page, 'decisions-decided');
     await expectVisibleText(page, '整批授权一次');
-    await expectVisibleText(page, '人工审批与策略自动签发同一种 MissionGrant');
-    await capture(page, evidence, 'decisions-decided', '已决策与 MissionGrant 整批授权', runId);
+    await expectVisibleText(page, '人工审批与策略自动签发同一种执行授权');
+    await capture(page, evidence, 'decisions-decided', '已决策与整批执行授权', runId);
 
     await navigateLegacyRoute(page, { workspace: 'execution', subview: 'live' });
     await assertWorkspace(page, 'execution', 'live');
@@ -147,36 +173,64 @@ async function main() {
       .waitFor({ state: 'visible', timeout: 15_000 });
     await assertGlobalGuards(page, 'execution-live');
     for (const text of [
-      '内存 mock · Amazon US / USD',
-      '不调用真实 API、不写入 Ads',
+      '仅开发预览 · 不连接真实广告页面，不提交任何广告调整',
       '低风险 · 降幅 ≤ 10%',
       '超出策略内自动边界，已隔离转人工审批',
-      'preview://visible-ads-session',
-      '排队 → 预检 → intent → 提交 → after → reload',
-      'intent 后必须完成回读或进入 UNKNOWN 人工对账',
+      '本地预览画面 · 不会访问真实页面',
+      '排队 → 预检 → 写入意图 → 提交 → 保存后核验 → 刷新回读',
+      '取消仅在提交前开放；提交后必须完成回读或转入结果不确定的人工对账',
     ]) {
       await expectVisibleText(page, text);
     }
 
     await page.getByRole('button', { name: '执行来源', exact: true }).click();
-    await expectVisibleText(page, 'MISSIONGRANT → SERIAL EXECUTION');
-    await expectVisibleText(page, 'Renderer 只提交 context 与已有 grant / batch / adEntity ID');
+    await expectVisibleText(page, '执行授权 → 串行执行');
+    await expectVisibleText(page, '界面只提交当前店铺范围与已有授权');
+    const executionRoot = page.locator('.execution-workspace--mission');
+    const ordinaryExecutionText = await executionRoot.evaluate((root) => {
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('details, [hidden]').forEach((node) => node.remove());
+      return clone.innerText;
+    });
+    const forbiddenExecutionTerms = [
+      'Mission', 'Experiment', 'UNKNOWN', 'revision', 'draft', 'set_keyword_bid', 'Main',
+      'StoreContext', 'Authority', 'Profile', 'dry-run', 'manifest', 'fingerprint', 'Renderer',
+      'CRUD', 'PRODUCTION_NATIVE', 'PROTOTYPE_ONLY', 'LEGACY_ADAPTER', 'sequence', 'append-only',
+      'correction', 'DECISION', 'ACTION', 'READBACK', 'EFFECT',
+    ];
+    const executionLeaks = forbiddenExecutionTerms.filter((term) => ordinaryExecutionText.toLowerCase().includes(term.toLowerCase()));
+    if (executionLeaks.length > 0) {
+      fail('Execution ordinary UI exposes internal copy', executionLeaks.join(', '));
+    }
 
     await resolvePreviewIdentityAndCreateBatch(page);
-    await expectVisibleText(page, '已从不可变 MissionGrant 创建完整串行批次');
+    await expectVisibleText(page, '已从有效执行授权创建完整串行批次');
     await page.getByRole('button', { name: '开始串行执行', exact: true }).click();
-    await expectVisibleText(page, '串行执行已返回最新 Authority 投影');
+    await expectVisibleText(page, '串行执行已更新为最新状态');
     await page.getByRole('tab', { name: '前后对比', exact: true }).click();
-    for (const text of ['before', 'after', 'reload']) await expectVisibleText(page, text);
+    const evidencePanel = page.locator('.execution-evidence');
+    for (const text of ['变更前', '提交后', '刷新后']) await expectVisibleText(page, text);
+    const readyEvidenceSlots = evidencePanel.locator('article[data-state="ready"]');
+    if (await readyEvidenceSlots.count() !== 3) {
+      fail('Three-part execution evidence is not independently ready', String(await readyEvidenceSlots.count()));
+    }
+    const evidenceReadbackText = await evidencePanel.innerText();
+    if ((evidenceReadbackText.match(/USD \d+\.\d{2} · \d{2}:\d{2}:\d{2}/g) || []).length !== 3) {
+      fail('Three-part execution evidence lost its independent value/time readback', evidenceReadbackText);
+    }
+    const selectionDiagnostics = await page.locator('.execution-selection-ids').textContent();
+    if (!selectionDiagnostics?.includes('before / after / reload')) {
+      fail('Folded execution diagnostics lost the raw evidence slot contract');
+    }
     await page.getByRole('tab', { name: '回读验证', exact: true }).click();
     await expectVisibleText(page, '三段回读已验证');
     await expectVisibleText(page, '任何不确定性都停止队列且不自动重试');
     evidence.previewExecutions.push({ issuer: 'human', result: 'succeeded-with-three-part-readback' });
 
-    const grantSelect = page.getByLabel('有效 MissionGrant');
+    const grantSelect = page.getByLabel('有效执行授权');
     await grantSelect.selectOption('preview-grant-policy');
     await resolvePreviewIdentityAndCreateBatch(page);
-    await expectVisibleText(page, '策略签发批次已由内存 Main 自动推进');
+    await expectVisibleText(page, '策略签发批次已在本机演示环境自动推进');
     await expectVisibleText(page, '执行模式');
     await expectVisibleText(page, '策略签发');
     evidence.previewExecutions.push({ issuer: 'policy', result: 'auto-advanced-in-memory-only' });
@@ -185,11 +239,24 @@ async function main() {
     await resolvePreviewIdentityAndCreateBatch(page);
     await page.getByRole('tab', { name: '动作详情', exact: true }).click();
     await page.getByRole('button', { name: '开始串行执行', exact: true }).click();
-    await expectVisibleText(page, '结果为 UNKNOWN：串行队列已停止，不会自动重试');
-    await expectVisibleText(page, 'UNKNOWN · 队列已停止');
+    await expectVisibleText(page, '结果不确定：串行队列已停止，不会自动重试');
+    await expectVisibleText(page, '结果不确定 · 队列已停止');
     await expectVisibleText(page, '人工接管');
+    const unknownPanel = page.locator('.execution-unknown');
+    const ordinaryUnknownText = await unknownPanel.evaluate((root) => {
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('details, [hidden]').forEach((node) => node.remove());
+      return clone.innerText;
+    });
+    if (/\bUNKNOWN\b/.test(ordinaryUnknownText)) {
+      fail('Unknown execution ordinary UI exposes the raw technical state', ordinaryUnknownText);
+    }
+    const unknownDiagnostics = await unknownPanel.locator('details').textContent();
+    if (!unknownDiagnostics?.includes('UNKNOWN')) {
+      fail('Unknown execution folded diagnostics lost the raw technical state');
+    }
     evidence.previewExecutions.push({ issuer: 'human', result: 'unknown-stopped-no-auto-retry' });
-    await capture(page, evidence, 'execution-live', '人工、策略与 UNKNOWN 执行分支（内存预览）', runId);
+    await capture(page, evidence, 'execution-live', '人工、策略与结果不确定执行分支（本机预览）', runId);
 
     await navigateLegacyRoute(page, 'readback');
     await expectHeading(page, '结果核对');

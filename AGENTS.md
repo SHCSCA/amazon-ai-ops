@@ -169,7 +169,7 @@ After doc changes that affect delivery state, re-export the bundle for the actua
 
 - `project_id`: `amazon-ai-ops`
 - 项目知识库入口：`C:\Users\wz\Documents\Obsidian Vault\20_Projects\amazon-ai-ops\项目主页.md`
-- 处理实质性任务前，先运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\wz\Documents\Codex\obsidian-memory-system\scripts\get-context.ps1" -Project amazon-ai-ops`，再按需检索 Vault 的当前状态、任务、Bug、交付物、决策、文档和会话。
+- 默认不自动检索 Vault。只有用户明确要求查知识库、历史记录或过往决策时，才运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\wz\Documents\Codex\obsidian-memory-system\scripts\get-context.ps1" -Project amazon-ai-ops`；普通任务不得自动运行。
 - Vault 默认只读；只有用户明确要求整理或更新笔记时才允许写入。
 - 本文件中的交付与安全边界优先；事实状态以当前 Git、代码、运行、测试和交付证据为准。Vault 是历史上下文和可重建投影，冲突时标记旧笔记可能过期。
 - 自动更新只能替换一对 `CODEX-KB-CURATOR` marker 之间的内容；marker 缺失、重复、嵌套或失衡时停止并报告。

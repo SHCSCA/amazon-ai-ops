@@ -7,6 +7,7 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import {
   StoreCollectionOrchestrator,
+  StoreCollectionOrchestratorError,
   STORE_COLLECTION_TRANSITION_PHASES,
   deriveStoreCollectionSchedulerExecutionIdentity,
   isStoreCollectionTransitionPhaseAllowed,
@@ -520,9 +521,15 @@ describe('StoreCollectionOrchestrator', () => {
         requestId: input.requestId,
       }),
     });
-    await expect(interrupted.orchestrator.runCycle()).rejects.toMatchObject({
-      code: 'SAFETY_STATE_UNKNOWN',
-    });
+    const interruptedResult = await interrupted.orchestrator.runCycle().then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({
+        ok: false as const,
+        code: error instanceof StoreCollectionOrchestratorError ? error.code : 'UNEXPECTED_ERROR',
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    expect(interruptedResult).toEqual({ ok: false, code: 'SAFETY_STATE_UNKNOWN' });
     const pending = readHistory(interrupted).transitions.find((item: any) => (
       item.purpose === 'collection' && item.phase === 'scheduler_accepted'
     ));
@@ -560,6 +567,100 @@ describe('StoreCollectionOrchestrator', () => {
         capabilityDomain: 'recovery_existing_request_only',
       }),
     });
+  });
+
+  it('terminalizes a request-bound transition when the exact durable scheduler request was never created', async () => {
+    const interrupted = harness({
+      stores: [store('store-a', 'profile-a')],
+      execute: async () => {
+        throw new Error('scheduler stopped before durable initial progress');
+      },
+    });
+    await expect(interrupted.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    const pending = readHistory(interrupted).transitions.find((item: any) => (
+      item.purpose === 'collection' && item.phase === 'scheduler_request_bound'
+    ));
+    expect(pending).toBeDefined();
+
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: interrupted.history,
+      codec: interrupted.codec,
+      inspection: () => {
+        throw new Error('recovery-only startup must not inspect due stores');
+      },
+      recover: async (input) => ({
+        state: 'not_found',
+        authority: authority(input.context),
+        owner: input.owner,
+        capability: input.capability,
+        transitionCapability: input.transitionCapability,
+        transitionScope: input.transitionScope,
+        cycleId: input.cycleId,
+        transitionId: input.transitionId,
+        fingerprint: input.expectedFingerprint,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+      }),
+    });
+
+    const recoveryResult = await restarted.orchestrator.recoverExistingTransitionsOnly().then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => {
+        const messages: string[] = [];
+        const seen = new Set<unknown>();
+        let current: unknown = error;
+        while (current instanceof Error && !seen.has(current) && messages.length < 8) {
+          seen.add(current);
+          messages.push(current.message);
+          current = (current as Error & { cause?: unknown }).cause;
+        }
+        return {
+          ok: false as const,
+          code: error instanceof StoreCollectionOrchestratorError ? error.code : 'UNEXPECTED_ERROR',
+          message: error instanceof Error ? error.message : String(error),
+          messages,
+        };
+      },
+    );
+    expect(recoveryResult.ok, JSON.stringify(recoveryResult)).toBe(true);
+    if (!recoveryResult.ok) throw new Error(recoveryResult.message);
+    expect(recoveryResult.value).toMatchObject({
+      state: 'completed',
+      outcomes: [expect.objectContaining({
+        state: 'failed',
+        failureCode: 'SCHEDULER_NOT_SUCCEEDED',
+        transitionId: pending.transitionId,
+      })],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+    expect(readHistory(restarted).transitions.find((item: any) => (
+      item.transitionId === pending.transitionId
+    ))).toMatchObject({ phase: 'failed', failureCode: 'SCHEDULER_NOT_SUCCEEDED' });
+    const retriableContext = context('store-a', 'profile-a');
+    expect(restarted.orchestrator.readProtectedSemanticAttempt({
+      storeId: retriableContext.storeId,
+      browserProfileId: retriableContext.browserProfileId,
+      expectedFingerprint: fingerprint('store-a'),
+    })).toBeNull();
+    expect(restarted.inspectStoreSchedule).not.toHaveBeenCalled();
+    expect(restarted.execute).not.toHaveBeenCalled();
+    expect(restarted.releasePolicy).toHaveBeenCalledOnce();
+
+    const retry = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: interrupted.history,
+      codec: interrupted.codec,
+    });
+    await expect(retry.orchestrator.runCycle()).resolves.toMatchObject({
+      state: 'completed',
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      attemptedStoreIds: ['store-a'],
+    });
+    expect(retry.execute).toHaveBeenCalledOnce();
   });
 
   it('rejects a regular cycle while a recovery-only cycle owns the transition lock', async () => {
@@ -2972,6 +3073,60 @@ describe('StoreCollectionOrchestrator', () => {
     const history = readHistory(test);
     expect(history.transitions.filter((item: any) => item.purpose === 'restore')).toHaveLength(1);
     expect(history.outcomes).toHaveLength(1);
+  });
+
+  it('restores from a same-store generation that has advanced beyond the durable origin lower bound', async () => {
+    const durableOrigin = context('store-b', 'profile-b', 44, '2026-08-13');
+    let test!: ReturnType<typeof harness>;
+    test = harness({
+      initialContext: durableOrigin,
+      inspection: (item) => ({
+        state: item.storeId === 'store-a' ? 'due' : 'not_due',
+        ...(item.storeId === 'store-a' ? { expectedFingerprint: fingerprint(item.storeId) } : {}),
+      }),
+      transition: async (input) => {
+        if (input.target?.storeId === 'store-a') {
+          const collectionContext = context('store-a', 'profile-a', 1, '2026-08-16');
+          test.setCurrent(collectionContext);
+          return {
+            owner: input.owner,
+            capability: input.capability,
+            transitionCapability: input.transitionCapability,
+            transitionScope: input.transitionScope,
+            reason: 'collection_automation',
+            mode: 'collection_only',
+            previous: input.previous,
+            current: authority(collectionContext),
+            targetGenerationBefore: 0,
+            targetGenerationAfter: 1,
+          };
+        }
+        const restoredContext = context('store-b', 'profile-b', 51, '2026-08-16');
+        test.setCurrent(restoredContext);
+        return {
+          owner: input.owner,
+          capability: input.capability,
+          transitionCapability: input.transitionCapability,
+          transitionScope: input.transitionScope,
+          reason: 'collection_automation',
+          mode: 'collection_only',
+          previous: input.previous,
+          current: authority(restoredContext),
+          targetGenerationBefore: 50,
+          targetGenerationAfter: 51,
+        };
+      },
+    });
+
+    const result = await test.orchestrator.runCycle().catch((error: unknown) => ({
+      failureCode: error instanceof StoreCollectionOrchestratorError ? error.code : 'UNEXPECTED_ERROR',
+    }));
+    expect(result).toMatchObject({
+      outcomes: [{ storeId: 'store-a', state: 'succeeded' }],
+    });
+    expect(test.current()).toEqual(context('store-b', 'profile-b', 51, '2026-08-16'));
+    expect(readHistory(test).transitions.find((item: any) => item.purpose === 'restore'))
+      .toMatchObject({ phase: 'completed', sessionGeneration: 51 });
   });
 
   it.each([

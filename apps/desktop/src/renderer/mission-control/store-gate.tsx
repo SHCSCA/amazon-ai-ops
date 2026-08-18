@@ -27,39 +27,42 @@ export interface MissionControlStoreGateViewProps {
   children: ReactNode;
 }
 
-function gateCopy(phase: MissionControlStorePhase, error: string | null) {
+function gateCopy(phase: MissionControlStorePhase) {
   if (phase === 'loading') {
     return {
-      eyebrow: 'STORE AUTHORITY · MAIN',
+      eyebrow: '店铺范围 · 正在确认',
       title: '正在读取店铺范围',
       description: '正在进入运营工作台；店铺范围确认前只暂停店铺级数据与动作。',
     };
   }
   if (phase === 'switching') {
     return {
-      eyebrow: 'STORE AUTHORITY · SWITCHING',
+      eyebrow: '店铺范围 · 正在切换',
       title: '正在切换店铺',
-      description: 'Main 正在切换独立数据域与浏览器 Profile；完成后直接进入该店铺工作台。',
+      description: '系统正在切换独立数据和浏览器会话；完成后将直接进入该店铺工作台。',
     };
   }
   if (phase === 'error') {
     return {
-      eyebrow: 'STORE AUTHORITY · BLOCKED',
+      eyebrow: '店铺范围 · 已暂停',
       title: '店铺上下文暂不可用',
-      description: error || '请在左侧“店铺与站点”入口重试，所有店铺级动作当前均已停止。',
+      description: '店铺范围读取失败，请点击“重试”再次确认当前店铺。',
     };
   }
   return {
-    eyebrow: 'STORE AUTHORITY · US / USD',
+    eyebrow: '店铺范围 · 美国站 / 美元',
     title: '从左侧新增或选择店铺',
-    description: '应用已经进入。先创建美国站店铺数据域，再明确切换到目标店铺；领星连接在店铺工作台内配置。',
+    description: '应用已经进入。先创建美国站店铺，再明确切换到目标店铺；领星连接在系统设置内配置。',
   };
 }
 
 export function MissionControlStoreGateView(props: MissionControlStoreGateViewProps) {
   if (props.phase === 'ready') return <>{props.children}</>;
-  const copy = gateCopy(props.phase, props.error);
+  const copy = gateCopy(props.phase);
   const busy = props.phase === 'loading' || props.phase === 'switching';
+  const safeStoreError = props.error
+    ? '店铺状态读取失败，请重试；仍失败时可展开诊断详情。'
+    : null;
 
   return (
     <div
@@ -87,7 +90,7 @@ export function MissionControlStoreGateView(props: MissionControlStoreGateViewPr
               dailyStatusError={props.dailyStatusError}
               dailyStatusPhase={props.dailyStatusPhase}
               dailyStatuses={props.dailyStatuses}
-              error={props.error}
+              error={safeStoreError}
               initiallyExpanded={props.phase === 'needs-selection' || props.phase === 'error'}
               onCreate={props.onCreate}
               onRetry={props.onRetry}
@@ -113,6 +116,12 @@ export function MissionControlStoreGateView(props: MissionControlStoreGateViewPr
             <span>{copy.eyebrow}</span>
             <h1 id="mission-control-store-gate-title">{copy.title}</h1>
             <p>{copy.description}</p>
+            {props.phase === 'error' && props.error && (
+              <details>
+                <summary>诊断详情</summary>
+                <code>{props.error}</code>
+              </details>
+            )}
             <div aria-label="安全边界" className="mission-control-store-gate__boundaries">
               <span>创建后保持未选择</span>
               <span>切换后进入工作台</span>

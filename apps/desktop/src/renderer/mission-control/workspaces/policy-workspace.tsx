@@ -49,6 +49,13 @@ const DAY_OPTIONS = [
 const DEFAULT_EXECUTION_DAYS = [1, 2, 3, 4, 5];
 
 type PolicyDraft = { name: string; scope: string; priority: string };
+type PolicyScopeLevel = 'store' | 'product' | 'campaign' | 'ad_group' | 'keyword';
+type PolicyScopeOption = {
+  value: string;
+  level: PolicyScopeLevel;
+  label: string;
+  allowedAdEntityIds: string[];
+};
 type VersionDraft = {
   version: string;
   allowedAdEntityIds: string;
@@ -63,6 +70,34 @@ type VersionDraft = {
   validFrom: string;
   validUntil: string;
 };
+type StrategyWizardDraft = {
+  step: 1 | 2 | 3 | 4;
+  policy: PolicyDraft;
+  scopeLevel: PolicyScopeLevel;
+  scopeValue: string;
+  version: VersionDraft;
+};
+
+const POLICY_SCOPE_LABELS: Record<PolicyScopeLevel, string> = {
+  store: '整个店铺',
+  product: '所选产品',
+  campaign: '广告活动',
+  ad_group: '广告组',
+  keyword: '关键词',
+};
+
+const POLICY_STATUS_LABELS: Record<PolicyRecord['status'], string> = {
+  draft: '待配置',
+  active: '已启用',
+  disabled: '已停用',
+  archived: '已归档',
+};
+
+const VERSION_STATUS_LABELS: Record<PolicyVersionRecord['status'], string> = {
+  draft: '待检查',
+  enabled: '已启用',
+  retired: '已停用',
+};
 
 export type PolicyWorkspaceProps = {
   apiOverride?: PolicyDomainRendererApi;
@@ -76,7 +111,15 @@ export type PolicyWorkspaceProps = {
 };
 
 function message(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message : 'Policy 操作未完成，请刷新后重试。';
+  return error instanceof Error && error.message.trim() ? error.message : '策略操作未完成，请刷新后重试。';
+}
+
+function operatorFacingBlocker(reason: string | null | undefined, subject: string): string {
+  const value = reason?.trim();
+  if (!value || /Mission|Experiment|Decision|Authority|Renderer|Main|StoreContext|UNKNOWN|\brevision\b|\bdraft\b|set_keyword_bid|PRODUCTION_NATIVE|PROTOTYPE_ONLY|\bBLOCKED\b/.test(value)) {
+    return `${subject}当前不可用。请确认当前店铺连接与本机服务后重试。`;
+  }
+  return value;
 }
 
 function split(value: string): string[] {
@@ -136,6 +179,74 @@ function defaultRules(
 
 function policyDraft(record?: PolicyRecord | null): PolicyDraft {
   return { name: record?.name ?? '', scope: record?.scope ?? 'store', priority: String(record?.priority ?? 20) };
+}
+
+type PolicyProductProjection = { asin: string; title?: string };
+type PolicyAdObjectProjection = {
+  kind: 'campaign' | 'ad_group' | 'target' | 'search_term';
+  objectKey: string;
+  entityId?: string;
+  resolved?: boolean;
+  nonExecutable?: boolean;
+  name: string;
+  campaignName?: string;
+  adGroupName?: string;
+  asin?: string;
+};
+
+export function buildPolicyScopeOptions(
+  storeLabel: string,
+  products: readonly PolicyProductProjection[],
+  adObjects: readonly PolicyAdObjectProjection[],
+): PolicyScopeOption[] {
+  const executableKeywords = adObjects.filter((item) => (
+    item.kind === 'target' && item.resolved && !item.nonExecutable && Boolean(item.entityId)
+  ));
+  const keywordIds = (rows: readonly PolicyAdObjectProjection[]) => Array.from(new Set(
+    rows.map((item) => item.entityId).filter((id): id is string => Boolean(id)),
+  ));
+  const options: PolicyScopeOption[] = [{
+    value: 'store',
+    level: 'store',
+    label: storeLabel || '当前店铺',
+    allowedAdEntityIds: keywordIds(executableKeywords),
+  }];
+  products.forEach((product) => options.push({
+    value: `product:${product.asin}`,
+    level: 'product',
+    label: `${product.title?.trim() || '未命名产品'} · ${product.asin}`,
+    allowedAdEntityIds: keywordIds(executableKeywords.filter((item) => item.asin === product.asin)),
+  }));
+  const addAdObjectOptions = (level: Extract<PolicyScopeLevel, 'campaign' | 'ad_group'>, kind: 'campaign' | 'ad_group') => {
+    const seen = new Set<string>();
+    adObjects.filter((item) => item.kind === kind).forEach((item) => {
+      const value = `${level}:${item.entityId || item.objectKey}`;
+      if (seen.has(value)) return;
+      seen.add(value);
+      const related = executableKeywords.filter((keyword) => (
+        level === 'campaign'
+          ? keyword.campaignName === item.name
+          : keyword.campaignName === item.campaignName && keyword.adGroupName === item.name
+      ));
+      options.push({ value, level, label: item.name || '未命名广告对象', allowedAdEntityIds: keywordIds(related) });
+    });
+  };
+  addAdObjectOptions('campaign', 'campaign');
+  addAdObjectOptions('ad_group', 'ad_group');
+  executableKeywords.forEach((item) => options.push({
+    value: `keyword:${item.entityId}`,
+    level: 'keyword',
+    label: [item.campaignName, item.adGroupName, item.name].filter(Boolean).join(' > ') || '未命名关键词/投放',
+    allowedAdEntityIds: [item.entityId!],
+  }));
+  return options;
+}
+
+function formatPolicyScope(scope: string, options: readonly PolicyScopeOption[]): string {
+  const match = options.find((option) => option.value === scope);
+  if (match) return `${POLICY_SCOPE_LABELS[match.level]} · ${match.label}`;
+  const [level] = scope.split(':');
+  return POLICY_SCOPE_LABELS[level as PolicyScopeLevel] ?? '当前店铺范围';
 }
 
 export function buildPolicyVersionDraft(record: PolicyVersionRecord | null | undefined, defaultTimeZone: string): VersionDraft {
@@ -209,6 +320,10 @@ export function formatExecutionWindowSummary(rules: PolicyVersionRules): string 
   return `${dailyLimit} · ${cooldown} · ${formatExecutionDays(window.daysOfWeek)} ${window.start}–${window.end} · ${window.timeZone}`;
 }
 
+export function formatPolicyActionBoundary(rules: PolicyVersionRules): string {
+  return `单次高于 0% 且不超过 ${rules.maxChangePct}% · 批次 0–${rules.totalImpactBudget} USD · ${formatExecutionWindowSummary(rules)}`;
+}
+
 export function buildCreatePolicyInput(draft: PolicyDraft, id: string): CreatePolicyInput {
   const priority = Number(draft.priority);
   if (!draft.name.trim() || !draft.scope.trim()) throw new Error('请填写策略名称与作用范围。');
@@ -269,15 +384,51 @@ export function buildPolicyVersionUpdate(record: PolicyVersionRecord, draft: Ver
   };
 }
 
-function PolicyDialog({ record, draft, busy, onChange, onClose, onSave }: {
+function PolicyDialog({ record, draft, busy, scopeOptions, onChange, onClose, onSave }: {
   record: PolicyRecord | null;
   draft: PolicyDraft;
   busy: boolean;
+  scopeOptions: readonly PolicyScopeOption[];
   onChange: (draft: PolicyDraft) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
-  return <div className="mission-control-dialog-backdrop"><section aria-modal="true" className="mission-control-dialog policy-domain-dialog" role="dialog" aria-labelledby="policy-dialog-title"><header><div><span>POLICY · AMAZON US / USD</span><h2 id="policy-dialog-title">{record ? '编辑策略' : '新建策略'}</h2><p>策略元数据可通过 CAS 修改；已启用版本内容保持不可变。</p></div><button aria-label="关闭策略编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header><div className="policy-domain-form"><label><span>策略名称 *</span><input autoFocus value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} /></label><label><span>作用范围 *</span><select value={draft.scope} onChange={(event) => onChange({ ...draft, scope: event.target.value })}><option value="store">整个店铺</option><option value="product">当前产品范围</option><option value="data">数据质量门</option></select></label><label><span>优先级 *</span><input min="1" max="100" type="number" value={draft.priority} onChange={(event) => onChange({ ...draft, priority: event.target.value })} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : record ? '保存策略' : '创建策略'}</button></footer></section></div>;
+  return <div className="mission-control-dialog-backdrop"><section aria-modal="true" className="mission-control-dialog policy-domain-dialog" role="dialog" aria-labelledby="policy-dialog-title"><header><div><span>策略设置 · Amazon 美国站 / USD</span><h2 id="policy-dialog-title">{record ? '编辑策略基本信息' : '新建策略'}</h2><p>已启用规则不会被这次修改覆盖。</p></div><button aria-label="关闭策略编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header><div className="policy-domain-form"><label><span>策略名称 *</span><input autoFocus value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} /></label><label><span>对象范围 *</span><select value={draft.scope} onChange={(event) => onChange({ ...draft, scope: event.target.value })}>{scopeOptions.map((option) => <option key={option.value} value={option.value}>{POLICY_SCOPE_LABELS[option.level]} · {option.label}</option>)}</select></label><label><span>优先级 *</span><input min="1" max="100" type="number" value={draft.priority} onChange={(event) => onChange({ ...draft, priority: event.target.value })} /><small>数字越小越优先；同一对象命中多条策略时，系统按数字越小越先匹配。范围为 1–100。</small></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : '保存策略'}</button></footer></section></div>;
+}
+
+export function StrategyWizardDialog({ draft, scopeOptions, busy, onChange, onClose, onSave }: {
+  draft: StrategyWizardDraft;
+  scopeOptions: readonly PolicyScopeOption[];
+  busy: boolean;
+  onChange: (draft: StrategyWizardDraft) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const optionsForLevel = scopeOptions.filter((option) => option.level === draft.scopeLevel);
+  const selectedOption = scopeOptions.find((option) => option.value === draft.scopeValue) ?? optionsForLevel[0];
+  const steps = [
+    '对象范围',
+    '允许动作',
+    '变更、预算、次数、冷却与时段限制',
+    '中文证据与停止条件',
+  ] as const;
+  const setStep = (step: 1 | 2 | 3 | 4) => onChange({ ...draft, step });
+  const canContinue = draft.step !== 1 || Boolean(draft.policy.name.trim() && selectedOption);
+  return <div className="mission-control-dialog-backdrop">
+    <section aria-labelledby="strategy-wizard-title" aria-modal="true" className="mission-control-dialog policy-domain-dialog policy-domain-dialog--wizard" role="dialog">
+      <header><div><span>Amazon 美国站 · USD</span><h2 id="strategy-wizard-title">新建策略</h2><p>按四步确定可执行边界；V1 只允许调整关键词竞价。</p></div><button aria-label="关闭新建策略" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header>
+      <ol aria-label="新建策略步骤" className="policy-wizard-steps">
+        {steps.map((label, index) => <li aria-current={draft.step === index + 1 ? 'step' : undefined} data-complete={draft.step > index + 1 || undefined} key={label}><button disabled={busy || index + 1 > draft.step} onClick={() => setStep((index + 1) as 1 | 2 | 3 | 4)} type="button"><span>{index + 1}</span>{label}</button></li>)}
+      </ol>
+      <div className="policy-wizard-body">
+        {draft.step === 1 && <section aria-labelledby="policy-wizard-scope-title" className="policy-wizard-section"><h3 id="policy-wizard-scope-title">1. 对象范围</h3><p>范围始终锁定当前店铺；下列对象只来自当前店铺产品和已导入广告对象。</p><div className="policy-domain-form"><label><span>策略名称 *</span><input autoFocus value={draft.policy.name} onChange={(event) => onChange({ ...draft, policy: { ...draft.policy, name: event.target.value } })} /></label><label><span>范围级别 *</span><select value={draft.scopeLevel} onChange={(event) => { const level = event.target.value as PolicyScopeLevel; const first = scopeOptions.find((option) => option.level === level); onChange({ ...draft, scopeLevel: level, scopeValue: first?.value ?? '' }); }}>{Object.entries(POLICY_SCOPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label><span>选择对象 *</span><select disabled={!optionsForLevel.length} value={selectedOption?.value ?? ''} onChange={(event) => onChange({ ...draft, scopeValue: event.target.value })}>{optionsForLevel.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{optionsForLevel.length ? `该范围包含 ${selectedOption?.allowedAdEntityIds.length ?? 0} 个可核验关键词/投放对象。` : '当前店铺没有该级别的可选对象，请先采集并导入广告报表。'}</small></label><label><span>优先级 *</span><input min="1" max="100" type="number" value={draft.policy.priority} onChange={(event) => onChange({ ...draft, policy: { ...draft.policy, priority: event.target.value } })} /><small>数字越小越优先；同一对象命中多条策略时，系统按数字越小越先匹配。范围为 1–100。</small></label></div></section>}
+        {draft.step === 2 && <section aria-labelledby="policy-wizard-action-title" className="policy-wizard-section"><h3 id="policy-wizard-action-title">2. 允许动作</h3><p>V1 动作固定，不能扩展到预算、状态、Listing 或其他广告写入。</p><article className="policy-wizard-action-choice"><CheckCircle size={22} /><div><strong>调整关键词竞价</strong><small>仅对上一步范围内可核验的关键词/投放对象生效；对象不足时自动执行保持阻断。</small></div><span>唯一允许动作</span></article></section>}
+        {draft.step === 3 && <section aria-labelledby="policy-wizard-limit-title" className="policy-wizard-section"><h3 id="policy-wizard-limit-title">3. 变更、预算、次数、冷却与时段限制</h3><div className="policy-domain-form policy-domain-form--version"><label><span>最大单次变化 *</span><div className="policy-domain-input-unit"><input max="15" min="0.1" step="0.1" type="number" value={draft.version.maxChangePct} onChange={(event) => onChange({ ...draft, version: { ...draft.version, maxChangePct: event.target.value } })} /><b>%</b></div></label><label><span>批次影响预算 *</span><div className="policy-domain-input-unit"><b>$</b><input min="0" step="1" type="number" value={draft.version.totalImpactBudget} onChange={(event) => onChange({ ...draft, version: { ...draft.version, totalImpactBudget: event.target.value } })} /></div></label><label><span>每日动作上限 *</span><div className="policy-domain-input-unit"><input min="1" step="1" type="number" value={draft.version.maxDailyActionCount} onChange={(event) => onChange({ ...draft, version: { ...draft.version, maxDailyActionCount: event.target.value } })} /><b>次</b></div></label><label><span>同对象冷却时间 *</span><div className="policy-domain-input-unit"><input min="0" step="1" type="number" value={draft.version.cooldownMinutes} onChange={(event) => onChange({ ...draft, version: { ...draft.version, cooldownMinutes: event.target.value } })} /><b>分钟</b></div></label><fieldset className="policy-domain-boundary"><legend>允许执行时段 *</legend><div className="policy-domain-window-grid"><label><span>时区</span><input value={draft.version.executionTimeZone} onChange={(event) => onChange({ ...draft, version: { ...draft.version, executionTimeZone: event.target.value } })} /></label><label><span>开始</span><input type="time" value={draft.version.executionWindowStart} onChange={(event) => onChange({ ...draft, version: { ...draft.version, executionWindowStart: event.target.value } })} /></label><label><span>结束</span><input type="time" value={draft.version.executionWindowEnd} onChange={(event) => onChange({ ...draft, version: { ...draft.version, executionWindowEnd: event.target.value } })} /></label></div><div className="policy-domain-day-field"><span>执行日（至少一天）</span><div aria-label="策略执行日" className="policy-domain-day-options" role="group">{DAY_OPTIONS.map((option) => <button aria-label={option.label} aria-pressed={draft.version.executionDaysOfWeek.includes(option.value)} key={option.value} onClick={() => onChange({ ...draft, version: { ...draft.version, executionDaysOfWeek: toggleExecutionDay(draft.version.executionDaysOfWeek, option.value) } })} type="button">{option.shortLabel}</button>)}</div></div></fieldset></div></section>}
+        {draft.step === 4 && <section aria-labelledby="policy-wizard-evidence-title" className="policy-wizard-section"><h3 id="policy-wizard-evidence-title">4. 中文证据与停止条件</h3><div className="policy-wizard-review-grid"><article><h4>执行前后必须留存</h4><ul><li>修改前页面截图</li><li>修改后页面截图</li><li>刷新后页面截图</li><li>页面与对象身份核验</li><li>刷新后的数值回读</li></ul></article><article><h4>遇到以下情况立即停止</h4><ul><li>店铺、页面或对象身份变化</li><li>修改前数值与预期不一致</li><li>结果无法确认，转人工对账且不自动重试</li><li>数据过期、影响预算耗尽或紧急停止开启</li></ul></article></div><div className="policy-domain-form"><label><span>生效日期</span><input type="date" value={draft.version.validFrom} onChange={(event) => onChange({ ...draft, version: { ...draft.version, validFrom: event.target.value } })} /></label><label><span>失效日期</span><input type="date" value={draft.version.validUntil} onChange={(event) => onChange({ ...draft, version: { ...draft.version, validUntil: event.target.value } })} /></label></div><p className="policy-wizard-final-note">保存后先形成待检查规则；仍需“检查边界 → 启用策略”，不会直接开启自动执行。</p></section>}
+      </div>
+      <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={draft.step === 1 ? onClose : () => setStep((draft.step - 1) as 1 | 2 | 3)} type="button">{draft.step === 1 ? '取消' : '上一步'}</button>{draft.step < 4 ? <button className="workspace-button workspace-button--primary" disabled={busy || !canContinue} onClick={() => setStep((draft.step + 1) as 2 | 3 | 4)} type="button">下一步</button> : <button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '创建中…' : '创建策略与草稿版本'}</button>}</footer>
+    </section>
+  </div>;
 }
 
 export function VersionDialog({ record, draft, busy, onChange, onClose, onSave }: {
@@ -291,7 +442,7 @@ export function VersionDialog({ record, draft, busy, onChange, onClose, onSave }
   return <div className="mission-control-dialog-backdrop">
     <section aria-labelledby="version-dialog-title" aria-modal="true" className="mission-control-dialog policy-domain-dialog policy-domain-dialog--version" role="dialog">
       <header>
-        <div><span>IMMUTABLE POLICY SNAPSHOT</span><h2 id="version-dialog-title">{record ? '编辑草稿版本' : '新建策略版本'}</h2><p>启用后规则不可编辑；后续变化必须新建版本。</p></div>
+        <div><span>策略规则检查</span><h2 id="version-dialog-title">{record ? '编辑待检查规则' : '创建草稿版本'}</h2><p>启用后规则不可编辑；后续变化必须新建版本。</p></div>
         <button aria-label="关闭版本编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button>
       </header>
       <div className="policy-domain-form policy-domain-form--version">
@@ -300,7 +451,7 @@ export function VersionDialog({ record, draft, busy, onChange, onClose, onSave }
         <label><span>批次影响预算 *</span><div className="policy-domain-input-unit"><b>$</b><input min="0" step="1" type="number" value={draft.totalImpactBudget} onChange={(event) => onChange({ ...draft, totalImpactBudget: event.target.value })} /></div></label>
         <label><span>每日动作上限 *</span><div className="policy-domain-input-unit"><input min="1" step="1" type="number" value={draft.maxDailyActionCount} onChange={(event) => onChange({ ...draft, maxDailyActionCount: event.target.value })} /><b>次</b></div></label>
         <label><span>同对象冷却时间 *</span><div className="policy-domain-input-unit"><input min="0" step="1" type="number" value={draft.cooldownMinutes} onChange={(event) => onChange({ ...draft, cooldownMinutes: event.target.value })} /><b>分钟</b></div></label>
-        <label className="policy-domain-form__wide"><span>允许广告实体 ID（可空；空=零执行权限）</span><textarea rows={4} value={draft.allowedAdEntityIds} onChange={(event) => onChange({ ...draft, allowedAdEntityIds: event.target.value })} /><small>每行一个稳定关键词广告实体 ID；未知 ID 由 Main 失败关闭。</small></label>
+        <div className="policy-domain-form__wide policy-domain-object-summary"><span>可执行对象</span><strong>{split(draft.allowedAdEntityIds).length} 个已核验关键词/投放对象</strong><small>没有已核验对象时保持零执行权限。</small><details><summary>诊断详情</summary><label><span>稳定对象标识（仅排障使用）</span><textarea rows={4} value={draft.allowedAdEntityIds} onChange={(event) => onChange({ ...draft, allowedAdEntityIds: event.target.value })} /></label></details></div>
         <fieldset aria-describedby="policy-execution-window-help" className="policy-domain-boundary">
           <legend>V1 执行窗口 *</legend>
           <div className="policy-domain-window-grid">
@@ -337,7 +488,9 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [policyEditor, setPolicyEditor] = useState<{ record: PolicyRecord | null; draft: PolicyDraft } | null>(null);
+  const [strategyWizard, setStrategyWizard] = useState<StrategyWizardDraft | null>(null);
   const [versionEditor, setVersionEditor] = useState<{ record: PolicyVersionRecord | null; draft: VersionDraft } | null>(null);
+  const [scopeOptions, setScopeOptions] = useState<PolicyScopeOption[]>([]);
   const [clearKillSwitchOpen, setClearKillSwitchOpen] = useState(false);
   const [clearKillSwitchReason, setClearKillSwitchReason] = useState('');
   const sequence = useRef(0);
@@ -361,13 +514,27 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
   const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const can = (id: string) => Boolean(api && storeContext && viewReady && capabilityReady(capabilities, id, previewMode));
   const busy = pending !== null;
+  const visibleBlockedReason = operatorFacingBlocker(error || blockedReason, '策略');
+
+  const openStrategyWizard = () => {
+    const storeOption = scopeOptions.find((option) => option.level === 'store') ?? {
+      value: 'store', level: 'store' as const, label: '当前店铺', allowedAdEntityIds: [],
+    };
+    setStrategyWizard({
+      step: 1,
+      policy: policyDraft(),
+      scopeLevel: 'store',
+      scopeValue: storeOption.value,
+      version: buildPolicyVersionDraft(null, storeContext?.businessTimezone ?? 'America/Los_Angeles'),
+    });
+  };
 
   const load = async (context: StoreContextEnvelope, key: string) => {
     const current = ++sequence.current;
     if (!viewReady || !api) {
       setPhase('blocked');
       setPolicies([]);
-      setError(!viewReady ? `策略中心需要 ${expectedState} 能力，当前已失败关闭。` : 'Policy production window API 未接入；Renderer 未回退到示例数据。');
+      setError(!viewReady ? '策略中心缺少生产能力，当前已失败关闭。' : '策略服务未接入；界面不会回退到示例数据。');
       return;
     }
     setPhase('loading'); setError(''); setFeedback('');
@@ -389,9 +556,29 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
   useEffect(() => {
     detailSequence.current += 1;
     mutationSequence.current += 1;
-    setPending(null); setSelectedId(''); setVersions([]); setPolicyEditor(null); setVersionEditor(null); setClearKillSwitchOpen(false); setClearKillSwitchReason(''); setPage(1);
+    setPending(null); setSelectedId(''); setVersions([]); setPolicyEditor(null); setStrategyWizard(null); setVersionEditor(null); setClearKillSwitchOpen(false); setClearKillSwitchReason(''); setPage(1);
     if (storeContext) void load(storeContext, authorityKey); else { setPhase('blocked'); setError('等待 Main 返回当前 StoreContext。'); }
   }, [authorityKey, includeArchived, apiOverride, viewReady]);
+
+  useEffect(() => {
+    if (!storeContext) { setScopeOptions([]); return; }
+    const capturedKey = authorityKey;
+    const storeOnly = buildPolicyScopeOptions('当前店铺', [], []);
+    setScopeOptions(storeOnly);
+    const surface = (window as any).electronAPI as {
+      listStoreProducts?: (context: StoreContextEnvelope, input: { includeArchived: boolean }) => Promise<PolicyProductProjection[]>;
+      listStoreAdObjects?: (context: StoreContextEnvelope, input: Record<string, never>) => Promise<PolicyAdObjectProjection[]>;
+    } | undefined;
+    void Promise.all([
+      surface?.listStoreProducts?.(storeContext, { includeArchived: false }) ?? Promise.resolve([]),
+      surface?.listStoreAdObjects?.(storeContext, {}) ?? Promise.resolve([]),
+    ]).then(([products, adObjects]) => {
+      if (authorityRef.current !== capturedKey) return;
+      setScopeOptions(buildPolicyScopeOptions('当前店铺', products, adObjects));
+    }).catch(() => {
+      if (authorityRef.current === capturedKey) setScopeOptions(storeOnly);
+    });
+  }, [authorityKey]);
 
   useEffect(() => {
     if (!selected || !storeContext || !api || phase !== 'ready') {
@@ -445,6 +632,46 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
     assertPolicyBelongsToContext(saved, storeContext);
     setPolicies((rows) => rows.some((row) => row.id === saved.id) ? rows.map((row) => row.id === saved.id ? saved : row) : [...rows, saved]);
     setSelectedId(saved.id); setPolicyEditor(null); setFeedback(policyEditor.record ? '策略元数据已通过 CAS 更新。' : '策略已创建，请新建草稿版本。');
+  };
+
+  const saveStrategy = async () => {
+    if (!strategyWizard || !storeContext) return;
+    const option = scopeOptions.find((item) => item.value === strategyWizard.scopeValue);
+    if (!option) { setError('所选对象已不可用，请返回第一步重新选择。'); return; }
+    const policyId = `POLICY-${String(storeContext.storeId)}-${Date.now()}`;
+    let policyInput: CreatePolicyInput;
+    let versionInput: CreatePolicyVersionInput;
+    try {
+      policyInput = buildCreatePolicyInput({
+        ...strategyWizard.policy,
+        scope: option.value,
+      }, policyId);
+      versionInput = buildPolicyVersionInput(
+        { id: policyId } as PolicyRecord,
+        { ...strategyWizard.version, allowedAdEntityIds: option.allowedAdEntityIds.join('\n') },
+        `POL-${String(storeContext.storeId)}-${policyId}-V1`,
+      );
+    } catch (validationError) {
+      setError(message(validationError));
+      return;
+    }
+    const savedPolicy = await mutate('strategy-create', (domain, context) => domain.createPolicy(context, policyInput));
+    if (!savedPolicy) return;
+    assertPolicyBelongsToContext(savedPolicy, storeContext);
+    setPolicies((rows) => [...rows, savedPolicy].sort((left, right) => left.priority - right.priority));
+    setSelectedId(savedPolicy.id);
+    const savedVersion = await mutate('strategy-create', (domain, context) => domain.createPolicyVersion(context, {
+      ...versionInput,
+      policyId: savedPolicy.id,
+    }));
+    setStrategyWizard(null);
+    if (!savedVersion) {
+      setFeedback('策略已创建，但草稿版本未保存；请在策略详情中点击“创建草稿版本”继续。');
+      return;
+    }
+    assertPolicyBelongsToContext(savedVersion, storeContext);
+    setVersions([savedVersion]);
+    setFeedback('策略与待检查规则已创建；请检查边界后再启用策略。');
   };
 
   const saveVersion = async () => {
@@ -527,36 +754,50 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
     setFeedback('紧急停止已解除；系统不会自动恢复策略内自动。');
   };
 
+  const enabledVersion = versions.find((version) => version.status === 'enabled') ?? null;
+  const draftVersion = versions.find((version) => version.status === 'draft') ?? null;
+  const displayedVersion = enabledVersion ?? draftVersion ?? versions[0] ?? null;
+  const selectedScopeOption = selected ? scopeOptions.find((option) => option.value === selected.scope) : undefined;
+  const createVersionDraft = () => ({
+    ...buildPolicyVersionDraft(null, storeContext?.businessTimezone ?? 'America/Los_Angeles'),
+    version: String(Math.max(0, ...versions.map((item) => item.version)) + 1),
+    allowedAdEntityIds: selectedScopeOption?.allowedAdEntityIds.join('\n') ?? '',
+  });
+
   return <div className="mission-control-workspace-root policy-domain-workspace" data-canonical-surface="policy" data-capability-state={viewReady ? expectedState : 'BLOCKED'} data-preview-mode={previewMode || undefined}>
-    <p className="sr-only">{viewReady && api ? 'Policy Authority 已接入。' : `Policy 已失败关闭；${!api ? 'production window API 未接入。' : blockedReason}`}</p>
-    <PageFrame className="policy-domain-page" description="策略先于执行判定；策略内自动只在启用版本、阈值、数据新鲜度与单次变更边界内工作。" pageId="policy-rules" title="策略与风控" task={<TaskBanner compact eyebrow="POLICY AUTHORITY" title="自动边界与审批策略" description="启用版本不可编辑；Renderer 只可切换人工审批/策略内自动和店铺级急停，不能写熔断器或 activeVersion。" primaryAction={{ actionId: 'policy.policy.create', label: '新建策略', disabled: !can('policy.policy.create') || busy, disabledReason: blockedReason, onClick: () => setPolicyEditor({ record: null, draft: policyDraft() }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'policy-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="policy-domain-authority" data-state={viewReady ? expectedState : 'BLOCKED'}>{previewMode ? '仅开发预览' : viewReady ? '生产 Authority' : '已阻断'}</span>}>{previewMode && <p className="policy-domain-preview-note">显式内存 adapter · Amazon US · USD · 不代表真实广告执行授权</p>}</TaskBanner>} summary={<SummaryStrip ariaLabel="Policy Authority 摘要" items={[{ id: 'active', label: '已启用策略', value: `${policies.filter((policy) => policy.status === 'active').length} / ${policies.length}` }, { id: 'versions', label: '不可变策略版本', value: `${versions.filter((version) => version.status === 'enabled').length} 个启用` }, { id: 'runtime', label: '当前执行模式', value: runtime?.mode === 'policy_auto' ? '策略内自动' : '人工审批' }, { id: 'switch', label: '紧急停止', value: runtime?.killSwitch ? '已开启' : '已关闭', tone: runtime?.killSwitch ? 'blocked' : 'neutral' }]} /> }>
-      <section aria-label="策略店铺隔离范围" className="policy-domain-scope-notice"><LockKey size={15} /><strong>{storeContext ? String(storeContext.storeId) : '等待 Main'} 独立数据域</strong><span>策略、不可变版本与运行模式仅作用于当前店铺，不跨店铺继承。</span><em>Amazon US · USD</em></section>
+    <p className="sr-only">{viewReady && api ? '策略服务已接入。' : `策略已失败关闭；${!api ? '生产策略服务未接入。' : visibleBlockedReason}`}</p>
+    <PageFrame className="policy-domain-page" description="策略先于执行判定；策略内自动只在启用版本、阈值、数据新鲜度与单次变更边界内工作。" pageId="policy-rules" title="策略与风控" task={<TaskBanner compact eyebrow="策略运行边界" title="自动边界与审批策略" description="先选对象和唯一允许动作，再限制变化、预算、次数、冷却、时段、证据与停止条件。" primaryAction={{ actionId: 'policy.policy.create', label: '新建策略', disabled: !can('policy.policy.create') || busy, disabledReason: visibleBlockedReason, onClick: openStrategyWizard }} secondaryActions={onInspectBoundary ? [{ actionId: 'policy-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="policy-domain-authority" data-state={viewReady ? expectedState : 'BLOCKED'}>{previewMode ? '仅开发预览' : viewReady ? '生产可用' : '已阻断'}</span>}>{previewMode && <p className="policy-domain-preview-note">仅开发预览 · 预览数据 · Amazon 美国站 · USD · 不代表真实广告执行授权</p>}</TaskBanner>} summary={<SummaryStrip ariaLabel="策略运行摘要" items={[{ id: 'active', label: '已启用策略', value: `${policies.filter((policy) => policy.status === 'active').length} / ${policies.length}` }, { id: 'versions', label: '不可变策略版本', value: `${versions.filter((version) => version.status === 'enabled').length} 个启用` }, { id: 'runtime', label: '当前执行模式', value: runtime?.mode === 'policy_auto' ? '策略内自动' : '人工审批' }, { id: 'switch', label: '紧急停止', value: runtime?.killSwitch ? '已开启' : '已关闭', tone: runtime?.killSwitch ? 'blocked' : 'neutral' }]} /> }>
+      <section aria-label="策略店铺隔离范围" className="policy-domain-scope-notice"><LockKey size={15} /><strong>{storeContext ? '当前店铺已隔离' : '等待选择店铺'}</strong><span>策略、不可变版本与运行模式仅作用于当前店铺，不跨店铺继承。</span><em>Amazon US · USD</em></section>
       <section className="policy-domain-runtime" aria-label="店铺级策略运行时">
-        <div><span>店铺运行模式</span><div className="policy-domain-segmented"><button aria-pressed={runtime?.mode === 'manual_approval'} disabled={!can('policy.runtime.mode.set') || busy || !runtime} onClick={() => void setMode('manual_approval')} type="button">人工审批</button><button aria-pressed={runtime?.mode === 'policy_auto'} disabled={!can('policy.runtime.mode.set') || busy || !runtime || !runtime.canAutoExecute} onClick={() => void setMode('policy_auto')} type="button">策略内自动</button></div></div>
-        <div><span>权威运行时</span><strong>{runtime?.activePolicyVersionId ?? '未绑定启用版本'}</strong><small>熔断器 {runtime?.circuitBreakerState ?? '—'} · 只读</small></div>
+        <div><span>店铺运行模式</span><div className="policy-domain-segmented"><button aria-pressed={runtime?.mode === 'manual_approval'} disabled={!can('policy.runtime.mode.set') || busy || !runtime} onClick={() => void setMode('manual_approval')} type="button">人工审批</button><button aria-pressed={runtime?.mode === 'policy_auto'} disabled={!can('policy.runtime.mode.set') || busy || !runtime || !runtime.canAutoExecute} onClick={() => void setMode('policy_auto')} type="button">策略内自动</button></div><details className="policy-domain-auto-conditions"><summary>查看启用条件</summary><ul><li>已有启用策略版本</li><li>对象身份已核验且 Ads 身份已确认</li><li>变化、预算、次数、冷却和时段均在边界内</li><li>紧急停止关闭且执行安全门正常</li></ul></details></div>
+        <div><span>当前规则状态</span><strong>{runtime?.activePolicyVersionId ? '已绑定启用规则' : '尚无启用规则'}</strong><small>{runtime?.canAutoExecute ? '满足策略规则前置条件' : '保持人工审批或阻断'}</small><details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>activePolicyVersionId={runtime?.activePolicyVersionId ?? 'none'}</code><code>circuitBreakerState={runtime?.circuitBreakerState ?? 'none'}</code><p>不能写熔断器或 activeVersion。</p></details></div>
         {runtime?.killSwitch
           ? <button className="workspace-button workspace-button--primary policy-domain-kill-switch" disabled={!can('policy.kill-switch.clear') || busy} onClick={() => setClearKillSwitchOpen(true)} type="button"><Power size={16} />解除紧急停止</button>
           : <button className="workspace-button workspace-button--secondary policy-domain-kill-switch" disabled={!can('policy.kill-switch.enable') || busy || !runtime} onClick={() => void enableKillSwitch()} type="button"><StopCircle size={16} />开启紧急停止</button>}
       </section>
       <div className="policy-domain-layout">
-        <WorkbenchPanel className="policy-domain-list-panel" title="策略边界" description="按优先级读取当前店铺策略。" footer={`第 ${safePage}/${pageCount} 页 · ${filtered.length} 条`} toolbar={<button className="workspace-button workspace-button--primary" disabled={!can('policy.policy.create') || busy} onClick={() => setPolicyEditor({ record: null, draft: policyDraft() })} type="button"><Plus size={15} />新建</button>}>
-          <div className="policy-domain-list-tools"><input aria-label="搜索策略" placeholder="搜索名称、范围或 ID" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} /><label><input checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} type="checkbox" />查看已归档</label></div>
-          {phase === 'loading' && <WorkspaceState kind="loading" title="读取 Policy Authority" description="正在读取当前店铺策略、版本和运行时。" />}
-          {(phase === 'blocked' || phase === 'error') && <WorkspaceState kind="blocked" title="Policy 已失败关闭" description="生产模式不会使用 Renderer 临时数据。" details={error || blockedReason} />}
-          {phase === 'ready' && !pageRows.length && <WorkspaceState kind="empty" title="当前店铺没有策略" description="先创建策略元数据，再建立首个草稿版本。" />}
-          <ul className="policy-domain-list">{pageRows.map((policy) => <li key={policy.id}><button aria-pressed={policy.id === selected?.id} data-selected={policy.id === selected?.id || undefined} onClick={() => setSelectedId(policy.id)} type="button"><span><b>P{policy.priority}</b><em data-status={policy.status}>{policy.status}</em></span><strong>{policy.name}</strong><small>{policy.scope} · r{policy.revision}</small></button></li>)}</ul>
+        <WorkbenchPanel className="policy-domain-list-panel" title="策略边界" description="数字越小越优先；只读取当前店铺策略。" footer={`第 ${safePage}/${pageCount} 页 · ${filtered.length} 条`} toolbar={<button className="workspace-button workspace-button--primary" disabled={!can('policy.policy.create') || busy} onClick={openStrategyWizard} type="button"><Plus size={15} />新建</button>}>
+          <div className="policy-domain-list-tools"><input aria-label="搜索策略" placeholder="搜索名称或范围" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} /><label><input checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} type="checkbox" />查看已归档</label></div>
+          {phase === 'loading' && <WorkspaceState kind="loading" title="读取策略" description="正在读取当前店铺策略、版本和运行模式。" />}
+          {(phase === 'blocked' || phase === 'error') && <WorkspaceState kind="blocked" title="策略已失败关闭" description="生产模式不会使用界面临时数据。" details={visibleBlockedReason} />}
+          {phase === 'ready' && !pageRows.length && <WorkspaceState kind="empty" title="当前店铺没有策略" description="点击“新建”按四步创建首个待检查策略。" />}
+          <ul className="policy-domain-list">{pageRows.map((policy) => <li key={policy.id}><button aria-pressed={policy.id === selected?.id} data-selected={policy.id === selected?.id || undefined} onClick={() => setSelectedId(policy.id)} type="button"><span><b>优先级 {policy.priority}</b><em data-status={policy.status}>{POLICY_STATUS_LABELS[policy.status]}</em></span><strong>{policy.name}</strong><small>{formatPolicyScope(policy.scope, scopeOptions)}</small></button></li>)}</ul>
           <nav className="policy-domain-pagination" aria-label="策略分页"><button disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button">上一页</button><span>{safePage}/{pageCount}</span><button disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button">下一页</button></nav>
         </WorkbenchPanel>
         <div className="policy-domain-detail">{selected ? <>
-          <section className="policy-domain-detail-head"><div><span>POLICY · {selected.id}</span><h2>{selected.name}</h2><p>{selected.scope} · 优先级 P{selected.priority} · revision {selected.revision}</p></div><em data-status={selected.status}>{selected.status}</em><div className="policy-domain-actions"><button className="workspace-button workspace-button--primary" disabled={!can('policy.policy.update') || busy || selected.status === 'archived'} onClick={() => setPolicyEditor({ record: selected, draft: policyDraft(selected) })} type="button"><PencilSimple size={15} />编辑</button>{selected.status === 'active' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.disable') || busy} onClick={() => void lifecycle('disable')} type="button"><Power size={15} />停用</button>}{selected.status !== 'active' && selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.archive') || busy} onClick={() => void lifecycle('archive')} type="button"><Archive size={15} />归档</button>}{selected.status === 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.restore') || busy} onClick={() => void lifecycle('restore')} type="button"><ArrowClockwise size={15} />恢复</button>}</div></section>
-          <section className="policy-domain-versions"><header><div><h3>不可变版本</h3><p>只有 draft 可修改；enable 后形成审计快照。</p></div><button className="workspace-button workspace-button--primary" disabled={!can('policy.version.create') || busy || selected.status === 'archived'} onClick={() => setVersionEditor({ record: null, draft: { ...buildPolicyVersionDraft(null, storeContext?.businessTimezone ?? 'America/Los_Angeles'), version: String(Math.max(0, ...versions.map((item) => item.version)) + 1) } })} type="button"><Plus size={15} />新建版本</button></header><div className="policy-domain-version-list" role="list">{versions.map((version) => <article data-status={version.status} key={version.id} role="listitem"><div><span>{version.status === 'enabled' ? <LockKey size={18} /> : <ShieldCheck size={18} />}</span><div><strong>v{version.version} · {version.id}</strong><small>r{version.revision} · {version.rules.allowedAdEntityIds.length ? `${version.rules.allowedAdEntityIds.length} 个对象` : '0 对象 · 不可自动签发'} · ≤ {version.rules.maxChangePct}% · ${version.rules.totalImpactBudget}</small><small className="policy-domain-version-boundary">{formatExecutionWindowSummary(version.rules)}</small></div></div><div>{version.status === 'draft' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.update') || busy} onClick={() => setVersionEditor({ record: version, draft: buildPolicyVersionDraft(version, storeContext?.businessTimezone ?? 'America/Los_Angeles') })} type="button"><PencilSimple size={14} />编辑草稿</button>}{version.status === 'draft' && <button className="workspace-button workspace-button--primary" disabled={!can('policy.version.enable') || busy} onClick={() => void enableVersion(version)} type="button"><CheckCircle size={14} />启用并冻结</button>}{version.status !== 'draft' && <span className="policy-domain-immutable"><LockKey size={14} />内容不可变</span>}</div></article>)}</div></section>
-          <section className="policy-domain-safety"><h3>V1 固定安全合同</h3><div><span>允许动作</span><strong>set_keyword_bid</strong></div><div><span>必需证据</span><strong>Before / After / Reload / Page identity / Readback value</strong></div><div><span>UNKNOWN</span><strong>停止，且不自动重试</strong></div><p>界面不会暴露 circuitBreakerState 或 activePolicyVersionId 的通用写入口。</p></section>
+          <section className="policy-domain-detail-head"><div><span>当前策略</span><h2>{selected.name}</h2><p>{formatPolicyScope(selected.scope, scopeOptions)} · 优先级 {selected.priority}（数字越小越优先）</p></div><em data-status={selected.status}>{POLICY_STATUS_LABELS[selected.status]}</em><div className="policy-domain-actions"><button className="workspace-button workspace-button--primary" disabled={!can('policy.policy.update') || busy || selected.status === 'archived'} onClick={() => setPolicyEditor({ record: selected, draft: policyDraft(selected) })} type="button"><PencilSimple size={15} />编辑</button>{selected.status === 'active' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.disable') || busy} onClick={() => void lifecycle('disable')} type="button"><Power size={15} />停用</button>}{selected.status !== 'active' && selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.archive') || busy} onClick={() => void lifecycle('archive')} type="button"><Archive size={15} />归档</button>}{selected.status === 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.restore') || busy} onClick={() => void lifecycle('restore')} type="button"><ArrowClockwise size={15} />恢复</button>}<details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>policyId={selected.id}</code><code>revision={selected.revision}</code><code>status={selected.status}</code></details></div></section>
+          {!enabledVersion && <section aria-label="策略启用路径" className="policy-domain-enable-path"><h3>从待检查到启用</h3><p>当前没有启用版本，按顺序完成以下三步。</p><ol><li data-complete={Boolean(draftVersion) || undefined}><span>1</span><div><strong>创建草稿版本</strong><small>填写允许对象与安全边界。</small></div><button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.create') || busy || Boolean(draftVersion)} onClick={() => setVersionEditor({ record: null, draft: createVersionDraft() })} type="button">{draftVersion ? '已创建' : '创建'}</button></li><li data-complete={Boolean(draftVersion) || undefined}><span>2</span><div><strong>检查边界</strong><small>核对对象、上下限、时段、证据与停止条件。</small></div><button className="workspace-button workspace-button--secondary" disabled={!draftVersion || busy} onClick={() => draftVersion && setVersionEditor({ record: draftVersion, draft: buildPolicyVersionDraft(draftVersion, storeContext?.businessTimezone ?? 'America/Los_Angeles') })} type="button">检查</button></li><li><span>3</span><div><strong>启用策略</strong><small>启用后规则冻结；不会自动切换运行模式。</small></div><button className="workspace-button workspace-button--primary" disabled={!draftVersion || !can('policy.version.enable') || busy} onClick={() => draftVersion && void enableVersion(draftVersion)} type="button">启用</button></li></ol></section>}
+          <section className="policy-domain-versions"><header><div><h3>不可变版本</h3><p>只有待检查规则可修改；启用后形成审计快照。</p></div><button className="workspace-button workspace-button--primary" disabled={!can('policy.version.create') || busy || selected.status === 'archived'} onClick={() => setVersionEditor({ record: null, draft: createVersionDraft() })} type="button"><Plus size={15} />创建草稿版本</button></header><div className="policy-domain-version-list" role="list">{versions.map((version) => <article data-status={version.status} key={version.id} role="listitem"><div><span>{version.status === 'enabled' ? <LockKey size={18} /> : <ShieldCheck size={18} />}</span><div><strong>版本 {version.version} · {VERSION_STATUS_LABELS[version.status]}</strong><small>{version.rules.allowedAdEntityIds.length ? `${version.rules.allowedAdEntityIds.length} 个对象` : '0 个对象 · 自动执行保持阻断'} · 单次 ≤ {version.rules.maxChangePct}% · 批次预算 ${version.rules.totalImpactBudget} USD</small><small className="policy-domain-version-boundary">{formatExecutionWindowSummary(version.rules)}</small></div></div><div>{version.status === 'draft' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.update') || busy} onClick={() => setVersionEditor({ record: version, draft: buildPolicyVersionDraft(version, storeContext?.businessTimezone ?? 'America/Los_Angeles') })} type="button"><PencilSimple size={14} />检查并编辑</button>}{version.status === 'draft' && <button className="workspace-button workspace-button--primary" disabled={!can('policy.version.enable') || busy} onClick={() => void enableVersion(version)} type="button"><CheckCircle size={14} />启用策略</button>}{version.status !== 'draft' && <span className="policy-domain-immutable"><LockKey size={14} />内容不可变</span>}<details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>versionId={version.id}</code><code>revision={version.revision}</code><code>status={version.status}</code></details></div></article>)}</div></section>
+          <section className="policy-domain-action-card"><h3>运行动作卡</h3>{displayedVersion ? <div className="policy-action-card-grid"><div><span>将改什么</span><strong>调整关键词竞价</strong></div><div><span>对象</span><strong>{formatPolicyScope(selected.scope, scopeOptions)} · {displayedVersion.rules.allowedAdEntityIds.length} 个可核验对象</strong></div><div><span>上下限</span><strong>{formatPolicyActionBoundary(displayedVersion.rules)}</strong></div><div><span>证据</span><strong>修改前、修改后、刷新后截图 + 身份与数值回读</strong></div><div><span>审批方式</span><strong>{runtime?.mode === 'policy_auto' ? '策略内自动（仍受全部安全门约束）' : '人工审批'}</strong></div></div> : <p>创建待检查规则后，这里会完整显示将改什么、对象、上下限、证据和审批方式。</p>}</section>
+          <section className="policy-domain-safety"><h3>V1 固定安全合同</h3><div><span>允许动作</span><strong>调整关键词竞价</strong></div><div><span>必需证据</span><strong>修改前 / 修改后 / 刷新后截图、页面身份、数值回读</strong></div><div><span>结果无法确认</span><strong>停止并转人工对账，不自动重试</strong></div><p>广告身份、对象身份、审批或回读任一不成立，真实写入保持为 0。</p></section>
         </> : phase === 'ready' ? <WorkspaceState kind="empty" title="等待选择策略" description="从左侧选择策略查看不可变版本。" /> : null}</div>
       </div>
-      {(error || feedback) && <p className="policy-domain-feedback" data-tone={error ? 'error' : 'success'} aria-live="polite">{error || feedback}</p>}
+      {(error || feedback) && <p className="policy-domain-feedback" data-tone={error ? 'error' : 'success'} aria-live="polite">{error ? operatorFacingBlocker(error, '策略') : feedback}</p>}
+      {!previewMode && (!viewReady || error) && <details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>{error || blockedReason}</code></details>}
     </PageFrame>
-    {policyEditor && <PolicyDialog record={policyEditor.record} draft={policyEditor.draft} busy={pending === 'policy-save'} onChange={(draft) => setPolicyEditor((current) => current ? { ...current, draft } : current)} onClose={() => setPolicyEditor(null)} onSave={() => void savePolicy()} />}
+    {policyEditor && <PolicyDialog record={policyEditor.record} draft={policyEditor.draft} busy={pending === 'policy-save'} scopeOptions={scopeOptions} onChange={(draft) => setPolicyEditor((current) => current ? { ...current, draft } : current)} onClose={() => setPolicyEditor(null)} onSave={() => void savePolicy()} />}
+    {strategyWizard && <StrategyWizardDialog draft={strategyWizard} scopeOptions={scopeOptions} busy={pending === 'strategy-create'} onChange={setStrategyWizard} onClose={() => setStrategyWizard(null)} onSave={() => void saveStrategy()} />}
     {versionEditor && <VersionDialog record={versionEditor.record} draft={versionEditor.draft} busy={pending === 'version-save'} onChange={(draft) => setVersionEditor((current) => current ? { ...current, draft } : current)} onClose={() => setVersionEditor(null)} onSave={() => void saveVersion()} />}
-    {clearKillSwitchOpen && <div className="mission-control-dialog-backdrop"><section aria-labelledby="clear-kill-switch-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>CLEAR EMERGENCY STOP</span><h2 id="clear-kill-switch-title">确认解除店铺级紧急停止</h2><p>解除急停不会自动恢复策略内自动。请记录复核原因后继续。</p></div></header><div className="policy-domain-clear-reason"><label><span>解除原因 *</span><textarea autoFocus onChange={(event) => setClearKillSwitchReason(event.target.value)} rows={4} value={clearKillSwitchReason} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => { setClearKillSwitchOpen(false); setClearKillSwitchReason(''); }} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !clearKillSwitchReason.trim() || !can('policy.kill-switch.clear')} onClick={() => void clearKillSwitch()} type="button">{pending === 'kill-switch-clear' ? '解除中…' : '确认解除'}</button></footer></section></div>}
+    {clearKillSwitchOpen && <div className="mission-control-dialog-backdrop"><section aria-labelledby="clear-kill-switch-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>解除紧急停止</span><h2 id="clear-kill-switch-title">确认解除店铺级紧急停止</h2><p>解除急停不会自动恢复策略内自动。请记录复核原因后继续。</p></div></header><div className="policy-domain-clear-reason"><label><span>解除原因 *</span><textarea autoFocus onChange={(event) => setClearKillSwitchReason(event.target.value)} rows={4} value={clearKillSwitchReason} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => { setClearKillSwitchOpen(false); setClearKillSwitchReason(''); }} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !clearKillSwitchReason.trim() || !can('policy.kill-switch.clear')} onClick={() => void clearKillSwitch()} type="button">{pending === 'kill-switch-clear' ? '解除中…' : '确认解除'}</button></footer></section></div>}
   </div>;
 }

@@ -26,6 +26,7 @@ import {
   S7_STARTUP_GATE_TESTING,
   completeS7MainStartupAdmission,
   enforceS7MainStartupGate,
+  protectFreshS7AuthorityPath,
   type S7StableFileArtifact,
 } from './s7-migration-startup-gate';
 
@@ -93,7 +94,7 @@ function safeIo() {
       ownerSid: 'S-1-5-21-synthetic',
       currentUserSid: 'S-1-5-21-synthetic',
       inheritanceProtected: true,
-      unauthorizedRules: [],
+      unauthorizedRules: [] as string[],
     })),
     protectWindowsPath: vi.fn(),
     inspectTrustedPowerShell: vi.fn(() => shell),
@@ -1215,6 +1216,40 @@ describe('S7 packaged Main startup exclusivity gate', () => {
       canonicalUserDataDir: path.resolve(canonicalUserDataDir),
     });
     expect(requestSingleInstanceLock).toHaveBeenCalledOnce();
+  });
+
+  it('protects and verifies each fresh authority path before it is trusted', () => {
+    const io = safeIo();
+    const target = path.join('C:\\authority', 'amazon-ai-ops.db');
+
+    protectFreshS7AuthorityPath(target, 'file', 'Fresh authority database', io);
+
+    expect(io.protectWindowsPath).toHaveBeenCalledWith(path.resolve(target), 'file');
+    expect(io.inspectWindowsPathSecurity).toHaveBeenCalledWith(
+      path.resolve(target),
+      'file',
+      'Fresh authority database',
+    );
+  });
+
+  it('fails closed when a fresh authority path remains inherited', () => {
+    const io = safeIo();
+    io.inspectWindowsPathSecurity.mockReturnValue({
+      passed: false,
+      path: path.resolve('C:\\authority', 'amazon-ai-ops.db'),
+      type: 'file',
+      ownerSid: 'S-1-5-21-synthetic',
+      currentUserSid: 'S-1-5-21-synthetic',
+      inheritanceProtected: false,
+      unauthorizedRules: ['S-1-5-21-synthetic:Allow:2032127:True'],
+    });
+
+    expect(() => protectFreshS7AuthorityPath(
+      path.join('C:\\authority', 'amazon-ai-ops.db'),
+      'file',
+      'Fresh authority database',
+      io,
+    )).toThrow(/S7_STARTUP_GATE_ACL_UNTRUSTED/);
   });
 
   it('blocks an existing no-ACTIVE v0 database before ordinary startup can auto-migrate it', () => {

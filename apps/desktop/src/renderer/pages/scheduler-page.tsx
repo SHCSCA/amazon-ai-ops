@@ -39,6 +39,7 @@ export const STORE_AUTOMATION_CAPABILITY_IDS = {
 export interface StoreEvidenceRetentionBlockerView {
   code: string;
   detail: string;
+  diagnosticDetail: string;
 }
 
 /**
@@ -109,7 +110,7 @@ export const STORE_AUTOMATION_STATES: readonly {
   { state: 'due', label: '计划已到', detail: '调度器可认领本业务日采集。' },
   { state: 'claimed', label: '正在采集', detail: '已持久认领，使用可见浏览器执行。' },
   { state: 'succeeded', label: '已完成', detail: '同一店铺、业务日与采集口径不重复认领。' },
-  { state: 'failed', label: '失败关闭', detail: '同一 fingerprint 不重试，等待人工排查。' },
+  { state: 'failed', label: '失败关闭', detail: '同一采集口径不重试，等待人工排查。' },
 ] as const;
 
 const SCHEDULE_STATES = new Set<StoreCollectionScheduleState>(
@@ -151,6 +152,13 @@ export function resolveStoreAutomationAccess(
   };
 }
 
+const SCHEDULER_INTERNAL_OPERATOR_COPY = /\b(?:Main|StoreContext|Authority|Renderer|Profile|Mission|Experiment|UNKNOWN|revision|draft|set_keyword_bid|manifest|fingerprint|dry-run|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|append-only|correction|DECISION|ACTION|READBACK|EFFECT)\b/i;
+
+export function schedulerOperatorMessage(value: unknown, fallback: string): string {
+  const mapped = toUserFacingError(value, fallback);
+  return SCHEDULER_INTERNAL_OPERATOR_COPY.test(mapped) ? fallback : mapped;
+}
+
 export function schedulerRunNowPolicy(
   projection: StoreCollectionScheduleProjection | null,
 ): { allowed: boolean; reason: string } {
@@ -158,7 +166,7 @@ export function schedulerRunNowPolicy(
   switch (projection.state) {
     case 'waiting':
     case 'due':
-      return { allowed: true, reason: '需要二次确认；Main 会再次复核当前 StoreContext。' };
+      return { allowed: true, reason: '需要二次确认；系统会再次核对当前店铺与可见领星会话。' };
     case 'not_configured':
       return { allowed: false, reason: '当前店铺尚未配置，请先前往 AI 与本地设置。' };
     case 'archived':
@@ -170,9 +178,17 @@ export function schedulerRunNowPolicy(
     case 'failed':
       return {
         allowed: false,
-        reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。',
+        reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。',
       };
   }
+}
+
+export function schedulerFailureReviewLabel(
+  state: StoreCollectionScheduleProjection['state'],
+): string {
+  return state === 'failed'
+    ? '同采集口径关闭 · 不重试'
+    : '状态无法确认或采集失败时，均需人工核对';
 }
 
 export function storeAutomationRequestMatches(
@@ -198,7 +214,14 @@ export function normalizeRetentionSummary(
         const code = String(blocker.code ?? '').trim();
         const detail = String(blocker.detail ?? '').trim();
         if (!code || !detail) throw new Error('证据保留阻塞项不完整。');
-        return { code, detail };
+        return {
+          code,
+          detail: schedulerOperatorMessage(
+            detail,
+            '此候选项未通过安全检查，当前不会删除或应用。',
+          ),
+          diagnosticDetail: detail,
+        };
       })
     : [];
   const retentionDays = Number(value.retentionDays);
@@ -279,7 +302,7 @@ function validateScheduleProjection(
     || typeof value.enabled !== 'boolean'
     || typeof value.detail !== 'string'
   ) {
-    throw new Error('店铺计划投影与当前 StoreContext 不一致，已失败关闭。');
+    throw new Error('店铺计划结果与当前店铺不一致，已安全停止。');
   }
   return value;
 }
@@ -310,7 +333,7 @@ function taskCopy(
   if (loading) {
     return {
       title: '正在读取当前店铺自动化',
-      detail: 'Main 正在复核 StoreContext、运行配置与本业务日幂等记录。',
+      detail: '系统正在核对当前店铺、运行配置与本业务日执行记录。',
       tone: 'neutral' as WorkspaceTone,
     };
   }
@@ -336,19 +359,19 @@ function taskCopy(
     },
     due: {
       title: '当前店铺计划已到执行时间',
-      detail: 'Main 将在可见领星会话就绪后持久认领；重复认领会被拒绝。',
+      detail: '系统将在可见领星会话就绪后认领任务；重复请求会被拒绝。',
     },
     claimed: {
       title: '当前店铺采集正在执行',
-      detail: '任务已持久认领并绑定当前浏览器 Profile；切店不会接收该结果。',
+      detail: '任务已认领并绑定当前店铺的独立浏览器会话；切换店铺不会接收该结果。',
     },
     succeeded: {
       title: '本业务日采集已完成',
-      detail: '同一店铺、业务日与采集口径不会再次执行；调整触发时间不会绕过幂等，只有回看窗口变化才形成新的 fingerprint。',
+      detail: '同一店铺、业务日与采集口径不会再次执行；调整触发时间不会绕过安全限制，只有回看窗口变化才形成新的采集口径标识。',
     },
     failed: {
       title: '本业务日采集已失败关闭',
-      detail: '同一店铺、业务日与采集口径不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。',
+      detail: '同一店铺、业务日与采集口径不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。',
     },
   };
   return { ...copies[projection.state], tone: stateTone(projection.state) };
@@ -398,7 +421,7 @@ export function SchedulerPage({
     } catch (caught) {
       if (isCurrentRequest(sequence, key)) {
         setRetention(null);
-        setRetentionError(toUserFacingError(caught, '读取证据保留预览失败。'));
+        setRetentionError(schedulerOperatorMessage(caught, '读取证据保留预览失败，请刷新后重试。'));
       }
     } finally {
       if (isCurrentRequest(sequence, key)) setRetentionLoading(false);
@@ -419,12 +442,12 @@ export function SchedulerPage({
     if (!options.keepMessage) setMessage(null);
     if (!access.view.allowed) {
       setLoading(false);
-      setError(access.view.capability?.detail ?? '当前店铺自动化视图未获 Main 能力授权。');
+      setError('当前店铺自动化视图不可用，请刷新或检查运行设置。');
       return;
     }
     if (!api) {
       setLoading(false);
-      setError('Store Automation API 未完整接入，已失败关闭。');
+      setError('当前店铺自动化接口不可用，请重新打开最新安装版后重试。');
       return;
     }
     try {
@@ -439,7 +462,7 @@ export function SchedulerPage({
       }
     } catch (caught) {
       if (isCurrentRequest(sequence, key)) {
-        setError(toUserFacingError(caught, '读取当前店铺自动化失败。'));
+        setError(schedulerOperatorMessage(caught, '读取当前店铺自动化失败，请刷新后重试。'));
       }
     } finally {
       if (isCurrentRequest(sequence, key)) setLoading(false);
@@ -525,12 +548,12 @@ export function SchedulerPage({
       setConfirmRun(false);
       setMessage(
         result.duplicate
-          ? 'Main 已识别同一业务日幂等记录，本次没有重复执行。'
+          ? '系统已识别同一业务日的重复请求，本次没有重复执行。'
           : next.state === 'succeeded'
             ? '当前店铺本业务日采集已完成。'
             : next.state === 'failed'
-              ? '采集失败关闭；同一采集口径的 fingerprint 不会自动重试。'
-              : '当前店铺采集已由 Main 受理。',
+              ? '采集失败关闭；同一采集口径不会自动重试。'
+              : '当前店铺采集已受理。',
       );
       if (next.state !== 'not_configured' && next.state !== 'archived') {
         await loadRetention(context, sequence, key);
@@ -538,7 +561,7 @@ export function SchedulerPage({
     } catch (caught) {
       if (isCurrentRequest(sequence, key)) {
         setConfirmRun(false);
-        setError(toUserFacingError(caught, '立即触发当前店铺采集失败。'));
+        setError(schedulerOperatorMessage(caught, '立即触发当前店铺采集失败，请刷新后重试。'));
       }
     } finally {
       if (isCurrentRequest(sequence, key)) setRunning(false);
@@ -549,8 +572,14 @@ export function SchedulerPage({
   const task = taskCopy(projection, loading, error);
   const needsConfig = projection?.state === 'not_configured' || projection?.state === 'archived';
   const runNowDisabledReason = !access.runNow.allowed
-    ? access.runNow.capability?.detail ?? '立即采集能力未获 Main 授权。'
+    ? schedulerOperatorMessage(
+      access.runNow.capability?.detail,
+      '立即采集暂不可用，请刷新或检查运行设置。',
+    )
     : runPolicy.reason;
+  const projectionDetail = projection
+    ? schedulerOperatorMessage(projection.detail, runNowDisabledReason)
+    : runNowDisabledReason;
   const primaryAction = needsConfig
     ? {
         actionId: 'settings.scheduler.open-config',
@@ -580,12 +609,12 @@ export function SchedulerPage({
   return (
     <PageFrame
       className="mission-control-store-automation"
-      description="按当前店铺、美国站、USD 与业务日管理领星自动采集；所有结果都由 Main 复核 StoreContext。"
+      description="按当前店铺、美国站、USD 与业务日管理领星自动采集；所有结果都会再次核对店铺范围。"
       pageId="store-automation"
       title="当前店铺自动化"
       task={(
         <TaskBanner
-          eyebrow={previewMode ? 'PROTOTYPE_ONLY · 当前店铺计划' : '当前店铺计划'}
+          eyebrow={previewMode ? '仅开发预览 · 当前店铺计划' : '当前店铺计划'}
           title={task.title}
           description={task.detail}
           tone={task.tone}
@@ -601,7 +630,7 @@ export function SchedulerPage({
               onClick: () => { void loadCurrentStore(); },
             },
           ]}
-          meta={message ?? projection?.detail ?? runNowDisabledReason}
+          meta={message ?? projectionDetail}
         />
       )}
       summary={(
@@ -611,7 +640,7 @@ export function SchedulerPage({
             {
               id: 'store',
               label: '店铺范围',
-              value: String(storeContext.storeId),
+              value: '当前店铺',
               detail: 'Amazon US · USD',
               tone: 'confirmed',
             },
@@ -642,7 +671,7 @@ export function SchedulerPage({
 
       <WorkbenchPanel
         className="mission-control-automation-plan"
-        description="七个状态构成同一 fingerprint 生命周期；同一店铺、业务日与采集口径的失败终态不会回到等待。"
+        description="七个状态构成同一采集口径生命周期；同一店铺、业务日与采集口径的失败终态不会回到等待。"
         status={<span>{stateLabel(projection?.state)} · 7 状态</span>}
         title="本业务日计划"
       >
@@ -719,7 +748,7 @@ export function SchedulerPage({
             <AutomationFact
               icon={<ShieldCheck aria-hidden="true" size={18} />}
               label="失败策略"
-              value={projection.state === 'failed' ? '同采集口径关闭 · 不重试' : 'UNKNOWN / 失败均人工核对'}
+              value={schedulerFailureReviewLabel(projection.state)}
             />
           </div>
         )}
@@ -727,8 +756,8 @@ export function SchedulerPage({
 
       <WorkbenchPanel
         className="mission-control-retention-preview"
-        description="只读扫描当前店铺 Store Capsule。页面只接收汇总，不显示候选文件名，也不提供任何变更入口。"
-        status={<span>DRY-RUN · deletionSupported=false</span>}
+        description="只读扫描当前店铺证据空间。页面只接收汇总，不显示候选文件名，也不提供任何变更入口。"
+        status={<span>仅预览 · 不支持删除</span>}
         title="证据保留预览"
         toolbar={(
           <button
@@ -747,7 +776,10 @@ export function SchedulerPage({
               void loadRetention(storeContext, sequence, authorityKey);
             }}
             title={!access.retentionPreview.allowed
-              ? access.retentionPreview.capability?.detail ?? '证据保留预览能力未授权。'
+              ? schedulerOperatorMessage(
+                access.retentionPreview.capability?.detail,
+                '证据保留预览暂不可用，请刷新或检查运行设置。',
+              )
               : undefined}
             type="button"
           >
@@ -767,15 +799,15 @@ export function SchedulerPage({
           />
         ) : !access.retentionPreview.allowed ? (
           <WorkspaceState
-            description={access.retentionPreview.capability?.detail ?? 'Main 未授权当前店铺证据保留预览。'}
+            description="当前店铺证据保留预览不可用，请刷新或检查运行设置。"
             kind="blocked"
             title="只读预览未获授权"
           />
         ) : retentionLoading && !retention ? (
           <WorkspaceState
-            description="正在按当前店铺证据保留期扫描 screenshots 与 traces；不会修改文件。"
+            description="正在按当前店铺证据保留期扫描页面截图与运行记录；不会修改文件。"
             kind="loading"
-            title="正在生成 dry-run"
+            title="正在生成只读预览"
           />
         ) : retentionError ? (
           <WorkspaceState
@@ -793,7 +825,7 @@ export function SchedulerPage({
         ) : retention ? (
           <>
             <div
-              aria-label="证据保留 dry-run 摘要"
+              aria-label="证据保留只读预览摘要"
               className="mission-control-retention-metrics"
               data-blocker-count={retention.blockers.length}
               data-browser-profile-id={retention.profileId}
@@ -818,7 +850,7 @@ export function SchedulerPage({
                 <strong>{retention.blockers.length ? `${retention.blockers.length} 个安全阻塞项` : '只读扫描通过安全检查'}</strong>
                 <p>
                   {retention.blockers.length
-                    ? '存在阻塞时 manifest 仅用于排查；当前版本始终不支持删除或应用。'
+                    ? '存在阻塞时诊断清单仅用于排查；当前版本始终不支持删除或应用。'
                     : '候选仅作容量规划；当前版本始终不支持删除或应用。'}
                 </p>
               </div>
@@ -827,8 +859,12 @@ export function SchedulerPage({
               <ul className="mission-control-retention-blockers" aria-label="证据保留阻塞项">
                 {retention.blockers.map((blocker, index) => (
                   <li key={`${blocker.code}-${index}`}>
-                    <code>{blocker.code}</code>
                     <span>{blocker.detail}</span>
+                    <details className="mission-control-retention-blocker-diagnostics">
+                      <summary>诊断详情</summary>
+                      <code>{blocker.code}</code>
+                      <p>{blocker.diagnosticDetail}</p>
+                    </details>
                   </li>
                 ))}
               </ul>
@@ -856,11 +892,11 @@ export function SchedulerPage({
           >
             <header>
               <div>
-                <span>RUN NOW · STORE CONTEXT ONLY</span>
+                <span>仅当前店铺 · 立即采集</span>
                 <h2 id="store-automation-confirm-title">立即触发当前店铺采集？</h2>
                 <p id="store-automation-confirm-description">
-                  店铺 {String(storeContext.storeId)} · {storeContext.businessDate} ·
-                  {' '}{projection.dateStart} 至 {projection.dateEnd}。Main 会再次核对可见领星会话与采集口径。
+                  当前店铺 · {storeContext.businessDate} ·
+                  {' '}{projection.dateStart} 至 {projection.dateEnd}。系统会再次核对可见领星会话与采集口径。
                 </p>
               </div>
               <button
@@ -875,7 +911,7 @@ export function SchedulerPage({
             </header>
             <div className="mission-control-automation-confirm-boundary">
               <WarningCircle aria-hidden="true" size={20} />
-              <p>同一店铺、业务日与采集口径一旦形成终态就不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。</p>
+              <p>同一店铺、业务日与采集口径一旦形成终态就不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。</p>
             </div>
             <footer>
               <button

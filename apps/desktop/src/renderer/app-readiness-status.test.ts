@@ -195,7 +195,9 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('本机加密不可用，无法建立可核验的新凭证会话。');
     expect(loginPage).toContain('暂不能登录，请先处理以下项目');
     expect(loginPage).toContain('未就绪：请先在步骤 1 输入领星用户名。');
-    expect(loginPage).toContain('待识别：启动可见连接后');
+    expect(loginPage).toContain('Main 将从 ERP 的“广告”入口进入 Ads');
+    expect(loginPage).toContain('无需你查找 Profile ID 或手动打开广告活动');
+    expect(loginPage).not.toContain('打开任一广告活动或广告组页面');
     expect(loginPage).toContain('确认前真实广告写入保持阻断');
     expect(loginPage).toContain('允许重置当前店铺领星会话');
     expect(loginPage).toContain('不会删除 Profile、报表或其他店铺数据');

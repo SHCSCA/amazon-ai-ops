@@ -166,18 +166,18 @@ async function main() {
     await capture(page, evidence, 'today-events', '运营事件 CRUD 入口', runId);
 
     await navigateLegacyRoute(page, 'ad-quant');
-    await expectHeading(page, 'Mission 事实链');
+    await expectHeading(page, '运营任务事实链');
     await assertWorkspace(page, 'missions', 'facts');
     await assertGlobalGuards(page, 'mission-facts');
     for (const text of [
-      '核验当前 Mission 的事实与来源',
-      'Mission 事实范围',
-      '数据 lineage',
+      '核验当前运营任务的事实与来源',
+      '运营任务事实范围',
+      '任务来源链',
       '不进入决策',
     ]) {
       await expectVisibleText(page, text);
     }
-    await capture(page, evidence, 'mission-facts', 'Mission 事实与数据 lineage', runId);
+    await capture(page, evidence, 'mission-facts', '运营任务事实与数据来源链', runId);
 
     if (evidence.consoleErrors.length > 0) {
       fail('Renderer emitted console errors', evidence.consoleErrors.join('\n'));

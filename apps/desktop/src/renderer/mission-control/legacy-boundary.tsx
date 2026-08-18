@@ -59,7 +59,7 @@ export function LegacyAdapterBoundary({
         <strong>当前功能未放行</strong>
         <p>{blockedDetail(capability)}</p>
         <small>
-          店铺 {storeContext.storeId} · US · USD · 会话代次 {storeContext.sessionGeneration}
+          当前店铺 · US · USD · 已按店铺隔离
         </small>
       </section>
     );

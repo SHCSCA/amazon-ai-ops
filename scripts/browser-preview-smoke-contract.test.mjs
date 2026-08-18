@@ -55,7 +55,7 @@ describe('Mission Control workspace and CRUD smoke contract', () => {
     expect(source).toContain("name: '产品与经营目标'");
     expect(source).toContain('查询 ASIN / 标题 / SKU');
     expect(source).toContain('name: /新建产品/');
-    expect(source).toContain("heading: /Mission 事实链/");
+    expect(source).toContain("heading: /运营任务事实链/");
   });
 
   it('data pipeline proves collection lineage, event CRUD entry, and Mission facts', () => {
@@ -69,9 +69,9 @@ describe('Mission Control workspace and CRUD smoke contract', () => {
       'DEV 预览不会注入伪造任务',
       "name: /记录事件/",
       'AI 因果上下文',
-      "expectHeading(page, 'Mission 事实链')",
+      "expectHeading(page, '运营任务事实链')",
       "assertWorkspace(page, 'missions', 'facts')",
-      '数据 lineage',
+      '任务来源链',
       '不进入决策',
     ]) {
       expect(source).toContain(marker);
@@ -120,9 +120,9 @@ describe('advertising execution smoke safety contract', () => {
 
     expectExplicitDevScenario(source, 'missing-readback-evidence');
     expect(source).toContain('.execution-workspace--mission[data-mutations-disabled="true"]');
-    expect(source).toContain('内存 mock · Amazon US / USD');
+    expect(source).toContain('仅开发预览 · 不连接真实广告页面，不提交任何广告调整');
     expect(source).toContain('auto-advanced-in-memory-only');
-    expect(source).toContain('UNKNOWN · 队列已停止');
+    expect(source).toContain('结果不确定 · 队列已停止');
     expect(source).toContain('不会自动重试');
     expect(source).not.toContain('smoke=ad-execution-authoritative');
   });

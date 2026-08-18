@@ -40,7 +40,7 @@ const MISSION_CONTROL_WORKSPACE_CONTRACT = Object.freeze({
   }),
   objects: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'objects', subview: 'products', view: 'objects/products' }),
-    heading: '店铺与广告对象',
+    heading: '产品与广告对象',
     tabs: Object.freeze(['products', 'targets', 'keywords', 'listing']),
   }),
   collection: Object.freeze({

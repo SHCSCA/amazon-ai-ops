@@ -36,7 +36,49 @@ function capability(
   };
 }
 
+function ordinaryVisibleText(markup: string): string {
+  return markup
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 describe('settings workspace composition', () => {
+  it('shows business-safe loading and blocking guidance with technical detail collapsed', () => {
+    const loading = renderToStaticMarkup(
+      <LegacyWorkspace
+        description="系统设置"
+        intent={{ workspace: 'settings', subview: 'ai-and-local' }}
+        route="settings"
+        storeContext={context}
+        title="系统设置"
+        view="settings/ai-and-local"
+      />,
+    );
+    const blocked = renderToStaticMarkup(
+      <LegacyWorkspace
+        capabilities={[{
+          ...capability('settings.ai-and-local.view', 'view', 'BLOCKED'),
+          detail: 'Main Settings Authority rejected StoreContext Profile',
+        }]}
+        description="系统设置"
+        intent={{ workspace: 'settings', subview: 'ai-and-local' }}
+        route="settings"
+        storeContext={context}
+        title="系统设置"
+        view="settings/ai-and-local"
+      />,
+    );
+
+    expect(ordinaryVisibleText(loading)).toContain('正在确认系统连接能力，请稍候。');
+    expect(ordinaryVisibleText(blocked)).toContain('系统连接暂不可用，请刷新后重试；仍失败时查看诊断详情。');
+    expect(ordinaryVisibleText(`${loading}${blocked}`))
+      .not.toMatch(/Main|StoreContext|Authority|Renderer|Profile|CRUD|PRODUCTION_NATIVE|LEGACY_ADAPTER/i);
+    expect(blocked).toContain('诊断详情');
+    expect(blocked).toContain('Main Settings Authority rejected StoreContext Profile');
+  });
+
   it('renders one page heading above native store CRUD and the adapted system AI surface', () => {
     const markup = renderToStaticMarkup(
       <LegacyWorkspace
@@ -60,6 +102,8 @@ describe('settings workspace composition', () => {
 
     expect(markup.match(/<h1/g)).toHaveLength(1);
     expect(markup).toContain('店铺与运行设置');
+    expect(markup).toContain('检查店铺连接');
+    expect(markup).toContain('data-action-priority="primary"');
     expect(markup).toContain('STORE CONFIG CRUD');
     expect(markup).toContain('SYSTEM AI');
     expect(markup.indexOf('STORE CONFIG CRUD')).toBeLessThan(markup.indexOf('SYSTEM AI'));
