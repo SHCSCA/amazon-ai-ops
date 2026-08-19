@@ -21,6 +21,7 @@
 - 追加一次应用内主动作复验：先把持久化旧范围改回权威窗口 `2026-08-04` 至 `2026-08-17`，再点击一次“重新获取完整 8 类报表”。系统未重复创建报表，立即返回 `checkpoint campaign/create_unknown 禁止自动原地续跑`；人工核对按钮保持禁用，旧任务安全门未被绕过。当前生产血缘仍为 `1/8` 下载、`0/8` 入库，任务数量未增加。
 - 未受真实库阻断影响的业务 UI 复验已压缩为一次 `pnpm run smoke:business-ui-current`：6/6 子脚本通过，连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 类 flow coverage 通过；汇总 `output/codex-evidence/current-business-ui-smoke-1787115252897.json`。该 smoke 不替代真实 8/8 入库证据，也未触发 Ads 写入。
 - 2026-08-19 只读终审：正式库为 1 店铺、2 产品、2 条连接，策略 1 条但启用版本 0，运营任务 0、经营实验 0、导入 0、推荐/审批 0；采集 jobs=3、批次=2、文件=2；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 全为 0。Package UI 最新目录仍是 `operator-core-20260814-69`，没有绑定当前构建的新 manifest；当前本地与远端均为 `b3ae3e31`，已通过 `git -c http.version=HTTP/1.1 push` 同步。
+- 当前构建与包内 Renderer 均已确认运营任务产品选项使用规范化 ASIN（`value: asin.trim()`）；旧“产品数据库行号当 ASIN”仅保留为历史问题，不再作为当前包阻断。
 
 ## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
 
@@ -130,7 +131,7 @@
 ## 历史：2026-08-14 较早续接状态
 - 2026-08-14 已从反复 Package UI 登录验收切换到正常业务闭环。当前 `release\win-unpacked` 仍是修前旧包，不能代表最新源码；正常应用内真实点击“重新获取完整 8 类报表”已进入 Main，但在创建任务前被严格拒绝，实际错误为页面保存范围 `2026-07-24..2026-08-06` 与 Main 当前 runtime config 推导的唯一采集窗口不一致，故真实结果仍为 `0/8`、0 批次、0 导入、0 广告写入。
 - 采集窗口错配已按 TDD 修复在白名单 `data-collection-page.tsx/.test.ts`：动作提交前即时读取 `getStoreCollectionSchedule`，严格核对 storeId/businessDate/enabled/dateStart/dateEnd，使用 Main 当前窗口完成同一次请求并同步当前 scope；异店铺、旧窗口、未配置/归档继续 fail-closed，Main 的唯一窗口门未放宽。精确红为 `2 failed / 49 skipped`（helper 不存在），修后聚焦 `2/2 passed`；与运营任务联合完整回归为 `2 files / 62/62 passed`，desktop typecheck exit 0。
-- 运营任务真实产品合同也已修复：Renderer 原先把本地 `products.id` 写入 `mission.productId`，而 Main 仓储归属校验和分析 SQL 均把它当 ASIN，导致正式 UI 连保存任务都失败。新增 `id=17 / asin=B0GTTJFQTM` 红测，修前 `buildMissionProductOptions is not a function`，修后 option value 使用规范化 ASIN，完整 `missions-workspace.test.tsx` 11/11 通过。该修复尚未进入当前运行包，必须重建后才可继续真实采集→策略版本→运营任务→经营实验链。
+- 运营任务真实产品合同已修复：Renderer 原先把本地 `products.id` 写入 `mission.productId`，而 Main 仓储归属校验和分析 SQL 均把它当 ASIN；新增 `id=17 / asin=B0GTTJFQTM` 红测后，option value 改为规范化 ASIN，完整 `missions-workspace.test.tsx` 11/11 通过。最新 `win-unpacked` 与包内 Renderer 已包含该修复；本节旧“尚未进入运行包”表述仅作历史记录。
 - Package UI `-69` 已完成真实 ERP/Ads 连接并进入定时任务页，失败点不是登录，而是 runner 仍按旧 `aria-label="证据保留 dry-run 摘要"` 查找已中文化组件；当前已改用稳定 `.mission-control-retention-metrics`，并补齐缺失零值 attribute 不得被 `Number(null)===0` 误判的 fail-closed 测试。该 runner 修复改变合同，旧 `-69` 只保留为失败证据，待业务源码重建后统一开新 run group。
 - 2026-08-14 用户验收重新打开，当前结论改为 **未通过 / 不得标记“开发完成”或 `APP_READY`**。`operator-core-20260813-67` 只证明当时包的技术链与 Package UI 结构门通过；正式包截图仍在普通界面暴露 `Mission 队列`、`DAILY MISSION CONTROL`，未知状态组件仍把 `UNKNOWN` 与 `authority/Main` 技术词直接交给运营者，且既有测试冻结了错误文案。当前按 TDD 修正文案并新增反向机器门，完成后必须重建 Windows 包并生成全新、绑定新哈希的 Package UI 证据；旧 `-67` 不得复用为当前验收。
 - 本次用户明确点名 `renderer/navigation.ts`、`components/store-scope-switcher.test.tsx` 和正式包可见文案，并要求“修正文案及反向测试”；据此只对这些确切漏出点及其直接实现/测试、同类可见 `scheduler-page.tsx` 文案作最小范围扩展。其余原任务书白名单仍不变；任何扩展都必须在本文件列明，且不得借机重构。
