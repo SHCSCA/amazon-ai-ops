@@ -5,6 +5,7 @@
 - 已按确认方案闭合：collection-only 在进入 scheduler 前按当前店铺业务窗持久化同页下载中心诊断，TDD 聚焦红→绿、typecheck、`build:win` 均通过。
 - 仍未有本包谱系的真实 collection job、8/8 完成批次或导入证据；不得用 build/smoke 代替正式业务结果。下一步只启动目标应用并点击一次完整 8 类采集，读取中文成功或失败原因后停止。
 - 其他发现继续保持记录状态，未经用户再次确认不扩修；Ads 身份/审批/回读门与广告写入 0 不变，整体仍 `APP_NEEDS_WORK / NON_READY`。
+- 版本状态：选择性提交 `02f47f46` 已成功；向 `origin/codex/preview-contract-production-p2` 的两次推送均因 GitHub 连接被远端重置（`Recv failure: Connection was reset`）失败，待网络恢复后再推送一次，不影响本地提交与回滚。
 
 ## 当前：2026-08-17 下载中心诊断前置与后台周期形成循环阻断，等待用户确认再改
 
