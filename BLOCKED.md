@@ -6,7 +6,7 @@
 - 正式库真实下载任务 `batch_20260819041021809_613h3r` 为 `completed`，campaign 批次/文件均已落盘；随后导入返回 `LINGXING_COLLECTION_IMPORT_FAILED: 真实报表包含无效数据（第 193 行 date）`。仅该行“日期”为空，行仍含其他指标字段；`importState=failed`，`report_import_runs=0`，所以不能宣称生产入库或 8/8。
 - 该解析/导入边界位于本轮允许修改范围外的 `packages/report-parser`；按用户“其他发现先记录、等确认再改”的要求，本轮不跳过坏行、不改弱校验、不越界修复。需要用户明确确认后，才能设计带来源行证据的安全处理方案。
 - 技术修复与包门已通过：定点聚焦回归 `2 files / 3 passed / 80 skipped`、desktop typecheck、`build:win`、`smoke:package-launch` 均为 0；Ads 执行表仍全 0。总体继续 `APP_NEEDS_WORK / NON_READY`。
-- 交付提交 `91158052` 及后续文档提交已保留完整历史；此前两次推送曾因 GitHub `Recv failure: Connection was reset` 失败，随后 HTTP/1.1 推送成功，当前本地与远端已同步。未改 remote、未强推。
+- 交付提交 `91158052` 及后续文档提交已保留完整历史；截至 `c4e6e5f6` 本地与远端曾同步，最新业务 smoke 文档提交 `7afa2661` 的两次推送又遇 GitHub `Recv failure: Connection was reset`，当前远端仍为 `c4e6e5f6`。未改 remote、未强推。
 - folder ZIP smoke `output/codex-evidence/folder-zip-launch-smoke-1787114238805.json` 已纳入已推送的文档链引用；构建产物本身仍按规则不进 Git。
 - neat-freak 盘点发现 `README.md` 与 `AGENTS.md` 仍保留更早候选包的历史摘要；本轮硬边界只允许更新 `PROGRESS.md`、`BLOCKED.md` 与 `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`，因此未越界改写，当前事实以这三份文档的 2026-08-19 置顶段为准。
 - 追加的完整 8 类应用动作在旧任务 `campaign/create_unknown` 处安全阻断；界面“人工核对（禁止恢复）”保持禁用，没有可用的应用内恢复路径。不能自动猜测领星结果、重复创建或拼接独立 campaign 批次，等待人工核对或用户确认新的安全修复方案。
