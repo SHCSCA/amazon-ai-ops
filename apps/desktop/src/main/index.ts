@@ -7137,6 +7137,18 @@ function createDownloadCenterAutomation(
       marketplaceCode: target.marketplaceCode,
     };
   };
+  const existingReportContext = (
+    report: { type: LingxingReportType; displayName: string; expectedFilenameKeyword: string },
+    dateRange: { start: string; end: string },
+    createdReportIdentity?: LingxingCreatedReportIdentity,
+  ): DownloadCenterReportSelectorContext => ({
+    ...reportContext(report, dateRange, createdReportIdentity),
+    // A download-existing run has no newly generated external name. The list
+    // row is already filtered by the current store/date scope, so bind it by
+    // the stable report type label instead of inventing a fresh timestamped
+    // name that can never match a historical row.
+    generatedReportName: createdReportIdentity?.externalReportName ?? report.displayName,
+  });
 
   return {
     async navigateToDownloadCenter() {
@@ -7259,7 +7271,10 @@ function createDownloadCenterAutomation(
       assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
-      const context = reportContext(report, dateRange, createdReportIdentity);
+      const existingReport = !createdReportIdentity;
+      const context = existingReport
+        ? existingReportContext(report, dateRange, createdReportIdentity)
+        : reportContext(report, dateRange, createdReportIdentity);
       let lastRecoveryAt = 0;
       const recoverListIfNeeded = async (attempt: number) => {
         const now = Date.now();
@@ -7313,7 +7328,10 @@ function createDownloadCenterAutomation(
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       fs.mkdirSync(downloadDir, { recursive: true });
-      const context = reportContext(report, dateRange, createdReportIdentity);
+      const existingReport = !createdReportIdentity;
+      const context = existingReport
+        ? existingReportContext(report, dateRange, createdReportIdentity)
+        : reportContext(report, dateRange, createdReportIdentity);
       const downloadButton = await assertUsableDownloadCenterActionSelector(page, 'downloadButton', selectors.downloadButton, context, dateRange);
 
       const [download] = await Promise.all([

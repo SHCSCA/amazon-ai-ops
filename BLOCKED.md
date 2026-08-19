@@ -1,5 +1,12 @@
 # BLOCKED — 2026-08-07
 
+## 当前：2026-08-19 下载已成功，严格导入因真实报表第 193 行空日期阻断
+
+- 最新目标应用已完成同店保存凭证恢复：应用内显式重置后无需再次输入密码，`ERP/Ads 已连接`；未读取或打印密码、Cookie、Profile。
+- 正式库真实下载任务 `batch_20260819041021809_613h3r` 为 `completed`，campaign 批次/文件均已落盘；随后导入返回 `LINGXING_COLLECTION_IMPORT_FAILED: 真实报表包含无效数据（第 193 行 date）`。仅该行“日期”为空，行仍含其他指标字段；`importState=failed`，`report_import_runs=0`，所以不能宣称生产入库或 8/8。
+- 该解析/导入边界位于本轮允许修改范围外的 `packages/report-parser`；按用户“其他发现先记录、等确认再改”的要求，本轮不跳过坏行、不改弱校验、不越界修复。需要用户明确确认后，才能设计带来源行证据的安全处理方案。
+- 技术修复与包门已通过：定点聚焦回归 `2 files / 3 passed / 80 skipped`、desktop typecheck、`build:win`、`smoke:package-launch` 均为 0；Ads 执行表仍全 0。总体继续 `APP_NEEDS_WORK / NON_READY`。
+
 ## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
 
 - 真实失败原因已确认：领星下载中心的非模态成功提示层覆盖店铺 FilterSelect，导致首个 campaign 创建/下载点击超时；正式库当前为 1 个 failed job、1 个 failed batch、1 个 failed file，尚无 import run/8 类完成批次。

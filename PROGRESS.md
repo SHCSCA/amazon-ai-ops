@@ -8,6 +8,16 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 置顶：2026-08-19 主流程实证收口；下载成功、导入被真实数据阻断
+
+- 连接恢复已在最新 `win-unpacked` 目标应用内复验：同店保存凭证重连先按身份门阻断，页面保留“重置当前店铺会话（保留本机密码）”；点击该应用内动作后再次重连未输入密码，`.session-line[role=status]` 为 `ERP/Ads 已连接`，未读取密码、Cookie 或 Profile。
+- 采集主链已推进到真实下载：`download-existing` 的 campaign 任务 `batch_20260819041021809_613h3r` 在正式库中为 `completed`，批次为 `completed`，文件状态为 `downloaded`、41504 bytes；不是 smoke 或模拟回执。
+- 导入真实阻断已定位：同一 XLSX 第 193 行“日期”为空，但该行仍有其他指标字段，严格导入门返回 `LINGXING_COLLECTION_IMPORT_FAILED: 真实报表包含无效数据（第 193 行 date）`，任务 `importState=failed`，没有生成 `report_import_runs`。不跳过坏行、不放宽日期校验。
+- 本轮定点修复：保存凭证失败回读后仍显示当前店铺会话重置入口；已有下载中心历史报表按稳定报表类型匹配，不再生成无法命中的新时间戳名称。聚焦回归合跑 `2 files / 3 passed / 80 skipped`，desktop typecheck `exit 0`。
+- `pnpm run build:win` `exit 0`，构建七步 status 0、原生绑定 `unchangedExact=true/sourceReadOnly=true`；当前 installer `E13DDAEC88DBAE0950A002BE163F6C08132A09E9C9421EF1D3BA7F237EB7DF89`、portable `1EA40051EE3AB86313537B03C8C774F73417E46250EFE5C4ECB35B31EC134E16`、folder ZIP `5090774DB52E80D629F3D584CA856C0484EB9ABED061B78E9AAFDED25F21BBF1`、blockmap `92F1FF729CF92E3A6AFDD5FCFE39A49F97E6F9B08F6E192811926BB27D7334AA`，EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。`pnpm run smoke:package-launch` `exit 0`，证据 `output/codex-evidence/package-launch-smoke-1787113826212.json`。
+- 当前仍不得标记“开发完成”或 `APP_READY`：8 类导入未闭合，策略/运营任务/经营实验尚未具备真实数据前置，Package UI 新鲜正式 manifest 与 Task 8B 仍后置；正式广告执行四表继续为 `0`。
+- 下一步只等用户确认是否允许触碰范围外 `packages/report-parser` 的坏行处理；未确认前不修改解析器，其他文案/scheduler/Task 8B 发现继续只记录。
+
 ## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
 
 - 正式库真实失败已定位：连接与下载中心诊断均 ready，但首个采集任务在创建/下载时因领星非模态成功提示层覆盖 `.fs-wrap.multiple` 店铺 FilterSelect，点击超时并以 `LINGXING_CREATE_CALL_INTERRUPTED` 结束；批次失败、仅 1 个文件失败，尚无导入完成证据。

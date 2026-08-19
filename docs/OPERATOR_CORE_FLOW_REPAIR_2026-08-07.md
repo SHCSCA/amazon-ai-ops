@@ -1,5 +1,13 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-19 当前交付状态（下载成功，导入阻断；不得标记 APP_READY）
+
+- 连接恢复已在最新 Windows 目标应用内闭合：保存凭证重连遇到身份门时显示当前店铺专用重置动作；应用内重置后再次重连不需手输，状态为 `ERP/Ads 已连接`。凭证、Cookie、Profile 均未被执行者读取或打印。
+- 真实采集已形成 durable 下载证据：`batch_20260819041021809_613h3r` 为 `download-existing` campaign 任务，job/batch `completed`，文件 `downloaded`、41504 bytes。已有报表行匹配改为按稳定报表类型回读，避免为历史行虚构新时间戳名称。
+- 真实导入仍 fail-closed：报表第 193 行日期为空，严格校验返回 `LINGXING_COLLECTION_IMPORT_FAILED`，任务 `importState=failed`，没有 `report_import_runs`。不把下载成功当作生产入库，也不跳过该行。
+- 本轮验证保持压缩：相关两文件聚焦回归 `3 passed / 80 skipped`，desktop typecheck、`build:win`、`smoke:package-launch` 均通过；构建产物 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、installer `E13DDAEC88DBAE0950A002BE163F6C08132A09E9C9421EF1D3BA7F237EB7DF89`、portable `1EA40051EE3AB86313537B03C8C774F73417E46250EFE5C4ECB35B31EC134E16`、folder ZIP `5090774DB52E80D629F3D584CA856C0484EB9ABED061B78E9AAFDED25F21BBF1`，原生绑定未变化。
+- 当前剩余主阻断是范围外的 `packages/report-parser` 坏行处理，等待用户明确确认；策略、运营任务、经营实验、当前包 Package UI 与 Task 8B 仍不宣称完成，Ads 写入继续为 0。
+
 ## 2026-08-14 当前验收状态（覆盖下方历史记录）
 
 - 结论仍为 **NON_READY / 不得标记“开发完成”或 `APP_READY`**。用户指出的 `Mission 队列`、`DAILY MISSION CONTROL`、裸 `UNKNOWN` 与 `authority/Main` 等普通界面漏出已修复，并新增覆盖 25 类内部词的真实 DOM 反向门；折叠“诊断详情”继续保留内部状态和原始证据。

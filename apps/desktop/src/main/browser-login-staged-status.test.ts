@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  configuredSessionResetActionVisible,
   configuredSessionResetRequiredFromError,
   connectionOperatorCopy,
   loginStatusMessage,
@@ -45,6 +46,16 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(configuredSessionResetRequiredFromError(
       new Error('领星 Ads 页面在限定时间内未出现。'),
     )).toBe(false);
+  });
+
+  it('keeps the configured-session recovery action visible after the workbench remounts', () => {
+    const sanitized = new Error(
+      '当前领星会话身份未经本次凭证验证；请在应用中使用“重置当前店铺会话（保留本机密码）”，再重新连接。',
+    );
+
+    expect(configuredSessionResetActionVisible(sanitized, false)).toBe(true);
+    expect(configuredSessionResetActionVisible(new Error('普通连接失败'), false)).toBe(false);
+    expect(configuredSessionResetActionVisible(null, true)).toBe(true);
   });
 
   it('does not render a technical credential notice in the ordinary login status line', () => {

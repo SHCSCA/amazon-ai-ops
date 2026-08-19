@@ -524,6 +524,13 @@ export function configuredSessionResetRequiredFromError(error: unknown): boolean
   return message.includes('当前领星会话身份未经本次凭证验证');
 }
 
+export function configuredSessionResetActionVisible(
+  error: unknown,
+  localRequired: boolean,
+): boolean {
+  return localRequired || configuredSessionResetRequiredFromError(error);
+}
+
 export function describeLoginSession(session?: LoginSessionInfo | null): string {
   if (!session) return 'ERP/Ads 会话：待确认';
   if (
@@ -976,6 +983,10 @@ function StoreConnectionWorkbench({
     !loading && credentialTone === 'warning' ? 'login-status-line-warning' : '',
     !loading && credentialTone === 'blocked' ? 'login-status-line-blocked' : '',
   ].filter(Boolean).join(' ');
+  const showConfiguredSessionReset = configuredSessionResetActionVisible(
+    error,
+    configuredSessionResetRequired,
+  );
   const securityTagView = loginSecurityTagView({
     credentialSource,
     credentialState: savedCredentialState,
@@ -1918,7 +1929,7 @@ function StoreConnectionWorkbench({
               </div>
             )}
             {error && <div role="alert" style={loginStyles.error}>{visibleConnectionError}</div>}
-            {configuredSessionResetRequired && (
+            {showConfiguredSessionReset && (
               <button
                 data-login-action="reset-lingxing-session"
                 disabled={loading || !configuredSavedSessionResetReady}

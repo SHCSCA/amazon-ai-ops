@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import {
   assertLingxingAdsSelectedStoreTags,
@@ -17,6 +19,21 @@ import {
 } from './lingxing-ads-sso';
 
 describe('Lingxing Ads navigation continuity', () => {
+  it('binds an existing report row by report type instead of a newly generated name', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const waitForReady = mainSource.slice(
+      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
+      mainSource.indexOf('async downloadReport(report, downloadDir, dateRange, createdReportIdentity)'),
+    );
+
+    expect(mainSource).toContain(
+      'generatedReportName: createdReportIdentity?.externalReportName ?? report.displayName',
+    );
+    expect(waitForReady).toContain(
+      'const context = existingReport ? existingReportContext(report, dateRange, createdReportIdentity) : reportContext',
+    );
+  });
+
   it('retries an explicit stale execution context and reads the replacement document', async () => {
     const snapshot = {
       url: 'https://ads.lingxing.com/ak_download/download_center/download_report_log/index',
