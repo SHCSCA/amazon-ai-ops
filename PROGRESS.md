@@ -18,6 +18,7 @@
 - 同一构建的 `pnpm run smoke:folder-zip-launch` `passed=true`；ZIP 与 win-unpacked EXE SHA 精确一致，窗口标题为 `Amazon AI Ops Agent`，临时文件/进程已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787114238805.json`。
 - 当前仍不得标记“开发完成”或 `APP_READY`：8 类导入未闭合，策略/运营任务/经营实验尚未具备真实数据前置，Package UI 新鲜正式 manifest 与 Task 8B 仍后置；正式广告执行四表继续为 `0`。
 - 下一步只等用户确认是否允许触碰范围外 `packages/report-parser` 的坏行处理；未确认前不修改解析器，其他文案/scheduler/Task 8B 发现继续只记录。
+- 追加一次应用内主动作复验：先把持久化旧范围改回权威窗口 `2026-08-04` 至 `2026-08-17`，再点击一次“重新获取完整 8 类报表”。系统未重复创建报表，立即返回 `checkpoint campaign/create_unknown 禁止自动原地续跑`；人工核对按钮保持禁用，旧任务安全门未被绕过。当前生产血缘仍为 `1/8` 下载、`0/8` 入库，任务数量未增加。
 
 ## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
 

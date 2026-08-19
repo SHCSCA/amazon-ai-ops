@@ -9,6 +9,7 @@
 - 交付提交已在本地生成 `91158052`；向 `origin/codex/preview-contract-production-p2` 的两次推送（默认协议、HTTP/1.1）均因 GitHub `Recv failure: Connection was reset` 失败。未改 remote、未强推、未反复重试；网络恢复后只需重推该提交。
 - 当前提交之后的 folder ZIP smoke 也已通过：`output/codex-evidence/folder-zip-launch-smoke-1787114238805.json`，但该证据尚未包含在远端（远端仍停在 `746c1573`）。
 - neat-freak 盘点发现 `README.md` 与 `AGENTS.md` 仍保留更早候选包的历史摘要；本轮硬边界只允许更新 `PROGRESS.md`、`BLOCKED.md` 与 `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`，因此未越界改写，当前事实以这三份文档的 2026-08-19 置顶段为准。
+- 追加的完整 8 类应用动作在旧任务 `campaign/create_unknown` 处安全阻断；界面“人工核对（禁止恢复）”保持禁用，没有可用的应用内恢复路径。不能自动猜测领星结果、重复创建或拼接独立 campaign 批次，等待人工核对或用户确认新的安全修复方案。
 
 ## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
 
