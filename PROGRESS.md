@@ -8,6 +8,13 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 置顶：2026-08-19 下载中心诊断前置已修复，等待一次真实采集复验
+
+- 按用户确认的“最小主流程”方案，仅修改 `apps/desktop/src/main/index.ts` 与 `apps/desktop/src/main/browser-login-staged-status.test.ts`：collection-only 浏览器完成 ERP→Ads 动态店铺核验并进入下载中心后，按当前 StoreContext.businessDate 与 runtime config 的回看天数生成唯一日期窗，采集同页模型/选择器/截图/DOM 证据并在当前店铺范围内持久化；失败仍在 scheduler durable 任务前阻断，不放宽 Ads 或店铺隔离门。
+- TDD 证据：修前聚焦红测 `1 failed / 45 skipped`（缺少同窗口诊断持久化）；修后同测 `1 passed / 45 skipped`。desktop typecheck `exit 0`；范围 `git diff --check` 无错误（仅 LF→CRLF 提示）。按用户要求未跑完整测试矩阵。
+- 最新 `pnpm run build:win` `exit 0`，七步 status 0，native bindings `unchangedExact=true / sourceReadOnly=true`。当前产物：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；installer `99BF1BDC...`；portable `D30A8FF5...`；folder ZIP `FC7027C2...`；blockmap `55887D1D...`。
+- 尚未宣称真实业务完成：正式库仍需在本包运行后证明 collection job → 8 类报表 → completed batch/import；策略、运营任务、经营实验与 Task 8B 仍后置，广告真实写入继续为 0。下一步只做一次目标应用内主动作复验；出现可操作失败即记录原因，不盲目重复。
+
 ## 置顶：2026-08-17 真实采集根因已定位；等待确认后再改
 
 - 用户要求压缩测试、只保证当前主流程，并明确“其他新问题只记录，等待确认后再改”。本轮只做只读代码/正式库诊断，没有启动应用，也没有修改新发现的业务逻辑。

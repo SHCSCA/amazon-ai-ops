@@ -145,6 +145,23 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
   });
 
+  it('persists same-window download-center evidence before collection identity becomes ready', () => {
+    const inspector = collectionRuntime.indexOf('inspectLingxingIdentity: async');
+    const downloadCenter = collectionRuntime.indexOf(
+      'await navigateToLingxingDownloadCenter(',
+      inspector,
+    );
+    const ready = collectionRuntime.indexOf("status: 'ready'", downloadCenter);
+    const slice = collectionRuntime.slice(downloadCenter, ready);
+
+    expect(downloadCenter).toBeGreaterThan(-1);
+    expect(ready).toBeGreaterThan(downloadCenter);
+    expect(slice).toContain('deriveStoreCollectionWindow(');
+    expect(slice).toContain('persistCollectionOnlyDownloadCenterDiagnostic(');
+    expect(slice).toContain('dateStart');
+    expect(slice).toContain('dateEnd');
+  });
+
   it('marks the exact operator runtime close as expected while collection takes ownership', () => {
     const runtimeRead = collectionAction.indexOf('visibleBrowserRuntimeRegistry.read()');
     const exactContext = collectionAction.indexOf('sameExactStoreContext(', runtimeRead);

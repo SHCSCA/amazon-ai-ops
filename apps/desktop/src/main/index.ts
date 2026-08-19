@@ -301,6 +301,7 @@ import { registerStoreCollectionSchedulerIpcHandlers } from './store-collection-
 import {
   assertStoreCollectionCommittedImportProofForRecovery,
 } from './store-collection-orchestrator-scheduler-adapter';
+import { deriveStoreCollectionWindow } from './store-collection-scheduler';
 import { StoreCollectionPolicySuppressionController } from './store-collection-policy-suppression';
 import {
   createStoreCollectionProductionComposition,
@@ -5514,6 +5515,21 @@ function initializeStoreCollectionProductionRuntime(): void {
           readDownloadCenterPageModel(),
           collectionStoreName,
         );
+        const runtimeConfig = state.storeRuntimeConfigService!.get(runtime.context).current;
+        if (!runtimeConfig || runtimeConfig.status === 'archived') {
+          throw new Error('当前店铺尚未配置可用的采集窗口，采集身份确认已阻断。');
+        }
+        const dateRange = deriveStoreCollectionWindow(
+          runtime.context.businessDate,
+          runtimeConfig.values.collectionLookbackDays,
+        );
+        const authorized = authorizedLingxingCollectionTarget(runtime.context);
+        await persistCollectionOnlyDownloadCenterDiagnostic(
+          controller,
+          storeCapsuleFor(authorized.store),
+          authorized.target,
+          { start: dateRange.dateStart, end: dateRange.dateEnd },
+        );
         const scopedPage = getControllerPageOrThrow(controller);
         return Object.freeze({
           status: 'ready' as const,
@@ -7864,6 +7880,95 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
       return persistDownloadCenterDiagnostic(result);
     }),
   );
+}
+
+async function persistCollectionOnlyDownloadCenterDiagnostic(
+  controller: BrowserController,
+  capsule: StoreCapsulePaths,
+  target: LingxingCollectionTarget & { marketplaceCode: string; storeId: string; storeName: string },
+  dateRange: { start: string; end: string },
+): Promise<DownloadCenterDiagnosticResult> {
+  validateDateRange(dateRange);
+  const modelInfo = handleGetDownloadCenterPageModel();
+  const model = modelInfo.model;
+  const fallbackUrl = model.candidateUrls[0];
+  let result: DownloadCenterDiagnosticResult;
+
+  try {
+    const selectorMatches: Record<string, boolean> = {};
+    for (const hint of model.verifySelectors) {
+      selectorMatches[hint.selector] = await controller.evaluate<boolean>((selector: string) => (
+        Boolean(document.querySelector(selector))
+      ), hint.selector);
+    }
+    const snapshot = await controller.evaluate<{ url: string; title: string; bodyText: string }>(() => ({
+      url: window.location.href,
+      title: document.title,
+      bodyText: document.body?.innerText ?? '',
+    }));
+    const selectorCandidates = await collectDownloadCenterSelectorCandidates(controller);
+    const diagnosticContext: DownloadCenterReportSelectorContext = {
+      ...LINGXING_AD_REPORTS[0],
+      generatedReportName: buildGeneratedDownloadCenterReportName(LINGXING_AD_REPORTS[0], dateRange),
+      storeName: target.storeName,
+      marketplaceCode: target.marketplaceCode,
+    };
+    const actionSelectorChecks = await collectDownloadCenterDiagnosticActionSelectorChecks(
+      controller,
+      model,
+      dateRange,
+      diagnosticContext,
+    );
+    result = evaluateDownloadCenterPageModel(model, { ...snapshot, selectorMatches });
+    result.pageModelSource = modelInfo.source as 'bundled' | 'override';
+    result.pageModelSnapshot = model;
+    result.dateStart = dateRange.start;
+    result.dateEnd = dateRange.end;
+    result.storeName = target.storeName;
+    result.marketplaceCode = target.marketplaceCode;
+    result.selectorCandidates = selectorCandidates;
+    result.actionSelectorChecks = actionSelectorChecks;
+  } catch (error) {
+    result = {
+      pageModel: model.name,
+      pageModelSource: modelInfo.source as 'bundled' | 'override',
+      pageModelSnapshot: model,
+      dateStart: dateRange.start,
+      dateEnd: dateRange.end,
+      storeName: target.storeName,
+      marketplaceCode: target.marketplaceCode,
+      url: fallbackUrl,
+      title: '',
+      ready: false,
+      requiresManualVerification: model.requiresManualVerification,
+      matchedEntryHints: [],
+      matchedReportNames: [],
+      selectorChecks: model.verifySelectors.map((hint) => ({ ...hint, found: false })),
+      missingRequiredSelectors: model.verifySelectors.filter((hint) => hint.required).map((hint) => hint.name),
+      actionSelectorChecks: [],
+      checkedAt: new Date().toISOString(),
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  result.appVersion = APP_VERSION;
+  try {
+    result.screenshotPath = await captureDownloadCenterDiagnosticScreenshot(controller, capsule.screenshotsDir);
+  } catch (error) {
+    result.errorMessage = appendDiagnosticError(
+      result.errorMessage,
+      `screenshot: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    result.domSnapshotPath = await captureDownloadCenterDiagnosticDomSnapshot(controller, capsule.evidenceDir);
+  } catch (error) {
+    result.errorMessage = appendDiagnosticError(
+      result.errorMessage,
+      `domSnapshot: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return persistDownloadCenterDiagnostic(result);
 }
 
 function appendDiagnosticError(existing: string | undefined, next: string): string {
