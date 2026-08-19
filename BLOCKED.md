@@ -1,5 +1,14 @@
 # BLOCKED — 2026-08-07
 
+## 置顶：2026-08-19 最新阻断快照
+
+- 当前 HEAD/远端均为 `5d53747e`；只剩既有未跟踪临时目录，未把产物、正式库或 Profile 纳入提交。
+- 最新 Windows 包与 ZIP smoke 已通过，业务 smoke 为 6/6 子脚本、7/7 flow；当前包哈希与证据以 `PROGRESS.md` 最新快照为准。
+- Package UI `operator-core-20260819-70` 绑定当前包，但因 60 秒内无操作者提交而产生不可变失败 `PACKAGE_UI_OPERATOR_WINDOW_CLOSED`；没有新的通过 manifest，历史 run 不得替代。
+- 真实业务主阻断：下载已成功，严格导入因真实 XLSX 第 193 行日期为空失败，`report_import_runs=0`；`packages/report-parser` 不在已授权修改范围，按用户要求等待明确确认，不跳过坏行、不放宽校验。
+- 由于没有完成 8/8 入库，策略/运营任务/经营实验没有可用真实前置；没有具体、产品内已批准的 `lower_bid` 推荐前，Task 8B 与所有广告写入继续为 0。整体仍 `APP_NEEDS_WORK / NON_READY`。
+- neat-freak 盘点还发现 `AGENTS.md`、`README.md` 与 `docs/USER_GUIDE_v1_5.md` 保留更早候选包的“current/APP_READY”历史段；本轮原始文件边界只允许更新本文件、`PROGRESS.md` 与指定运营修复文档，因此不越界改写，以上三份置顶快照为当前事实来源。
+
 ## 当前：2026-08-19 下载已成功，严格导入因真实报表第 193 行空日期阻断
 
 - 最新目标应用已完成同店保存凭证恢复：应用内显式重置后无需再次输入密码，`ERP/Ads 已连接`；未读取或打印密码、Cookie、Profile。

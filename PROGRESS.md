@@ -8,6 +8,14 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 置顶：2026-08-19 最新交付快照（覆盖下方同日旧包记录）
+
+- 当前 HEAD/远端均为 `5d53747e`；工作树只有既有未跟踪临时目录，没有 tracked 修改。文档已同步并推送，未提交 `output/`、`storage/`、Profile、报表或 Windows 产物。
+- 当前重建 Windows 包：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app-content `A42398CEFD3CB076773D1668BF7C1E982CF6E3DB797AAF5999DB6B3038CA6DD0`（5118 files / 544471498 bytes）；installer `DD00E35D95758664721BCBC08C41194A5AE1E2FC91B9679ED180D57BB883C6C2F`；portable `1A5DFBFEDBAB56C3B440C8408B2F99590D0AC426800F0B2A2452B5D0774663B9A`；folder ZIP `F66B66B711982076E160768342BF49E82BD845958941C5ECBAC60019B767CB28`；blockmap `8C6D148DA2156C2CB3BEA4275C15A63C225030331C7489AE24ECBC3333F174511`。
+- 该包的 `build:win`、package launch、folder ZIP launch、`smoke:business-ui-current` 均通过（6/6 子脚本、7/7 flow）；证据分别为 `output/codex-evidence/package-launch-smoke-1787116961932.json`、`output/codex-evidence/folder-zip-launch-smoke-1787117059767.json`、`output/codex-evidence/current-business-ui-smoke-1787117151978.json`。
+- 全新 Package UI run-group `operator-core-20260819-70` 已绑定当前包，但因 60 秒内没有操作者本人完成可见登录交接而失败：`PACKAGE_UI_OPERATOR_WINDOW_CLOSED`。它不是通过证据，不能由历史 `operator-core-20260813-67` 替代。
+- 正式库只读快照：采集 jobs 3、批次 2、文件 2、导入 0、策略启用版本 0、运营任务 0、经营实验 0、推荐/审批 0；广告执行批次/jobs/events/evidence 全 0。连接已恢复，真实下载成功，但第 193 行空日期使严格导入失败；因此仍 `APP_NEEDS_WORK / NON_READY`，不得标记 `APP_READY`。
+
 ## 置顶：2026-08-19 主流程实证收口；下载成功、导入被真实数据阻断
 
 - 连接恢复已在最新 `win-unpacked` 目标应用内复验：同店保存凭证重连先按身份门阻断，页面保留“重置当前店铺会话（保留本机密码）”；点击该应用内动作后再次重连未输入密码，`.session-line[role=status]` 为 `ERP/Ads 已连接`，未读取密码、Cookie 或 Profile。

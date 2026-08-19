@@ -1,5 +1,13 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-19 最新交付快照（当前事实）
+
+- 当前 HEAD 与远端均为 `5d53747e`；最新重建包 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，app-content `A42398CEFD3CB076773D1668BF7C1E982CF6E3DB797AAF5999DB6B3038CA6DD0`；installer `DD00E35D95758664721BCBC08C41194A5AE1E2FC91B9679ED180D57BB883C6C2F`，portable `1A5DFBFEDBAB56C3B440C8408B2F99590D0AC426800F0B2A2452B5D0774663B9A`，folder ZIP `F66B66B711982076E160768342BF49E82BD845958941C5ECBAC60019B767CB28`。
+- `build:win`、package launch、folder ZIP launch、业务 smoke 均通过；业务 smoke 为 6/6 子脚本和 7/7 flow。它们不替代真实入库证据。
+- 全新 Package UI `operator-core-20260819-70` 绑定当前包，但因 60 秒内未收到操作者本人登录提交而以 `PACKAGE_UI_OPERATOR_WINDOW_CLOSED` 失败；历史 Package UI manifest 不得替代当前包。
+- 正式库当前为采集 jobs 3、批次 2、文件 2、导入 0、策略启用版本 0、运营任务 0、经营实验 0、推荐/审批 0；广告执行表全 0。真实下载成功后，报表第 193 行日期为空导致严格导入失败。
+- 因 `packages/report-parser` 在本轮授权范围外且用户要求先记录再确认，暂不跳过坏行或放宽日期校验。总体仍 `APP_NEEDS_WORK / NON_READY`，不得标记 `APP_READY`。
+
 ## 2026-08-19 当前交付状态（下载成功，导入阻断；不得标记 APP_READY）
 
 - 连接恢复已在最新 Windows 目标应用内闭合：保存凭证重连遇到身份门时显示当前店铺专用重置动作；应用内重置后再次重连不需手输，状态为 `ERP/Ads 已连接`。凭证、Cookie、Profile 均未被执行者读取或打印。
