@@ -10,6 +10,7 @@
 - folder ZIP smoke `output/codex-evidence/folder-zip-launch-smoke-1787114238805.json` 已纳入已推送的文档链引用；构建产物本身仍按规则不进 Git。
 - neat-freak 盘点发现 `README.md` 与 `AGENTS.md` 仍保留更早候选包的历史摘要；本轮硬边界只允许更新 `PROGRESS.md`、`BLOCKED.md` 与 `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`，因此未越界改写，当前事实以这三份文档的 2026-08-19 置顶段为准。
 - 追加的完整 8 类应用动作在旧任务 `campaign/create_unknown` 处安全阻断；界面“人工核对（禁止恢复）”保持禁用，没有可用的应用内恢复路径。不能自动猜测领星结果、重复创建或拼接独立 campaign 批次，等待人工核对或用户确认新的安全修复方案。
+- `pnpm run smoke:business-ui-current` 已单次通过 6/6 子脚本、7/7 flow coverage；它只证明隔离的 UI 合同，不解除真实报表导入、`create_unknown`、Package UI 或 Task 8B 阻断。
 
 ## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
 

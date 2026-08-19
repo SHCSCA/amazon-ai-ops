@@ -9,6 +9,7 @@
 - `pnpm run smoke:folder-zip-launch` 同样 `passed=true`，ZIP/EXE SHA 精确匹配且临时进程清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787114238805.json`。该证据属于本地提交，因 GitHub 连接重置尚未推送。
 - 当前剩余主阻断是范围外的 `packages/report-parser` 坏行处理，等待用户明确确认；策略、运营任务、经营实验、当前包 Package UI 与 Task 8B 仍不宣称完成，Ads 写入继续为 0。
 - 2026-08-19 追加一次主动作复验：应用先把范围恢复为 `2026-08-04` 至 `2026-08-17`，随后完整 8 类动作在旧 `campaign/create_unknown` 检查点处立即安全停止；人工核对入口保持禁用。没有重复创建报表、没有拼接独立任务、没有新增广告写入。
+- 当前源码业务 smoke 单次复验通过：`pnpm run smoke:business-ui-current` 为 6/6 子脚本、7/7 flow coverage，汇总 `output/codex-evidence/current-business-ui-smoke-1787115252897.json`；这不等价于正式库 8/8 导入或广告执行证据。
 
 ## 2026-08-14 当前验收状态（覆盖下方历史记录）
 
