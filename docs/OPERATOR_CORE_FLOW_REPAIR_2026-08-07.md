@@ -6,6 +6,7 @@
 - 真实采集已形成 durable 下载证据：`batch_20260819041021809_613h3r` 为 `download-existing` campaign 任务，job/batch `completed`，文件 `downloaded`、41504 bytes。已有报表行匹配改为按稳定报表类型回读，避免为历史行虚构新时间戳名称。
 - 真实导入仍 fail-closed：报表第 193 行日期为空，严格校验返回 `LINGXING_COLLECTION_IMPORT_FAILED`，任务 `importState=failed`，没有 `report_import_runs`。不把下载成功当作生产入库，也不跳过该行。
 - 本轮验证保持压缩：相关两文件聚焦回归 `3 passed / 80 skipped`，desktop typecheck、`build:win`、`smoke:package-launch` 均通过；构建产物 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、installer `E13DDAEC88DBAE0950A002BE163F6C08132A09E9C9421EF1D3BA7F237EB7DF89`、portable `1EA40051EE3AB86313537B03C8C774F73417E46250EFE5C4ECB35B31EC134E16`、folder ZIP `5090774DB52E80D629F3D584CA856C0484EB9ABED061B78E9AAFDED25F21BBF1`，原生绑定未变化。
+- `pnpm run smoke:folder-zip-launch` 同样 `passed=true`，ZIP/EXE SHA 精确匹配且临时进程清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787114238805.json`。该证据属于本地提交，因 GitHub 连接重置尚未推送。
 - 当前剩余主阻断是范围外的 `packages/report-parser` 坏行处理，等待用户明确确认；策略、运营任务、经营实验、当前包 Package UI 与 Task 8B 仍不宣称完成，Ads 写入继续为 0。
 
 ## 2026-08-14 当前验收状态（覆盖下方历史记录）
