@@ -8,6 +8,7 @@
 - 技术修复与包门已通过：定点聚焦回归 `2 files / 3 passed / 80 skipped`、desktop typecheck、`build:win`、`smoke:package-launch` 均为 0；Ads 执行表仍全 0。总体继续 `APP_NEEDS_WORK / NON_READY`。
 - 交付提交已在本地生成 `91158052`；向 `origin/codex/preview-contract-production-p2` 的两次推送（默认协议、HTTP/1.1）均因 GitHub `Recv failure: Connection was reset` 失败。未改 remote、未强推、未反复重试；网络恢复后只需重推该提交。
 - 当前提交之后的 folder ZIP smoke 也已通过：`output/codex-evidence/folder-zip-launch-smoke-1787114238805.json`，但该证据尚未包含在远端（远端仍停在 `746c1573`）。
+- neat-freak 盘点发现 `README.md` 与 `AGENTS.md` 仍保留更早候选包的历史摘要；本轮硬边界只允许更新 `PROGRESS.md`、`BLOCKED.md` 与 `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`，因此未越界改写，当前事实以这三份文档的 2026-08-19 置顶段为准。
 
 ## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
 
