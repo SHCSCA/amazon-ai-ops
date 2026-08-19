@@ -23,7 +23,7 @@
 - 2026-08-19 只读终审：正式库为 1 店铺、2 产品、2 条连接，策略 1 条但启用版本 0，运营任务 0、经营实验 0、导入 0、推荐/审批 0；采集 jobs=3、批次=2、文件=2；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 全为 0。当前分支已在 `a387879e` 与远端同步。
 - 重建后的当前 Windows 包：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app-content `A42398CEFD3CB076773D1668BF7C1E982CF6E3DB797AAF5999DB6B3038CA6DD0`（5118 files / 544471498 bytes）；installer `DD00E35D95758664721BCBC08C41194A5AE1E2FC91B9679ED180D57BB883C6C2F`；portable `1A5DFBFEDBAB56C3B440C8408B2F99590D0AC426800F0B2A2452B5D0774663B9A`；folder ZIP `F66B66B711982076E160768342BF49E82BD845958941C5ECBAC60019B767CB28`；blockmap `8C6D148DA2156C2CB3BEA4275C15A63C225030331C7489AE24ECBC3333F174511`。`build:win` 七步均为 0，native `unchangedExact=true/sourceReadOnly=true`。
 - 重建后 `smoke:package-launch` 通过（`output/codex-evidence/package-launch-smoke-1787116961932.json`）、`smoke:folder-zip-launch` 通过（`output/codex-evidence/folder-zip-launch-smoke-1787117059767.json`）、`smoke:business-ui-current` 通过 6/6 子脚本与 7/7 flow（`output/codex-evidence/current-business-ui-smoke-1787117151978.json`）。
-- 全新 Package UI run-group `operator-core-20260819-70` 已绑定上述包；首轮 stale gate 在重建前失败，恢复后因 60 秒内没有操作者提交而按要求停止，最终不可变证据为 `PACKAGE_UI_OPERATOR_WINDOW_CLOSED`，不是通过证据。
+- 全新 Package UI run-group `operator-core-20260819-70` 已绑定上述包；首轮 stale gate 在重建前失败，恢复后因 60 秒内没有操作者提交而按要求停止，最终不可变证据 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260819-70/manifests/2026-08-19T05-20-05-190Z-2026-08-19T05-19-49-044Z-40eecf8e-aa4f-4029-b70b-2016c614f034.json` 为 `PACKAGE_UI_OPERATOR_WINDOW_CLOSED`，不是通过证据。
 - 当前构建与包内 Renderer 均已确认运营任务产品选项使用规范化 ASIN（`value: asin.trim()`）；旧“产品数据库行号当 ASIN”仅保留为历史问题，不再作为当前包阻断。重建包、Package UI 失败证据与当前状态文档已随 `a387879e` 推送。
 
 ## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
