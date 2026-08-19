@@ -21,7 +21,7 @@
 - 追加一次应用内主动作复验：先把持久化旧范围改回权威窗口 `2026-08-04` 至 `2026-08-17`，再点击一次“重新获取完整 8 类报表”。系统未重复创建报表，立即返回 `checkpoint campaign/create_unknown 禁止自动原地续跑`；人工核对按钮保持禁用，旧任务安全门未被绕过。当前生产血缘仍为 `1/8` 下载、`0/8` 入库，任务数量未增加。
 - 未受真实库阻断影响的业务 UI 复验已压缩为一次 `pnpm run smoke:business-ui-current`：6/6 子脚本通过，连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 类 flow coverage 通过；汇总 `output/codex-evidence/current-business-ui-smoke-1787115252897.json`。该 smoke 不替代真实 8/8 入库证据，也未触发 Ads 写入。
 - 2026-08-19 只读终审：正式库为 1 店铺、2 产品、2 条连接，策略 1 条但启用版本 0，运营任务 0、经营实验 0、导入 0、推荐/审批 0；采集 jobs=3、批次=2、文件=2；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 全为 0。Package UI 最新目录仍是 `operator-core-20260814-69`，没有绑定当前构建的新 manifest；当前本地与远端均为 `b3ae3e31`，已通过 `git -c http.version=HTTP/1.1 push` 同步。
-- 当前构建与包内 Renderer 均已确认运营任务产品选项使用规范化 ASIN（`value: asin.trim()`）；旧“产品数据库行号当 ASIN”仅保留为历史问题，不再作为当前包阻断。
+- 当前构建与包内 Renderer 均已确认运营任务产品选项使用规范化 ASIN（`value: asin.trim()`）；旧“产品数据库行号当 ASIN”仅保留为历史问题，不再作为当前包阻断。文档修订提交为 `c58c1796`，本次推送因 GitHub 443 连接超时未完成，远端仍停在 `e5dafcd3`。
 
 ## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
 
