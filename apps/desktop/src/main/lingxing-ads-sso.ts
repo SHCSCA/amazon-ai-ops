@@ -49,6 +49,11 @@ const ADS_CHANGE_ANNOUNCEMENT_TITLE_SELECTOR = [
   '[class*="modal"][class*="title"]',
   '[role="heading"]',
 ].join(', ');
+const LINGXING_TRANSIENT_TOAST_SELECTOR = [
+  '#toast-container [aria-live="polite"]:visible',
+  '#toast-container .toast-success:visible',
+  '#toast-container .toast-error:visible',
+].join(', ');
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const MAX_IDENTITY_LENGTH = 256;
 
@@ -531,6 +536,7 @@ async function trySelectOnlyLegacyLingxingAdsStore(
   for (let index = 0; index < await selects.count(); index += 1) {
     const storeSelect = selects.nth(index);
     const beforeClick = await readVisibleLegacyLingxingAdsDropdowns(page);
+    await clearLingxingTransientToast(page);
     await storeSelect.click();
     const afterClick = await readVisibleLegacyLingxingAdsDropdowns(page);
     const previouslyVisible = new Set(beforeClick.references.flatMap((reference) => (
@@ -572,6 +578,7 @@ async function trySelectOnlyLegacyLingxingAdsStore(
   const dropdown = legacyLingxingAdsDropdown(page, matched.dropdown);
   if (matched.dropdown.documentIndex === null
     || !await dropdown.isVisible().catch(() => false)) {
+    await clearLingxingTransientToast(page);
     await storeSelect.click();
   }
   await dropdown.waitFor({ state: 'visible', timeout: 10_000 });
@@ -613,6 +620,32 @@ function assertLingxingAdsFilterSelectedStore(
   }
 }
 
+async function clearLingxingTransientToast(page: Page): Promise<void> {
+  const toastCandidates = page.locator(LINGXING_TRANSIENT_TOAST_SELECTOR) as Locator & {
+    first?: () => Locator;
+  };
+  if (typeof toastCandidates.isVisible !== 'function') return;
+  const toast = typeof toastCandidates.first === 'function'
+    ? toastCandidates.first()
+    : toastCandidates;
+  if (!await toast.isVisible({ timeout: 250 }).catch(() => false)) return;
+
+  const close = toast.locator(
+    '[aria-label="关闭"], [title="关闭"], .el-icon-close, .anticon-close, button',
+  ).first();
+  if (await close.isVisible({ timeout: 250 }).catch(() => false)) {
+    await close.click({ timeout: 1_000 }).catch(() => undefined);
+  }
+  if (await toast.isVisible({ timeout: 250 }).catch(() => false)) {
+    await page.keyboard.press('Escape').catch(() => undefined);
+  }
+  if (await toast.isVisible({ timeout: 250 }).catch(() => false)) {
+    await toast.waitFor({ state: 'hidden', timeout: 1_500 }).catch(() => {
+      throw new Error('领星页面提示层未关闭，店铺选择已阻断。');
+    });
+  }
+}
+
 async function trySelectOnlyCurrentLingxingAdsStore(
   page: Page,
   expected: string,
@@ -634,6 +667,7 @@ async function trySelectOnlyCurrentLingxingAdsStore(
     if (optionIndexes.length === 0 && !await dropdown.isVisible().catch(() => false)) {
       const trigger = control.locator('.fs-label-wrap');
       if (await trigger.isVisible().catch(() => false)) {
+        await clearLingxingTransientToast(page);
         await trigger.click({ timeout: 5_000 });
         openedForDiscovery = await dropdown
           .waitFor({ state: 'visible', timeout: 1_000 })
@@ -680,6 +714,7 @@ async function trySelectOnlyCurrentLingxingAdsStore(
     return true;
   }
 
+  await clearLingxingTransientToast(page);
   await control.locator('.fs-label-wrap').click();
   const dropdown = control.locator('.fs-dropdown');
   await dropdown.waitFor({ state: 'visible', timeout: 10_000 });

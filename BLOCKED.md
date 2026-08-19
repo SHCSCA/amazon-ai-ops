@@ -1,5 +1,12 @@
 # BLOCKED — 2026-08-07
 
+## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
+
+- 真实失败原因已确认：领星下载中心的非模态成功提示层覆盖店铺 FilterSelect，导致首个 campaign 创建/下载点击超时；正式库当前为 1 个 failed job、1 个 failed batch、1 个 failed file，尚无 import run/8 类完成批次。
+- 修复已进入新 Windows 包：已知提示层只走关闭控件/Escape，无法关闭即阻断；SSO `35/35`、typecheck、build:win、package-launch smoke 均通过。未放宽 Ads 身份、店铺隔离或广告写入安全门。
+- **待用户动作**：请在目标应用的数据采集页对失败任务点击一次“重试/继续采集”。仅在应用内观察成功或中文可操作失败；不盲点第二次。执行者不代输凭证、不操控桌面。
+- 其他已发现问题（普通界面技术文案、scheduler title、任务/实验真实数据前置、Task 8B 推荐与审批）按用户要求只记录，等主流程确认后再决定是否扩修。当前仍 `APP_NEEDS_WORK / NON_READY`，Ads 写入 0。
+
 ## 当前：2026-08-19 诊断前置已进入包，唯一主流程阻断是正式 8/8 复验
 
 - 已按确认方案闭合：collection-only 在进入 scheduler 前按当前店铺业务窗持久化同页下载中心诊断，TDD 聚焦红→绿、typecheck、`build:win` 均通过。

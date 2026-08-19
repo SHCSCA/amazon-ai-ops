@@ -593,6 +593,55 @@ describe('selectOnlyLingxingAdsStore', () => {
     }
   });
 
+  it('clears a persistent non-modal success toast before opening the current store FilterSelect', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <style>
+          .fs-dropdown { display: none; }
+          .fs-dropdown.visible { display: block; }
+          #toast-container { position: fixed; inset: 0; z-index: 99; }
+          .toast-success { display: block; pointer-events: auto; }
+        </style>
+        <div class="fs-wrap multiple" data-filter="store">
+          <div class="fs-label-wrap"><div class="fs-label placeholder">搜索店铺</div></div>
+          <div class="fs-dropdown"><div class="fs-options">
+            <div class="fs-option" data-value="store-orbit"><div class="fs-option-label"><span class="fs-option-label-detail">ORBIT-US 美国</span></div></div>
+          </div><div class="fs-footer"><a class="fs-save">确定</a></div></div>
+        </div>
+        <div id="toast-container"><div aria-live="polite" class="export-info toast-success">导出成功</div></div>
+      `);
+      await page.evaluate(() => {
+        const root = document.querySelector<HTMLElement>('.fs-wrap.multiple')!;
+        const dropdown = root.querySelector<HTMLElement>('.fs-dropdown')!;
+        root.querySelector('.fs-label-wrap')?.addEventListener('click', () => dropdown.classList.add('visible'));
+        root.querySelector('.fs-option')?.addEventListener('click', (event) => {
+          (event.currentTarget as HTMLElement).classList.toggle('selected');
+        });
+        root.querySelector('.fs-save')?.addEventListener('click', () => {
+          const selected = root.querySelector<HTMLElement>('.fs-option.selected .fs-option-label-detail');
+          root.querySelector<HTMLElement>('.fs-label')!.textContent = selected?.textContent ?? '';
+          dropdown.classList.remove('visible');
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            document.querySelector<HTMLElement>('.toast-success')!.style.display = 'none';
+            document.querySelector<HTMLElement>('#toast-container')!.style.pointerEvents = 'none';
+          }
+        });
+      });
+
+      await selectOnlyLingxingAdsStore(page, 'ORBIT-US');
+
+      expect((await page.locator('.fs-label').textContent())?.trim()).toBe('ORBIT-US 美国');
+      expect(await page.locator('.toast-success:visible').count()).toBe(0);
+    } finally {
+      await page.close();
+      await browser.close();
+    }
+  });
+
   it('blocks duplicate exact aliases in the current Lingxing FilterSelect DOM', async () => {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();

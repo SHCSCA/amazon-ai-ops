@@ -8,6 +8,14 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 置顶：2026-08-19 领星提示层拦截已修复，等待应用内重试采集
+
+- 正式库真实失败已定位：连接与下载中心诊断均 ready，但首个采集任务在创建/下载时因领星非模态成功提示层覆盖 `.fs-wrap.multiple` 店铺 FilterSelect，点击超时并以 `LINGXING_CREATE_CALL_INTERRUPTED` 结束；批次失败、仅 1 个文件失败，尚无导入完成证据。
+- 按用户要求只修主流程：`lingxing-ads-sso.ts` 仅识别领星提示容器，优先点击已知关闭控件、再发 Escape；仍可见则 fail-closed，不使用 `force` 或 DOM 删除；动态店铺精确匹配、Ads 身份门和广告写入门不变。
+- TDD 证据：修前聚焦测试 `1 failed / 34 skipped`（5 秒超时，提示层拦截）；修后同测 `1 passed / 34 skipped`；SSO 单文件 `35/35 passed`；desktop typecheck `exit 0`。
+- 新包 `pnpm run build:win` `exit 0`，七步 status 0、native bindings `unchangedExact=true/sourceReadOnly=true`；当前 installer `FEC295F9...`、portable `FC711114...`、folder ZIP `E7FA7758...`、blockmap `DC2394FC...`，EXE 保持 `67DC2A70...`。`pnpm run smoke:package-launch` `exit 0`，证据 `output/codex-evidence/package-launch-smoke-1787108319134.json`。
+- 当前只等待操作者在目标应用内对失败采集动作点击一次重试/继续；执行者不代输密码、不操作桌面。成功条件仍是 8/8 报表、完成批次与导入证据；失败则记录中文原因并停止。策略、运营任务、经营实验、Package UI、Task 8B 后置，Ads 写入继续为 0。
+
 ## 置顶：2026-08-19 下载中心诊断前置已修复，等待一次真实采集复验
 
 - 按用户确认的“最小主流程”方案，仅修改 `apps/desktop/src/main/index.ts` 与 `apps/desktop/src/main/browser-login-staged-status.test.ts`：collection-only 浏览器完成 ERP→Ads 动态店铺核验并进入下载中心后，按当前 StoreContext.businessDate 与 runtime config 的回看天数生成唯一日期窗，采集同页模型/选择器/截图/DOM 证据并在当前店铺范围内持久化；失败仍在 scheduler durable 任务前阻断，不放宽 Ads 或店铺隔离门。
