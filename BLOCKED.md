@@ -1,6 +1,20 @@
 # BLOCKED — 2026-08-07
 
-## 当前：2026-08-20 真实 8 类采集需要人工核对领星创建结果
+## 当前：2026-08-20 原创建结果已核清，续跑在恢复 claim 前阻断
+
+- 人工事实门已经闭合：目标应用已确认原 `product_targeting` 精确生成记录不存在，并把原任务持久化为 `LINGXING_CREATE_CONFIRMED_ABSENT`；因此当前阻断不再是“需要人工核对创建结果”。
+- 最新包中点击同一任务“继续采集”后，恢复三表仍精确为 `attempts=0 / active_claims=0 / events=0`，任务未进入可变更下载/导入状态。代码边界为 `resumeJob` 已取得 exact durable resume packet，但在协调器的 `acquireCollectionResumeClaimForStore` 前被浏览器运行时或 preflight 安全门拒绝。
+- 同日期最新下载中心诊断的安全摘要为：`ready=true`、截图文件存在、DOM 文件存在、16 条动作检查存在、页面模型快照完全匹配、必需动作证据缺失为 0、证据年龄约 6 分钟。因此不能再笼统归因于“没有验证页面”；需要用聚焦测试区分运行时身份/authority 变化与 preflight readback。
+- 复制库已进一步排除仓储门：官方 readonly/query-only 在线备份上的 exact packet 成功取得 resume claim，复制库 `attempts/active_claims/events=1/1/1`；正式库保持 `0/0/0`。剩余阻断只可能位于协调器 claim 前的 operation lease、可见运行时/身份回读或 preflight 断言。
+- UI 丢失错误反馈的确定缺口已红→绿修复：resume catch 现在只允许同店、同 Profile、同站点/币种/业务日且 generation 单调前进时保留中文失败；其他 authority 变化继续 fail-closed。聚焦回归 `66/66`、desktop typecheck 通过，但该源码尚未重建入包，因此当前运行包仍不能显示这次 preclaim 的精确原因。
+- “确认缺失”安全门也已收紧：同日期兄弟行不再单独构成 absence proof；只有下载中心搜索框精确绑定本次生成名、值回读一致且连续 3 次无精确行才可重建。该修改防止分页或未生效过滤导致重复创建，不改变当前已经取得的正式人工事实。
+- 最新构建哈希：installer `2E07497F23233D90DCDAA5B80E6748D93DD9401C20F561459A6E7C56EA125578`、portable `924D31B0875FE8C264D1E1D964E52531BD6E96997B4B29A4F31B25A6E4AC8D0C`、folder ZIP `C997AFEF9403806790B192568026B9AF5ED482BEBCD1526E95C5D2B423FA9AE5`、blockmap `4CDE6B7F23D1C87278418C96334BBDDD4D4F5A281A2ECE2D98E0E43C9DA7D6C1`。目标应用已停止且精确进程残留为 0。
+- 广告执行五表继续为 0；没有产品内具体推荐和人工批准前不得进行 Task 8B。真实 8/8 入库未完成，整体仍为 `APP_NEEDS_WORK / NON_READY`。
+
+## 历史：2026-08-20 真实 8 类采集需要人工核对领星创建结果
+
+- 人工核对事实已取得：当前店铺同日期有 5 条其他生成成功报表，但原 `product_targeting` 精确生成名不存在；旧“无法判断是否创建”的事实不确定态已收窄为“可审计缺失”。
+- 源码已新增显式“核对并继续”路径，聚焦回归 `65/65` 与 desktop typecheck 通过；它不盲重试，只有唯一生成名、当前店铺身份和同日期旁证同时成立才把缺失写为可恢复 checkpoint。尚未重建并用目标应用复验，因此当前阻断仍是“运行包未包含/未证明该恢复链”，不是代码已完成。
 
 - 启动恢复、Main-only 保存凭证连接、ERP/Ads 同店身份链均已进入最新 Windows 包并完成正式 AppData 实测；当前不再被旧导入恢复门或登录阻断。
 - 单次完整 8 类主动作形成 durable failed job。精确失败为 `LINGXING_CREATE_CALL_INTERRUPTED`：`product_targeting` 创建请求后，30 秒内无法在领星下载中心唯一定位本次生成的报表行。当前 checkpoint 分布为 downloaded 5、create_unknown 1、failed 1、queued 1；`report_import_runs=0`。

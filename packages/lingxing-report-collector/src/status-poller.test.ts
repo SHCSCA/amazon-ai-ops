@@ -4,10 +4,63 @@ import {
   classifyReportStatus,
   classifyReportGenerationStatus,
   isTerminalReportGenerationStatus,
+  parseExpectedLingxingGeneratedReportName,
   pollReportGenerationStatus,
+  reconcileLingxingCreatedReportRows,
 } from './status-poller';
 
 describe('report generation status poller', () => {
+  it('extracts one exact generated report name from an interrupted create failure without accepting another report or date range', () => {
+    const detail = "locator('tr').filter({ hasText: 'AAO_20260806_20260819_product_targeting_071554' }).first()";
+
+    expect(parseExpectedLingxingGeneratedReportName(detail, {
+      dateStart: '2026-08-06',
+      dateEnd: '2026-08-19',
+      reportToken: 'product_targeting',
+    })).toBe('AAO_20260806_20260819_product_targeting_071554');
+    expect(parseExpectedLingxingGeneratedReportName(detail, {
+      dateStart: '2026-08-06',
+      dateEnd: '2026-08-19',
+      reportToken: 'keyword',
+    })).toBeUndefined();
+    expect(parseExpectedLingxingGeneratedReportName(
+      `${detail} AAO_20260806_20260819_product_targeting_071555`,
+      {
+        dateStart: '2026-08-06',
+        dateEnd: '2026-08-19',
+        reportToken: 'product_targeting',
+      },
+    )).toBeUndefined();
+  });
+
+  it('distinguishes one exact created row from confirmed absence and ambiguous evidence', () => {
+    const input = {
+      expectedReportName: 'AAO_20260806_20260819_product_targeting_071554',
+      dateStart: '2026-08-06',
+      dateEnd: '2026-08-19',
+    };
+
+    expect(reconcileLingxingCreatedReportRows([
+      'AAO_20260806_20260819_product_targeting_071554 2026-08-06 - 2026-08-19 生成成功',
+      'AAO_20260806_20260819_keyword_071501 2026-08-06 - 2026-08-19 生成成功',
+    ], input)).toMatchObject({ outcome: 'found', status: 'ready' });
+    expect(reconcileLingxingCreatedReportRows([
+      'AAO_20260806_20260819_keyword_071501 2026-08-06 - 2026-08-19 生成成功',
+    ], input)).toEqual({ outcome: 'ambiguous' });
+    expect(reconcileLingxingCreatedReportRows([
+      'AAO_20260806_20260819_keyword_071501 2026-08-06 - 2026-08-19 生成成功',
+    ], { ...input, exactSearchApplied: true })).toEqual({ outcome: 'confirmed_absent' });
+    expect(reconcileLingxingCreatedReportRows([], {
+      ...input,
+      exactSearchApplied: true,
+    })).toEqual({ outcome: 'confirmed_absent' });
+    expect(reconcileLingxingCreatedReportRows([], input)).toEqual({ outcome: 'ambiguous' });
+    expect(reconcileLingxingCreatedReportRows([
+      'AAO_20260806_20260819_product_targeting_071554 2026-08-06 - 2026-08-19 生成中',
+      'AAO_20260806_20260819_product_targeting_071554 2026-08-06 - 2026-08-19 生成成功',
+    ], input)).toEqual({ outcome: 'ambiguous' });
+  });
+
   it('classifies Lingxing-style terminal and non-terminal report statuses', () => {
     expect(classifyReportGenerationStatus('')).toBe('unknown');
     expect(classifyReportGenerationStatus('待创建')).toBe('pending');

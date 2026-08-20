@@ -538,6 +538,13 @@ describe('DataCollectionPage store authority collection contract', () => {
     });
     expect(unknownMarkup).toContain('人工核对（禁止恢复）');
     expect(unknownMarkup).not.toContain('>继续采集<');
+
+    const reconcilableMarkup = renderWorkspace({
+      jobs: [collectionJob({ jobId: 'job-reconcile', jobState: 'completed_with_errors', checkpointState: 'create_unknown' })],
+      onReconcile: vi.fn(),
+    });
+    expect(reconcilableMarkup).toContain('核对并继续');
+    expect(reconcilableMarkup).not.toContain('人工核对（禁止恢复）');
   });
 
   it('keeps collection task ids and internal failure terms out of the ordinary workspace surface', () => {
@@ -590,6 +597,21 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(source).toContain('retainCollectionActionFeedback(previousFeedbackContext, nextFeedbackContext, currentError)');
     expect(source).toContain('!isCapturedFeedbackAuthorityCurrent(dateRange.storeContext)');
     expect(source).toContain('if (!isCapturedAuthorityCurrent(authorityKey)) return;');
+  });
+
+  it('keeps same-store resume failures visible after a forward session generation transition', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const resumeSource = source.slice(
+      source.indexOf('async function resumeCollectionJob('),
+      source.indexOf('async function cancelCollectionJob('),
+    );
+    const catchSource = resumeSource.slice(
+      resumeSource.indexOf('} catch (caught) {', resumeSource.indexOf('setCollectionMonitorOpen(true)')),
+      resumeSource.indexOf('} finally {'),
+    );
+
+    expect(catchSource).toContain('isCapturedFeedbackAuthorityCurrent(captured.storeContext)');
+    expect(catchSource).not.toContain('isCapturedAuthorityCurrent(captured.authorityKey)');
   });
 });
 

@@ -91,7 +91,9 @@ type LingxingCollectionCancelInput = {
   storeContext: StoreContextEnvelope;
 };
 
-type LingxingCollectionResumeInput = LingxingCollectionCancelInput;
+type LingxingCollectionResumeInput = LingxingCollectionCancelInput & {
+  reconcileCreateUnknown?: boolean;
+};
 
 type BusinessUiScope = {
   dateFrom: string;

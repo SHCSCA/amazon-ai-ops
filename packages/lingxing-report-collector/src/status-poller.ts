@@ -49,6 +49,69 @@ export interface PollReportGenerationStatusOptions {
   onPendingSnapshot?: (snapshot: ReportStatusSnapshot) => Promise<void> | void;
 }
 
+export interface ExpectedLingxingGeneratedReportNameInput {
+  dateStart: string;
+  dateEnd: string;
+  reportToken: string;
+}
+
+export function parseExpectedLingxingGeneratedReportName(
+  detail: string,
+  input: ExpectedLingxingGeneratedReportNameInput,
+): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dateStart)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(input.dateEnd)
+    || !/^[A-Za-z0-9_-]+$/.test(input.reportToken)) {
+    return undefined;
+  }
+
+  const prefix = `AAO_${input.dateStart.replaceAll('-', '')}_${input.dateEnd.replaceAll('-', '')}_${input.reportToken}_`;
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = [...detail.matchAll(new RegExp(`${escapedPrefix}\\d{6}`, 'g'))]
+    .map((match) => match[0]);
+  const uniqueMatches = [...new Set(matches)];
+  return uniqueMatches.length === 1 ? uniqueMatches[0] : undefined;
+}
+
+export type LingxingCreatedReportRowReconciliation =
+  | { outcome: 'found'; status: ReportGenerationStatus; rowText: string }
+  | { outcome: 'confirmed_absent' }
+  | { outcome: 'ambiguous' };
+
+export function reconcileLingxingCreatedReportRows(
+  rowTexts: readonly string[],
+  input: {
+    expectedReportName: string;
+    dateStart: string;
+    dateEnd: string;
+    exactSearchApplied?: boolean;
+  },
+): LingxingCreatedReportRowReconciliation {
+  const compactStart = input.dateStart.replaceAll('-', '');
+  const compactEnd = input.dateEnd.replaceAll('-', '');
+  const expectedPrefix = `AAO_${compactStart}_${compactEnd}_`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dateStart)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(input.dateEnd)
+    || !input.expectedReportName.startsWith(expectedPrefix)) {
+    return { outcome: 'ambiguous' };
+  }
+
+  const dateDisplay = `${input.dateStart} - ${input.dateEnd}`;
+  const rows = [...new Set(rowTexts.map((text) => text.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const scopedRows = rows.filter((text) => text.includes(expectedPrefix) && text.includes(dateDisplay));
+  const exactRows = scopedRows.filter((text) => text.includes(input.expectedReportName));
+  if (exactRows.length !== 1) {
+    return exactRows.length === 0 && input.exactSearchApplied === true
+      ? { outcome: 'confirmed_absent' }
+      : { outcome: 'ambiguous' };
+  }
+
+  const status = classifyReportGenerationStatus(exactRows[0]);
+  return status === 'unknown'
+    ? { outcome: 'ambiguous' }
+    : { outcome: 'found', status, rowText: exactRows[0] };
+}
+
 export class ReportGenerationTerminalError extends Error {
   constructor(
     message: string,

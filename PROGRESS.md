@@ -8,7 +8,23 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
-## 当前：2026-08-20 启动恢复与连接已闭合，真实 8 类采集在领星创建回读处安全停止
+## 当前：2026-08-20 创建结果已核清，原任务续跑仍在 claim 前安全阻断
+
+- 最新 Windows 包已重建成功，七步均为 status 0，native bindings `unchangedExact=true / sourceReadOnly=true`。当前 installer `2E07497F23233D90DCDAA5B80E6748D93DD9401C20F561459A6E7C56EA125578`、portable `924D31B0875FE8C264D1E1D964E52531BD6E96997B4B29A4F31B25A6E4AC8D0C`、folder ZIP `C997AFEF9403806790B192568026B9AF5ED482BEBCD1526E95C5D2B423FA9AE5`、blockmap `4CDE6B7F23D1C87278418C96334BBDDD4D4F5A281A2ECE2D98E0E43C9DA7D6C1`；win-unpacked EXE 仍为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
+- 仅操控目标 Electron 应用完成一次最终复验。“核对并继续”已把原 `product_targeting` `create_unknown` 精确收窄并持久化为 `LINGXING_CREATE_CONFIRMED_ABSENT`；这证明核对路径本身有效，应用没有猜测创建结果或盲目复用不存在的行。
+- 随后的同一原任务续跑没有形成任何恢复 claim：`lingxing_collection_resume_attempts=0`、`lingxing_collection_resume_active_claims=0`、`lingxing_collection_resume_events=0`，最新任务仍为 `failed`，正式导入仍为 0。按“同一验收不盲试”约束已停止目标应用，精确目标进程残留为 0。
+- 当前根因边界已收窄为 `resumeJob` 进入协调器后、`acquireCollectionResumeClaimForStore` 之前的浏览器/预检拒绝；不是仓储 resume packet、不是已下载文件校验、不是导入或 Ads 写入。当前同日期最新下载中心诊断为 ready，截图、DOM、动作选择器证据均存在且在 30 分钟窗口内，因此下一步只做该 preclaim 条件的聚焦源码复现与错误反馈保留，不再操作正式应用。
+- 使用官方 readonly/query-only 在线备份创建一次性复制库后，原任务 exact resume packet 可成功执行 `acquireCollectionResumeClaimForStore`，复制库三表变为 `1/1/1`；临时库随后清理，正式库三表保持 `0/0/0`。这排除了 durable packet、CAS hash 与 generation-forward 仓储门。
+- 新增反馈 TDD：精确 RED 为 resume catch 缺少 `isCapturedFeedbackAuthorityCurrent(captured.storeContext)`；修后同店 generation 前进时保留中文失败，换店/档案/站点/币种/业务日及 generation 回退仍丢弃。聚焦回归现为 `status-poller.test.ts` + `data-collection-page.test.ts` 合计 `66/66 passed`，desktop typecheck exit 0。该反馈修复尚未重建入包，也不会作为已解决浏览器 preflight 的证明。
+- 提交前安全反查发现并修复分页误判风险：未应用精确生成名搜索时，同日期兄弟报表不再足以确认缺失；Main 必须把下载中心搜索框精确回读为本次生成名，并连续 3 次观察不到精确行，才允许 `confirmed_absent`。精确 RED 收到旧 `confirmed_absent`，修后 GREEN；任何搜索条件漂移、重复行或未知状态继续保持 `ambiguous` 并禁止重建。
+- 正式广告执行五表继续全部为 0；真实 8/8 入库、策略、运营任务、经营实验、当前包 Package UI 与 Task 8B 均未完成，整体仍为 `APP_NEEDS_WORK / NON_READY`。
+- 非主流程但已确认的问题只记录：生产失败任务因 `importState=not_applicable` 被普通界面误标为 Canary；该标签问题等待主链闭合后再修。
+
+## 历史：2026-08-20 启动恢复与连接已闭合，真实 8 类采集在领星创建回读处安全停止
+
+- 已将人工核对事实收窄：只读安全 DOM 证据显示同店同日期 5 条其他报表均“生成成功”，但原 `product_targeting` 精确生成名不存在；随后只下载已有报表的恢复任务仍在该行等待 300 秒后失败。正式库当前 jobs 6、batches 4、files 10、`report_import_runs=0`，广告执行五表继续为 0。
+- 新增显式“核对并继续”恢复链：仅接受单个 `create_unknown`、从原错误中解析出的唯一生成名、当前 StoreContext/可见领星身份、同日期下载中心行证据；唯一行可复用，存在同日期旁证但精确行缺失可安全重建，重名/无旁证/身份变化继续阻断。默认未注入恢复动作时仍显示“人工核对（禁止恢复）”。
+- TDD 证据：名称解析 RED=`parseExpectedLingxingGeneratedReportName is not a function`，行核对 RED=`reconcileLingxingCreatedReportRows is not a function`，UI RED=缺少“核对并继续”；修后两文件聚焦回归 `65/65 passed`，desktop typecheck exit 0。当前尚待重建 Windows 包并在目标应用内单次复验，未宣称 8/8 或业务闭环。
 
 - 部分导入启动恢复与“重启前尚未创建批次”的 cancelled 任务恢复均已按窄合同修复：`lingxing-import-startup-recovery-gate.test.ts` 为 `9/9 passed`，`store-collection-orchestrator-scheduler-adapter.test.ts` 为 `75/75 passed`，desktop typecheck exit 0。正式冷启动不再被旧任务阻断。
 - 最新 Windows 构建七步均为 status 0，native bindings `unchangedExact=true / sourceReadOnly=true`。当前 installer `723225012B07FE7321A7242592936283183A92B27F473D26DC30CE4CB6EE82EE`、portable `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807`、folder ZIP `DF5210B34903B3728776B370C3E6400052FBA7AFDD1604AD22935AEA56AB58A7`、blockmap `F6BA749B6F3936ACBA20C79CA16D892F7902330614C9C095F0332F1485E3F8C9`、win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、app content `2BCA88C048C889D971B58A37E3A2397D547779752A8048A88EB62FBAE9C99BDB`、Main bundle `3AE00CE179A46765BAB398A149F87524DDD5B3E9625C65549D502E5995E82F6E`、Renderer `index-CZlnaKmv.js`（`C21E61041F4F54F9D6464E886690829B999FA6DADC6132B5BB1473BEB4580EE2`）。

@@ -1507,6 +1507,7 @@ export function CollectionJobWorkspace({
   actionBusyKey,
   onRefresh,
   onResume,
+  onReconcile,
   onCancel,
 }: {
   jobs: readonly LingxingCollectionJobSnapshot[];
@@ -1517,6 +1518,7 @@ export function CollectionJobWorkspace({
   actionBusyKey: string | null;
   onRefresh: () => void;
   onResume: (job: LingxingCollectionJobSnapshot) => void;
+  onReconcile?: (job: LingxingCollectionJobSnapshot) => void;
   onCancel: (job: LingxingCollectionJobSnapshot) => void;
 }) {
   const visibleJobs = jobs.slice(0, 12);
@@ -1633,14 +1635,27 @@ export function CollectionJobWorkspace({
                         </button>
                       )}
                       {row.action === 'manual-reconciliation' && (
-                        <button
-                          aria-label="当前采集任务需人工核对，禁止继续采集"
-                          className="secondary-button compact-button"
-                          disabled
-                          type="button"
-                        >
-                          人工核对（禁止恢复）
-                        </button>
+                        onReconcile ? (
+                          <button
+                            aria-busy={resumeBusy}
+                            className={resumeBusy ? 'primary-button compact-button button-loading' : 'primary-button compact-button'}
+                            disabled={Boolean(actionBusyKey)}
+                            onClick={() => onReconcile(row.job)}
+                            type="button"
+                          >
+                            {resumeBusy && <span aria-hidden="true" className="button-spinner" />}
+                            <span>{resumeBusy ? '核对中...' : '核对并继续'}</span>
+                          </button>
+                        ) : (
+                          <button
+                            aria-label="当前采集任务需人工核对，禁止继续采集"
+                            className="secondary-button compact-button"
+                            disabled
+                            type="button"
+                          >
+                            人工核对（禁止恢复）
+                          </button>
+                        )
                       )}
                       {row.action === 'none' && <span className="table-subtext">无需操作</span>}
                     </div>
@@ -2085,15 +2100,20 @@ export function DataCollectionPage() {
     return collectionActionFeedbackBelongsToAuthority(capturedContext, authorityContextRef.current);
   }
 
-  async function resumeCollectionJob(job: LingxingCollectionJobSnapshot): Promise<void> {
+  async function resumeCollectionJob(
+    job: LingxingCollectionJobSnapshot,
+    options: { reconcileCreateUnknown?: boolean } = {},
+  ): Promise<void> {
     const api = (window as any).electronAPI;
     const view = buildCollectionJobWorkspaceRow(job, storeAuthority.authoritativeContext);
-    if (view.action === 'manual-reconciliation') {
+    if (view.action === 'manual-reconciliation' && !options.reconcileCreateUnknown) {
       setActionNotice('该任务没有自动恢复。');
       setActionError(view.blockerText);
       return;
     }
-    if (view.action !== 'resume' && view.action !== 'supplement-import') {
+    if (view.action !== 'resume'
+      && view.action !== 'supplement-import'
+      && !(view.action === 'manual-reconciliation' && options.reconcileCreateUnknown)) {
       setActionNotice('该任务当前不需要继续采集。');
       return;
     }
@@ -2123,7 +2143,9 @@ export function DataCollectionPage() {
     setLastActionResult(null);
     setLastDiagnostic(null);
     setActionError(null);
-    setActionNotice(view.action === 'supplement-import'
+    setActionNotice(options.reconcileCreateUnknown
+      ? '正在当前店铺下载中心精确核对原创建记录；只有确认唯一记录或确认缺失后才会继续。'
+      : view.action === 'supplement-import'
       ? '正在补导当前采集任务的真实报表；系统会复用已验证文件，不会重新创建领星报表。'
       : view.canary
       ? '正在从当前诊断任务的已确认检查点继续；结果只用于诊断，不会导入生产指标。'
@@ -2142,13 +2164,16 @@ export function DataCollectionPage() {
         jobId: job.jobId,
         requestId,
         storeContext: captured.storeContext,
+        ...(options.reconcileCreateUnknown ? { reconcileCreateUnknown: true } : {}),
       });
       if (collectionJobActionTokenRef.current !== actionToken || !isCapturedAuthorityCurrent(captured.authorityKey)) return;
       if (result?.job && !collectionJobBelongsToStore(result.job, captured.storeContext)) return;
       if (manualReconciliationRequestIdRef.current === requestId) return;
       setActionError(null);
       const returnedImportState = result?.job?.importState || result?.importState;
-      setActionNotice(view.action === 'supplement-import'
+      setActionNotice(options.reconcileCreateUnknown
+        ? '创建结果已完成精确核对，正在继续原任务并复用已验证文件。'
+        : view.action === 'supplement-import'
         ? returnedImportState === 'succeeded' || result?.importRecovered === true
           ? '补导已完成并持久化为生产指标已入库，正在刷新当前店铺任务与数据账本。'
           : '补导请求已返回，正在重新读取持久化入库状态。'
@@ -2158,13 +2183,15 @@ export function DataCollectionPage() {
       window.dispatchEvent(new Event('business-ui:data-updated'));
       await loadRecentCollectionJobs(captured.storeContext, captured.authorityKey);
     } catch (caught) {
-      if (collectionJobActionTokenRef.current !== actionToken || !isCapturedAuthorityCurrent(captured.authorityKey)) return;
+      if (collectionJobActionTokenRef.current !== actionToken
+        || !isCapturedFeedbackAuthorityCurrent(captured.storeContext)) return;
       if (manualReconciliationRequestIdRef.current === requestId) return;
       setActionNotice('继续采集未完成。');
       setActionError(toUserFacingError(caught, '继续采集未完成。'));
       await loadRecentCollectionJobs(captured.storeContext, captured.authorityKey);
     } finally {
-      if (collectionJobActionTokenRef.current === actionToken && isCapturedAuthorityCurrent(captured.authorityKey)) {
+      if (collectionJobActionTokenRef.current === actionToken
+        && isCapturedFeedbackAuthorityCurrent(captured.storeContext)) {
         collectionJobActionTokenRef.current = null;
         setCollectionJobActionBusyKey(null);
         setRunningAction(null);
@@ -2778,6 +2805,7 @@ export function DataCollectionPage() {
             const authorityKey = storeAuthority.authorityKey;
             if (context && authorityKey) void loadRecentCollectionJobs(context, authorityKey);
           }}
+          onReconcile={(job) => { void resumeCollectionJob(job, { reconcileCreateUnknown: true }); }}
           onResume={(job) => { void resumeCollectionJob(job); }}
         />
 

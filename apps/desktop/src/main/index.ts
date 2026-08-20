@@ -57,7 +57,7 @@ import {
 import { MissionDomainRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/mission-domain-repo';
 import { AnalysisAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-authority-repo';
 import { ExecutionAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/execution-authority-repo';
-import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
+import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, parseExpectedLingxingGeneratedReportName, pollReportGenerationStatus, reconcileLingxingCreatedReportRows, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
@@ -6871,6 +6871,186 @@ function projectExportArtifactForCurrentStore(
   return rendererPayload(artifact);
 }
 
+async function reconcileLingxingCreateUnknownCheckpoint(
+  job: LingxingCollectionJobSnapshot,
+  context: StoreContextEnvelope,
+  ownerRequestId: string,
+): Promise<LingxingCollectionJobSnapshot> {
+  if (packageUiReadOnlyRuntime) {
+    throw new Error('PACKAGE_UI_EVIDENCE_READ_ONLY: package UI evidence cannot reconcile collection.');
+  }
+  if (!state.lingxingImportRepo || !state.lingxingCollectionOperations) {
+    throw new Error('店铺级领星采集核对依赖尚未就绪。');
+  }
+  if (!state.executionAuthorityService) {
+    throw new Error('浏览器任务准入屏障尚未就绪。');
+  }
+  const unknownCheckpoints = job.reports.filter((checkpoint) => checkpoint.state === 'create_unknown');
+  const alreadyReconciled = job.blockerCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+    || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_FAILED';
+  if (!alreadyReconciled && unknownCheckpoints.length !== 1) {
+    throw new Error('创建结果核对要求任务中恰好有一类待核对报表。');
+  }
+  const checkpoint = unknownCheckpoints[0];
+  const report = checkpoint
+    ? LINGXING_AD_REPORTS.find((candidate) => candidate.type === checkpoint.reportType)
+    : undefined;
+  const expectedReportName = checkpoint && report
+    ? parseExpectedLingxingGeneratedReportName(checkpoint.detail || '', {
+        dateStart: job.request.dateStart,
+        dateEnd: job.request.dateEnd,
+        reportToken: report.expectedFilenameKeyword,
+      })
+    : undefined;
+  if (!alreadyReconciled && (!checkpoint || !report || !expectedReportName)) {
+    throw new Error('创建记录中没有唯一、可核对的领星报表名称；为避免重复创建，任务继续阻断。');
+  }
+
+  const authorized = authorizedLingxingCollectionTarget(context);
+  return state.executionAuthorityService.withAdmittedBrowserOperation(
+    'legacy:lingxing-create-reconciliation',
+    () => state.lingxingCollectionOperations!.run({
+      context: authorized.context,
+      owner: `lingxing-create-reconciliation:${ownerRequestId}`,
+      ttlMs: 2 * 60 * 1_000,
+    }, async (operation) => {
+      operation.assertStepCurrent();
+      const browserRuntime = visibleBrowserRuntimeRegistry.read();
+      if (!browserRuntime
+        || !state.isLoggedIn
+        || browserRuntime.providerIdentityStatus.lingxing !== 'verified'
+        || !sameExactStoreContext(browserRuntime.context, authorized.context)) {
+        throw new Error('请先连接当前店铺领星会话，再核对创建结果。');
+      }
+      assertVisibleLingxingCollectionSession(authorized.context);
+      const controller = browserControllerFromVisibleRuntime(browserRuntime, 'lingxing');
+      if (!controller) throw new Error('当前领星可见浏览器类型不受 Main 支持。');
+      const model = readDownloadCenterPageModel();
+      await navigateToLingxingDownloadCenter(controller, model, authorized.target.storeName);
+      const page = getControllerPageOrThrow(controller);
+      const selectors = model.actionSelectors!;
+      if (alreadyReconciled) {
+        const diagnostic = await persistCollectionOnlyDownloadCenterDiagnostic(
+          controller,
+          storeCapsuleFor(authorized.store),
+          authorized.target,
+          { start: job.request.dateStart, end: job.request.dateEnd },
+        );
+        operation.assertStepCurrent();
+        if (!diagnostic.ready) {
+          throw new Error('当前店铺下载中心预检证据尚未闭合；任务继续阻断，未重复创建。');
+        }
+        return job;
+      }
+      let reconciliation: ReturnType<typeof reconcileLingxingCreatedReportRows> = { outcome: 'ambiguous' };
+      let confirmedAbsentObservations = 0;
+      const dateRange = { start: job.request.dateStart, end: job.request.dateEnd };
+      const selectorContext: DownloadCenterReportSelectorContext = {
+        ...report!,
+        generatedReportName: expectedReportName!,
+        storeName: authorized.target.storeName,
+        marketplaceCode: authorized.target.marketplaceCode,
+      };
+      const reportSearchInput = await assertUsableDownloadCenterActionSelector(
+        page,
+        'reportSearchInput',
+        selectors.reportSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput,
+        selectorContext,
+        dateRange,
+      );
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        operation.assertStepCurrent();
+        await refreshDownloadCenterReportList(page, selectors);
+        const searchInput = page.locator(reportSearchInput).first();
+        await searchInput.fill(expectedReportName!);
+        await searchInput.press('Enter').catch(() => undefined);
+        await page.waitForTimeout(750);
+        if ((await searchInput.inputValue()).trim() !== expectedReportName) {
+          throw new Error('下载中心没有保持本次生成名的精确搜索条件；任务继续阻断，未重复创建。');
+        }
+        const rowTexts = await page.locator('tr').allInnerTexts();
+        const observed = reconcileLingxingCreatedReportRows(rowTexts, {
+          expectedReportName: expectedReportName!,
+          dateStart: job.request.dateStart,
+          dateEnd: job.request.dateEnd,
+          exactSearchApplied: true,
+        });
+        if (observed.outcome === 'found') {
+          reconciliation = observed;
+          break;
+        }
+        if (observed.outcome === 'confirmed_absent') {
+          confirmedAbsentObservations += 1;
+          if (confirmedAbsentObservations === 3) reconciliation = observed;
+        } else {
+          confirmedAbsentObservations = 0;
+        }
+      }
+      operation.assertStepCurrent();
+      if (reconciliation.outcome === 'ambiguous') {
+        throw new Error('下载中心没有形成唯一的当前日期核对证据；任务继续阻断，未重复创建。');
+      }
+
+      const diagnostic = await persistCollectionOnlyDownloadCenterDiagnostic(
+        controller,
+        storeCapsuleFor(authorized.store),
+        authorized.target,
+        { start: job.request.dateStart, end: job.request.dateEnd },
+      );
+      operation.assertStepCurrent();
+      if (!diagnostic.ready) {
+        throw new Error('当前店铺下载中心核对完成，但采集预检证据尚未闭合；任务继续阻断，未重复创建。');
+      }
+
+      const updatedAt = nextLingxingCollectionSnapshotTimestamp(job.updatedAt);
+      const foundReusable = reconciliation.outcome === 'found'
+        && ['pending', 'created', 'generating', 'ready'].includes(reconciliation.status);
+      const reconciledCheckpoint: LingxingCollectionReportCheckpoint = {
+        ...checkpoint,
+        state: foundReusable
+          ? reconciliation.outcome === 'found' && reconciliation.status === 'ready' ? 'ready' : 'created'
+          : 'failed',
+        updatedAt,
+        ...(foundReusable ? {
+          createdReportIdentity: {
+            provider: 'lingxing',
+            reportType: checkpoint!.reportType,
+            externalReportName: expectedReportName!,
+            dateStart: job.request.dateStart,
+            dateEnd: job.request.dateEnd,
+            createdAt: checkpoint.updatedAt,
+          },
+          detail: '已在当前店铺下载中心唯一核对到原创建记录；将复用该记录继续采集。',
+          errorCode: undefined,
+        } : {
+          createdReportIdentity: undefined,
+          detail: reconciliation.outcome === 'confirmed_absent'
+            ? '已在当前店铺同日期报表列表中确认原创建记录不存在；允许安全重新创建。'
+            : '已唯一核对到原创建记录处于失败终态；允许安全重新创建。',
+          errorCode: reconciliation.outcome === 'confirmed_absent'
+            ? 'LINGXING_CREATE_CONFIRMED_ABSENT'
+            : 'LINGXING_CREATE_CONFIRMED_FAILED',
+        }),
+      };
+      const next: LingxingCollectionJobSnapshot = {
+        ...job,
+        state: 'failed',
+        blockerCode: reconciledCheckpoint.errorCode,
+        detail: reconciledCheckpoint.detail,
+        updatedAt,
+        reports: job.reports.map((candidate) => (
+          candidate.reportType === checkpoint!.reportType ? reconciledCheckpoint : candidate
+        )),
+      };
+      return state.lingxingImportRepo!.upsertCollectionProgressForStore(context.storeId, {
+        eventId: `${job.jobId}:create-reconciliation:${updatedAt}`,
+        emittedAt: updatedAt,
+        job: next,
+      });
+    }),
+  );
+}
+
 async function handleResumeLingxingCollection(input: unknown) {
   if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
@@ -6878,8 +7058,13 @@ async function handleResumeLingxingCollection(input: unknown) {
   const requestId = optionalTrimmedString(value.requestId);
   const jobId = optionalTrimmedString(value.jobId);
   if (!requestId || !jobId) throw new Error('恢复采集需要有效的 requestId 与 jobId。');
-  const job = state.lingxingImportRepo.getCollectionJobForStore(context.storeId, jobId);
+  let job = state.lingxingImportRepo.getCollectionJobForStore(context.storeId, jobId);
   if (!job) throw new Error(`当前店铺未找到采集任务：${jobId}`);
+  if (value.reconcileCreateUnknown === true
+    || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+    || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_FAILED') {
+    job = await reconcileLingxingCreateUnknownCheckpoint(job, context, requestId);
+  }
   const isCanary = job.request.requestId.startsWith('canary:');
   const reboundRequestId = isCanary ? asLingxingCanaryRequestId(requestId) : requestId;
   const rebound = rebindLingxingResumeState(job, reboundRequestId, context);
