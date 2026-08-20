@@ -1,5 +1,12 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-20 XLSX 阻断定性
+
+- 对正式下载的 campaign XLSX 做了只读结构审计，未修改源文件。第 193 行不是日级指标：店铺、国家、日期为空，状态为 `paused`，17 个数值指标全部为 0，27 个文本指标全部为 `0%`/`--`，且它是文件末尾唯一同型非空行。
+- 当前失败根因是 report parser 对领星零活动实体占位行仍执行日级必填日期校验；连接、下载与文件完整性并非该次导入失败原因。
+- 合法修复边界必须足够窄：只分类无日期/无店铺国家/暂停/全零指标占位行；任何非零或非法指标的空日期行继续 fail-closed，并保留原始 source row。`packages/report-parser` 不在原始写入白名单，等待用户明确授权后再实施。
+- 当前正式库仍没有 import run、启用策略版本、运营任务、经营实验、推荐或审批，广告执行保持 0；不得标记 `APP_READY`。
+
 ## 2026-08-19 最新交付快照（当前事实）
 
 - 当前 HEAD 与远端均为 `5d53747e`；最新重建包 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，app-content `A42398CEFD3CB076773D1668BF7C1E982CF6E3DB797AAF5999DB6B3038CA6DD0`；installer `DD00E35D95758664721BCBC08C41194A5AE1E2FC91B9679ED180D57BB883C6C2F`，portable `1A5DFBFEDBAB56C3B440C8408B2F99590D0AC426800F0B2A2452B5D0774663B9A`，folder ZIP `F66B66B711982076E160768342BF49E82BD845958941C5ECBAC60019B767CB28`。
