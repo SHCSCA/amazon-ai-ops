@@ -7,6 +7,7 @@
 - 当前授权只覆盖 parser 两文件，恢复调用位于 `apps/desktop/src/main/index.ts`，分类门位于 `lingxing-import-startup-recovery-gate.ts` 及其测试，均未获本轮修改授权。按用户要求只记录，不绕过 gate、不直接改正式库、不清理旧任务。
 - 正式库只读证据把原因收窄为合同错配：任务只有 `1/8` downloaded checkpoint/file，持久错误类别为 `LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING`，且 `report_import_runs=0`；恢复队列允许部分任务，但 Main 后续要求完整 8 类 reconciliation proof，因此必然落 authority failure。
 - 仓储既有测试明确要求部分下载终态继续作为 recovery candidate，不能删测、改弱断言或简单从 SQL 隐藏。若获授权，应先红测“合法部分终态、无 immutable run、精确 failed settlement 不阻断应用启动”，然后在 Main 分类为 known failed；真正 CAS 冲突、已有 immutable run 不一致、跨店上下文或 reconciliation 漂移必须继续 authority-fail。
+- 文档提交 `a4b62df4` 已在本地形成，但 GitHub 连续两次分别连接重置与 443 不可达，尚未推送；Parser 修复提交 `5f2907d5` 已在远端。没有强推或修改 remote。
 
 ## 置顶：2026-08-20 parser 授权与源码阻断已解除，等待运行包真实导入
 

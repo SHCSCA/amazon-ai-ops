@@ -25,6 +25,7 @@
 - 正式库 `query_only=1` 的精确快照：该任务为 `state=completed / importState=failed`，只有 `1` 个 downloaded checkpoint 与 `1` 个非空 downloaded file，`report_import_runs=0`；持久错误类别为 `LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING`。因此不是 parser 再次失败或半提交，而是部分任务进入恢复后被完整 8 类 proof 门拒绝。
 - 仓储既有测试明确要求部分 `completed_with_errors` 任务进入恢复队列，不能通过放宽/删除该测试或简单 SQL 过滤来假修。待授权的最小 Main 修复必须只把“合法部分终态 + 无 immutable run + 精确 durable failed settlement”归为 known failed，真正 CAS、跨店、已有 run 不一致与 reconciliation 漂移仍为 authority failure。
 - 当前 folder ZIP 真实启动 smoke 同样通过：ZIP `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`，解压 EXE 与 win-unpacked 精确匹配，窗口标题 `Amazon AI Ops Agent`，临时文件与进程已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787206148806.json`。
+- Parser 修复提交 `5f2907d5` 已推送；本节精确根因与 ZIP 证据提交为本地 `a4b62df4`。连续两次推送分别因 `Recv failure: Connection was reset` 与 GitHub 443 不可达失败，未改 remote、未强推，待网络恢复后仅需重推当前分支。
 
 ## 置顶：2026-08-20 XLSX 只读取证确认第 193 行是零活动占位行
 
