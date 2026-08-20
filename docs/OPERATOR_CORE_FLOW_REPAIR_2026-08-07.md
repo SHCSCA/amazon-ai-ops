@@ -1,10 +1,18 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-20 XLSX 阻断定性
+## 2026-08-20 parser 已修复；正式启动恢复门成为当前主阻断
+
+- 用户明确授权 parser 两文件后，新增精确红测并最小实现：只排除店铺/国家/日期为空、状态为 `paused`、活动名存在且 8 个导入指标全部为严格零值或领星 `--` 的占位行；非零/非法指标仍整文件 fail-closed，source row 在过滤前固定。
+- parser 单文件 `16/16 passed`，package typecheck exit 0。正式 campaign XLSX 只读直接解析为 `totalRows=192 / validCount=191 / invalidCount=0 / data=191`，保留源行 `2…192`；未改写工作簿或正式库。
+- 新 Windows 包七步构建与 package launch smoke 均通过；installer `1F50EBE8A90B0DFFD5609FEF9E91B47A41BDA7BD4A9E614AB7819418893F2BA0`、portable `78AAF47DC6EF01594865D3FF57DC6824D63DB8DFE3B7DD4BB08AD0E8636B47DB`、folder ZIP `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`，EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
+- 正式 AppData 启动暴露新的 Main 阻断：旧 failed 导入任务恢复结果为 `authorityFailed=1`，`assertLingxingImportStartupRecoverySafe` 在主窗口前抛出 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED`。没有新 import run，目标进程已清理，Ads 写入保持 0。
+- 按用户“其他发现先记录、确认后再改”，恢复链不在本轮 parser 两文件授权内，因此未修改或绕过。总体仍 `APP_NEEDS_WORK / NON_READY`。
+
+## 历史：2026-08-20 XLSX 阻断定性（parser 修复前）
 
 - 对正式下载的 campaign XLSX 做了只读结构审计，未修改源文件。第 193 行不是日级指标：店铺、国家、日期为空，状态为 `paused`，17 个数值指标全部为 0，27 个文本指标全部为 `0%`/`--`，且它是文件末尾唯一同型非空行。
 - 当前失败根因是 report parser 对领星零活动实体占位行仍执行日级必填日期校验；连接、下载与文件完整性并非该次导入失败原因。
-- 合法修复边界必须足够窄：只分类无日期/无店铺国家/暂停/全零指标占位行；任何非零或非法指标的空日期行继续 fail-closed，并保留原始 source row。`packages/report-parser` 不在原始写入白名单，等待用户明确授权后再实施。
+- 合法修复边界必须足够窄：只分类无日期/无店铺国家/暂停/全零指标占位行；任何非零或非法指标的空日期行继续 fail-closed，并保留原始 source row。该授权已于后续收到并按上述边界完成。
 - 当前正式库仍没有 import run、启用策略版本、运营任务、经营实验、推荐或审批，广告执行保持 0；不得标记 `APP_READY`。
 
 ## 2026-08-19 最新交付快照（当前事实）

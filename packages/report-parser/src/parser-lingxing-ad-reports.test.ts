@@ -60,6 +60,90 @@ describe('ReportParser Lingxing ad report rows', () => {
     });
   });
 
+  it('ignores a paused all-zero Lingxing campaign placeholder without renumbering source rows', () => {
+    const result = parseRows([
+      {
+        '店铺名称': '',
+        '国家': '',
+        '类型': 'SP',
+        '广告组合': 'Dormant portfolio',
+        '广告活动': 'Dormant campaign',
+        '有效状态': 'paused',
+        '日期': '',
+        '曝光量': '--',
+        '点击': '--',
+        'CPC-本币': 0,
+        '花费-本币': '--',
+        '广告销售额-本币': '--',
+        '广告订单': '--',
+        'ACoS': '0%',
+        'CVR': '0%',
+      },
+      {
+        '店铺名称': 'JF-US',
+        '国家': 'US',
+        '类型': 'SP',
+        '广告组合': 'Active portfolio',
+        '广告活动': 'Active campaign',
+        '有效状态': 'enabled',
+        '日期': '2026-08-17',
+        '曝光量': 20,
+        '点击': 2,
+        'CPC-本币': 1.5,
+        '花费-本币': 3,
+        '广告销售额-本币': 30,
+        '广告订单': 1,
+        'ACoS': '10%',
+        'CVR': '50%',
+      },
+    ], { reportType: 'campaign' });
+
+    expect(result).toMatchObject({
+      success: true,
+      schemaValid: true,
+      totalRows: 2,
+      validation: {
+        valid: true,
+        validCount: 1,
+        invalidCount: 0,
+      },
+    });
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
+      campaignName: 'Active campaign',
+      date: '2026-08-17',
+      sourceRow: 3,
+      reportType: 'campaign',
+    });
+  });
+
+  it.each([
+    ['a non-zero metric', { '曝光量': 1 }],
+    ['an invalid metric', { '花费-本币': 'abc' }],
+  ])('keeps a blank-date paused row fail-closed when it contains %s', (_label, metricOverride) => {
+    const result = parseRows([{
+      '店铺名称': '',
+      '国家': '',
+      '广告活动': 'Dormant campaign',
+      '有效状态': 'paused',
+      '日期': '',
+      '曝光量': 0,
+      '点击': 0,
+      'CPC-本币': 0,
+      '花费-本币': 0,
+      '广告销售额-本币': 0,
+      '广告订单': 0,
+      'ACoS': '0%',
+      'CVR': '0%',
+      ...metricOverride,
+    }], { reportType: 'campaign' });
+
+    expect(result.success).toBe(false);
+    expect(result.validation.valid).toBe(false);
+    expect(result.validation.invalidCount).toBe(1);
+    expect(result.data).toHaveLength(0);
+  });
+
   it('parses UTF-8 Chinese CSV headers and keeps caller-provided report type for localized filenames', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-report-parser-'));
     const filePath = path.join(dir, '领星广告数据_2026-05-01_2026-05-25.csv');

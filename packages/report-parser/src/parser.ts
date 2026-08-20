@@ -101,17 +101,28 @@ export class ReportParser {
     const schemaValid = isAdvertisingReportSchema(headers, options.requiredFields)
       && reportType !== undefined;
 
-    // 字段名标准化
-    const mappedRows = dataRows.map(row => mapRowFields(row));
+    // 字段名标准化，并在任何过滤前固定原始 Excel 行号。
+    const candidateRows = dataRows.map((rawRow, index) => ({
+      rawRow,
+      mappedRow: mapRowFields(rawRow),
+      sourceRow: index + skipRows + 2,
+    }));
+    const importRows = candidateRows.filter(({ rawRow, mappedRow }) => (
+      !isLingxingPausedZeroActivityPlaceholder(rawRow, mappedRow)
+    ));
+    const mappedRows = importRows.map(({ mappedRow }) => mappedRow);
 
     // 数据校验
     const validation = validateBatch(mappedRows);
     const invalidRows = new Set(validation.errors.map((error) => error.row));
-    const normalizedRows = mappedRows.map(row => cleanNumericFields(row));
+    const normalizedRows = importRows.map(({ mappedRow, sourceRow }) => ({
+      row: cleanNumericFields(mappedRow),
+      sourceRow,
+    }));
 
     // 转换为 AdDailyMetrics
-    const metrics: AdDailyMetrics[] = normalizedRows.map((row, index) => {
-      return this.mapToAdMetrics(row, sourceFile, reportType, index + skipRows + 2);
+    const metrics: AdDailyMetrics[] = normalizedRows.map(({ row, sourceRow }) => {
+      return this.mapToAdMetrics(row, sourceFile, reportType, sourceRow);
     }).filter((m, index) => (
       !invalidRows.has(index)
       && m.date
@@ -234,6 +245,48 @@ export class ReportParser {
         throw new Error(`Unsupported file format: ${ext}`);
     }
   }
+}
+
+const IMPORTED_METRIC_FIELDS = [
+  'impressions',
+  'clicks',
+  'cost',
+  'orders',
+  'sales',
+  'acos',
+  'cpc',
+  'cvr',
+] as const;
+
+function normalizedCellText(value: unknown): string {
+  return String(value ?? '').normalize('NFKC').trim();
+}
+
+function isStrictZeroMetric(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value) && value === 0;
+  if (typeof value !== 'string') return false;
+  const candidate = value.normalize('NFKC').trim();
+  return candidate === '--'
+    || /^[+-]?(?:[$¥￥])?(?:0+(?:\.0*)?|\.0+)%?$/.test(candidate);
+}
+
+function isLingxingPausedZeroActivityPlaceholder(
+  rawRow: Record<string, any>,
+  mappedRow: Record<string, any>,
+): boolean {
+  const status = Object.entries(rawRow).find(([key]) => (
+    normalizedCellText(key) === '有效状态'
+  ))?.[1];
+
+  return normalizedCellText(status).toLowerCase() === 'paused'
+    && normalizedCellText(mappedRow.date) === ''
+    && normalizedCellText(mappedRow.storeName) === ''
+    && normalizedCellText(mappedRow.marketplaceCode) === ''
+    && normalizedCellText(mappedRow.campaignName) !== ''
+    && IMPORTED_METRIC_FIELDS.every((field) => (
+      Object.prototype.hasOwnProperty.call(mappedRow, field)
+      && isStrictZeroMetric(mappedRow[field])
+    ));
 }
 
 function isAdvertisingReportSchema(

@@ -8,6 +8,21 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 置顶：2026-08-20 parser 窄门已修复，真实 campaign 文件可解析
+
+- 用户已明确授权只修改 `packages/report-parser/src/parser.ts` 与 `parser-lingxing-ad-reports.test.ts`。实现仅排除同时满足“店铺/国家/日期为空、状态精确为 paused、活动名存在、8 个可导入指标均存在且为严格零值或领星无数据标记 `--`”的零活动占位行。
+- 源 Excel 行号在过滤前固定；有效业务行不会因占位行被排除而重编号。任一非零或非法指标、非 paused、缺少指标字段或其他缺必填字段的行仍进入原校验并使整文件 fail-closed。
+- 精确 RED：新正向用例收到 `success=false / invalidCount=1`；最小修复后 GREEN。最终 parser 单文件 `16/16 passed`，package typecheck `tsc --noEmit` exit 0，无 skip/todo/only。
+- 用正式下载的 campaign XLSX 做一次只读直接解析：`totalRows=192`、`validCount=191`、`invalidCount=0`、`data=191`，保留的源行号为 `2…192`；未修改或导出工作簿，也未写正式库。
+- 该阶段代码阻断已解除；随后已完成 Windows 包重建，结果见下一节。真实 `report_import_runs` 与 8/8 完成前仍不得宣称业务闭环或 `APP_READY`，Ads 写入保持 0。
+
+## 置顶：2026-08-20 新包已构建，但正式库启动恢复门阻断主窗口
+
+- `pnpm run build:win` exit 0，七步均为 status 0，原生绑定 `unchangedExact=true / sourceReadOnly=true`；新包 installer `1F50EBE8A90B0DFFD5609FEF9E91B47A41BDA7BD4A9E614AB7819418893F2BA0`、portable `78AAF47DC6EF01594865D3FF57DC6824D63DB8DFE3B7DD4BB08AD0E8636B47DB`、folder ZIP `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`、blockmap `5FEEC2D5AB8E213D2C5AEE2B9C700507890DCFC069B3103DBDDF175A0AE55B32`，EXE 保持 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
+- `pnpm run smoke:package-launch` 通过，证据 `output/codex-evidence/package-launch-smoke-1787205252416.json`。该 smoke 使用隔离启动条件，不替代正式 AppData 主流程。
+- 仅操控目标 Electron 应用的正式 AppData 复验在创建首窗前 fail-closed：启动恢复扫描到 1 个旧失败导入任务，`recovered=0 / failed=1 / knownFailed=0 / authorityFailed=1`，最终错误为 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED`。目标进程已退出且残留为 0。
+- 这是 parser 之后暴露的新 Main 恢复阻断：新包尚未执行本次真实导入，正式库仍没有 import run。按用户“其他发现先记录、确认后再改”，本轮不修改 `index.ts`、恢复 gate 或仓储；下一步等待用户授权最小恢复 TDD seam。
+
 ## 置顶：2026-08-20 XLSX 只读取证确认第 193 行是零活动占位行
 
 - 使用正式下载文件做只读结构审计，未修改/导出工作簿：唯一工作表表头在第 1 行，日期列为 G；第 190–192 行日期依次为 `2026-08-15`、`2026-08-16`、`2026-08-17`。

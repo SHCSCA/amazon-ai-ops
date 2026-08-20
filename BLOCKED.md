@@ -1,11 +1,17 @@
 # BLOCKED — 2026-08-07
 
-## 置顶：2026-08-20 解析器范围授权仍待确认
+## 置顶：2026-08-20 正式 AppData 启动被旧失败导入恢复门阻断
 
-- 只读 XLSX 取证已排除“真实非零数据损坏”：第 193 行为领星零活动占位行，店铺/国家/日期为空、状态 `paused`，17 个数值指标全 0、27 个文本指标全为零值/`--`，后面没有数据行。
-- 当前 parser 对所有 data row 一律执行 `date/storeName/campaignName` 必填校验，因此把该占位行计入 invalid row 并使整文件 fail-closed；这是解析器缺少领星占位行分类，不是连接、下载或 Ads 身份失败。
-- 最小安全修复需扩展原白名单外 `packages/report-parser/src/parser.ts` 与 `parser-lingxing-ad-reports.test.ts`：只忽略“无日期、无店铺/国家、已暂停、所有可导入指标严格为零值”的实体占位行，并保留原始行号；任一非零、非法指标或其他缺字段行继续失败。
-- 未获用户明确授权前不实施、不跳过泛化坏行、不覆盖原 XLSX。正式 8/8 入库及后续策略/任务/实验仍因此阻断，Ads 写入保持 0。
+- parser 修复已进入新 Windows 包，包启动 smoke 通过；但用正式 AppData 启动目标应用时，Main 在主窗口创建前扫描到 1 个旧 `failed` 导入任务，并得到 `recovered=0 / failed=1 / knownFailed=0 / authorityFailed=1`。
+- `assertLingxingImportStartupRecoverySafe` 随即以 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED` 安全停止。没有主窗口、没有执行新 parser 导入、没有新的 import run，也没有 Ads 写入；中止后目标应用进程残留为 0。
+- 当前授权只覆盖 parser 两文件，恢复调用位于 `apps/desktop/src/main/index.ts`，分类门位于 `lingxing-import-startup-recovery-gate.ts` 及其测试，均未获本轮修改授权。按用户要求只记录，不绕过 gate、不直接改正式库、不清理旧任务。
+- 若获授权，下一步应先用一个精确红测复现“已有 failed 任务在 parser 已可成功解析时恢复仍落 authorityFailed”，再最小修复 failed→pending 的可证明 CAS/终态链；不得把真正 CAS 冲突、已有 immutable run 不一致或跨店上下文降级为 known failure。
+
+## 置顶：2026-08-20 parser 授权与源码阻断已解除，等待运行包真实导入
+
+- 用户已授权 parser 两文件；零活动 paused 占位行分类已完成精确红→绿，正式 campaign XLSX 只读解析为 `192` 个原始数据行、`191` 条有效记录、`0` 条无效记录，原始来源行号保持 `2…192`。
+- 非零与非法指标反向用例继续 fail-closed；没有跳过泛化坏行、没有改弱日期/店铺/活动必填校验、没有改写原 XLSX 或正式库。
+- 当前剩余阻断从“解析器源码缺口”变为“运行包尚未重建并在目标应用内形成真实 import run”。重建并单次复验前，8/8 入库、策略/运营任务/经营实验、当前包 Package UI 与 Task 8B 仍未完成，Ads 写入保持 0。
 
 ## 置顶：2026-08-19 最新阻断快照
 
