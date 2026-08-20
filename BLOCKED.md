@@ -10,7 +10,7 @@
 - “确认缺失”安全门也已收紧：同日期兄弟行不再单独构成 absence proof；只有下载中心搜索框精确绑定本次生成名、值回读一致且连续 3 次无精确行才可重建。该修改防止分页或未生效过滤导致重复创建，不改变当前已经取得的正式人工事实。
 - 最新构建哈希：installer `2E07497F23233D90DCDAA5B80E6748D93DD9401C20F561459A6E7C56EA125578`、portable `924D31B0875FE8C264D1E1D964E52531BD6E96997B4B29A4F31B25A6E4AC8D0C`、folder ZIP `C997AFEF9403806790B192568026B9AF5ED482BEBCD1526E95C5D2B423FA9AE5`、blockmap `4CDE6B7F23D1C87278418C96334BBDDD4D4F5A281A2ECE2D98E0E43C9DA7D6C1`。目标应用已停止且精确进程残留为 0。
 - 广告执行五表继续为 0；没有产品内具体推荐和人工批准前不得进行 Task 8B。真实 8/8 入库未完成，整体仍为 `APP_NEEDS_WORK / NON_READY`。
-- 当前安全修复已提交为 `5c5e23d3`；两次 `git push -u origin codex/collection-reconcile-preclaim-evidence` 均因 GitHub HTTPS `Recv failure: Connection was reset` 失败。提交仍在本地，remote 未修改、未强推；这是交付同步阻断，不是测试或业务通过证据。
+- 当前安全修复已提交为 `5c5e23d3`，状态说明为 `614ab810`；功能分支已 `--ff-only` 合并到 `master` 并成功推送 `origin/master`。此前两次功能分支推送的 HTTPS 连接重置已解除，不再是当前阻断；业务阻断仍仅是 claim 前浏览器运行时/preflight。
 
 ## 历史：2026-08-20 真实 8 类采集需要人工核对领星创建结果
 
