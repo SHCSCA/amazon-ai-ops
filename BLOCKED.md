@@ -1,6 +1,16 @@
 # BLOCKED — 2026-08-07
 
-## 置顶：2026-08-20 正式 AppData 启动被旧失败导入恢复门阻断
+## 当前：2026-08-20 真实 8 类采集需要人工核对领星创建结果
+
+- 启动恢复、Main-only 保存凭证连接、ERP/Ads 同店身份链均已进入最新 Windows 包并完成正式 AppData 实测；当前不再被旧导入恢复门或登录阻断。
+- 单次完整 8 类主动作形成 durable failed job。精确失败为 `LINGXING_CREATE_CALL_INTERRUPTED`：`product_targeting` 创建请求后，30 秒内无法在领星下载中心唯一定位本次生成的报表行。当前 checkpoint 分布为 downloaded 5、create_unknown 1、failed 1、queued 1；`report_import_runs=0`。
+- 这是必须 fail-closed 的外部事实不确定态：应用不能自动断言“已创建”或“未创建”，也不能盲目重复创建。下一步必须由操作者在领星下载中心核对该报表是否存在，再决定安全接管或重新创建。未核对前不重复点击本次采集。
+- 正式库只读 `mode=ro + query_only=1` 终审：jobs 5、batches 3、files 9、导入 0；五张广告执行表全部为 0。目标应用进程已退出且残留为 0。
+- 当前整体仍为 `APP_NEEDS_WORK / NON_READY`。策略启用、运营任务、经营实验、当前包 Package UI 与 Task 8B 均不能越过真实 8/8 入库前置；没有具体、产品内已批准的 `lower_bid` 推荐前，任何广告写入继续为 0。
+- 已记录但本轮不扩修：连接失败提示仍暴露 `Error invoking remote method`；正常应用重启后偶尔仍要求当前店铺会话重置。等待用户确认后再处理。
+- Git 本地分支当前有两个已提交但未推送的文档提交，以及本轮恢复代码/测试/文档待提交；此前推送因连接重置和 GitHub 443 不可达失败。不得把 `output/`、`storage/`、Profile、报表或 EXE/ZIP 纳入提交。
+
+## 历史：2026-08-20 正式 AppData 启动被旧失败导入恢复门阻断
 
 - parser 修复已进入新 Windows 包，包启动 smoke 通过；但用正式 AppData 启动目标应用时，Main 在主窗口创建前扫描到 1 个旧 `failed` 导入任务，并得到 `recovered=0 / failed=1 / knownFailed=0 / authorityFailed=1`。
 - `assertLingxingImportStartupRecoverySafe` 随即以 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED` 安全停止。没有主窗口、没有执行新 parser 导入、没有新的 import run，也没有 Ads 写入；中止后目标应用进程残留为 0。
@@ -9,13 +19,13 @@
 - 仓储既有测试明确要求部分下载终态继续作为 recovery candidate，不能删测、改弱断言或简单从 SQL 隐藏。若获授权，应先红测“合法部分终态、无 immutable run、精确 failed settlement 不阻断应用启动”，然后在 Main 分类为 known failed；真正 CAS 冲突、已有 immutable run 不一致、跨店上下文或 reconciliation 漂移必须继续 authority-fail。
 - 文档提交 `a4b62df4` 已在本地形成，但 GitHub 连续两次分别连接重置与 443 不可达，尚未推送；Parser 修复提交 `5f2907d5` 已在远端。没有强推或修改 remote。
 
-## 置顶：2026-08-20 parser 授权与源码阻断已解除，等待运行包真实导入
+## 历史：2026-08-20 parser 授权与源码阻断已解除
 
 - 用户已授权 parser 两文件；零活动 paused 占位行分类已完成精确红→绿，正式 campaign XLSX 只读解析为 `192` 个原始数据行、`191` 条有效记录、`0` 条无效记录，原始来源行号保持 `2…192`。
 - 非零与非法指标反向用例继续 fail-closed；没有跳过泛化坏行、没有改弱日期/店铺/活动必填校验、没有改写原 XLSX 或正式库。
 - 当前剩余阻断从“解析器源码缺口”变为“运行包尚未重建并在目标应用内形成真实 import run”。重建并单次复验前，8/8 入库、策略/运营任务/经营实验、当前包 Package UI 与 Task 8B 仍未完成，Ads 写入保持 0。
 
-## 置顶：2026-08-19 最新阻断快照
+## 历史：2026-08-19 最新阻断快照
 
 - 当前 HEAD/远端均为 `5d53747e`；只剩既有未跟踪临时目录，未把产物、正式库或 Profile 纳入提交。
 - 最新 Windows 包与 ZIP smoke 已通过，业务 smoke 为 6/6 子脚本、7/7 flow；当前包哈希与证据以 `PROGRESS.md` 最新快照为准。

@@ -1,3 +1,8 @@
+import {
+  ANALYSIS_REQUIRED_REPORT_TYPES,
+  type LingxingReportType,
+} from '@amazon-ai-ops/shared-types';
+
 export interface LingxingImportRecoverySummary {
   inspected: number;
   recovered: number;
@@ -11,6 +16,7 @@ export interface LingxingFailedImportSettlementProof {
   requestId: string;
   importState?: string;
   importCompletedAt?: string;
+  importError?: string;
 }
 
 export class KnownLingxingImportRecoveryFailure extends Error {
@@ -20,6 +26,57 @@ export class KnownLingxingImportRecoveryFailure extends Error {
     super(message, options);
     this.name = 'KnownLingxingImportRecoveryFailure';
   }
+}
+
+const ANALYSIS_REQUIRED_REPORT_TYPE_SET = new Set<LingxingReportType>(
+  ANALYSIS_REQUIRED_REPORT_TYPES,
+);
+
+function isExactReportTypeSet(
+  actual: readonly LingxingReportType[],
+  expected: readonly LingxingReportType[],
+): boolean {
+  return actual.length === expected.length
+    && new Set(actual).size === actual.length
+    && new Set(expected).size === expected.length
+    && actual.every((reportType) => expected.includes(reportType));
+}
+
+export function classifyLingxingPartialImportRecoveryFailure(input: {
+  state?: string;
+  immutableImportRunPresent: boolean;
+  expectedJobId: string;
+  expectedRequestId: string;
+  requestedReportTypes: readonly LingxingReportType[];
+  downloadedCheckpointReportTypes: readonly LingxingReportType[];
+  downloadedFileReportTypes: readonly LingxingReportType[];
+  failedSettlement: LingxingFailedImportSettlementProof;
+}): unknown {
+  const importError = input.failedSettlement.importError;
+  const requestedReportTypes = input.requestedReportTypes;
+  const isExactPartialTerminal = (
+    input.state === 'completed' || input.state === 'completed_with_errors'
+  )
+    && input.immutableImportRunPresent === false
+    && input.failedSettlement.jobId === input.expectedJobId
+    && input.failedSettlement.requestId === input.expectedRequestId
+    && input.failedSettlement.importState === 'failed'
+    && Boolean(input.failedSettlement.importCompletedAt)
+    && typeof importError === 'string'
+    && (
+      importError.startsWith('LINGXING_COLLECTION_IMPORT_FAILED:')
+      || importError.startsWith('LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING:')
+    )
+    && requestedReportTypes.length > 0
+    && requestedReportTypes.length < ANALYSIS_REQUIRED_REPORT_TYPES.length
+    && new Set(requestedReportTypes).size === requestedReportTypes.length
+    && requestedReportTypes.every((reportType) => ANALYSIS_REQUIRED_REPORT_TYPE_SET.has(reportType))
+    && isExactReportTypeSet(input.downloadedCheckpointReportTypes, requestedReportTypes)
+    && isExactReportTypeSet(input.downloadedFileReportTypes, requestedReportTypes);
+
+  return isExactPartialTerminal
+    ? new KnownLingxingImportRecoveryFailure(importError, { cause: new Error(importError) })
+    : undefined;
 }
 
 export function classifyLingxingImportRecoveryFailure(input: {

@@ -105,6 +105,7 @@ import {
 import {
   assertLingxingImportStartupRecoverySafe,
   classifyLingxingImportRecoveryFailure,
+  classifyLingxingPartialImportRecoveryFailure,
   isKnownLingxingImportRecoveryFailure,
 } from './lingxing-import-startup-recovery-gate';
 import { StrictBrowserControllerCleanup } from './strict-browser-controller-cleanup';
@@ -6485,6 +6486,34 @@ function recoverCompletedLingxingCollectionImport(
         errors: [],
       },
     };
+  }
+
+  const knownPartialTerminal = classifyLingxingPartialImportRecoveryFailure({
+    state: job.state,
+    immutableImportRunPresent: false,
+    expectedJobId: job.jobId,
+    expectedRequestId: job.request.requestId,
+    requestedReportTypes: job.request.reportTypes,
+    downloadedCheckpointReportTypes: job.reports
+      .filter((checkpoint) => checkpoint.state === 'downloaded')
+      .map((checkpoint) => checkpoint.reportType),
+    downloadedFileReportTypes: snapshot.files
+      .filter((file) => (
+        file.status === 'downloaded'
+        && Boolean(file.filePath?.trim())
+        && (file.fileSizeBytes ?? 0) > 0
+      ))
+      .map((file) => file.reportType),
+    failedSettlement: {
+      jobId: job.jobId,
+      requestId: job.request.requestId,
+      importState: job.importState,
+      importCompletedAt: job.importCompletedAt,
+      importError: job.importError,
+    },
+  });
+  if (isKnownLingxingImportRecoveryFailure(knownPartialTerminal)) {
+    throw knownPartialTerminal;
   }
 
   if (options.requireActiveContext !== false) {

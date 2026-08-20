@@ -8,6 +8,27 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 当前：2026-08-20 启动恢复与连接已闭合，真实 8 类采集在领星创建回读处安全停止
+
+- 部分导入启动恢复与“重启前尚未创建批次”的 cancelled 任务恢复均已按窄合同修复：`lingxing-import-startup-recovery-gate.test.ts` 为 `9/9 passed`，`store-collection-orchestrator-scheduler-adapter.test.ts` 为 `75/75 passed`，desktop typecheck exit 0。正式冷启动不再被旧任务阻断。
+- 最新 Windows 构建七步均为 status 0，native bindings `unchangedExact=true / sourceReadOnly=true`。当前 installer `723225012B07FE7321A7242592936283183A92B27F473D26DC30CE4CB6EE82EE`、portable `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807`、folder ZIP `DF5210B34903B3728776B370C3E6400052FBA7AFDD1604AD22935AEA56AB58A7`、blockmap `F6BA749B6F3936ACBA20C79CA16D892F7902330614C9C095F0332F1485E3F8C9`、win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、app content `2BCA88C048C889D971B58A37E3A2397D547779752A8048A88EB62FBAE9C99BDB`、Main bundle `3AE00CE179A46765BAB398A149F87524DDD5B3E9625C65549D502E5995E82F6E`、Renderer `index-CZlnaKmv.js`（`C21E61041F4F54F9D6464E886690829B999FA6DADC6132B5BB1473BEB4580EE2`）。
+- 仅操控目标 Electron 应用完成正式 AppData 复验：应用内显式重置当前店铺会话后，使用 Main-only 已保存凭证重新连接，最终状态为 `ERP/Ads 已连接`；没有读取或代输密码、Cookie、Profile。
+- 随后只点击一次“重新获取完整 8 类报表”。正式库形成新的 durable failed job：`LINGXING_CREATE_CALL_INTERRUPTED`；`product_targeting` 创建请求后等待精确生成报表行 30 秒超时，当前 checkpoint 为 downloaded 5、create_unknown 1、failed 1、queued 1。系统没有猜测创建结果、没有盲重试，也没有生成 import run。
+- 只读 `mode=ro + query_only=1` 终审：jobs 5、batches 3、files 9、`report_import_runs=0`；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 全为 0。目标应用与测试进程残留为 0。
+- 当前主流程下一步不是继续自动点击，而是人工核对领星下载中心中该 `product_targeting` 报表是否实际创建，并据此选择“接管已有行”或“确认未创建后重新创建”的可审计恢复路径。未经该事实确认，不推进策略、运营任务、经营实验、Package UI 或 Task 8B，也不标记 `APP_READY`。
+- 非主流程问题仅记录：连接失败提示仍会露出 `Error invoking remote method`；正常应用重启后偶尔仍需再次执行当前店铺会话重置。按用户要求等待确认后再扩修。
+
+## 历史：2026-08-20 部分导入启动恢复已完成修复并重建
+
+- 用户已扩大授权，允许继续修改 Main 恢复门。精确 RED 为 `classifyLingxingPartialImportRecoveryFailure is not a function`（1 failed / 8 skipped）；最小实现后聚焦 GREEN，恢复 gate 全文件 `9/9 passed`，desktop typecheck exit 0。
+- 新分类只接受：下载终态为 `completed/completed_with_errors`、原请求是规范 8 类中的非空真子集、requested/checkpoint/非空 downloaded file 三组精确一致、durable import settlement 已为 failed 且含 completedAt、错误仅为 parser/reconciliation 两类、并且不存在 immutable import run。
+- 完整 8 类请求、已有 immutable run、文件/checkpoint 不一致、跨 job/request、缺失终态或其他错误继续归为 authority failure；未改仓储 SQL、未删除或放宽现有部分恢复候选测试，也未降低真实 8/8 导入与 reconciliation 门。
+- Main 在进入新导入事务前识别上述历史 known-failed 终态，避免旧 1/8 任务再次阻断主窗口。`pnpm run build:win` 已 exit 0，七步 status 全 0，原生绑定 `unchangedExact=true / sourceReadOnly=true`；新 installer `324764030412EFEA692468527DFE79404D04293AA9D2ED02A0606FBA09683588`、portable `68A699F6C2383F911FFF64BE5EEC864F663D2890D3C1AB0D08E80DDD6D32E295`、folder ZIP `8804A437B6ACEF66852449BA9DE1D796D777E4CD697C9C6175533FCF26D40B79`、blockmap `E41886C5670E91D99D586DC3FFBA0873F883DAD4E6D4E9D14093E98589BD9ABB`，win-unpacked EXE 仍为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
+- 下一步必须在正式 AppData 上证明主窗口可启动，再执行新的真实 8/8 采集。当前尚未据此宣称业务闭环或 `APP_READY`。
+- 第一次正式冷启动已证明 import recovery 变为 `inspected=1 / knownFailed=1 / authorityFailed=0`；验证进程关闭时又暴露唯一 protected-history transition：系统重启收口生成的 8/8 `cancelled` job 处于 `scheduler_request_bound`，8 个 checkpoint 全为 `LINGXING_COLLECTION_INTERRUPTED_BY_RESTART`，同时严格为 0 batch / 0 file / 0 import proof。旧 classifier 因缺 batch 将它误判为 `SAFETY_STATE_UNKNOWN`。
+- 精确 scheduler RED 为 `74 passed / 1 failed`（收到 `unknown`，期望 `failed`）；新增仅接受上述系统重启 blocker、完整 8 类 cancelled checkpoint、无身份/文件/导入证据的 pre-batch 终态，修后 scheduler-adapter `75/75 passed`，desktop typecheck exit 0。普通取消、缺 checkpoint、已有文件、其他 blocker 或“有 batch 但缺 completedAt”的既有反向门保持 `unknown`。
+- 该第二处 Main 修复尚待再次重建并完成正式冷启动；验证前仍不宣称采集主链恢复。
+
 ## 置顶：2026-08-20 parser 窄门已修复，真实 campaign 文件可解析
 
 - 用户已明确授权只修改 `packages/report-parser/src/parser.ts` 与 `parser-lingxing-ad-reports.test.ts`。实现仅排除同时满足“店铺/国家/日期为空、状态精确为 paused、活动名存在、8 个可导入指标均存在且为严格零值或领星无数据标记 `--`”的零活动占位行。

@@ -1424,6 +1424,36 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
       expected: 'unknown',
     },
     {
+      name: 'restart-cancelled pre-batch terminal with exact empty durable proof',
+      mutateJob: (job) => {
+        const terminal = terminalNotApplicableJob(job, 'cancelled');
+        return {
+          ...terminal,
+          blockerCode: 'LINGXING_COLLECTION_INTERRUPTED_BY_RESTART',
+          detail: '应用重启前采集未形成终态，已安全收口为取消；可由运营者重新发起。',
+          reports: terminal.reports.map((checkpoint) => {
+            const cancelled = {
+              ...checkpoint,
+              state: 'cancelled' as const,
+              errorCode: 'LINGXING_COLLECTION_INTERRUPTED_BY_RESTART',
+              detail: '应用重启前采集未形成终态，已安全收口为取消；可由运营者重新发起。',
+              updatedAt: terminal.completedAt!,
+            };
+            delete cancelled.createdReportIdentity;
+            delete cancelled.fileSizeBytes;
+            return cancelled;
+          }),
+        };
+      },
+      mutateProof: (proof) => ({
+        ...proof,
+        batch: undefined,
+        lingxingFileCount: 0,
+        lingxingFiles: [],
+      }),
+      expected: 'failed',
+    },
+    {
       name: 'terminal not_applicable with empty import lifecycle',
       mutateJob: (job) => terminalNotApplicableJob(job, 'failed'),
       expected: 'failed',

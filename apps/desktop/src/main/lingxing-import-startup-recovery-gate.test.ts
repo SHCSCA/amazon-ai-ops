@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertLingxingImportStartupRecoverySafe,
   classifyLingxingImportRecoveryFailure,
+  classifyLingxingPartialImportRecoveryFailure,
   isKnownLingxingImportRecoveryFailure,
 } from './lingxing-import-startup-recovery-gate';
 
@@ -14,6 +15,62 @@ const failedSettlement = {
 };
 
 describe('Lingxing import startup recovery gate', () => {
+  it('classifies an exact partial terminal without an immutable run as known-failed', () => {
+    const classified = classifyLingxingPartialImportRecoveryFailure({
+      state: 'completed',
+      immutableImportRunPresent: false,
+      expectedJobId: 'job-one',
+      expectedRequestId: 'request-one',
+      requestedReportTypes: ['campaign'],
+      downloadedCheckpointReportTypes: ['campaign'],
+      downloadedFileReportTypes: ['campaign'],
+      failedSettlement: {
+        ...failedSettlement,
+        importError: 'LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING: 部分任务没有完整八类证据。',
+      },
+    });
+
+    expect(isKnownLingxingImportRecoveryFailure(classified)).toBe(true);
+    expect(classified).toMatchObject({
+      code: 'LINGXING_COLLECTION_IMPORT_RECOVERY_KNOWN_FAILED',
+    });
+
+    const base = {
+      state: 'completed',
+      immutableImportRunPresent: false,
+      expectedJobId: 'job-one',
+      expectedRequestId: 'request-one',
+      requestedReportTypes: ['campaign'] as const,
+      downloadedCheckpointReportTypes: ['campaign'] as const,
+      downloadedFileReportTypes: ['campaign'] as const,
+      failedSettlement: {
+        ...failedSettlement,
+        importError: 'LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING: 部分任务没有完整八类证据。',
+      },
+    };
+    expect(isKnownLingxingImportRecoveryFailure(
+      classifyLingxingPartialImportRecoveryFailure({ ...base, immutableImportRunPresent: true }),
+    )).toBe(false);
+    expect(isKnownLingxingImportRecoveryFailure(
+      classifyLingxingPartialImportRecoveryFailure({ ...base, downloadedFileReportTypes: [] }),
+    )).toBe(false);
+    expect(isKnownLingxingImportRecoveryFailure(
+      classifyLingxingPartialImportRecoveryFailure({
+        ...base,
+        requestedReportTypes: [
+          'campaign',
+          'ad_group',
+          'placement',
+          'advertised_product',
+          'auto_targeting',
+          'keyword',
+          'product_targeting',
+          'user_search_term',
+        ],
+      }),
+    )).toBe(false);
+  });
+
   it('classifies only an exact no-commit parser failure with a durable failed settlement as known', () => {
     const classified = classifyLingxingImportRecoveryFailure({
       error: parserFailure,

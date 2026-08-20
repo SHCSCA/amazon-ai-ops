@@ -1,6 +1,15 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-20 parser 已修复；正式启动恢复门成为当前主阻断
+## 2026-08-20 当前状态：连接已闭合，8 类采集在创建结果不确定态安全停止
+
+- 当前 Windows 包已包含 parser 窄修复、部分导入 known-failed 恢复和重启前 cancelled 任务的 pre-batch 安全分类。聚焦回归分别为 parser `16/16`、import recovery `9/9`、scheduler adapter `75/75`，desktop typecheck 与 Windows 七步构建均通过。
+- 当前包谱系：installer `723225012B07FE7321A7242592936283183A92B27F473D26DC30CE4CB6EE82EE`；portable `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807`；folder ZIP `DF5210B34903B3728776B370C3E6400052FBA7AFDD1604AD22935AEA56AB58A7`；win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content `2BCA88C048C889D971B58A37E3A2397D547779752A8048A88EB62FBAE9C99BDB`；Main bundle `3AE00CE179A46765BAB398A149F87524DDD5B3E9625C65549D502E5995E82F6E`。
+- 正式 AppData 目标应用已通过当前店铺显式会话重置，以 Main-only 已保存凭证完成 `ERP/Ads 已连接`；没有读取或代输密码、Cookie、Profile。
+- 随后的单次完整 8 类动作形成正式失败证据：`product_targeting` 创建请求结束后，30 秒内没有唯一回读本次生成的下载中心行，任务以 `LINGXING_CREATE_CALL_INTERRUPTED` 停止。5 类已下载，1 类为 `create_unknown`，1 类 failed，1 类 queued；没有 import run。
+- 该状态不能自动续跑。必须先人工确认领星下载中心中目标报表是否存在；存在时只能精确接管该行，不存在时才允许生成新的创建请求。系统当前保持安全阻断，没有重复创建或广告写入。
+- 正式库只读终审为 jobs 5、batches 3、files 9、imports 0；五张广告执行表均为 0。策略、运营任务、经营实验、Package UI 与 Task 8B 继续后置，总体为 `APP_NEEDS_WORK / NON_READY`。
+
+## 历史：2026-08-20 parser 已修复；正式启动恢复门成为主阻断
 
 - 用户明确授权 parser 两文件后，新增精确红测并最小实现：只排除店铺/国家/日期为空、状态为 `paused`、活动名存在且 8 个导入指标全部为严格零值或领星 `--` 的占位行；非零/非法指标仍整文件 fail-closed，source row 在过滤前固定。
 - parser 单文件 `16/16 passed`，package typecheck exit 0。正式 campaign XLSX 只读直接解析为 `totalRows=192 / validCount=191 / invalidCount=0 / data=191`，保留源行 `2…192`；未改写工作簿或正式库。

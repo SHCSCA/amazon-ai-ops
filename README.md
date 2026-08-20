@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 第一版固定 Amazon US / USD，正式桌面导航为 10 个 Mission Control 工作区；应用直接进入本地运营系统，左侧 `店铺与站点` 是新增、维护与切换店铺的唯一入口。领星账号与下载中心店铺名称在当前店铺工作台内配置；广告账户不要求运营人员查找或填写 Profile ID，而是由 Electron Main 从可见 `ads.lingxing.com` 受信页面自动识别，再由用户确认绑定。店铺 DB 范围、连接身份、独立浏览器 Profile、会话、任务、配置、授权、执行和证据均按 Store Capsule 隔离。正式 package UI schema v8、真实 authority DB 升级、每店 8/8、两店连续七个美国业务日、人工 canary 和 policy-auto canary 尚未完成；旧 `7/8`、Mission `4/8`、旧 manifest 和旧 bundle 仅为历史，不得复用为当前信用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 第一版固定 Amazon US / USD，正式桌面导航为 10 个运营工作区。连接链已在当前包完成正式 AppData 实测，但完整 8 类采集在领星 `product_targeting` 创建结果无法唯一回读时安全停止；正式库尚无 import run。策略、运营任务、经营实验、当前包 Package UI 与真实广告写入/回读仍未闭合，旧 `APP_READY`、`7/8`、旧 manifest 和旧 bundle 均不得复用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
 
 ## 当前交付
 
@@ -13,23 +13,23 @@
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
 | 当前版本 | `1.5.0` |
 | 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；当前八门聚合尚未生成） |
-| 当前包源码 | `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` |
+| 当前包源码基线 | `9c4f5b954818afd1f143128ea166a2ac5e5f6aab` + 本轮未提交恢复修复；提交后必须重新绑定新包证据 |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `58C6D501329547654FCBCBE429AAE2CA73738DC17B17A28A3CCEC965411DEDE4` |
-| 安装版 SHA-256 | `EDEC273C4B6FCC172D75160E3809FD2E8618B001BC3C3855E40EDC05CB61B96A` |
+| 无安装版 SHA-256 | `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807` |
+| 安装版 SHA-256 | `723225012B07FE7321A7242592936283183A92B27F473D26DC30CE4CB6EE82EE` |
 | win-unpacked EXE SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
-| app content SHA-256 | `FC173A2EE64C949F2EDF4237D8B447AF2C3D721EC8F9AFDE3E97A59674C8DE43` |
-| main bundle SHA-256 | `9B0C43D5383F679567D74F8A63735829156926CB1290F603378A48CF7F5AF32A` |
+| app content SHA-256 | `2BCA88C048C889D971B58A37E3A2397D547779752A8048A88EB62FBAE9C99BDB` |
+| main bundle SHA-256 | `3AE00CE179A46765BAB398A149F87524DDD5B3E9625C65549D502E5995E82F6E` |
 | 内部交互 UI | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json`（20 个工作区捕获 + 3 个门禁/隔离/最小窗口场景，共 23 PNG；`NO_FINAL_READINESS_CREDIT`） |
-| 当前业务 UI smoke | `output\codex-evidence\current-business-ui-smoke-1785830923177.json`（5/5 PASS） |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1785831535965.json`（win-unpacked + portable PASS） |
-| Package security evidence | `output\codex-evidence\package-security-boundaries-3f6fbec3.json`（11/11 PASS） |
-| Adversarial `NODE_ENV` | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json`（PASS） |
+| 当前真实业务 | ERP/Ads 已连接；8 类采集在 `LINGXING_CREATE_CALL_INTERRUPTED` 安全停止，5 类 downloaded、1 类 create_unknown、1 类 failed、1 类 queued；imports=0 |
+| 当前包自动门 | 聚焦恢复测试 `9/9 + 75/75`、desktop typecheck、Windows 七步构建通过；最新构建尚未生成新的 Package UI manifest |
+| 历史 Package security evidence | `output\codex-evidence\package-security-boundaries-3f6fbec3.json`（旧包 11/11 PASS；不授予当前包信用） |
+| 历史 adversarial `NODE_ENV` | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json`（旧包 PASS；不授予当前包信用） |
 | Package UI evidence | schema v8 pending；当前包尚未完成 visible operator handoff 和正式 package manifest |
-| 当前 authority / 真实运行证据 | 真实 DB 升级、逐店 8/8、两店连续七日、人工 canary、policy-auto canary 均 pending / blocked，不复用旧快照 |
+| 当前 authority / 真实运行证据 | 正式库 jobs=5、batches=3、files=9、imports=0；五张广告执行表为 0。真实 8/8、策略/任务/实验和 Task 8B 均 pending / blocked |
 | 正式八门 / bundle | 当前候选尚未重新生成；旧 4/8、7/8 与旧 bundle 仅作历史记录 |
-| 详细状态 | `docs\MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` |
+| 详细状态 | `docs\OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`（当前）；`docs\MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` 仅为历史基线 |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
 >

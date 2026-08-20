@@ -645,6 +645,10 @@ function classifyDurableProof(
       return terminalFailureProofExact(proof, authorized)
       ? 'failed'
       : 'unknown';
+    case 'restart_cancelled_before_batch':
+      return restartCancelledBeforeBatchProofExact(proof)
+        ? 'failed'
+        : 'unknown';
     default:
       return 'unknown';
   }
@@ -747,7 +751,8 @@ type DurableLifecycleShape =
   | 'completed_pending'
   | 'completed_failed'
   | 'completed_succeeded'
-  | 'terminal_not_applicable';
+  | 'terminal_not_applicable'
+  | 'restart_cancelled_before_batch';
 
 /**
  * One fail-closed lifecycle matrix shared by every durable classification.
@@ -803,6 +808,19 @@ function durableLifecycleShape(
         : null;
     }
     return null;
+  }
+  if (job.state === 'cancelled'
+    && job.blockerCode === 'LINGXING_COLLECTION_INTERRUPTED_BY_RESTART'
+    && requiredNonBlank(job.detail)
+    && batch === undefined) {
+    return isIsoInstant(job.completedAt)
+      && job.importState === 'not_applicable'
+      && job.importAttemptedAt === undefined
+      && job.importCompletedAt === undefined
+      && job.importError === undefined
+      && noCompletedImportProof(proof)
+      ? 'restart_cancelled_before_batch'
+      : null;
   }
   if (job.state === 'completed_with_errors'
     || job.state === 'failed'
@@ -866,6 +884,26 @@ function terminalFailureProofExact(
       file.storeId === authorized.context.storeId
       && file.batchId === proof.job.jobId
     ));
+}
+
+function restartCancelledBeforeBatchProofExact(
+  proof: LingxingCollectionAuthorityProof,
+): boolean {
+  const completedAt = proof.job.completedAt;
+  return proof.batch === undefined
+    && proof.checkpointCount === FULL_REPORT_TYPES.length
+    && proof.job.reports.length === FULL_REPORT_TYPES.length
+    && sameFullReportSet(proof.job.reports.map((checkpoint) => checkpoint.reportType))
+    && proof.job.reports.every((checkpoint) => (
+      checkpoint.state === 'cancelled'
+      && checkpoint.errorCode === 'LINGXING_COLLECTION_INTERRUPTED_BY_RESTART'
+      && requiredNonBlank(checkpoint.detail)
+      && checkpoint.updatedAt === completedAt
+      && checkpoint.createdReportIdentity === undefined
+      && checkpoint.fileSizeBytes === undefined
+    ))
+    && proof.lingxingFileCount === 0
+    && proof.lingxingFiles.length === 0;
 }
 
 function downloadProofExact(

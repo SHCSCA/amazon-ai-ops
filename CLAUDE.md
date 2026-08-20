@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Amazon AI Ops Agent is a Windows-first, local Electron desktop app for Amazon operations. It connects Lingxing ad report collection, local report import, product-level ad quantification, keyword and Listing optimization, AI/rule-based recommendations, manual approval, Ads UI readback, and final delivery evidence into an auditable local workflow.
 
-The app is currently documented as v1.5.0 / `APP_READY` in `README.md`. Ads execution must remain fail-closed: AI can generate diagnostics, explanations, threshold suggestions, and drafts, but any Amazon Ads change still requires human approval, screenshots, execution, reload/readback, and verifier evidence.
+The app is currently v1.5.0 / `APP_NEEDS_WORK` (`INTERNAL NON_READY`). ERP/Ads connection is verified in the current package, but the latest full-8 Lingxing collection stopped fail-closed because the `product_targeting` create call could not be uniquely read back from Download Center; no immutable import run exists. Ads execution must remain fail-closed: AI can generate diagnostics, explanations, threshold suggestions, and drafts, but any Amazon Ads change still requires a concrete current `lower_bid` recommendation, product-local human approval, screenshots, execution, reload/readback, and verifier evidence.
 
 ## Common commands
 
