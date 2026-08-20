@@ -13,7 +13,7 @@
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
 | 当前版本 | `1.5.0` |
 | 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；当前八门聚合尚未生成） |
-| 当前包源码基线 | `9c4f5b954818afd1f143128ea166a2ac5e5f6aab` + 本轮未提交恢复修复；提交后必须重新绑定新包证据 |
+| 当前包源码 | `668ac75e`（恢复修复已推送并快进合并到 `master`；当前包仍需重新生成 Package UI 证据） |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
 | 无安装版 SHA-256 | `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807` |

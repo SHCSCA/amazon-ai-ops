@@ -8,6 +8,7 @@
 - 随后的单次完整 8 类动作形成正式失败证据：`product_targeting` 创建请求结束后，30 秒内没有唯一回读本次生成的下载中心行，任务以 `LINGXING_CREATE_CALL_INTERRUPTED` 停止。5 类已下载，1 类为 `create_unknown`，1 类 failed，1 类 queued；没有 import run。
 - 该状态不能自动续跑。必须先人工确认领星下载中心中目标报表是否存在；存在时只能精确接管该行，不存在时才允许生成新的创建请求。系统当前保持安全阻断，没有重复创建或广告写入。
 - 正式库只读终审为 jobs 5、batches 3、files 9、imports 0；五张广告执行表均为 0。策略、运营任务、经营实验、Package UI 与 Task 8B 继续后置，总体为 `APP_NEEDS_WORK / NON_READY`。
+- 恢复修复与文档提交 `668ac75e` 已推送到功能分支，并以 `--ff-only` 快进合并到 `master` 后推送；本地运行产物与正式数据未进入 Git。
 
 ## 历史：2026-08-20 parser 已修复；正式启动恢复门成为主阻断
 

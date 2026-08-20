@@ -17,6 +17,7 @@
 - 只读 `mode=ro + query_only=1` 终审：jobs 5、batches 3、files 9、`report_import_runs=0`；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 全为 0。目标应用与测试进程残留为 0。
 - 当前主流程下一步不是继续自动点击，而是人工核对领星下载中心中该 `product_targeting` 报表是否实际创建，并据此选择“接管已有行”或“确认未创建后重新创建”的可审计恢复路径。未经该事实确认，不推进策略、运营任务、经营实验、Package UI 或 Task 8B，也不标记 `APP_READY`。
 - 非主流程问题仅记录：连接失败提示仍会露出 `Error invoking remote method`；正常应用重启后偶尔仍需再次执行当前店铺会话重置。按用户要求等待确认后再扩修。
+- 恢复修复与当前文档已提交为 `668ac75e`，推送到 `origin/codex/preview-contract-production-p2`，并以 `--ff-only` 快进合并到 `master` 后推送；未提交任何 `output/`、`storage/`、Profile、报表或 Windows 产物。
 
 ## 历史：2026-08-20 部分导入启动恢复已完成修复并重建
 

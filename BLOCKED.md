@@ -8,7 +8,7 @@
 - 正式库只读 `mode=ro + query_only=1` 终审：jobs 5、batches 3、files 9、导入 0；五张广告执行表全部为 0。目标应用进程已退出且残留为 0。
 - 当前整体仍为 `APP_NEEDS_WORK / NON_READY`。策略启用、运营任务、经营实验、当前包 Package UI 与 Task 8B 均不能越过真实 8/8 入库前置；没有具体、产品内已批准的 `lower_bid` 推荐前，任何广告写入继续为 0。
 - 已记录但本轮不扩修：连接失败提示仍暴露 `Error invoking remote method`；正常应用重启后偶尔仍要求当前店铺会话重置。等待用户确认后再处理。
-- Git 本地分支当前有两个已提交但未推送的文档提交，以及本轮恢复代码/测试/文档待提交；此前推送因连接重置和 GitHub 443 不可达失败。不得把 `output/`、`storage/`、Profile、报表或 EXE/ZIP 纳入提交。
+- 恢复修复与当前文档已提交为 `668ac75e`，已推送功能分支，并以 `--ff-only` 快进合并到 `master` 后推送。未提交 `output/`、`storage/`、Profile、报表或 EXE/ZIP；下方早期网络失败记录仅保留为历史。
 
 ## 历史：2026-08-20 正式 AppData 启动被旧失败导入恢复门阻断
 
