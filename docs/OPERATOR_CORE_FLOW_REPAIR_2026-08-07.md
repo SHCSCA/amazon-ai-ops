@@ -6,6 +6,9 @@
 - parser 单文件 `16/16 passed`，package typecheck exit 0。正式 campaign XLSX 只读直接解析为 `totalRows=192 / validCount=191 / invalidCount=0 / data=191`，保留源行 `2…192`；未改写工作簿或正式库。
 - 新 Windows 包七步构建与 package launch smoke 均通过；installer `1F50EBE8A90B0DFFD5609FEF9E91B47A41BDA7BD4A9E614AB7819418893F2BA0`、portable `78AAF47DC6EF01594865D3FF57DC6824D63DB8DFE3B7DD4BB08AD0E8636B47DB`、folder ZIP `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`，EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
 - 正式 AppData 启动暴露新的 Main 阻断：旧 failed 导入任务恢复结果为 `authorityFailed=1`，`assertLingxingImportStartupRecoverySafe` 在主窗口前抛出 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED`。没有新 import run，目标进程已清理，Ads 写入保持 0。
+- 正式库 `query_only=1` 进一步证明该任务只有 `1/8` downloaded checkpoint/file、持久错误为 `LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING`、`report_import_runs=0`。这是“仓储允许部分任务进入 recovery queue，而 Main 只接受完整 8 类 proof”的合同错配，不是 parser 复发或半提交。
+- 既有仓储测试明确锁定部分任务必须进入恢复队列，因此不能删测或用 SQL 隐藏。安全修复应只让合法部分终态在无 immutable run 且 durable failed settlement 精确匹配时成为 known failed；CAS/跨店/已有 run/证据漂移继续 fail-closed。
+- 当前 folder ZIP 启动证据也已闭合：`output/codex-evidence/folder-zip-launch-smoke-1787206148806.json` 为 `passed=true`，ZIP SHA `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`，解压 EXE 与 win-unpacked 匹配，临时文件和进程已清理。
 - 按用户“其他发现先记录、确认后再改”，恢复链不在本轮 parser 两文件授权内，因此未修改或绕过。总体仍 `APP_NEEDS_WORK / NON_READY`。
 
 ## 历史：2026-08-20 XLSX 阻断定性（parser 修复前）

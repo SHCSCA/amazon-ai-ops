@@ -5,7 +5,8 @@
 - parser 修复已进入新 Windows 包，包启动 smoke 通过；但用正式 AppData 启动目标应用时，Main 在主窗口创建前扫描到 1 个旧 `failed` 导入任务，并得到 `recovered=0 / failed=1 / knownFailed=0 / authorityFailed=1`。
 - `assertLingxingImportStartupRecoverySafe` 随即以 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED` 安全停止。没有主窗口、没有执行新 parser 导入、没有新的 import run，也没有 Ads 写入；中止后目标应用进程残留为 0。
 - 当前授权只覆盖 parser 两文件，恢复调用位于 `apps/desktop/src/main/index.ts`，分类门位于 `lingxing-import-startup-recovery-gate.ts` 及其测试，均未获本轮修改授权。按用户要求只记录，不绕过 gate、不直接改正式库、不清理旧任务。
-- 若获授权，下一步应先用一个精确红测复现“已有 failed 任务在 parser 已可成功解析时恢复仍落 authorityFailed”，再最小修复 failed→pending 的可证明 CAS/终态链；不得把真正 CAS 冲突、已有 immutable run 不一致或跨店上下文降级为 known failure。
+- 正式库只读证据把原因收窄为合同错配：任务只有 `1/8` downloaded checkpoint/file，持久错误类别为 `LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING`，且 `report_import_runs=0`；恢复队列允许部分任务，但 Main 后续要求完整 8 类 reconciliation proof，因此必然落 authority failure。
+- 仓储既有测试明确要求部分下载终态继续作为 recovery candidate，不能删测、改弱断言或简单从 SQL 隐藏。若获授权，应先红测“合法部分终态、无 immutable run、精确 failed settlement 不阻断应用启动”，然后在 Main 分类为 known failed；真正 CAS 冲突、已有 immutable run 不一致、跨店上下文或 reconciliation 漂移必须继续 authority-fail。
 
 ## 置顶：2026-08-20 parser 授权与源码阻断已解除，等待运行包真实导入
 

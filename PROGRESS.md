@@ -22,6 +22,9 @@
 - `pnpm run smoke:package-launch` 通过，证据 `output/codex-evidence/package-launch-smoke-1787205252416.json`。该 smoke 使用隔离启动条件，不替代正式 AppData 主流程。
 - 仅操控目标 Electron 应用的正式 AppData 复验在创建首窗前 fail-closed：启动恢复扫描到 1 个旧失败导入任务，`recovered=0 / failed=1 / knownFailed=0 / authorityFailed=1`，最终错误为 `LINGXING_COLLECTION_IMPORT_RECOVERY_AUTHORITY_FAILED`。目标进程已退出且残留为 0。
 - 这是 parser 之后暴露的新 Main 恢复阻断：新包尚未执行本次真实导入，正式库仍没有 import run。按用户“其他发现先记录、确认后再改”，本轮不修改 `index.ts`、恢复 gate 或仓储；下一步等待用户授权最小恢复 TDD seam。
+- 正式库 `query_only=1` 的精确快照：该任务为 `state=completed / importState=failed`，只有 `1` 个 downloaded checkpoint 与 `1` 个非空 downloaded file，`report_import_runs=0`；持久错误类别为 `LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING`。因此不是 parser 再次失败或半提交，而是部分任务进入恢复后被完整 8 类 proof 门拒绝。
+- 仓储既有测试明确要求部分 `completed_with_errors` 任务进入恢复队列，不能通过放宽/删除该测试或简单 SQL 过滤来假修。待授权的最小 Main 修复必须只把“合法部分终态 + 无 immutable run + 精确 durable failed settlement”归为 known failed，真正 CAS、跨店、已有 run 不一致与 reconciliation 漂移仍为 authority failure。
+- 当前 folder ZIP 真实启动 smoke 同样通过：ZIP `AD1D5E88323F551E6B2ADA2CBF3D62D0B9E55DDF7F68830B2FEFE24D8B764CA6`，解压 EXE 与 win-unpacked 精确匹配，窗口标题 `Amazon AI Ops Agent`，临时文件与进程已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787206148806.json`。
 
 ## 置顶：2026-08-20 XLSX 只读取证确认第 193 行是零活动占位行
 
