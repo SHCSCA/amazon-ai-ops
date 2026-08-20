@@ -19,6 +19,7 @@
 - 提交前安全反查发现并修复分页误判风险：未应用精确生成名搜索时，同日期兄弟报表不再足以确认缺失；Main 必须把下载中心搜索框精确回读为本次生成名，并连续 3 次观察不到精确行，才允许 `confirmed_absent`。精确 RED 收到旧 `confirmed_absent`，修后 GREEN；任何搜索条件漂移、重复行或未知状态继续保持 `ambiguous` 并禁止重建。
 - 正式广告执行五表继续全部为 0；真实 8/8 入库、策略、运营任务、经营实验、当前包 Package UI 与 Task 8B 均未完成，整体仍为 `APP_NEEDS_WORK / NON_READY`。
 - 非主流程但已确认的问题只记录：生产失败任务因 `importState=not_applicable` 被普通界面误标为 Canary；该标签问题等待主链闭合后再修。
+- 本轮 8 个源码/文档文件已形成可追溯提交 `5c5e23d3`（分支 `codex/collection-reconcile-preclaim-evidence`）；未提交 `.codex-temp/`、`output/`、`storage/`、Profile、报表或 Windows 产物。向 GitHub 推送两次均在 HTTPS 阶段收到 `Recv failure: Connection was reset`，未改 remote、未强推；待网络恢复后再推送。
 
 ## 历史：2026-08-20 启动恢复与连接已闭合，真实 8 类采集在领星创建回读处安全停止
 
