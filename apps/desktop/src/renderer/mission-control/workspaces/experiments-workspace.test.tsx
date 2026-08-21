@@ -52,6 +52,12 @@ describe('ExperimentsWorkspace', () => {
     expect(source).toContain('当前店铺没有可用运营任务，经营实验必须先绑定运营任务。');
     expect(source).toContain('先创建运营任务');
     expect(source).toContain("{ workspace: 'missions', subview: 'overview' }");
+    expect(source).toContain('需要按产品范围经营时，请先添加产品。');
+    expect(source).toContain('先添加产品');
+    expect(source).toContain("onNavigate('product-management')");
+    expect(source).toContain('需要对象级实验时，请先采集并导入广告对象。');
+    expect(source).toContain('先采集广告对象');
+    expect(source).toContain("onNavigate('data-collection')");
   });
 
   it('keeps long editor bodies scrollable while their action footers stay reachable', () => {

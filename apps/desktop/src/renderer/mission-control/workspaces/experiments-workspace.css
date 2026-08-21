@@ -556,18 +556,24 @@
 }
 
 .experiment-dependency-gate {
-  align-items: center;
   background: #fff7ed;
   border: 1px solid #fed7aa;
   border-radius: 9px;
   color: #9a3412;
-  display: flex;
+  display: grid;
   font-size: 12px;
   font-weight: 700;
-  gap: 12px;
+  gap: 8px;
   grid-column: 1 / -1;
-  justify-content: space-between;
   padding: 10px 12px;
+}
+
+.experiment-dependency-gate p {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 0;
 }
 
 .experiment-dependency-gate button {

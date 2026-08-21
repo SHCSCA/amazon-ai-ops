@@ -338,7 +338,11 @@ function ExperimentEditor({
           <button aria-label="关闭实验编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button>
         </header>
         <div className="experiment-form">
-          {!options.loading && !options.missions.length && <div className="experiment-dependency-gate" role="status"><span>当前店铺没有可用运营任务，经营实验必须先绑定运营任务。</span><button onClick={() => onNavigate({ workspace: 'missions', subview: 'overview' })} type="button">先创建运营任务</button></div>}
+          {!options.loading && (!options.missions.length || !options.products.length || !options.adObjects.length) && <div aria-label="经营实验前置条件" className="experiment-dependency-gate" role="status">
+            {!options.missions.length && <p><span>当前店铺没有可用运营任务，经营实验必须先绑定运营任务。</span><button onClick={() => onNavigate({ workspace: 'missions', subview: 'overview' })} type="button">先创建运营任务</button></p>}
+            {!options.products.length && <p><span>当前店铺没有可选产品；需要按产品范围经营时，请先添加产品。</span><button onClick={() => onNavigate('product-management')} type="button">先添加产品</button></p>}
+            {!options.adObjects.length && <p><span>当前店铺没有可选广告对象；需要对象级实验时，请先采集并导入广告对象。</span><button onClick={() => onNavigate('data-collection')} type="button">先采集广告对象</button></p>}
+          </div>}
           <SearchableOptionSelect disabled={Boolean(editor.record) || options.loading} label="运营任务" onChange={(value) => change('missionId', value)} options={options.missions} required value={editor.draft.missionId} />
           <SearchableOptionSelect disabled={options.loading} label="主指标" onChange={(value) => change('primaryMetric', value)} options={PRIMARY_METRIC_OPTIONS} required value={editor.draft.primaryMetric} />
           <label className="experiment-form__wide"><span>实验名称 *</span><input autoFocus onChange={(event) => change('name', event.target.value)} placeholder="例如：核心词竞价 -12% 小步实验" value={editor.draft.name} /></label>
