@@ -1,6 +1,15 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-21 当前状态：店铺选择与续跑链已修通，领星商品投放创建 200 后仍不落行
+## 2026-08-21 最新交付状态：当前包已构建，Package UI 待一次可见登录
+
+- 当前 Git 分支为 `master`，本轮源码与状态文档已推送 `origin/master`；既有未跟踪本地目录保留，`output/`、正式库、Profile、报表及 EXE/ZIP 未提交。
+- 当前 Windows 产物已重新按文件核验：installer `99E93B9CA6BA8A8BC489FA7F6FB234AF5FEAA429380E96ECA55299DC4FBA778E`，portable `488CD1B09EE21ECABB520A403D6B97CC1C4B5D8AC62442D1663D509D1A9B0C37`，folder ZIP `0094767AC505439E1AB1902AFAAD8B8D11C9D6DD67FA1A1E0662398A3B2677A3`，blockmap `981725081587C1127719AB70984ACF144A5887A51212CD372A31C0F1841292C8`，win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。Package UI hash preflight exit 0，app content 为 `93443D3489876300D2D4EFA32E7E320D4E23109F0D1311A2DFEDE0A885AE58F8`（5118 files / 544,549,369 bytes）。文件夹 ZIP 已有当前哈希绑定的真实解压起窗通过证据。
+- 当前生产 Renderer 与源码对 `DAILY MISSION CONTROL`、裸 `Mission`、`UNKNOWN`、`set_keyword_bid` 的精确普通界面文案检索均为 0；策略可用时的陈旧阻断原因、运营任务弹窗裁切及经营实验空依赖入口均已进入当前包。最新 7 类业务 smoke、desktop typecheck、七步 Windows build 与 ZIP 启动均通过；这些证据不替代真实 8/8、Package UI 或 Task 8B。
+- 正式库最新只读事实为 `query_only=1`，查询前后主文件 SHA-256 都是 `4C107960F7F75DFC566438A35817F912DDB55E9220BB7F3DFA475922529789A3`。resume attempts 12、active claims 0、events 111；6 类 downloaded，`product_targeting=failed / LINGXING_CREATE_CONFIRMED_ABSENT`，`user_search_term=queued`；`report_import_runs`、`policy_versions`、`missions`、`experiments` 与五张 `ad_execution_*` 表全部为 0。
+- 当前 Package UI run group `operator-core-20260821-74` 已由只读 inspector 判为 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，包哈希、authority receipt 与只含 readonly/query-only 在线备份的新隔离 Profile 均已绑定。唯一未完成动作是操作者在目标应用首档可见窗口中本人输入密码、勾选“记住密码”并提交；只续跑同一 `-74`，不复用旧包证据、不新建重复 run group。
+- 因领星对两次 `product_targeting` 创建均返回 `POST .../batch_create_report -> 200（操作成功）` 却未形成可唯一回读的下载中心行，本轮禁止盲目第三次创建。真实 8/8/import、随后启用策略并创建真实运营任务/经营实验仍未闭环；同时正式库没有具体、当前且已批准的正向 `lower_bid` 推荐，Task 8B 与任何 Ads 写入继续阻断。总体结论保持 `APP_NEEDS_WORK / NON_READY`，不得标记 `APP_READY`。
+
+## 历史：2026-08-21 店铺选择与续跑链已修通，领星商品投放创建 200 后仍不落行
 
 - `completed_with_errors` 原位续跑的三道状态遗漏已用红→绿修复：local-db、scheduler double-read 与 production composition 现在接受该合法终态；完整 8 类、店铺/Profile、request/job/batch、durable fingerprint 与 MainRuntime CAS 等既有门不变。
 - 领星创建页的店铺名不是配置值 `JF-US`，而是运行时展示的 `JF-US-US`。实现动态接受“当前店铺名”或“当前店铺名-当前站点码”两个规范化精确别名；不写死 JF-US、不做子串匹配，缺失或重复仍 fail-closed。
