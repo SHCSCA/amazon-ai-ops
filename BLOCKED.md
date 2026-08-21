@@ -2,6 +2,7 @@
 
 ## 当前：2026-08-21 商品投放已确认不存在，采集暂停并转项
 
+- Package UI 不再缺包哈希、authority receipt 或隔离 Profile：当前 `operator-core-20260821-74` 已由只读 inspector 判定 `RESUME_SAFE`，一次性 resume receipt 已生成。当前唯一人工前置是操作者必须在首档可见窗口内手输密码、勾选“记住密码”并提交；本轮 180 秒无人提交，runner 已失败关闭且目标进程残留为 0。恢复条件是用户明确回复“现在可以输入”，随后只续跑 `-74`，不新建重复 run group。
 - 非主链视觉项：Windows 构建明确提示当前仍使用 Electron 默认图标（`application icon is not set`）。按用户要求仅记录，未扩改品牌资产；不影响本轮连接、采集安全门、业务 smoke 或 ZIP 启动结论。
 - 用户看到的领星下载中心是上一轮商品投放创建后唯一回读的目标应用窗口；本轮已关闭，不再停留或重试。源码只保留非 GET 响应的 method/path/status/脱敏 message，现有证据仅能确认 `batch_create_report -> 200（操作成功）`，没有证据证明响应中存在可接管的任务号；在没有新外部事实前不推测字段、不放宽按精确报表名回读门。
 - 当前包已修复策略可用时误显示阻断原因、正式空态下任务弹窗顶部裁切；新包 7 类 smoke、Windows build、ZIP 解压启动和正式包定点复验均通过。这两项不再是 blocker。
