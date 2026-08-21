@@ -8,6 +8,17 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
+## 当前：2026-08-21 商品投放只读核对完成，立即转项
+
+- 仅操控目标应用，以 Main 托管保存凭证重建当前店铺会话；返回 `currentStore=JF-US`、`erpSessionReady=true`、`adsSessionReady=true`、`adsEntryMode=erp_ads_entry`，未读取或传递密码、Cookie、Profile。
+- 对正式作业 `batch_20260820071341341_y7yk86` 只执行 `reconcileOnly=true`，没有创建报表、下载报表或触发广告写入。精确名称 `AAO_20260806_20260819_product_targeting_064758` 在当前店铺同日期列表仍不存在，正式 checkpoint 已安全落为 `failed / LINGXING_CREATE_CONFIRMED_ABSENT`；`user_search_term` 保持 queued。
+- 这次结果已经排除“只是在等领星晚到”。按用户要求不再围绕下载重复尝试；采集外部缺口保留在 `BLOCKED.md`，当前执行转向策略、运营任务、经营实验与普通界面审计。
+- 目标应用已正常关闭；本次动作没有再次创建 `product_targeting`，不能把 6/8 冒充 8/8 或正式入库，整体仍为 `APP_NEEDS_WORK / NON_READY`。
+- 转项后的策略/运营任务/经营实验最小回归为 3 files / `32/32 passed`。源码核对确认：策略已有四步向导、数字越小越优先、草稿→检查→启用路径与运行动作卡；运营任务只接受当前店铺 completed 批次、enabled 策略版本和现有产品，缺项时显示“先采集/先启用策略/先添加产品”并禁用保存；经营实验使用可搜索的运营任务、主指标、产品、广告对象选择器和指标+比较符+阈值守护条件。
+- 审计同时发现经营实验的本地必填校验仍会直接显示 `Mission`。新增断言先 RED=`1 failed / 8 passed`，改为“请绑定运营任务…”后 GREEN=`9/9 passed`；desktop typecheck 为 `$ tsc --noEmit` / exit 0。其他技术值继续只允许出现在诊断详情或测试数据中。
+- Renderer 生产构建通过：4735 modules transformed，输出 `index-jLUj3PqA.js` / `index-CsHVBxxp.css`；随后 `pnpm run smoke:business-ui-current` exit 0，汇总 `output/codex-evidence/current-business-ui-smoke-1787295995003.json` 明确报告连接、采集、策略、运营任务、经营实验、弹窗、按钮 7/7 passed。该 smoke 是机器合同，不替代真实 8/8 或 Package UI。
+- 烟测后正式库再次以 readonly + `query_only=ON` 核验：resume attempts 12、active claims 0、events 111、import runs 0；Ads 执行五表仍全 0；missions 0、experiments 0、policy_versions 0。说明本次转项构建/烟测未伪造正式任务、实验、策略版本或广告写入。
+
 ## 当前：2026-08-21 真实自动投放报表识别已按值域窄门修复
 
 - 创建提交可观测合同已完成红→绿：新增用例先为 `1 failed / 13 passed`，要求提交前回读报表类型并仅记录脱敏的领星非 GET 响应；最小实现后为 `14/14 passed`，desktop typecheck `$ tsc --noEmit` / exit 0。实现只保留 method、无查询参数 pathname、status 与脱敏 message，不读取请求体、Header、Cookie 或凭证；下一步重建包后只做一次核对与一次续采，以响应事实定位 `product_targeting` 未落行原因。

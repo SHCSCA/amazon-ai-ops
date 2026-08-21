@@ -228,7 +228,7 @@ export function buildCreateExperimentInput(draft: ExperimentDraft, id: string): 
     ? [`${draft.guardrailMetrics.trim()} ${draft.guardrailComparator} ${draft.guardrailThreshold!.trim()}%`]
     : list(draft.guardrailCriteria);
   if (!draft.missionId.trim() || !draft.name.trim() || !draft.hypothesis.trim()) {
-    throw new Error('请绑定 Mission，并填写实验名称与可证伪假设。');
+    throw new Error('请绑定运营任务，并填写实验名称与可证伪假设。');
   }
   if (!draft.primaryMetric.trim() || !guardrailMetrics.length || !guardrailCriteria.length) {
     throw new Error('请填写主指标、守护指标与守护标准。');

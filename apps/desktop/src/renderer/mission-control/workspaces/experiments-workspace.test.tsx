@@ -131,6 +131,8 @@ describe('ExperimentsWorkspace', () => {
     expect(buildUpdateExperimentInput(record, { ...draft, conclusion: 'ACOS 改善 12%' }))
       .toMatchObject({ expectedRevision: 4, patch: { conclusion: 'ACOS 改善 12%' } });
     expect(() => buildCreateExperimentInput({ ...draft, baselineJson: '{invalid' }, 'EXPERIMENT-002')).toThrow(/合法 JSON/);
+    expect(() => buildCreateExperimentInput({ ...draft, missionId: '' }, 'EXPERIMENT-003'))
+      .toThrow('请绑定运营任务，并填写实验名称与可证伪假设。');
   });
 
   it('preserves an existing structured guardrail when opening the edit dialog', () => {
