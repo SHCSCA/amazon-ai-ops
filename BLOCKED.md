@@ -2,6 +2,7 @@
 
 ## 当前：2026-08-21 商品投放已确认不存在，采集暂停并转项
 
+- 用户看到的领星下载中心是上一轮商品投放创建后唯一回读的目标应用窗口；本轮已关闭，不再停留或重试。源码只保留非 GET 响应的 method/path/status/脱敏 message，现有证据仅能确认 `batch_create_report -> 200（操作成功）`，没有证据证明响应中存在可接管的任务号；在没有新外部事实前不推测字段、不放宽按精确报表名回读门。
 - 当前包已修复策略可用时误显示阻断原因、正式空态下任务弹窗顶部裁切；新包 7 类 smoke、Windows build、ZIP 解压启动和正式包定点复验均通过。这两项不再是 blocker。
 - Package UI 的自动准备部分已完成：当前包哈希、authority receipt 和只含正式库只读在线备份的新隔离 Profile 均已就绪。唯一不可自动替代项是 schema v8 首 profile 强制的本次可见 typed+saved 登录证明；旧已登录 Profile、Main 保存密码和现有会话均被 runner 明确拒绝。未取得该人工动作前不能生成当前包通过 manifest。
 - 目标应用内 Main 托管凭证已重新验证 ERP/Ads 同店身份，下载中心诊断 `ready=true`；随后仅执行一次 `reconcileOnly=true`，未创建或下载报表。
