@@ -37,6 +37,8 @@
 - 按防重复规则停止继续重建商品投放。当前结论是应用的任意店铺精确选择、提交与状态恢复链已实证通过，外部阻断收窄为领星接受商品投放创建但未生成可唯一回读的下载中心行；未经对 `…064758` 的后续唯一核对不得再次 resume。
 - 精简主链回归通过：6 files / `186/186 passed`、skipped=0（exit 0、Vitest duration 30.80s），覆盖 local-db 54、scheduler read model 66、production composition 16、collection coordinator 23、parser 19、collector 8；desktop typecheck 在最后一处状态修复后为 `$ tsc --noEmit` / exit 0。没有运行全量 UI/打包验收，符合“先保证主流程，其它问题记录”的当前执行约定。
 - 正式库终态再次 readonly/query_only 核验：attempts 12、claims 0、events 111、imports 0；6 类 downloaded，product_targeting=`create_unknown / LINGXING_CREATE_CALL_INTERRUPTED`，user_search_term=queued；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表全部 0。目标应用已正常关闭。
+- 本轮源码与文档已提交到本地 `master`：`c26be721 fix: harden Lingxing collection resume and report matching`（21 files，未包含 output/storage/Profile/报表/EXE/ZIP 或未跟踪临时目录），阻断同步记录提交为当前 HEAD。连同此前 `5e650ae8`，相对可见 `origin/master@614ab810` 共超前 3 个提交。
+- GitHub 同步未完成：一次 `git fetch origin --prune` 与两次 `git push origin master` 分别失败为 `Recv failure: Connection was reset`、`Could not connect to github.com port 443`、再次 `Recv failure: Connection was reset`。按三次失败换项停止盲重试；恢复条件仅为本机到 GitHub 443 网络恢复后执行 `git push origin master`。
 - “确定/确认”兼容实包仍对 `…044644` 返回“未出现可见确认按钮”，且可见错误为空；正式 attempts 7、claims 0、events 61、imports 0、Ads 五表 0。结论：当前创建不是二次确认弹窗问题，下一步改为记录提交前表单就绪与点击后的脱敏非 GET 响应，不再猜按钮文案。
 - 结构化反馈包对新名 `…043611` 给出确定事实：没有可见必填/权限/频控错误，但“提交确认：未出现可见确认按钮”。旧候选只识别“确定”，而当前领星二次确认可能为“确认”；正式库 attempts 6、active claims 0、events 54、imports 0、Ads 五表 0。
 - 新增弹窗内“确定/确认”兼容合同先 RED=`1 failed / 12 passed`；最小修复在 layui、Element message box、Element dialog、role=dialog 中同时识别两种中文动作，仍要求全页恰好一个可见候选，多个立即阻断。修后 `13/13 passed`，desktop typecheck exit 0，尚待重建实测。

@@ -393,3 +393,4 @@
 - 三道状态门、动态 `店铺名-站点码` 别名和真实创建提交均已实跑通过；attempt 11/12 都到达领星创建接口并收到 200，且 claim 均释放。`LINGXING_CREATE_STORE_NOT_SELECTED` 已不再复现。
 - 当前唯一采集阻断是第二个商品投放新名 `AAO_20260806_20260819_product_targeting_064758` 在创建 200 后仍未形成可见列表行，任务保持 create_unknown、搜索词 queued。未经后续唯一核对禁止再次创建；8/8/import 因此外部阻断，整体继续 `APP_NEEDS_WORK / NON_READY`。
 - 独立源码主链当前 `186/186 passed`、skipped=0 且 desktop typecheck 通过；这只能证明修复没有破坏续跑/解析合同，不能替代 `…064758` 的外部唯一回读、8/8/import、Package UI 或 Task 8B。
+- Git 交付外部阻断：本地 `master` 已提交 `c26be721`，但 GitHub 443 连续三次连接失败（reset / connect timeout / reset），当前远端未同步。禁止宣称 push 完成；网络恢复后只需 `git push origin master`，无需重做源码或测试。

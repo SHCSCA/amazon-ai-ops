@@ -8,7 +8,7 @@
 - 两次商品投放创建都收到 `POST /ak_download/download_center/index/batch_create_report -> 200（操作成功）`。第一次新名 `…064519` 经 reconcile-only 唯一查询确认不存在后才允许一次重建；第二次新名 `AAO_20260806_20260819_product_targeting_064758` 仍未形成可见列表行，因此安全停止为 `create_unknown`，不得再次自动创建。
 - 正式库终态为 6 类 downloaded、product_targeting create_unknown、user_search_term queued；resume attempts 12、active claims 0、events 111、import runs 0，五张 Ads execution 表全部为 0。8/8/import、策略真实启用、运营任务、经营实验、Package UI 与 Task 8B 仍未闭合，总体保持 `APP_NEEDS_WORK / NON_READY`。
 - 精简源码主链回归为 6 files / `186/186 passed`、skipped=0，desktop typecheck 通过。最后一处 production composition 修复只进入 Main 诊断副本；最近一次完整 Windows 构建（folder ZIP `A4EFA70E947805EE62C6770670F1683C7AF53544F2B57B9F20E3B094358563F7`）早于该修复，不能当作最终交付包。外部阻断解除后必须重新完整构建与验收。
-- Git 当前本地 `master` 已包含此前功能分支的快进合并提交；本轮准备提交源码与文档。远端 fetch 首次因网络连接被重置失败，推送前需重试，未成功前不得宣称已同步。
+- Git 当前本地 `master` 已包含此前功能分支的快进合并，并新增本轮提交 `c26be721`。一次 fetch 与两次 push 均因 GitHub 443 reset/timeout 失败；远端仍未同步，网络恢复后执行 `git push origin master`，未成功前不得宣称已推送。
 
 ## 2026-08-20 当前状态：连接已闭合，8 类采集在创建结果不确定态安全停止
 
