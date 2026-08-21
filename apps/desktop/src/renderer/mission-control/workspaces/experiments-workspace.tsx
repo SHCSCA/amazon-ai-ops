@@ -316,6 +316,7 @@ function ExperimentEditor({
   options,
   onCancel,
   onChange,
+  onNavigate,
   onSave,
 }: {
   busy: boolean;
@@ -323,6 +324,7 @@ function ExperimentEditor({
   options: ExperimentSelectorOptions;
   onCancel: () => void;
   onChange: (draft: ExperimentDraft) => void;
+  onNavigate: (target: unknown) => void;
   onSave: () => void;
 }) {
   const change = <K extends keyof ExperimentDraft>(key: K, value: ExperimentDraft[K]) => {
@@ -336,6 +338,7 @@ function ExperimentEditor({
           <button aria-label="关闭实验编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button>
         </header>
         <div className="experiment-form">
+          {!options.loading && !options.missions.length && <div className="experiment-dependency-gate" role="status"><span>当前店铺没有可用运营任务，经营实验必须先绑定运营任务。</span><button onClick={() => onNavigate({ workspace: 'missions', subview: 'overview' })} type="button">先创建运营任务</button></div>}
           <SearchableOptionSelect disabled={Boolean(editor.record) || options.loading} label="运营任务" onChange={(value) => change('missionId', value)} options={options.missions} required value={editor.draft.missionId} />
           <SearchableOptionSelect disabled={options.loading} label="主指标" onChange={(value) => change('primaryMetric', value)} options={PRIMARY_METRIC_OPTIONS} required value={editor.draft.primaryMetric} />
           <label className="experiment-form__wide"><span>实验名称 *</span><input autoFocus onChange={(event) => change('name', event.target.value)} placeholder="例如：核心词竞价 -12% 小步实验" value={editor.draft.name} /></label>
@@ -428,6 +431,9 @@ export function ExperimentsWorkspace({
   const selected = experiments.find((item) => item.id === selectedId) ?? null;
 
   const actionReady = (capabilityId: string) => capabilityReady(capabilities, capabilityId, previewMode);
+  const navigate = (target: unknown) => {
+    window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: target }));
+  };
 
   const load = async () => {
     const sequence = ++requestSequence.current;
@@ -751,7 +757,7 @@ export function ExperimentsWorkspace({
         {!previewMode && (!viewReady || error) && <details className="experiment-diagnostics"><summary>诊断详情</summary><code>{error ?? blockedReason}</code></details>}
       </PageFrame>
 
-      {editor && <ExperimentEditor busy={pending === 'save'} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onSave={() => void save()} options={selectorOptions} />}
+      {editor && <ExperimentEditor busy={pending === 'save'} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onNavigate={navigate} onSave={() => void save()} options={selectorOptions} />}
       {observationEditor && <ObservationEditor busy={pending === 'observation'} correctionTargets={correctionTargets} draft={observationEditor} onCancel={() => setObservationEditor(null)} onChange={setObservationEditor} onSave={() => void appendObservation()} />}
       {archiveConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档经营实验</span><h2 id="experiment-archive-title">归档“{archiveConfirm.name}”？</h2><p>实验退出默认队列，但所有观察、修正和因果事件继续保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archive()} type="button">确认归档</button></footer></section></div>}
       {completeConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-complete-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm experiment-complete-dialog" role="dialog"><header><div><span>完成经营实验</span><h2 id="experiment-complete-title">完成“{completeConfirm.name}”</h2><p>结论会作为效果记录追加到因果链，完成后不可再编辑。</p></div></header><label><span>实验结论 *</span><textarea autoFocus onChange={(event) => setCompletion(event.target.value)} rows={4} value={completion} /></label><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setCompleteConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !completion.trim()} onClick={() => void transition(completeConfirm, 'completed', completion.trim())} type="button">确认完成</button></footer></section></div>}

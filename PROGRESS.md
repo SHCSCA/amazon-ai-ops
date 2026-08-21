@@ -10,6 +10,7 @@
 
 ## 当前：2026-08-21 商品投放只读核对完成，立即转项
 
+- 经营实验空依赖路径补齐：正式界面原先仅显示“当前店铺没有可选运营任务”并禁用保存，缺少可操作下一步。新增合同先 RED=`1 failed / 9 passed`；现在弹窗常驻说明“经营实验必须先绑定运营任务”，提供“先创建运营任务”并导航到运营任务总览，保存门继续要求当前店铺有效运营任务。修后定点 `10/10 passed`、desktop typecheck `$ tsc --noEmit` / exit 0、7 类业务 smoke passed，汇总 `output/codex-evidence/current-business-ui-smoke-1787298245118.json`；本项不创建实验、不触发采集或 Ads 写入。按用户要求不为单个界面修复重复构建 Windows 包，剩余 UI 修改合并后只做一次实包复验。
 - 正式包只读 UI 审计新增并修复两项真实缺口。其一：共享 `TaskBanner` 在动作实际可用时仍无条件显示 `disabledReason`，导致策略页同时出现“生产可用 / 新建策略可点击”和“策略当前不可用”；新增回归先 RED=`1 failed / 16 passed`，最小修复仅在按钮真实禁用或同组忙碌时显示原因并绑定 `aria-describedby`。组合回归曾暴露经营实验预览状态依赖旧误显示，改为自身明确显示“仅开发预览”，未删除或放宽旧断言。
 - 其二：运营任务弹窗在正式 1332×759 内容区复现顶部 `y=-71px` 裁切；根因是 `.mission-domain-workspace { container-type:inline-size }` 使 fixed backdrop 以短内容根节点而非窗口为包含块。新增 CSS 合同先 RED=`1 failed / 12 passed`；打开弹窗时仅解除该容器 containment，保留正文滚动和固定 footer。修后 4 files / `50/50 passed`、desktop typecheck exit 0、7 类业务 smoke 再次 passed。
 - 修复进入新 Windows 包后原场景复验通过：策略“新建策略”保持 enabled 且陈旧“策略当前不可用”文本为 0；运营任务弹窗 `top=23.99 / bottom=735.43 / viewportHeight=759`，footer bottom `734.74`，正文依赖门显示“先采集/先启用策略”，保存按钮 disabled。没有创建策略版本、运营任务或实验。

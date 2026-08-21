@@ -47,6 +47,13 @@ describe('ExperimentsWorkspace', () => {
     expect(source).toContain('listStoreAdObjects');
   });
 
+  it('gives an actionable next step when the current store has no mission to bind', () => {
+    const source = readFileSync(new URL('./experiments-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('当前店铺没有可用运营任务，经营实验必须先绑定运营任务。');
+    expect(source).toContain('先创建运营任务');
+    expect(source).toContain("{ workspace: 'missions', subview: 'overview' }");
+  });
+
   it('keeps long editor bodies scrollable while their action footers stay reachable', () => {
     const css = readFileSync(new URL('./experiments-workspace.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.experiment-observation-editor\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[^}]*overflow:\s*hidden;/s);
