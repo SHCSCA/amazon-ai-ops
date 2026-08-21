@@ -57,6 +57,11 @@ function ordinaryText(markup: string): string {
 }
 
 describe('MissionsWorkspace contracts', () => {
+  it('releases fixed dialog backdrops from the workspace container at compact desktop size', () => {
+    const css = readFileSync(new URL('../../styles/mission-control-shell.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/\.mission-control-workspace-root:has\(\.mission-control-dialog-backdrop\)\s*\{[^}]*container-type:\s*normal;/s);
+  });
+
   it('uses only current-store completed batches, enabled rules and existing products', () => {
     const source = readFileSync(new URL('./missions-workspace.tsx', import.meta.url), 'utf8');
     const defaults = source.slice(source.indexOf('function missionDraft'), source.indexOf('export function buildCreateMissionInput'));

@@ -10,6 +10,12 @@
 
 ## 当前：2026-08-21 商品投放只读核对完成，立即转项
 
+- 正式包只读 UI 审计新增并修复两项真实缺口。其一：共享 `TaskBanner` 在动作实际可用时仍无条件显示 `disabledReason`，导致策略页同时出现“生产可用 / 新建策略可点击”和“策略当前不可用”；新增回归先 RED=`1 failed / 16 passed`，最小修复仅在按钮真实禁用或同组忙碌时显示原因并绑定 `aria-describedby`。组合回归曾暴露经营实验预览状态依赖旧误显示，改为自身明确显示“仅开发预览”，未删除或放宽旧断言。
+- 其二：运营任务弹窗在正式 1332×759 内容区复现顶部 `y=-71px` 裁切；根因是 `.mission-domain-workspace { container-type:inline-size }` 使 fixed backdrop 以短内容根节点而非窗口为包含块。新增 CSS 合同先 RED=`1 failed / 12 passed`；打开弹窗时仅解除该容器 containment，保留正文滚动和固定 footer。修后 4 files / `50/50 passed`、desktop typecheck exit 0、7 类业务 smoke 再次 passed。
+- 修复进入新 Windows 包后原场景复验通过：策略“新建策略”保持 enabled 且陈旧“策略当前不可用”文本为 0；运营任务弹窗 `top=23.99 / bottom=735.43 / viewportHeight=759`，footer bottom `734.74`，正文依赖门显示“先采集/先启用策略”，保存按钮 disabled。没有创建策略版本、运营任务或实验。
+- 最新七步 Windows 构建 status 0，installer `4E850D098923F3975AB9D7FBC4ED7E5D229CA2450E0624203966B6952A211443`、portable `7A7477D2E089A808F3D9293CDEF958FA5CFB04E8042DD655B9D3754A13E00467`、folder ZIP `56C6787559E1C994C020B3CD951D1B972CF6884727EA09E1059FFF12BE724E8F`、blockmap `B5A8BEA6DFDB501E15444B2FB25A4C1E4826F7F1F96899EA86CEFE3ACA763367`；当前 ZIP 真实解压启动再次 passed，证据 `output/codex-evidence/folder-zip-launch-smoke-1787297788658.json`。
+- 当前 Package UI 绑定哈希更新为 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、app content `5C913A4CD3787189070E0BC7D9DED48EAB20E403FC857DC1418AAE8394C361A4`。新隔离 Profile `D:\Temp\amazon-ai-ops-package-ui-operator-core-20260821-71` 已通过 readonly/query-only SQLite online backup 建立，627 pages / remaining 0，未复制浏览器 Profile/Cookie；runner 源码确认首 profile 仍硬性要求当前 run 的 typed+saved、非复用、身份已验证可见登录，不能自动化保存密码绕过。
+- 复验后正式库 readonly/query_only 计数保持 attempts 12、claims 0、events 111、imports 0、missions 0、experiments 0、policy_versions 0，Ads 五表全 0。
 - 仅操控目标应用，以 Main 托管保存凭证重建当前店铺会话；返回 `currentStore=JF-US`、`erpSessionReady=true`、`adsSessionReady=true`、`adsEntryMode=erp_ads_entry`，未读取或传递密码、Cookie、Profile。
 - 对正式作业 `batch_20260820071341341_y7yk86` 只执行 `reconcileOnly=true`，没有创建报表、下载报表或触发广告写入。精确名称 `AAO_20260806_20260819_product_targeting_064758` 在当前店铺同日期列表仍不存在，正式 checkpoint 已安全落为 `failed / LINGXING_CREATE_CONFIRMED_ABSENT`；`user_search_term` 保持 queued。
 - 这次结果已经排除“只是在等领星晚到”。按用户要求不再围绕下载重复尝试；采集外部缺口保留在 `BLOCKED.md`，当前执行转向策略、运营任务、经营实验与普通界面审计。

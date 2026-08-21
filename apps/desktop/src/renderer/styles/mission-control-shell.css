@@ -1053,6 +1053,13 @@
   padding: 24px;
 }
 
+/* Container queries make fixed descendants use the workspace as their
+ * containing block. Release that containment while a modal is open so the
+ * backdrop and its max-height are measured against the desktop viewport. */
+.mission-control-workspace-root:has(.mission-control-dialog-backdrop) {
+  container-type: normal;
+}
+
 .mission-control-workspace-root .mission-control-dialog {
   display: grid;
   width: min(680px, calc(100vw - 48px));

@@ -122,6 +122,23 @@ describe('TaskBanner', () => {
     expect(textContent(peerReason)).toBe('等待当前导入完成');
   });
 
+  it('does not show a stale disabled reason while the action is available', () => {
+    const tree = TaskBanner({
+      title: '创建当前店铺策略',
+      primaryAction: {
+        label: '新建策略',
+        onClick: vi.fn(),
+        disabled: false,
+        disabledReason: '策略当前不可用。请确认当前店铺连接与本机服务后重试。',
+      },
+    }) as ReactElement;
+
+    const button = collectElements(tree, (element) => element.type === 'button')[0];
+    expect(button.props.disabled).toBe(false);
+    expect(button.props['aria-describedby']).toBeUndefined();
+    expect(textContent(tree)).not.toContain('策略当前不可用');
+  });
+
   it('omits the task action group when an inspector owns the current primary action', () => {
     const tree = TaskBanner({
       title: '核验当前建议',

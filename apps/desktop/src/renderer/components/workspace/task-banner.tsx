@@ -40,7 +40,8 @@ function renderActionButton({
   seed: string;
 }) {
   const disabled = Boolean(action.disabled || groupBusy);
-  const reasonId = action.disabledReason ? actionReasonId(seed, priority, index) : undefined;
+  const visibleDisabledReason = disabled ? action.disabledReason : undefined;
+  const reasonId = visibleDisabledReason ? actionReasonId(seed, priority, index) : undefined;
 
   return (
     <div className="task-banner__action-shell">
@@ -58,8 +59,8 @@ function renderActionButton({
         {action.busy && <span aria-hidden="true" className="workspace-spinner" />}
         <span>{action.busy ? action.busyLabel ?? '处理中...' : action.label}</span>
       </button>
-      {action.disabledReason && (
-        <span className="task-banner__disabled-reason" id={reasonId}>{action.disabledReason}</span>
+      {visibleDisabledReason && (
+        <span className="task-banner__disabled-reason" id={reasonId}>{visibleDisabledReason}</span>
       )}
     </div>
   );

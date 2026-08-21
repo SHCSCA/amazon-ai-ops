@@ -2,6 +2,8 @@
 
 ## 当前：2026-08-21 商品投放已确认不存在，采集暂停并转项
 
+- 当前包已修复策略可用时误显示阻断原因、正式空态下任务弹窗顶部裁切；新包 7 类 smoke、Windows build、ZIP 解压启动和正式包定点复验均通过。这两项不再是 blocker。
+- Package UI 的自动准备部分已完成：当前包哈希、authority receipt 和只含正式库只读在线备份的新隔离 Profile 均已就绪。唯一不可自动替代项是 schema v8 首 profile 强制的本次可见 typed+saved 登录证明；旧已登录 Profile、Main 保存密码和现有会话均被 runner 明确拒绝。未取得该人工动作前不能生成当前包通过 manifest。
 - 目标应用内 Main 托管凭证已重新验证 ERP/Ads 同店身份，下载中心诊断 `ready=true`；随后仅执行一次 `reconcileOnly=true`，未创建或下载报表。
 - 精确名称 `AAO_20260806_20260819_product_targeting_064758` 仍不存在，正式作业已从 `create_unknown` 收口为 `failed / LINGXING_CREATE_CONFIRMED_ABSENT`；当前仍是 6 类 downloaded、商品投放 failed、用户搜索词 queued、正式 import run 0。
 - 该状态技术上允许以后安全重新创建，但连续两次 `POST 200（操作成功）` 均未形成下载中心行；为避免继续空转，本轮不再创建，先推进不依赖 8/8 的策略/运营任务/经营实验界面与禁用路径。恢复条件是明确决定重新创建商品投放并接受一次新的外部尝试，或领星侧能解释该报表类型的创建限制。
