@@ -4001,13 +4001,13 @@ function normalizeInPlaceResumeReports(
   proof: LingxingCollectionAuthorityProof,
 ): LingxingCollectionReportCheckpoint[] {
   if (
-    proof.job.state !== 'failed'
+    (proof.job.state !== 'failed' && proof.job.state !== 'completed_with_errors')
     || proof.job.request.mode !== 'create-and-download'
     || !sameCompleteLingxingReportTypeSet(proof.job.request.reportTypes)
     || proof.checkpointCount !== COMPLETE_LINGXING_REPORT_TYPES.size
     || proof.job.reports.length !== COMPLETE_LINGXING_REPORT_TYPES.size
   ) {
-    throw new Error('原地续跑只接受原任务失败的完整八报表 create-and-download 快照。');
+    throw new Error('原地续跑只接受原任务失败或部分失败的完整八报表 create-and-download 快照。');
   }
   if (
     !proof.batch

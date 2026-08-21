@@ -1,7 +1,51 @@
 # BLOCKED — 2026-08-07
 
+## 当前：2026-08-21 自动投放源码阻断已解除，商品投放仍需实包唯一回读
+
+- “确认”兼容已被正式实包否定：`…044644` 仍未出现，提交事实为无二次确认、无可见错误。当前阻断只剩“前端表单未发请求”或“服务端请求拒绝”两类，必须通过脱敏请求/响应与表单就绪回读区分。
+- 当前 attempts 7、claims 0、events 61、imports 0、Ads 五表 0；在上述诊断进入包前不再续采。
+- 正式提交反馈已确定 `…043611` 的创建页没有可见错误，但旧逻辑未发现“确定”按钮；当前最可能的 DOM 漂移是二次动作改为“确认”。弹窗内“确定/确认”兼容已 `1 RED → 13/13 GREEN`，尚未进入 Windows 包。
+- 当前 attempts 6、claims 0、events 54、imports 0、Ads 五表 0；下一包仍先只读核对 `…043611`，再做一次单独续采验证，未核对前禁止提交。
+- “确定/确认”兼容已进入 folder ZIP `A0D436D2AFC9D00635CF8097724AAF4D20529DBE9E7A7FDE6A9FB3205DD21B30`；当前只差同一安全两步实包验证。
+- 唯一可见确认修复实包仍未创建 `…042344`，因此当前不能再归因于隐藏旧弹窗；阻断收窄为创建提交后的可见表单/服务反馈被旧代码忽略。必须先把该反馈结构化回读，才能决定是缺必填字段、频控还是领星服务拒绝。
+- 当前 attempts 5、active claims 0、events 47、import 0、Ads 五表 0；未经下一次只读核对与结构化提交反馈，不再续采。
+- 提交反馈读取已 `1 RED → 13/13 GREEN` 并通过 typecheck，尚未进入 Windows 包；下一包只允许先核对 latest create_unknown，再做一次单独续采以取得确定的表单/服务反馈。
+- 提交反馈读取已进入 folder ZIP `13B366D91DF38951B596435D22E9C9A8CF0656D22A03613725EAC944D2AA28B2`；当前只差正式应用的一次只读核对与一次单独续采返回确定原因。
+- post-create 精确搜索已在正式包中生效并证明 `…040927` 不存在；问题不再是列表分页，而是创建确认未提交。确认按钮旧逻辑命中隐藏弹窗 `.first()` 的缺口已 `1 RED → 12/12 GREEN` 并通过 typecheck，尚未重建实测。
+- 当前 latest create_unknown 必须先由下一包“仅核对创建结果”确认；之后只允许一次单独续采验证唯一可见确认修复。当前 attempts 4、active claims 0、events 40、import 0、Ads 五表 0。
+- 确认按钮修复已进入 folder ZIP `1E4653779EABDF4BDDC1BDEB0478C7332B064C92B966FCEB778AD46F73FDB4C9`；当前只差新包依次执行一次只读核对和一次单独续采，仍不把构建成功当作创建成功。
+- 旧包的“核对并继续”已证明存在产品级危险歧义：核对缺失后在同一点击中立即创建，而 post-create 仅看当前列表页，未按新生成名精确搜索，导致 `…034952` 再次 create_unknown。当前未确认该行存在前禁止再次恢复。
+- reconcile-only 与 post-create 精确搜索已完成 `4 RED → 70/70 GREEN` 并通过 desktop typecheck，但尚未重建入 Windows 包。下一步必须先用新包“仅核对创建结果”；只有唯一找到或连续精确确认缺失后，才由单独“继续采集”动作推进。
+- 修复已进入 folder ZIP `DC81A6A07276C5C60262592F53B62409386B8657501CD8A5B181D44C9B88F25C`；当前阻断收窄为新包对 `…034952` 的一次只读唯一核对结果，尚未授权语义上的再次创建。
+- 最新正式续采已证明自动投放真实下载成功，但商品投放再次进入新的 `LINGXING_CREATE_CALL_INTERRUPTED/create_unknown`，搜索词仍 queued；当前为 downloaded 6/8、正式 import run 0。
+- 本次恢复 claim 已释放（attempts 2、active claims 0、events 26），Ads 执行五表为 0。禁止直接重复续采；必须先由目标应用按精确生成名唯一核对本次创建结果。
+- 自动投放真实文件不是坏文件：领星使用通用“投放”列并以受控值表示自动定向组。collector/parser 已用值域窄门完成红→绿，真实 XLSX 只读复验 30/30 行通过；ASIN、未知值、空文件反向门仍拒绝。
+- 自动投放源码阻断虽已解除，但尚未产生正式 immutable import run；构建成功、测试或只读 parser 结果都不能冒充真实 8/8 入库。
+- 修复现已进入新 Windows 包（folder ZIP `28C693563940302A0A166766FE8F1FF291351D68C91FDD7557732D0786A1EFED`），但仍未形成正式 8/8/import 证据；下一步实包只做唯一回读与安全恢复。
+- 当前 `product_targeting` 仍保留 `LINGXING_CREATE_CALL_INTERRUPTED/create_unknown` 外部不确定态。新包中必须先按精确生成名核对下载中心唯一行：找到则接管，连续精确搜索确认缺失后才允许重建；重复、搜索漂移或未知状态继续阻断。
+- 第一版新包的唯一回读被当前领星下载中心搜索框 DOM 漂移阻断：旧 Element selector 命中 0；双结构+唯一可见门已红→绿并进入 folder ZIP `FBCBBBF460D0846ABB074FB4D903F62B8816D2AB98C2B7E4B084B0A09185FC0F`。尚待新包实测，未发生创建或下载，不能把前一轮算作 create_unknown 已核清。
+- 第二次实包证明上述包仍被已验证页面模型中的旧非空 selector 覆盖。运行时模型合并现已红→绿，但尚未进入下一包；当前 blocker 已从“未知 DOM”收窄为“新 Main 尚未构建复验”。
+- 运行时模型合并已进入 folder ZIP `813CE0384E1EE0CFB57A374C7179026FA9EC29BD33E7564CA4BCB645A480BCFE`；当前只差实包唯一回读结果，仍不能预判 create_unknown 已核清。
+- 唯一回读现已通过并确认原商品投放记录缺失；当前 blocker 下移为 continuation 的 Main runtime sticky unknown。只读 DB 证明新 attempt/claim/import 均未产生，因此没有重复创建风险，但必须先取得重启后第一次 resume 的原始错误，不能反复点击 sticky 次生错误。
+- 首次原始错误已确认是 diagnostic page-model fingerprint 分裂，不是浏览器身份或 durable CAS。effective 模型统一修复已红→绿，但尚未进入下一包；当前阻断是“新包需证明 preflight→claim”，不是需要再次人工核对。
+- effective 模型统一修复已进入 folder ZIP `B7878BF60E9633A554E774A8EACF0B2659E675FF93B90AD6245B8303DB9AA0C0`；当前只需实包证明 preflight→claim/runner，仍不重复 absence 核对。
+- 正式 Ads 执行五表仍为 0。8/8 入库、策略启用、运营任务、经营实验、Package UI 与 Task 8B 仍未完成，整体为 `APP_NEEDS_WORK / NON_READY`。
+
 ## 当前：2026-08-20 原创建结果已核清，续跑在恢复 claim 前阻断
 
+- 主因源码已定位并完成聚焦红→绿：完整八报表恢复漏登记同店 `operator_full` runtime 的预期关闭，可能把采集接管浏览器误判成身份/liveness 失效。新增契约先红（找不到登记），修后 `1/1 passed`，typecheck 通过；尚待重建与一次正式应用续跑证明，因此当前仍不能宣称 8/8。
+- 第一版正式复验已否定“只保护 resumeJob”足够：核对阶段成功写入新 ready 诊断后 claim 仍为 0。第二个聚焦红测证明保护必须覆盖核对阶段的 ERP→Ads 导航；前移修复已绿并通过 typecheck，尚待新包单次复验。
+- 前移修复已进入新包，folder ZIP `F5893461D841D64276085264A2A8E025605F3A4395984CAEEB6E2A5CE68CD062`；当前只差一次正式应用同任务续跑结果，不能用构建成功代替 claim/8/8/import 证据。
+- 已取得 claim=0 的决定性源码原因：生产 coordinator 未注入 6 个 resume persistence 端口，首错为 `LINGXING_COLLECTION_RESUME_PERSISTENCE_UNAVAILABLE`；Main 随后才进入粘性 safety unknown。6 个端口现已全部一对一绑定既有仓储实现，聚焦红→绿与 typecheck 通过，尚待新包正式 claim/runner 证明。
+- 6 端口 wiring 已进入新包，folder ZIP `A47F98F5C766C13D3B7791E969FC9D39B901FC894B4938444EFD0F2C0F667193`；当前阻断只剩正式同任务 claim/runner/import 结果，尚不能宣称采集闭环。
+- 生产 resume persistence 阻断已正式解除：本包形成 1 个 attempt、最多 1 个 active claim、13 个事件，并以 failed 终态释放 claim。当前阻断已下移到真实外部报表：自动投放文件表头类型不匹配，以及商品投放创建结果再次 `create_unknown`；正式 import run 仍为 0。
+- 商品投放本次精确生成名在 30 秒内未出现，属于新的外部事实不确定态；未核对下载中心前不得再次发起创建。自动投放文件允许只读检查表头/类型映射，但不得把错误报表强行标成目标类型或放宽列语义唯一性校验。
+- 目标应用 shutdown 旁支仍存在：主窗关闭且 `electronApp.close()` 等待超过 60 秒后，3 个目标应用进程未退出；正式库无在途 claim/导入/Ads 写入后已定点终止，残留 0。主链完成前不扩修 shutdown，但交付验收不得忽略。
+- 修复已进入新 Windows 包：installer `C26870A46AAC9578D921B7A4E7562E73C7B48995CB3CDD7FAF9B2876F73E3C81`、portable `78B71EA1E13853B8CF282F38511B9DC53CE543F957496E0193FB079BBCBE19B6`、folder ZIP `F47A6A20D0E31C818AB5CC7485CC129B14759B7399E6ABE0605BF9EDC0496355`。当前唯一未决是正式应用同一任务续跑结果。
+- 非业务主链阻断：`browser-login-staged-status.test.ts` 全文件为 47/48，唯一旧断言把换行写死为 LF，而 Windows checkout 的 `index.ts` 为 CRLF。按“不改弱现有断言”保持原样；聚焦新增用例和类型检查已绿。后续统一测试源码换行策略时再修，不能用 `.skip`、删除断言或模糊匹配规避。
+- 已用公开 `resumeInPlace` 主链增加三段非敏感失败标识：`RUNTIME_AUTHORITY`、`PREFLIGHT`、`CLAIM`。精确预检 RED 为 `1 failed / 22 skipped`（旧实现只返回原始错误），修后聚焦 `1 passed / 22 skipped`、全文件 `23/23 passed`、desktop typecheck 通过。这只是定位门，不冒充已修复真实恢复阻断。
+- 定点应用实测同时证明旧 Renderer 在 generation 前进时清空在途 action token，使 Main 失败被静默丢弃：页面无处理中/成功/失败反馈，正式库仍 `0/0/0`。新增精确 wiring RED 后已修复为仅保留同店安全 generation-forward 动作；采集页 `58/58`、typecheck 通过。当前仍需重建后读取真实阶段错误，未宣称恢复已成功。
+- 当前 Windows 运行包尚未包含该阶段标识。重建后允许一次仅操控目标应用的续跑复现；如果返回其中一个阶段，立即停止应用回放并转为该唯一条件的源码 TDD。
 - 人工事实门已经闭合：目标应用已确认原 `product_targeting` 精确生成记录不存在，并把原任务持久化为 `LINGXING_CREATE_CONFIRMED_ABSENT`；因此当前阻断不再是“需要人工核对创建结果”。
 - 最新包中点击同一任务“继续采集”后，恢复三表仍精确为 `attempts=0 / active_claims=0 / events=0`，任务未进入可变更下载/导入状态。代码边界为 `resumeJob` 已取得 exact durable resume packet，但在协调器的 `acquireCollectionResumeClaimForStore` 前被浏览器运行时或 preflight 安全门拒绝。
 - 同日期最新下载中心诊断的安全摘要为：`ready=true`、截图文件存在、DOM 文件存在、16 条动作检查存在、页面模型快照完全匹配、必需动作证据缺失为 0、证据年龄约 6 分钟。因此不能再笼统归因于“没有验证页面”；需要用聚焦测试区分运行时身份/authority 变化与 preflight readback。
@@ -331,3 +375,21 @@
 - 该问题可在任务白名单 `apps/desktop/src/main/{index.ts,lingxing-ads-sso.ts,*login*.test.ts,lingxing-ads-sso.test.ts}` 内继续修，不是外部输入阻断。安全边界保持：pending Ads 尚未获得写权限，短暂接管只接受同一隔离上下文内、同 provider、非 `restartLogin` 的可信页；verified Ads 关闭或身份变化仍立即阻断。
 - `-42` 已停止且没有 manifest；不能沿用其 ERP 成功、窗口存在或旧 `-41` 的 scheduler 证据宣称 Package UI 完成。修复、测试、重建后必须使用全新 Profile/run group。
 - 上述源码缺口已形成红→绿并通过 128/128 完整连接回归、112/112 任务书六文件与 typecheck；它不再是源码阻断。但尚未进入新的 Windows 包并完成全新 Package UI，故本阻断只在实包通过后才能移除。
+# 当前阻断（2026-08-21）
+
+- `product_targeting` 最新一次正式创建请求已由领星返回 `POST /ak_download/download_center/index/batch_create_report -> 200（操作成功）`，但当前列表精确回读仍未发现生成名 `AAO_20260806_20260819_product_targeting_050355`。创建接口失败已排除；需先修复并验证“填入精确名称后显式提交列表查询”的动作，再只读核对该名称，禁止在核对前重复创建。
+- 同次 resume 后端已于 05:04:45 持久化 failed 并释放 claim，Renderer 在超过 65 秒后才从“恢复中...”回弹为“需人工核对”；当前已自行恢复，不列为持久阻断，但后续体验抽查需关注终态回弹耗时。
+- “填名后显式提交查询”已进入新包并只读确认 `…050355` 不存在；该项排除了查询未提交造成的假阴性，但没有解除 8/8 阻断。
+- 显式查询新包已确认 `…050355` 不存在；当前待重建验证的是“配置店铺必须唯一进入右侧已选列表”的提交前硬门。该门已通过 `16/16` 聚焦测试与 desktop typecheck，但未进包前 8/8 仍阻断。
+- Main-only 热更新诊断运行时在 claim 前返回 `Main collection runtime safety state is unknown`；因其不是完整重建包，不把该错误记为产品回归。正式库 attempts/events 未增加，下一次验证必须使用完整 Windows 重建包。
+- 完整包已证明创建前店铺移动后“待选 0 / 已选 0”，且明确未提交创建；当前实现改为从 `.el-checkbox__label` 精确读取店铺名，以排除整个 label 附加文本造成的假 0。新读取尚未进包复验，`product_targeting` 仍未完成。
+- `.el-checkbox__label` 精确读取已加入 5 秒有界挂载等待并通过聚焦测试/typecheck，但尚未完整重建实测；因此仍不能继续到 `user_search_term` 或导入。
+- 历史这条“未提交创建”已由窄恢复路径安全转为 confirmed_absent，后续同类错误落 `not_created`；正式任务当前已无 create_unknown，但仍有两类 `LINGXING_CREATE_STORE_NOT_SELECTED` 未完成。
+- 历史误分类已在正式库安全恢复，任务已越过 create_unknown 并跑到第 8 类；当前两类失败的精确根因是领星右侧可见名 `JF-US-US` 与配置名 `JF-US` 的站点后缀差异。动态“店铺名-当前站点码”精确别名已 `17/17` + typecheck 通过，但尚未进入运行时复验。
+- 原地恢复 `completed_with_errors` 的代码门已修复并通过定点测试/local-db typecheck，但尚未进入运行时；因此动态别名仍未真正提交两类报表。
+- Main 双读恢复模型的同状态遗漏也已完成 `1 RED → 1 GREEN` 并通过 desktop typecheck；源码状态门已解除，当前只剩进入目标应用实跑并验证动态别名是否真实提交/下载两类报表，不能用定点测试替代 8/8/import 证据。
+- Main-only 热更新运行时再次落入 sticky unknown，且重新连接未刷新 ERP/Ads 成功时间；它未取得 claim、未调用创建、未改变报表终态。当前改用完整 Windows 重建验证，避免继续把非交付热更新运行时的安全态误当成业务结论。
+- 完整包已解除 sticky unknown 并重新验证 ERP/Ads，但 production composition 的第三处状态白名单在 MainRuntime CAS 前阻断；该缺口现已 `1 RED → 1 GREEN` + typecheck。当前仍需实跑证明 claim 与两报表下载，正式 8/8/import 尚未形成。
+- 三道状态门、动态 `店铺名-站点码` 别名和真实创建提交均已实跑通过；attempt 11/12 都到达领星创建接口并收到 200，且 claim 均释放。`LINGXING_CREATE_STORE_NOT_SELECTED` 已不再复现。
+- 当前唯一采集阻断是第二个商品投放新名 `AAO_20260806_20260819_product_targeting_064758` 在创建 200 后仍未形成可见列表行，任务保持 create_unknown、搜索词 queued。未经后续唯一核对禁止再次创建；8/8/import 因此外部阻断，整体继续 `APP_NEEDS_WORK / NON_READY`。
+- 独立源码主链当前 `186/186 passed`、skipped=0 且 desktop typecheck 通过；这只能证明修复没有破坏续跑/解析合同，不能替代 `…064758` 的外部唯一回读、8/8/import、Package UI 或 Task 8B。

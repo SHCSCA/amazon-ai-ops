@@ -1,5 +1,15 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-21 当前状态：店铺选择与续跑链已修通，领星商品投放创建 200 后仍不落行
+
+- `completed_with_errors` 原位续跑的三道状态遗漏已用红→绿修复：local-db、scheduler double-read 与 production composition 现在接受该合法终态；完整 8 类、店铺/Profile、request/job/batch、durable fingerprint 与 MainRuntime CAS 等既有门不变。
+- 领星创建页的店铺名不是配置值 `JF-US`，而是运行时展示的 `JF-US-US`。实现动态接受“当前店铺名”或“当前店铺名-当前站点码”两个规范化精确别名；不写死 JF-US、不做子串匹配，缺失或重复仍 fail-closed。
+- 正式目标应用通过应用内会话重置与 Main 托管凭证重新获得 ERP/Ads ready；未读取或传递密码、Cookie、Profile。刷新下载中心诊断后，同一任务成功进入 resume attempt 11/12，证明三道状态门和动态店铺选择均已进入真实主链。
+- 两次商品投放创建都收到 `POST /ak_download/download_center/index/batch_create_report -> 200（操作成功）`。第一次新名 `…064519` 经 reconcile-only 唯一查询确认不存在后才允许一次重建；第二次新名 `AAO_20260806_20260819_product_targeting_064758` 仍未形成可见列表行，因此安全停止为 `create_unknown`，不得再次自动创建。
+- 正式库终态为 6 类 downloaded、product_targeting create_unknown、user_search_term queued；resume attempts 12、active claims 0、events 111、import runs 0，五张 Ads execution 表全部为 0。8/8/import、策略真实启用、运营任务、经营实验、Package UI 与 Task 8B 仍未闭合，总体保持 `APP_NEEDS_WORK / NON_READY`。
+- 精简源码主链回归为 6 files / `186/186 passed`、skipped=0，desktop typecheck 通过。最后一处 production composition 修复只进入 Main 诊断副本；最近一次完整 Windows 构建（folder ZIP `A4EFA70E947805EE62C6770670F1683C7AF53544F2B57B9F20E3B094358563F7`）早于该修复，不能当作最终交付包。外部阻断解除后必须重新完整构建与验收。
+- Git 当前本地 `master` 已包含此前功能分支的快进合并提交；本轮准备提交源码与文档。远端 fetch 首次因网络连接被重置失败，推送前需重试，未成功前不得宣称已同步。
+
 ## 2026-08-20 当前状态：连接已闭合，8 类采集在创建结果不确定态安全停止
 
 - 当前 Windows 包已包含 parser 窄修复、部分导入 known-failed 恢复和重启前 cancelled 任务的 pre-batch 安全分类。聚焦回归分别为 parser `16/16`、import recovery `9/9`、scheduler adapter `75/75`，desktop typecheck 与 Windows 七步构建均通过。

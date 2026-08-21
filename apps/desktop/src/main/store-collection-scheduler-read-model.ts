@@ -534,7 +534,7 @@ function exactResumeRequest(
 ): StoreCollectionExistingResumeRequest {
   const durableContext = normalizeStoreContextEnvelope(proof.job.request.storeContext);
   const expectedDigest = fingerprintLingxingCollectionAuthorityProof(proof);
-  if (proof.job.state !== 'failed'
+  if ((proof.job.state !== 'failed' && proof.job.state !== 'completed_with_errors')
     || !proof.batch
     || resume.jobId !== proof.job.jobId
     || resume.job.jobId !== proof.job.jobId

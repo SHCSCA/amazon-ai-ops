@@ -527,6 +527,35 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).not.toHaveBeenCalled();
   });
 
+  it('routes an exact durable completed-with-errors full8 job through the same double-read resume proof', async () => {
+    const test = harness({ currentConfig: config() });
+    const before = durableProof({ state: 'completed_with_errors', importState: 'not_applicable' });
+    const after = durableProof({ state: 'completed_with_errors', importState: 'not_applicable' });
+    after.job.updatedAt = '2026-07-22T15:06:00.000Z';
+    after.jobRow.updatedAt = after.job.updatedAt;
+    test.importRepository.getCollectionJobForStore.mockReturnValue(before.job);
+    test.importRepository.readUniqueCollectionAuthorityProofForStoreByRequestId
+      .mockReturnValueOnce(before)
+      .mockReturnValue(after);
+    test.importRepository.getCollectionInPlaceResumeStateForStore.mockReturnValue(
+      inPlaceResumeState(before),
+    );
+    test.importRepository.readLatestCollectionResumeAttemptReceiptForStore
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue(resumeReceipt({ before, after, outcome: 'failed' }));
+    test.orchestrator.readProtectedSemanticAttempt.mockReturnValue(
+      protectedAttempt({ terminalState: 'failed' }),
+    );
+
+    await expect(test.model.resumeJob(CONTEXT, 'job-one')).resolves.toMatchObject({
+      accepted: true,
+      duplicate: false,
+      job: { jobId: 'job-one', state: 'completed_with_errors' },
+    });
+    expect(test.resumeExisting).toHaveBeenCalledOnce();
+    expect(test.manualRun).not.toHaveBeenCalled();
+  });
+
   it('locks a selected failed job before mutation even when current lookback now targets another window', async () => {
     const changedConfig = config({
       values: {

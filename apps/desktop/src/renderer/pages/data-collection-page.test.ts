@@ -543,8 +543,19 @@ describe('DataCollectionPage store authority collection contract', () => {
       jobs: [collectionJob({ jobId: 'job-reconcile', jobState: 'completed_with_errors', checkpointState: 'create_unknown' })],
       onReconcile: vi.fn(),
     });
-    expect(reconcilableMarkup).toContain('核对并继续');
+    expect(reconcilableMarkup).toContain('仅核对创建结果');
     expect(reconcilableMarkup).not.toContain('人工核对（禁止恢复）');
+  });
+
+  it('does not create a report from the create-unknown reconciliation button', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const resumeSource = source.slice(
+      source.indexOf('async function resumeCollectionJob('),
+      source.indexOf('async function cancelCollectionJob('),
+    );
+
+    expect(resumeSource).toContain('reconcileOnly: true');
+    expect(resumeSource).toContain('创建结果核对已完成；请根据核对结果单独点击“继续采集”');
   });
 
   it('keeps collection task ids and internal failure terms out of the ordinary workspace surface', () => {
@@ -612,6 +623,21 @@ describe('DataCollectionPage store authority collection contract', () => {
 
     expect(catchSource).toContain('isCapturedFeedbackAuthorityCurrent(captured.storeContext)');
     expect(catchSource).not.toContain('isCapturedAuthorityCurrent(captured.authorityKey)');
+  });
+
+  it('does not clear the in-flight resume token during a same-store forward generation transition', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const authorityEffect = source.slice(
+      source.indexOf('const previousFeedbackContext = collectionFeedbackAuthorityContextRef.current;'),
+      source.indexOf('}, [storeAuthority.authorityKey]);'),
+    );
+    const preservationGuard = authorityEffect.indexOf(
+      'if (collectionActionFeedbackBelongsToAuthority(previousFeedbackContext, nextFeedbackContext))',
+    );
+    const tokenReset = authorityEffect.indexOf('collectionJobActionTokenRef.current = null;');
+
+    expect(preservationGuard).toBeGreaterThan(-1);
+    expect(tokenReset).toBeGreaterThan(preservationGuard);
   });
 });
 

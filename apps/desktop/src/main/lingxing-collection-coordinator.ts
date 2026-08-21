@@ -54,6 +54,19 @@ const REPORT_TYPES = new Set<LingxingReportType>(
   LINGXING_AD_REPORTS.map((report) => report.type),
 );
 
+type ResumeAdmissionStage = 'RUNTIME_AUTHORITY' | 'PREFLIGHT' | 'CLAIM';
+
+function resumeAdmissionError(
+  stage: ResumeAdmissionStage,
+  operatorStage: string,
+  error: unknown,
+): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `LINGXING_COLLECTION_RESUME_${stage}_FAILED: ${operatorStage}：${detail}`,
+  );
+}
+
 export interface LingxingCollectionAuthority {
   assertActiveStoreContext(value: unknown): StoreContextEnvelope;
   getActiveStoreContext(): StoreContextEnvelope | null;
@@ -343,25 +356,50 @@ export class LingxingCollectionCoordinator {
       let claim: CollectionResumeClaim | undefined;
       let finalized = false;
       try {
-        operation.assertStepCurrent();
-        const runtime = this.resolveAuthorizedRuntime(capturedContext, false);
-        this.dependencies.assertRuntimeCurrent?.(capturedContext, runtime);
-        await this.dependencies.preflight?.({
-          ...request,
-          storeContext: capturedContext,
-        }, runtime);
-        operation.assertStepCurrent();
+        let runtime: LingxingCollectionRuntime;
+        try {
+          operation.assertStepCurrent();
+          runtime = this.resolveAuthorizedRuntime(capturedContext, false);
+          this.dependencies.assertRuntimeCurrent?.(capturedContext, runtime);
+        } catch (error) {
+          throw resumeAdmissionError(
+            'RUNTIME_AUTHORITY',
+            '继续采集在当前店铺与浏览器会话核验阶段停止',
+            error,
+          );
+        }
+        try {
+          await this.dependencies.preflight?.({
+            ...request,
+            storeContext: capturedContext,
+          }, runtime);
+          operation.assertStepCurrent();
+        } catch (error) {
+          throw resumeAdmissionError(
+            'PREFLIGHT',
+            '继续采集在下载中心安全预检阶段停止',
+            error,
+          );
+        }
 
-        claim = await persistence.acquireCollectionResumeClaimForStore(
-          request.storeContext.storeId,
-          {
-            jobId: input.resumeFrom.jobId,
-            requestId: request.requestId,
-            expectedJobUpdatedAt: input.resumeFrom.expectedJobUpdatedAt,
-            expectedAuthorityProofSha256: input.resumeFrom.authorityProofSha256,
-            executionStoreContext: capturedContext,
-          },
-        );
+        try {
+          claim = await persistence.acquireCollectionResumeClaimForStore(
+            request.storeContext.storeId,
+            {
+              jobId: input.resumeFrom.jobId,
+              requestId: request.requestId,
+              expectedJobUpdatedAt: input.resumeFrom.expectedJobUpdatedAt,
+              expectedAuthorityProofSha256: input.resumeFrom.authorityProofSha256,
+              executionStoreContext: capturedContext,
+            },
+          );
+        } catch (error) {
+          throw resumeAdmissionError(
+            'CLAIM',
+            '继续采集在持久化恢复权限核验阶段停止',
+            error,
+          );
+        }
         const persistResumeProgress: LingxingCollectionProgressSink = async (event) => {
           assertProgressBelongsToRequest(event, request);
           if (!claim) throw new Error('LINGXING_COLLECTION_RESUME_CLAIM_MISSING');

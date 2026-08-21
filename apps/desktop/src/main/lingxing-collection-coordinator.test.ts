@@ -213,7 +213,9 @@ function progressFor(options: RunBatchOptions): LingxingCollectionProgressEvent 
   };
 }
 
-function harness() {
+function harness(options: {
+  preflight?: () => void | Promise<void>;
+} = {}) {
   let active = context();
   let cancelled = false;
   const persistedProgress: LingxingCollectionProgressEvent[] = [];
@@ -267,6 +269,14 @@ function harness() {
     return receiptFor(input.claim, 'interrupted');
   });
   const clearCancellation = vi.fn();
+  const acquireCollectionResumeClaimForStore = vi.fn((_storeId, input) => (
+    nextResumeClaim({
+      jobId: input.jobId,
+      requestId: input.requestId,
+      expectedJobUpdatedAt: input.expectedJobUpdatedAt,
+      version: 0,
+    })
+  ));
   const operation = {
     assertStepCurrent: vi.fn(() => {
       if (active.storeId !== 'store-one' || active.sessionGeneration !== 4) {
@@ -317,18 +327,12 @@ function harness() {
       storeDisplayName: 'SHC001 主店',
       target: { marketplaceCode: 'US', storeId: active.storeId, storeName: 'SHC001' },
     }),
+    ...(options.preflight ? { preflight: options.preflight } : {}),
     persistence: {
       persistProgress(event) { persistedProgress.push(event); },
       persistResult(result) { persistedResults.push(result); },
       persistImportState(job) { persistedImportStates.push(job); },
-      acquireCollectionResumeClaimForStore(_storeId, input) {
-        return nextResumeClaim({
-          jobId: input.jobId,
-          requestId: input.requestId,
-          expectedJobUpdatedAt: input.expectedJobUpdatedAt,
-          version: 0,
-        });
-      },
+      acquireCollectionResumeClaimForStore,
       commitCollectionResumeProgressForStore(_storeId, input) {
         resumeProgress.push(input.event);
         return nextResumeClaim({
@@ -372,6 +376,7 @@ function harness() {
     resumeFinalized,
     resumeFinalize,
     resumeInterrupt,
+    acquireCollectionResumeClaimForStore,
     clearCancellation,
     get cancelled() { return cancelled; },
     set cancelled(value: boolean) { cancelled = value; },
@@ -444,6 +449,23 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.resumeFinalized).toEqual([
       expect.objectContaining({ outcome: 'succeeded' }),
     ]);
+  });
+
+  it('identifies a pre-claim preflight rejection without acquiring a durable resume claim', async () => {
+    const test = harness({
+      preflight: async () => {
+        throw new Error('download center diagnostic not ready');
+      },
+    });
+
+    await expect(test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom: fullEightResumeState(),
+    })).rejects.toThrow(
+      'LINGXING_COLLECTION_RESUME_PREFLIGHT_FAILED: '
+      + '继续采集在下载中心安全预检阶段停止：download center diagnostic not ready',
+    );
+    expect(test.acquireCollectionResumeClaimForStore).not.toHaveBeenCalled();
   });
 
   it('resolves a durably finalized import failure as a failed terminal result', async () => {

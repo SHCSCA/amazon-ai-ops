@@ -300,7 +300,7 @@ async function resumeExistingCollection(
     || resumeFrom.expectedJobUpdatedAt !== input.expectedJobUpdatedAt
     || resumeFrom.job.updatedAt !== input.expectedJobUpdatedAt
     || resumeFrom.authorityProofSha256 !== input.expectedAuthorityProofSha256
-    || resumeFrom.job.state !== 'failed'
+    || (resumeFrom.job.state !== 'failed' && resumeFrom.job.state !== 'completed_with_errors')
     || resumeFrom.batch.storeId !== current.storeId
     || resumeFrom.batch.id !== input.jobId
     || resumeFrom.batch.requestId !== input.requestId

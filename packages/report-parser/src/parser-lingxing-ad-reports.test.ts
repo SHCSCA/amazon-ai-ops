@@ -285,6 +285,73 @@ describe('ReportParser Lingxing ad report rows', () => {
     });
   });
 
+  it('parses a real-like auto-targeting report whose generic targeting column has bounded provider values', () => {
+    const result = parseRows([
+      {
+        '店铺名称': 'NOVA-US',
+        '国家': 'US',
+        '广告活动': 'Campaign A',
+        '广告组': 'Ad Group A',
+        '投放': '紧密匹配',
+        '日期': '2026-08-19',
+        '曝光量': '20',
+        '点击': '2',
+        '花费-本币': '3.12',
+        '广告订单': '1',
+        '广告销售额-本币': '49.99',
+      },
+      {
+        '店铺名称': 'NOVA-US',
+        '国家': 'US',
+        '广告活动': 'Campaign A',
+        '广告组': 'Ad Group A',
+        '投放': '宽泛匹配',
+        '日期': '2026-08-19',
+        '曝光量': '10',
+        '点击': '1',
+        '花费-本币': '1.56',
+        '广告订单': '0',
+        '广告销售额-本币': '0',
+      },
+    ], { reportType: 'auto_targeting' });
+
+    expect(result).toMatchObject({
+      success: true,
+      schemaValid: true,
+      totalRows: 2,
+    });
+    expect(result.data).toHaveLength(2);
+    expect(result.data.map((row: { targeting: string; reportType?: string }) => ({
+      targeting: row.targeting,
+      reportType: row.reportType,
+    }))).toEqual([
+      { targeting: '紧密匹配', reportType: 'auto_targeting' },
+      { targeting: '宽泛匹配', reportType: 'auto_targeting' },
+    ]);
+  });
+
+  it.each([
+    ['an ASIN', 'B0ABCDEF12'],
+    ['an unknown label', '自定义商品集合'],
+  ])('rejects declared auto targeting when the generic targeting column contains %s', (_label, targeting) => {
+    const result = parseRows([{
+      '店铺名称': 'NOVA-US',
+      '国家': 'US',
+      '广告活动': 'Campaign A',
+      '广告组': 'Ad Group A',
+      '投放': targeting,
+      '日期': '2026-08-19',
+      '曝光量': '20',
+      '点击': '2',
+      '花费-本币': '3.12',
+      '广告订单': '1',
+      '广告销售额-本币': '49.99',
+    }], { reportType: 'auto_targeting' });
+
+    expect(result).toMatchObject({ success: false, schemaValid: false });
+    expect(result.data).toHaveLength(0);
+  });
+
   it.each([false, true])(
     'rejects a filename-declared keyword report whose %s-row columns identify search terms',
     (withDataRow) => {

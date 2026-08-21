@@ -77,7 +77,7 @@ export class ReportParser {
     });
 
     if (jsonData.length === 0) {
-      const reportType = resolveSemanticReportType(rawHeaders, options.reportType);
+      const reportType = resolveSemanticReportType(rawHeaders, options.reportType, []);
       const schemaValid = isAdvertisingReportSchema(rawHeaders, options.requiredFields)
         && reportType !== undefined;
       return {
@@ -97,7 +97,7 @@ export class ReportParser {
     
     // 获取表头
     const headers = Object.keys(dataRows[0] || {});
-    const reportType = resolveSemanticReportType(headers, options.reportType);
+    const reportType = resolveSemanticReportType(headers, options.reportType, dataRows);
     const schemaValid = isAdvertisingReportSchema(headers, options.requiredFields)
       && reportType !== undefined;
 
@@ -325,6 +325,18 @@ const REPORT_COLUMN_ALIASES = {
   ],
 } as const;
 
+const GENERIC_TARGETING_HEADERS = new Set(['投放', 'targeting', 'target'].map(normalizeReportHeader));
+const AUTO_TARGETING_PROVIDER_VALUES = new Set([
+  '紧密匹配',
+  '宽泛匹配',
+  '同类商品',
+  '关联商品',
+  'closematch',
+  'loosematch',
+  'substitutes',
+  'complements',
+].map(normalizeReportHeader));
+
 function normalizeReportHeader(value: unknown): string {
   return String(value ?? '')
     .trim()
@@ -349,11 +361,35 @@ function inferSemanticReportType(headers: readonly string[]): LingxingReportType
   return undefined;
 }
 
+function inferGenericAutoTargetingFromRows(
+  headers: readonly string[],
+  rows: readonly Record<string, any>[],
+): LingxingReportType | undefined {
+  const targetingHeader = headers.find((header) => (
+    GENERIC_TARGETING_HEADERS.has(normalizeReportHeader(header))
+  ));
+  if (!targetingHeader) return undefined;
+
+  const values = rows
+    .map((row) => normalizeReportHeader(row[targetingHeader]))
+    .filter(Boolean);
+  if (values.length === 0) return undefined;
+  return values.every((value) => AUTO_TARGETING_PROVIDER_VALUES.has(value))
+    ? 'auto_targeting'
+    : undefined;
+}
+
 function resolveSemanticReportType(
   headers: readonly string[],
   declaredReportType: string | undefined,
+  rows: readonly Record<string, any>[],
 ): LingxingReportType | undefined {
-  const inferred = inferSemanticReportType(headers);
+  const headerReportType = inferSemanticReportType(headers);
+  const genericAutoTargetingType = inferGenericAutoTargetingFromRows(headers, rows);
+  const inferred = genericAutoTargetingType
+    && (!headerReportType || headerReportType === 'campaign' || headerReportType === 'ad_group')
+    ? genericAutoTargetingType
+    : headerReportType;
   if (!declaredReportType) return inferred;
   return inferred === declaredReportType ? inferred : undefined;
 }

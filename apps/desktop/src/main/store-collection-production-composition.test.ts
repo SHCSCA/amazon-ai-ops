@@ -482,6 +482,46 @@ describe('createStoreCollectionProductionComposition', () => {
     expect(testFixture.lingxingStart).not.toHaveBeenCalled();
   });
 
+  it('injects an exact completed-with-errors full-eight packet into explicit MainRuntime resume', async () => {
+    const { composition, testFixture } = await readyComposition();
+    const packet = failedResumePacket();
+    packet.job.state = 'completed_with_errors';
+    packet.batch.status = 'completed_with_errors';
+    const terminalJob = {
+      ...packet.job,
+      state: 'completed_with_errors' as const,
+      updatedAt: '2026-07-22T15:06:00.000Z',
+      completedAt: '2026-07-22T15:06:00.000Z',
+    };
+    const proof = failedAuthorityProof(packet, terminalJob);
+    const receipt = terminalResumeReceipt(packet, proof);
+    testFixture.importRepository.getCollectionInPlaceResumeStateForStore.mockReturnValue(packet);
+    testFixture.importRepository.readUniqueCollectionAuthorityProofForStoreByRequestId
+      .mockReturnValue(proof);
+    testFixture.importRepository.readLatestCollectionResumeAttemptReceiptForStore
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue(receipt);
+    testFixture.lingxingResumeInPlace.mockResolvedValue({
+      result: { job: terminalJob, batch: packet.batch, files: packet.files },
+    });
+
+    await expect(composition.runtime.resumeExisting({
+      context: CONTEXT,
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      dateStart: packet.request.dateStart,
+      dateEnd: packet.request.dateEnd,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+    })).resolves.toMatchObject({ state: 'completed', outcome: 'failed' });
+
+    expect(testFixture.lingxingResumeInPlace).toHaveBeenCalledWith({
+      currentStoreContext: CONTEXT,
+      resumeFrom: packet,
+    });
+    expect(testFixture.lingxingStart).not.toHaveBeenCalled();
+  });
+
   it('fails inside the Main lane when a coordinator result lacks a new exact terminal receipt', async () => {
     const { composition, testFixture } = await readyComposition();
     const packet = failedResumePacket();

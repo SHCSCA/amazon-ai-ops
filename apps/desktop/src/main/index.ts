@@ -10,7 +10,7 @@ import {
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
-import type { Page } from 'playwright';
+import type { Locator, Page, Response } from 'playwright';
 import {
   BrowserController,
   BrowserLeaseManager,
@@ -5394,6 +5394,24 @@ function initializeLingxingCollectionCoordinator(): void {
           job,
         );
       },
+      acquireCollectionResumeClaimForStore(storeId, input) {
+        return state.lingxingImportRepo!.acquireCollectionResumeClaimForStore(storeId, input);
+      },
+      commitCollectionResumeProgressForStore(storeId, input) {
+        return state.lingxingImportRepo!.commitCollectionResumeProgressForStore(storeId, input);
+      },
+      commitCollectionResumeRunnerResultForStore(storeId, input) {
+        return state.lingxingImportRepo!.commitCollectionResumeRunnerResultForStore(storeId, input);
+      },
+      advanceCollectionResumeClaimAfterImportForStore(storeId, input) {
+        return state.lingxingImportRepo!.advanceCollectionResumeClaimAfterImportForStore(storeId, input);
+      },
+      finalizeCollectionResumeAttemptForStore(storeId, input) {
+        return state.lingxingImportRepo!.finalizeCollectionResumeAttemptForStore(storeId, input);
+      },
+      interruptCollectionResumeClaimForStore(storeId, input) {
+        return state.lingxingImportRepo!.interruptCollectionResumeClaimForStore(storeId, input);
+      },
     },
     importResult: (result, options) => {
       const summary = importStoreScopedLingxingDownloadedReportMetrics(result, options);
@@ -6902,7 +6920,13 @@ async function reconcileLingxingCreateUnknownCheckpoint(
         reportToken: report.expectedFilenameKeyword,
       })
     : undefined;
-  if (!alreadyReconciled && (!checkpoint || !report || !expectedReportName)) {
+  const confirmedNeverSubmitted = Boolean(
+    checkpoint
+    && checkpoint.errorCode === 'LINGXING_CREATE_CALL_INTERRUPTED'
+    && checkpoint.detail?.includes('未提交创建。')
+    && !checkpoint.detail?.includes('提交响应：'),
+  );
+  if (!alreadyReconciled && (!checkpoint || !report || (!expectedReportName && !confirmedNeverSubmitted))) {
     throw new Error('创建记录中没有唯一、可核对的领星报表名称；为避免重复创建，任务继续阻断。');
   }
 
@@ -6942,48 +6966,45 @@ async function reconcileLingxingCreateUnknownCheckpoint(
         }
         return job;
       }
-      let reconciliation: ReturnType<typeof reconcileLingxingCreatedReportRows> = { outcome: 'ambiguous' };
+      let reconciliation: ReturnType<typeof reconcileLingxingCreatedReportRows> = confirmedNeverSubmitted ? { outcome: 'confirmed_absent' } : { outcome: 'ambiguous' };
       let confirmedAbsentObservations = 0;
       const dateRange = { start: job.request.dateStart, end: job.request.dateEnd };
-      const selectorContext: DownloadCenterReportSelectorContext = {
-        ...report!,
-        generatedReportName: expectedReportName!,
-        storeName: authorized.target.storeName,
-        marketplaceCode: authorized.target.marketplaceCode,
-      };
-      const reportSearchInput = await assertUsableDownloadCenterActionSelector(
-        page,
-        'reportSearchInput',
-        selectors.reportSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput,
-        selectorContext,
-        dateRange,
-      );
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        operation.assertStepCurrent();
-        await refreshDownloadCenterReportList(page, selectors);
-        const searchInput = page.locator(reportSearchInput).first();
-        await searchInput.fill(expectedReportName!);
-        await searchInput.press('Enter').catch(() => undefined);
-        await page.waitForTimeout(750);
-        if ((await searchInput.inputValue()).trim() !== expectedReportName) {
-          throw new Error('下载中心没有保持本次生成名的精确搜索条件；任务继续阻断，未重复创建。');
-        }
-        const rowTexts = await page.locator('tr').allInnerTexts();
-        const observed = reconcileLingxingCreatedReportRows(rowTexts, {
-          expectedReportName: expectedReportName!,
-          dateStart: job.request.dateStart,
-          dateEnd: job.request.dateEnd,
-          exactSearchApplied: true,
-        });
-        if (observed.outcome === 'found') {
-          reconciliation = observed;
-          break;
-        }
-        if (observed.outcome === 'confirmed_absent') {
-          confirmedAbsentObservations += 1;
-          if (confirmedAbsentObservations === 3) reconciliation = observed;
-        } else {
-          confirmedAbsentObservations = 0;
+      if (!confirmedNeverSubmitted) {
+        const selectorContext: DownloadCenterReportSelectorContext = {
+          ...report!,
+          generatedReportName: expectedReportName!,
+          storeName: authorized.target.storeName,
+          marketplaceCode: authorized.target.marketplaceCode,
+        };
+        const reportSearchInput = await assertUsableDownloadCenterActionSelector(
+          page,
+          'reportSearchInput',
+          selectors.reportSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput,
+          selectorContext,
+          dateRange,
+        );
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          operation.assertStepCurrent();
+          await refreshDownloadCenterReportList(page, selectors);
+          const searchInput = page.locator(reportSearchInput).first();
+          await submitExactDownloadCenterReportSearch(page, searchInput, expectedReportName!);
+          const rowTexts = await page.locator('tr').allInnerTexts();
+          const observed = reconcileLingxingCreatedReportRows(rowTexts, {
+            expectedReportName: expectedReportName!,
+            dateStart: job.request.dateStart,
+            dateEnd: job.request.dateEnd,
+            exactSearchApplied: true,
+          });
+          if (observed.outcome === 'found') {
+            reconciliation = observed;
+            break;
+          }
+          if (observed.outcome === 'confirmed_absent') {
+            confirmedAbsentObservations += 1;
+            if (confirmedAbsentObservations === 3) reconciliation = observed;
+          } else {
+            confirmedAbsentObservations = 0;
+          }
         }
       }
       operation.assertStepCurrent();
@@ -7060,12 +7081,42 @@ async function handleResumeLingxingCollection(input: unknown) {
   if (!requestId || !jobId) throw new Error('恢复采集需要有效的 requestId 与 jobId。');
   let job = state.lingxingImportRepo.getCollectionJobForStore(context.storeId, jobId);
   if (!job) throw new Error(`当前店铺未找到采集任务：${jobId}`);
-  if (value.reconcileCreateUnknown === true
-    || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
-    || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_FAILED') {
-    job = await reconcileLingxingCreateUnknownCheckpoint(job, context, requestId);
-  }
   const isCanary = job.request.requestId.startsWith('canary:');
+  const reconciliationRuntime = !isCanary
+    && isExactLingxingFull8ReportSet(job.request.reportTypes)
+      ? visibleBrowserRuntimeRegistry.read()
+      : null;
+  const expectedReconciliationRuntimeCloseId = reconciliationRuntime
+    && reconciliationRuntime.purpose === 'operator_full'
+    && sameExactStoreContext(reconciliationRuntime.context, context)
+      ? reconciliationRuntime.runtimeId
+      : undefined;
+  if (expectedReconciliationRuntimeCloseId) {
+    expectedVisibleRuntimeCloseIds.add(expectedReconciliationRuntimeCloseId);
+  }
+  try {
+    if (value.reconcileCreateUnknown === true
+      || value.reconcileOnly === true
+      || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+      || job.blockerCode === 'LINGXING_CREATE_CONFIRMED_FAILED') {
+      job = await reconcileLingxingCreateUnknownCheckpoint(job, context, requestId);
+    }
+  } finally {
+    if (expectedReconciliationRuntimeCloseId) {
+      expectedVisibleRuntimeCloseIds.delete(expectedReconciliationRuntimeCloseId);
+    }
+  }
+  if (value.reconcileOnly === true) {
+    mainWindow?.webContents.send('business-ui:data-updated');
+    return {
+      alreadyComplete: false,
+      reconciliationOnly: true,
+      job: minimalLingxingCollectionJobForRenderer(job),
+      importState: job.importState,
+      resumedFromJobId: jobId,
+      reusedDownloadedReportTypes: validatedDownloadedResumeReportTypes(job),
+    };
+  }
   const reboundRequestId = isCanary ? asLingxingCanaryRequestId(requestId) : requestId;
   const rebound = rebindLingxingResumeState(job, reboundRequestId, context);
   if (!rebound.resumeFrom || rebound.reportTypes.length === 0) {
@@ -7098,10 +7149,28 @@ async function handleResumeLingxingCollection(input: unknown) {
     // Renderer requestId is only a UI action token. The MainRuntime resume
     // path derives and CAS-binds the original durable request/job; never use a
     // fresh Renderer id to create a second full8 semantic task.
-    const schedule = await state.storeCollectionSchedulerReadModel.resumeJob(
-      context,
-      job.jobId,
-    );
+    const currentRuntime = visibleBrowserRuntimeRegistry.read();
+    const expectedClosedRuntimeId = currentRuntime
+      && currentRuntime.purpose === 'operator_full'
+      && sameExactStoreContext(currentRuntime.context, context)
+        ? currentRuntime.runtimeId
+        : undefined;
+    if (expectedClosedRuntimeId) {
+      expectedVisibleRuntimeCloseIds.add(expectedClosedRuntimeId);
+    }
+    let schedule: Awaited<ReturnType<
+      NonNullable<typeof state.storeCollectionSchedulerReadModel>['resumeJob']
+    >>;
+    try {
+      schedule = await state.storeCollectionSchedulerReadModel.resumeJob(
+        context,
+        job.jobId,
+      );
+    } finally {
+      if (expectedClosedRuntimeId) {
+        expectedVisibleRuntimeCloseIds.delete(expectedClosedRuntimeId);
+      }
+    }
     if (!schedule.job || schedule.job.jobId !== job.jobId) {
       throw new Error('完整八报表恢复未回读到同一 durable job，拒绝把结果绑定到其他任务。');
     }
@@ -7143,7 +7212,7 @@ const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS = {
   storeSearchInput: '.el-transfer-panel:has-text("待选店铺") input[placeholder="店铺搜索"]',
   storeOption: '.el-transfer-panel:has-text("待选店铺") label.el-transfer-panel__item:has-text("{storeName}")',
   storeMoveButton: '.el-transfer__buttons button:has(.el-icon-arrow-right)',
-  reportSearchInput: 'input[placeholder="报告名称"].el-input__inner',
+  reportSearchInput: 'input[placeholder="报告名称"].el-input__inner, input#report_name[name="keyword"][placeholder="报告名称"].form-control',
   reportTypeSelect: '.report-item .el-select input.el-input__inner',
   reportTypeOption: '.el-select-dropdown:visible .el-select-dropdown__item:has-text("{reportName}")',
   dateStartInput: 'input[placeholder="开始日期"].el-range-input',
@@ -7241,6 +7310,49 @@ async function waitForCreateReportPage(page: NonNullable<ReturnType<BrowserContr
   await page.getByText('创建报告', { exact: false }).first().waitFor({ state: 'visible', timeout: 30000 });
 }
 
+async function assertLingxingCreateStoreSelected(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  storeName: string,
+  marketplaceCode?: string,
+): Promise<void> {
+  const normalizedStoreName = normalizeLingxingCollectionStoreName(storeName);
+  const normalizedMarketplaceCode = normalizeLingxingCollectionStoreName(marketplaceCode);
+  if (!normalizedStoreName || !normalizedMarketplaceCode) {
+    throw new Error('领星创建报表缺少有效的当前店铺名称，未提交创建。');
+  }
+  const expectedStoreNames = new Set([
+    normalizedStoreName,
+    `${normalizedStoreName}-${normalizedMarketplaceCode}`,
+  ]);
+  const panels = page.locator('.el-transfer-panel:visible');
+  const panelCount = await panels.count();
+  if (panelCount !== 2) {
+    throw new Error(`领星创建报表店铺选择器应有 2 个可见列表，当前为 ${panelCount} 个；未提交创建。`);
+  }
+  const countExactVisibleStoreItems = async (panel: Locator): Promise<number> => {
+    const items = panel.locator('label.el-transfer-panel__item:visible');
+    let exactMatches = 0;
+    for (let index = 0; index < await items.count(); index += 1) {
+      const storeLabel = items.nth(index).locator('.el-checkbox__label').first();
+      const normalizedItemText = normalizeLingxingCollectionStoreName(await storeLabel.innerText());
+      if (normalizedItemText === normalizedStoreName || (normalizedItemText && expectedStoreNames.has(normalizedItemText))) {
+        exactMatches += 1;
+      }
+    }
+    return exactMatches;
+  };
+  const selectionDeadline = Date.now() + 5_000;
+  let sourceMatches = 0;
+  let selectedMatches = 0;
+  do {
+    sourceMatches = await countExactVisibleStoreItems(panels.nth(0));
+    selectedMatches = await countExactVisibleStoreItems(panels.nth(1));
+    if (sourceMatches === 0 && selectedMatches === 1) return;
+    if (Date.now() < selectionDeadline) await page.waitForTimeout(200);
+  } while (Date.now() < selectionDeadline);
+  throw new Error(`领星创建报表未唯一选中当前店铺“${normalizedStoreName}”；待选列表 ${sourceMatches} 条，已选列表 ${selectedMatches} 条，未提交创建。`);
+}
+
 async function refreshDownloadCenterReportList(
   page: NonNullable<ReturnType<BrowserController['getPage']>>,
   selectors: DownloadCenterActionSelectors,
@@ -7266,6 +7378,254 @@ async function refreshDownloadCenterReportList(
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
   }
   await page.waitForTimeout(500);
+}
+
+async function submitExactDownloadCenterReportSearch(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  searchInput: Locator,
+  expectedReportName: string,
+): Promise<void> {
+  await searchInput.fill(expectedReportName);
+  if ((await searchInput.inputValue()).trim() !== expectedReportName) {
+    throw new Error('下载中心没有保持本次生成名的精确搜索条件；任务继续阻断，未重复创建。');
+  }
+
+  const form = searchInput.locator('xpath=ancestor::form[1]');
+  const hasUniqueForm = (await form.count()) === 1;
+  const queryCandidates = hasUniqueForm
+    ? form.locator([
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'button:has-text("查询")',
+      'button:has-text("搜索")',
+      'a:has-text("查询")',
+      'a:has-text("搜索")',
+    ].join(', '))
+    : page.locator([
+      'button:has-text("查询")',
+      'button:has-text("搜索")',
+      'a:has-text("查询")',
+      'a:has-text("搜索")',
+    ].join(', '));
+  const visibleCandidates: number[] = [];
+  const candidateCount = await queryCandidates.count();
+  for (let index = 0; index < candidateCount; index += 1) {
+    if (await queryCandidates.nth(index).isVisible().catch(() => false)) {
+      visibleCandidates.push(index);
+    }
+  }
+  if (visibleCandidates.length !== 1) {
+    throw new Error(`下载中心精确查询动作命中 ${visibleCandidates.length} 个可见按钮；为避免误查，任务已阻断。`);
+  }
+  await queryCandidates.nth(visibleCandidates[0]).click({ timeout: 5000 });
+  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+  await page.waitForTimeout(750);
+  if ((await searchInput.inputValue()).trim() !== expectedReportName) {
+    throw new Error('下载中心提交查询后丢失本次生成名；任务继续阻断，未重复创建。');
+  }
+}
+
+async function waitForCreatedReportRowByExactSearch(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  selectors: DownloadCenterActionSelectors,
+  context: DownloadCenterReportSelectorContext,
+  dateRange: { start: string; end: string },
+  timeoutMs = 30_000,
+): Promise<void> {
+  const expectedReportName = context.generatedReportName || context.displayName;
+  const reportSearchInput = await assertUsableDownloadCenterActionSelector(
+    page,
+    'reportSearchInput',
+    selectors.reportSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput,
+    context,
+    dateRange,
+  );
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await refreshDownloadCenterReportList(page, selectors);
+    const searchInput = page.locator(reportSearchInput).first();
+    await submitExactDownloadCenterReportSearch(page, searchInput, expectedReportName);
+
+    const observed = reconcileLingxingCreatedReportRows(await page.locator('tr').allInnerTexts(), {
+      expectedReportName,
+      dateStart: dateRange.start,
+      dateEnd: dateRange.end,
+      exactSearchApplied: true,
+    });
+    if (observed.outcome === 'found') return;
+    if (observed.outcome === 'ambiguous') {
+      throw new Error('下载中心出现重复或状态不明的同名报表；创建结果保持未知，禁止重复创建。');
+    }
+    if (Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(1_500, Math.max(0, deadline - Date.now())));
+    }
+  }
+
+  throw new Error(`下载中心精确搜索未发现新建报表：${expectedReportName}`);
+}
+
+async function clickUniqueVisibleLingxingCreateConfirmation(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  const candidates = page.locator([
+    '.layui-layer-btn0',
+    '.el-message-box:visible button:has-text("确定")',
+    '.el-message-box:visible button:has-text("确认")',
+    '.el-dialog:visible button:has-text("确定")',
+    '.el-dialog:visible button:has-text("确认")',
+    '[role="dialog"]:visible button:has-text("确定")',
+    '[role="dialog"]:visible button:has-text("确认")',
+    'button:has-text("确定")',
+    'a:has-text("确定")',
+  ].join(', '));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const visibleIndexes: number[] = [];
+    const count = await candidates.count();
+    for (let index = 0; index < count; index += 1) {
+      if (await candidates.nth(index).isVisible().catch(() => false)) visibleIndexes.push(index);
+    }
+    if (visibleIndexes.length > 1) {
+      throw new Error(`领星创建确认弹窗同时出现 ${visibleIndexes.length} 个可见“确定/确认”按钮；为避免误提交，操作已阻断。`);
+    }
+    if (visibleIndexes.length === 1) {
+      await candidates.nth(visibleIndexes[0]).click();
+      return true;
+    }
+    await page.waitForTimeout(200);
+  }
+  return false;
+}
+
+async function readLingxingCreateSubmissionFeedback(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  confirmationClicked: boolean,
+): Promise<{ confirmationClicked: boolean; pathname: string; visibleMessages: string[] }> {
+  return page.evaluate(({ clicked }) => {
+    const failurePattern = /失败|错误|请选择|不能为空|必填|未选择|至少|频繁|稍后|超时|限制|无权限|不支持|已存在|重复|异常|不足/;
+    const selectors = [
+      '.el-form-item__error',
+      '.el-message__content',
+      '.el-notification__content',
+      '.layui-layer-content',
+      '.alert',
+      '[role="alert"]',
+      '.invalid-feedback',
+      '.text-danger',
+    ].join(', ');
+    const isVisible = (element: Element) => {
+      const html = element as HTMLElement;
+      const style = window.getComputedStyle(html);
+      const rect = html.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const sanitize = (value: string) => value
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+      .replace(/\b1[3-9]\d{9}\b/g, '[phone]')
+      .replace(/\b[a-f0-9]{24,}\b/gi, '[redacted]')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    const visibleMessages = Array.from(document.querySelectorAll(selectors))
+      .filter(isVisible)
+      .map((element) => sanitize(element.textContent || ''))
+      .filter((message) => Boolean(message) && failurePattern.test(message));
+    let pathname = '';
+    try {
+      pathname = new URL(window.location.href).pathname;
+    } catch {
+      pathname = '';
+    }
+    return {
+      confirmationClicked: clicked,
+      pathname,
+      visibleMessages: Array.from(new Set(visibleMessages)).slice(0, 8),
+    };
+  }, { clicked: confirmationClicked });
+}
+
+interface LingxingCreateSubmissionResponseEvidence {
+  method: string;
+  pathname: string;
+  status: number;
+  message?: string;
+}
+
+function extractLingxingCreateResponseMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  for (const key of ['message', 'msg', 'error', 'errmsg', 'error_message']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return sanitizeEvidenceText(value)
+        .replace(/\b[a-f0-9]{24,}\b/gi, '[redacted]')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 240);
+    }
+  }
+  return extractLingxingCreateResponseMessage(record.data);
+}
+
+async function captureLingxingCreateSubmissionResponses(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  action: () => Promise<boolean>,
+): Promise<{ value: boolean; responses: LingxingCreateSubmissionResponseEvidence[] }> {
+  const responses: LingxingCreateSubmissionResponseEvidence[] = [];
+  const pending: Promise<void>[] = [];
+  const handleResponse = (response: Response) => {
+    const method = response.request().method().toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+    let url: URL;
+    try {
+      url = new URL(response.url());
+    } catch {
+      return;
+    }
+    if (url.hostname !== 'lingxing.com' && !url.hostname.endsWith('.lingxing.com')) return;
+    pending.push((async () => {
+      let message: string | undefined;
+      const contentType = response.headers()['content-type'] || '';
+      if (/json/i.test(contentType)) {
+        try {
+          const body = await response.text();
+          if (body.length <= 16_384) {
+            message = extractLingxingCreateResponseMessage(JSON.parse(body));
+          }
+        } catch {
+          // Status and pathname remain useful when the provider body is absent or unreadable.
+        }
+      }
+      responses.push({
+        method,
+        pathname: url.pathname,
+        status: response.status(),
+        ...(message ? { message } : {}),
+      });
+    })());
+  };
+
+  page.on('response', handleResponse);
+  try {
+    const value = await action();
+    await page.waitForTimeout(750);
+    return { value, responses };
+  } finally {
+    page.off('response', handleResponse);
+    await Promise.allSettled(pending);
+  }
+}
+
+function summarizeLingxingCreateSubmissionResponses(
+  responses: LingxingCreateSubmissionResponseEvidence[],
+): string {
+  if (responses.length === 0) return '未捕获领星非 GET 请求';
+  return responses.slice(0, 8).map((response) => {
+    const base = `${response.method} ${response.pathname} -> ${response.status}`;
+    return response.message ? `${base}（${response.message}）` : base;
+  }).join('；');
 }
 
 async function ensureDownloadCenterCreateTimeLatestFirst(
@@ -7397,6 +7757,16 @@ function createDownloadCenterAutomation(
       await page.locator(renderedStoreSearchInput).fill(context.storeName);
       await page.locator(renderedStoreOption).click();
       await page.locator(renderedStoreMoveButton).click();
+      try {
+        await assertLingxingCreateStoreSelected(page, context.storeName, context.marketplaceCode);
+      } catch (error) {
+        return {
+          status: 'not_created',
+          retryable: true,
+          blockerCode: 'LINGXING_CREATE_STORE_NOT_SELECTED',
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
 
       const reportSearchInput = await assertUsableDownloadCenterActionSelector(
         page,
@@ -7419,6 +7789,15 @@ function createDownloadCenterAutomation(
         dateRange,
       );
       await page.locator(reportTypeOption).click();
+      const selectedReportType = (await page.locator(reportTypeSelect).inputValue()).trim();
+      if (selectedReportType !== report.displayName) {
+        throw new Error(`领星报表类型未锁定为“${report.displayName}”；当前回读“${selectedReportType || '空'}”，未提交创建。`);
+      }
+      const enteredReportName = (await page.locator(reportSearchInput).inputValue()).trim();
+      const expectedReportName = context.generatedReportName || report.displayName;
+      if (enteredReportName !== expectedReportName) {
+        throw new Error(`领星报表名称回读不一致；预期“${expectedReportName}”，当前“${enteredReportName || '空'}”，未提交创建。`);
+      }
 
       const dateStartInput = await assertUsableDownloadCenterActionSelector(
         page,
@@ -7457,17 +7836,26 @@ function createDownloadCenterAutomation(
       );
       await page.locator(confirmCreateButton).waitFor({ state: 'visible', timeout: 15000 });
       await assertUsableDownloadCenterActionSelector(page, 'confirmCreateButton', confirmCreateButton, context, dateRange);
-      await page.locator(confirmCreateButton).click();
-      await page.getByText('正在创建报告', { exact: false }).waitFor({ state: 'visible', timeout: 15000 }).catch(() => undefined);
-      const okButton = page.locator('.layui-layer-btn0, button:has-text("确定"), a:has-text("确定")').first();
-      if (await okButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await okButton.click();
+      const submission = await captureLingxingCreateSubmissionResponses(page, async () => {
+        await page.locator(confirmCreateButton).click();
+        await page.getByText('正在创建报告', { exact: false }).waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+        const clicked = await clickUniqueVisibleLingxingCreateConfirmation(page);
+        if (clicked) await page.waitForTimeout(500);
+        return clicked;
+      });
+      const confirmationClicked = submission.value;
+      const responseSummary = summarizeLingxingCreateSubmissionResponses(submission.responses);
+      const submissionFeedback = await readLingxingCreateSubmissionFeedback(page, confirmationClicked);
+      if (submissionFeedback.visibleMessages.length > 0) {
+        throw new Error(`领星创建表单未提交：${submissionFeedback.visibleMessages.join('；')}；提交确认：${confirmationClicked ? '已点击唯一可见确认按钮' : '未出现可见确认按钮'}；提交响应：${responseSummary}`);
       }
       await navigateToLingxingDownloadCenter(controller, model, target.storeName);
-      const createdRow = page.locator('tr').filter({
-        hasText: context.generatedReportName || report.displayName,
-      }).first();
-      await createdRow.waitFor({ state: 'visible', timeout: 30000 });
+      try {
+        await waitForCreatedReportRowByExactSearch(page, selectors, context, dateRange);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${message}；提交确认：${submissionFeedback.confirmationClicked ? '已点击唯一可见确认按钮' : '未出现可见确认按钮'}；提交响应：${responseSummary}`);
+      }
       return {
         status: 'created',
         identity: {
@@ -8207,16 +8595,42 @@ function appendDiagnosticError(existing: string | undefined, next: string): stri
   return existing ? `${existing}; ${next}` : next;
 }
 
+function withTrustedDownloadCenterReportSearchSelector(
+  model: DownloadCenterPageModel,
+): DownloadCenterPageModel {
+  const actionSelectors = model.actionSelectors;
+  if (!actionSelectors) return model;
+  const configured = actionSelectors.reportSearchInput?.trim();
+  const trusted = DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput;
+  const reportSearchInput = configured && !trusted.split(', ').includes(configured)
+    ? `${configured}, ${trusted}`
+    : trusted;
+  if (actionSelectors.reportSearchInput === reportSearchInput) return model;
+  return {
+    ...model,
+    actionSelectors: {
+      ...actionSelectors,
+      reportSearchInput,
+    },
+  };
+}
+
 function readDownloadCenterPageModel(): DownloadCenterPageModel {
   const overridePath = getDownloadCenterPageModelOverridePath();
   if (fs.existsSync(overridePath)) {
     try {
-      return readAndValidateDownloadCenterPageModel(overridePath);
+      return withTrustedDownloadCenterReportSearchSelector(
+        readAndValidateDownloadCenterPageModel(overridePath),
+      );
     } catch {
-      return readAndValidateDownloadCenterPageModel(getBundledDownloadCenterPageModelPath());
+      return withTrustedDownloadCenterReportSearchSelector(
+        readAndValidateDownloadCenterPageModel(getBundledDownloadCenterPageModelPath()),
+      );
     }
   }
-  return readAndValidateDownloadCenterPageModel(getBundledDownloadCenterPageModelPath());
+  return withTrustedDownloadCenterReportSearchSelector(
+    readAndValidateDownloadCenterPageModel(getBundledDownloadCenterPageModelPath()),
+  );
 }
 
 function getBundledDownloadCenterPageModelPath(): string {
@@ -8250,6 +8664,7 @@ function handleGetDownloadCenterPageModel() {
   } else {
     model = readAndValidateDownloadCenterPageModel(pathInUse);
   }
+  model = withTrustedDownloadCenterReportSearchSelector(model);
 
   return {
     model,

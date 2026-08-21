@@ -35,6 +35,17 @@ const COLUMN_ALIASES = {
 } as const;
 
 const ALL_HEADER_ALIASES = Object.values(COLUMN_ALIASES).flat();
+const GENERIC_TARGETING_HEADERS = ['投放', 'targeting', 'target'] as const;
+const AUTO_TARGETING_PROVIDER_VALUES = new Set([
+  '紧密匹配',
+  '宽泛匹配',
+  '同类商品',
+  '关联商品',
+  'closematch',
+  'loosematch',
+  'substitutes',
+  'complements',
+].map(normalizeHeader));
 
 export interface ReportContentInspection {
   readable: boolean;
@@ -81,10 +92,16 @@ function readWorkbookRows(filePath: string): unknown[][] {
   }).slice(0, 12);
 }
 
-function selectSemanticHeaderRow(rows: readonly unknown[][]): string[] {
-  let best: { headers: string[]; score: number } = { headers: [], score: 0 };
+function selectSemanticHeaderRow(
+  rows: readonly unknown[][],
+): { headers: string[]; rowIndex: number } {
+  let best: { headers: string[]; rowIndex: number; score: number } = {
+    headers: [],
+    rowIndex: -1,
+    score: 0,
+  };
   const known = new Set(ALL_HEADER_ALIASES.map(normalizeHeader));
-  for (const row of rows) {
+  for (const [rowIndex, row] of rows.entries()) {
     const headers = row
       .slice(0, 80)
       .map((value) => String(value ?? '').trim())
@@ -93,9 +110,30 @@ function selectSemanticHeaderRow(rows: readonly unknown[][]): string[] {
       (total, header) => total + (known.has(normalizeHeader(header)) ? 1 : 0),
       0,
     );
-    if (score > best.score) best = { headers, score };
+    if (score > best.score) best = { headers, rowIndex, score };
   }
-  return best.headers;
+  return { headers: best.headers, rowIndex: best.rowIndex };
+}
+
+function inferGenericAutoTargetingFromRows(
+  rows: readonly unknown[][],
+  headers: readonly string[],
+  headerRowIndex: number,
+): LingxingReportType | undefined {
+  const genericTargetingHeaders = new Set(GENERIC_TARGETING_HEADERS.map(normalizeHeader));
+  const targetingColumnIndex = headers.findIndex((header) => (
+    genericTargetingHeaders.has(normalizeHeader(header))
+  ));
+  if (targetingColumnIndex < 0 || headerRowIndex < 0) return undefined;
+
+  const values = rows
+    .slice(headerRowIndex + 1)
+    .map((row) => normalizeHeader(row[targetingColumnIndex]))
+    .filter(Boolean);
+  if (values.length === 0) return undefined;
+  return values.every((value) => AUTO_TARGETING_PROVIDER_VALUES.has(value))
+    ? 'auto_targeting'
+    : undefined;
 }
 
 /**
@@ -144,14 +182,28 @@ export function inspectReportFileContent(
   try {
     if (!fs.existsSync(filePath)) throw new Error('file does not exist');
     const rows = readWorkbookRows(filePath);
-    const headers = selectSemanticHeaderRow(rows);
-    const inferredReportType = inferLingxingReportTypeFromHeaders(headers);
+    const { headers, rowIndex: headerRowIndex } = selectSemanticHeaderRow(rows);
+    const headerReportType = inferLingxingReportTypeFromHeaders(headers);
+    const genericAutoTargetingType = inferGenericAutoTargetingFromRows(
+      rows,
+      headers,
+      headerRowIndex,
+    );
+    const inferredReportType = genericAutoTargetingType
+      && (!headerReportType || headerReportType === 'campaign' || headerReportType === 'ad_group')
+      ? genericAutoTargetingType
+      : headerReportType;
     const sampledText = rows
       .flatMap((row) => row.slice(0, 40))
       .map((value) => String(value ?? '').trim())
       .filter(Boolean)
       .join(' | ');
-    const matchedTokens = matchingHeaders(headers, aliasesForReportType(expectedReportType));
+    const matchedTokens = matchingHeaders(
+      headers,
+      expectedReportType === 'auto_targeting' && inferredReportType === 'auto_targeting'
+        ? [...aliasesForReportType(expectedReportType), ...GENERIC_TARGETING_HEADERS]
+        : aliasesForReportType(expectedReportType),
+    );
     return {
       readable: true,
       matched: inferredReportType === expectedReportType,

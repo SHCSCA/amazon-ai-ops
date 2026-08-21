@@ -54,6 +54,49 @@ describe('Lingxing report content type authority', () => {
     }).valid).toBe(true);
   });
 
+  it('recognizes a generic targeting column as auto targeting only from its bounded provider values', () => {
+    const filePath = writeCsv('领星广告数据_2026-08-06_2026-08-19.csv', [
+      '店铺名称,国家,广告活动,广告组,投放,日期,曝光量,点击,花费-本币,广告订单,广告销售额-本币',
+      'NOVA-US,US,Campaign A,Ad Group A,紧密匹配,2026-08-19,20,2,3.12,1,49.99',
+      'NOVA-US,US,Campaign A,Ad Group A,宽泛匹配,2026-08-19,10,1,1.56,0,0',
+    ]);
+
+    expect(inspectReportFileContent(filePath, 'auto_targeting')).toMatchObject({
+      readable: true,
+      matched: true,
+      inferredReportType: 'auto_targeting',
+    });
+    expect(verifyDownloadedFile(filePath, {
+      minBytes: 1,
+      expectedFilenameKeyword: 'auto_targeting',
+      expectedReportType: 'auto_targeting',
+    }).valid).toBe(true);
+  });
+
+  it.each([
+    ['header-only', undefined],
+    ['an ASIN', 'B0ABCDEF12'],
+    ['an unknown label', '自定义商品集合'],
+  ])('does not infer auto targeting from a generic targeting column with %s', (_label, value) => {
+    const lines = [
+      '店铺名称,国家,广告活动,广告组,投放,日期,曝光量,点击,花费-本币,广告订单,广告销售额-本币',
+    ];
+    if (value) {
+      lines.push(`NOVA-US,US,Campaign A,Ad Group A,${value},2026-08-19,20,2,3.12,1,49.99`);
+    }
+    const filePath = writeCsv('auto_targeting_2026-08-06_2026-08-19.csv', lines);
+
+    expect(inspectReportFileContent(filePath, 'auto_targeting')).toMatchObject({
+      readable: true,
+      matched: false,
+    });
+    expect(verifyDownloadedFile(filePath, {
+      minBytes: 1,
+      expectedFilenameKeyword: 'auto_targeting',
+      expectedReportType: 'auto_targeting',
+    }).valid).toBe(false);
+  });
+
   it.each([false, true])(
     'rejects a matching keyword filename when %s-row content is a search-term report',
     (withDataRow) => {

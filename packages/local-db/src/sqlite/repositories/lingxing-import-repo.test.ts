@@ -2295,6 +2295,29 @@ describe('LingxingImportRepository', () => {
     })).toThrow(/CAS_CONFLICT/);
   });
 
+  it('allows an exact full-eight completed-with-errors snapshot to resume its failed report checkpoints in place', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'partial-full8-resume');
+    terminal.job = {
+      ...terminal.job,
+      state: 'completed_with_errors',
+    };
+    terminal.batch = {
+      ...terminal.batch,
+      status: 'completed_with_errors',
+    };
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+
+    const packet = repository.getCollectionInPlaceResumeStateForStore(storeA, terminal.job.jobId);
+
+    expect(packet).toMatchObject({
+      jobId: terminal.job.jobId,
+      job: { state: 'completed_with_errors' },
+    });
+    expect(packet?.reports.filter((checkpoint) => checkpoint.state === 'downloaded')).toHaveLength(3);
+    expect(packet?.reports.filter((checkpoint) => checkpoint.state === 'queued')).toHaveLength(5);
+  });
+
   it('interrupts an orphaned creating resume at startup without browser work or a reusable claim', () => {
     const { repository, storeA } = createHarness();
     const terminal = failedFullAuthorityTerminal(storeA, 'startup-resume-1', 0);

@@ -93,6 +93,7 @@ type LingxingCollectionCancelInput = {
 
 type LingxingCollectionResumeInput = LingxingCollectionCancelInput & {
   reconcileCreateUnknown?: boolean;
+  reconcileOnly?: boolean;
 };
 
 type BusinessUiScope = {

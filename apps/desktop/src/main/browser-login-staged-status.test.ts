@@ -21,9 +21,17 @@ describe('browser login staged ERP and Ads status contract', () => {
     mainSource.indexOf('function initializeStoreCollectionProductionRuntime'),
     mainSource.indexOf('function assertVisibleLingxingCollectionSession'),
   );
+  const collectionCoordinatorWiring = mainSource.slice(
+    mainSource.indexOf('function initializeLingxingCollectionCoordinator'),
+    mainSource.indexOf('function initializeStoreCollectionProductionRuntime'),
+  );
   const collectionAction = mainSource.slice(
     mainSource.indexOf('async function handleCollectLingxingReports'),
     mainSource.indexOf('function handleImportCurrentBusinessReports'),
+  );
+  const collectionResumeAction = mainSource.slice(
+    mainSource.indexOf('async function handleResumeLingxingCollection'),
+    mainSource.indexOf('const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS'),
   );
 
   it('keeps dynamic connection diagnostics out of the ordinary operator message', () => {
@@ -197,6 +205,76 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(collectionAction.slice(runtimeRead, expectedClose)).toContain(
       "currentRuntime.purpose === 'operator_full'",
     );
+  });
+
+  it('marks the exact operator runtime close as expected while full8 resume takes ownership', () => {
+    const runtimeRead = collectionResumeAction.indexOf('visibleBrowserRuntimeRegistry.read()');
+    const exactContext = collectionResumeAction.indexOf('sameExactStoreContext(', runtimeRead);
+    const expectedClose = collectionResumeAction.indexOf(
+      'expectedVisibleRuntimeCloseIds.add(expectedClosedRuntimeId)',
+      exactContext,
+    );
+    const resumeJob = collectionResumeAction.indexOf(
+      'state.storeCollectionSchedulerReadModel.resumeJob(',
+      expectedClose,
+    );
+    const releaseExpectedClose = collectionResumeAction.indexOf(
+      'expectedVisibleRuntimeCloseIds.delete(expectedClosedRuntimeId)',
+      resumeJob,
+    );
+
+    expect(runtimeRead).toBeGreaterThan(-1);
+    expect(exactContext).toBeGreaterThan(runtimeRead);
+    expect(expectedClose).toBeGreaterThan(exactContext);
+    expect(resumeJob).toBeGreaterThan(expectedClose);
+    expect(releaseExpectedClose).toBeGreaterThan(resumeJob);
+    expect(collectionResumeAction.slice(runtimeRead, expectedClose)).toContain(
+      "currentRuntime.purpose === 'operator_full'",
+    );
+  });
+
+  it('protects the full8 checkpoint reconciliation navigation before resume admission', () => {
+    const expectedClose = collectionResumeAction.indexOf(
+      'expectedVisibleRuntimeCloseIds.add(expectedReconciliationRuntimeCloseId)',
+    );
+    const reconcile = collectionResumeAction.indexOf(
+      'reconcileLingxingCreateUnknownCheckpoint(',
+      expectedClose,
+    );
+    const releaseExpectedClose = collectionResumeAction.indexOf(
+      'expectedVisibleRuntimeCloseIds.delete(expectedReconciliationRuntimeCloseId)',
+      reconcile,
+    );
+    const resumeJob = collectionResumeAction.indexOf(
+      'state.storeCollectionSchedulerReadModel.resumeJob(',
+      releaseExpectedClose,
+    );
+
+    expect(expectedClose).toBeGreaterThan(-1);
+    expect(reconcile).toBeGreaterThan(expectedClose);
+    expect(releaseExpectedClose).toBeGreaterThan(reconcile);
+    expect(resumeJob).toBeGreaterThan(releaseExpectedClose);
+    expect(collectionResumeAction.slice(0, expectedClose)).toContain(
+      'isExactLingxingFull8ReportSet(job.request.reportTypes)',
+    );
+  });
+
+  it('wires every durable same-job resume persistence port into the production coordinator', () => {
+    const requiredResumePorts = [
+      'acquireCollectionResumeClaimForStore',
+      'commitCollectionResumeProgressForStore',
+      'commitCollectionResumeRunnerResultForStore',
+      'advanceCollectionResumeClaimAfterImportForStore',
+      'finalizeCollectionResumeAttemptForStore',
+      'interruptCollectionResumeClaimForStore',
+    ];
+
+    for (const port of requiredResumePorts) {
+      expect(collectionCoordinatorWiring).toContain(`${port}(storeId, input)`);
+      expect(collectionCoordinatorWiring).toContain(
+        `state.lingxingImportRepo!.${port}(storeId, input)`,
+      );
+    }
   });
 
   it('reads back encrypted storage before committing fresh typed proof ahead of Ads recognition', () => {

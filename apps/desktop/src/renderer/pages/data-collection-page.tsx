@@ -1644,7 +1644,7 @@ export function CollectionJobWorkspace({
                             type="button"
                           >
                             {resumeBusy && <span aria-hidden="true" className="button-spinner" />}
-                            <span>{resumeBusy ? '核对中...' : '核对并继续'}</span>
+                            <span>{resumeBusy ? '核对中...' : '仅核对创建结果'}</span>
                           </button>
                         ) : (
                           <button
@@ -1886,6 +1886,14 @@ export function DataCollectionPage() {
       ? { ...storeAuthority.authoritativeContext }
       : null;
     collectionFeedbackAuthorityContextRef.current = nextFeedbackContext;
+    if (collectionActionFeedbackBelongsToAuthority(previousFeedbackContext, nextFeedbackContext)) {
+      // A collection-only runtime may legitimately advance the current
+      // store's session generation. Keep the in-flight token and feedback
+      // alive so its real Main result is still delivered to the operator.
+      // Store/profile/marketplace/business-date changes continue through the
+      // reset path below and remain fail-closed.
+      return;
+    }
     ++collectionJobsLoadSequenceRef.current;
     collectionJobActionTokenRef.current = null;
     collectionRequestIdRef.current = null;
@@ -2144,7 +2152,7 @@ export function DataCollectionPage() {
     setLastDiagnostic(null);
     setActionError(null);
     setActionNotice(options.reconcileCreateUnknown
-      ? '正在当前店铺下载中心精确核对原创建记录；只有确认唯一记录或确认缺失后才会继续。'
+      ? '正在当前店铺下载中心精确核对原创建记录；本次只核对，不会创建报表或继续采集。'
       : view.action === 'supplement-import'
       ? '正在补导当前采集任务的真实报表；系统会复用已验证文件，不会重新创建领星报表。'
       : view.canary
@@ -2164,7 +2172,7 @@ export function DataCollectionPage() {
         jobId: job.jobId,
         requestId,
         storeContext: captured.storeContext,
-        ...(options.reconcileCreateUnknown ? { reconcileCreateUnknown: true } : {}),
+        ...(options.reconcileCreateUnknown ? { reconcileCreateUnknown: true, reconcileOnly: true } : {}),
       });
       if (collectionJobActionTokenRef.current !== actionToken || !isCapturedAuthorityCurrent(captured.authorityKey)) return;
       if (result?.job && !collectionJobBelongsToStore(result.job, captured.storeContext)) return;
@@ -2172,7 +2180,7 @@ export function DataCollectionPage() {
       setActionError(null);
       const returnedImportState = result?.job?.importState || result?.importState;
       setActionNotice(options.reconcileCreateUnknown
-        ? '创建结果已完成精确核对，正在继续原任务并复用已验证文件。'
+        ? '创建结果核对已完成；请根据核对结果单独点击“继续采集”。'
         : view.action === 'supplement-import'
         ? returnedImportState === 'succeeded' || result?.importRecovered === true
           ? '补导已完成并持久化为生产指标已入库，正在刷新当前店铺任务与数据账本。'
