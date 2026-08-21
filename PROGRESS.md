@@ -18,6 +18,10 @@
 - 审计同时发现经营实验的本地必填校验仍会直接显示 `Mission`。新增断言先 RED=`1 failed / 8 passed`，改为“请绑定运营任务…”后 GREEN=`9/9 passed`；desktop typecheck 为 `$ tsc --noEmit` / exit 0。其他技术值继续只允许出现在诊断详情或测试数据中。
 - Renderer 生产构建通过：4735 modules transformed，输出 `index-jLUj3PqA.js` / `index-CsHVBxxp.css`；随后 `pnpm run smoke:business-ui-current` exit 0，汇总 `output/codex-evidence/current-business-ui-smoke-1787295995003.json` 明确报告连接、采集、策略、运营任务、经营实验、弹窗、按钮 7/7 passed。该 smoke 是机器合同，不替代真实 8/8 或 Package UI。
 - 烟测后正式库再次以 readonly + `query_only=ON` 核验：resume attempts 12、active claims 0、events 111、import runs 0；Ads 执行五表仍全 0；missions 0、experiments 0、policy_versions 0。说明本次转项构建/烟测未伪造正式任务、实验、策略版本或广告写入。
+- 当前源码 Windows 七步构建全部 status 0，`freshCurrentRun=true`、native bindings `unchangedExact=true / sourceReadOnly=true`。installer SHA-256 `D0CBE7A63FDE71E73476FF2CC475D5E40B2C7C76E14F71400DF919A26C72A75E`，portable `61817C798D402BDE6CD66F992D08F3B8775165D04C5CAB28A0F71F5DD89A0A05`，folder ZIP `39909C944CACDAA4B599862D5FBA112DB8C7E9053F8E305DFF18743469026EFD`，blockmap `7F9EAA2261DAC45AB06B1BEDAA0E77B6ED3F1C89C9C9515082186326910501FC`。
+- `pnpm run smoke:folder-zip-launch` 真实解压启动通过：主窗标题 `Amazon AI Ops Agent`、Renderer 来自解压目录、EXE 与 win-unpacked 哈希一致、测试进程已停止、临时目录已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787296449294.json`。
+- Package UI 哈希预检已绑定当前包：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、app content `936A8C5F43DFB1D68F005CD86EF173A5E16674CC5BDD6AB992608707FDB0A51E`（5118 files）。首次裸命令因缺少强制哈希/隔离 Profile/authority receipt 参数直接 exit 1、未启动 Electron；随后已生成当前正式库只读 authority selection receipt，`SELECTED_SCHEMA_READY`、`authorityDatabaseMutated=false`、`adsExecutionInvoked=false`。交互式 Package UI 仍留到有可用隔离 Profile 且操作者愿意完成可见登录时执行，不伪造通过。
+- 本轮代码与证据记录本地提交为 `28aacdf5 fix: keep experiment validation operator-facing`。单次 `git push origin master` 仍失败为 `Recv failure: Connection was reset`，停止网络空转；本地分支保留全部提交，待 GitHub 443 恢复后再推送。
 
 ## 当前：2026-08-21 真实自动投放报表识别已按值域窄门修复
 

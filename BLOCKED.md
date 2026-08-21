@@ -6,6 +6,8 @@
 - 精确名称 `AAO_20260806_20260819_product_targeting_064758` 仍不存在，正式作业已从 `create_unknown` 收口为 `failed / LINGXING_CREATE_CONFIRMED_ABSENT`；当前仍是 6 类 downloaded、商品投放 failed、用户搜索词 queued、正式 import run 0。
 - 该状态技术上允许以后安全重新创建，但连续两次 `POST 200（操作成功）` 均未形成下载中心行；为避免继续空转，本轮不再创建，先推进不依赖 8/8 的策略/运营任务/经营实验界面与禁用路径。恢复条件是明确决定重新创建商品投放并接受一次新的外部尝试，或领星侧能解释该报表类型的创建限制。
 - 8/8 入库、策略启用后的真实任务/实验数据闭环及 Task 8B 仍受前置事实阻断；没有产品内已批准 `lower_bid` 推荐，广告写入必须保持 0。
+- 当前包的 Windows 构建、7 类业务 smoke 与文件夹 ZIP 真实启动均已通过；Package UI 尚无当前通过 manifest。runner 强制要求当前哈希、正式库 authority receipt、现存隔离 Profile 与可见操作者登录，不能用裸命令、旧 Profile 或保存密码伪造。当前哈希和 authority receipt 已准备好，恢复条件是创建/选择合规隔离 Profile并由操作者完成一次可见登录。
+- GitHub 推送仍因 `Recv failure: Connection was reset` 失败；不影响本地提交，但远端仍未包含本轮新提交。恢复条件是本机到 github.com:443 连通后执行一次 `git push origin master`。
 
 ## 当前：2026-08-21 自动投放源码阻断已解除，商品投放仍需实包唯一回读
 
