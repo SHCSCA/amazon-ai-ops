@@ -59,6 +59,12 @@ export interface RunBatchOptions {
   executionStoreContext?: StoreContextEnvelope;
   progressEventNamespace?: string;
   resumeFrom?: LingxingCollectionResumeState | LingxingInPlaceResumeState;
+  /**
+   * Keep explicitly reconciled create failures terminal while finishing other
+   * untouched checkpoints. This mode performs zero browser work for those
+   * failed report types; a later retry still requires a separate explicit run.
+   */
+  deferReconciledCreateFailures?: boolean;
 }
 
 export interface LingxingInPlaceResumeState extends LingxingCollectionResumeState {
@@ -345,11 +351,23 @@ interface ValidatedResumeState {
   inPlace?: LingxingInPlaceResumeState;
 }
 
+function isReconciledCreateFailure(
+  checkpoint: LingxingCollectionReportCheckpoint,
+): boolean {
+  return checkpoint.state === 'failed'
+    && !checkpoint.createdReportIdentity
+    && (
+      checkpoint.errorCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+      || checkpoint.errorCode === 'LINGXING_CREATE_CONFIRMED_FAILED'
+    );
+}
+
 function validateResumeState(
   resumeFrom: LingxingCollectionResumeState | LingxingInPlaceResumeState | undefined,
   request: LingxingCollectionRequestDto,
   maxRetries: number,
   rootDownloadDir: string,
+  deferReconciledCreateFailures: boolean,
 ): ValidatedResumeState {
   if (!resumeFrom) {
     return { checkpoints: new Map(), downloadedFiles: new Map() };
@@ -424,6 +442,10 @@ function validateResumeState(
       if (rawCheckpoint.createdReportIdentity) {
         throw new Error('queued resume checkpoints must not contain a created report identity');
       }
+      checkpoints.set(rawCheckpoint.reportType, cloneCheckpoint(rawCheckpoint));
+      continue;
+    }
+    if (deferReconciledCreateFailures && isReconciledCreateFailure(rawCheckpoint)) {
       checkpoints.set(rawCheckpoint.reportType, cloneCheckpoint(rawCheckpoint));
       continue;
     }
@@ -644,6 +666,7 @@ async function runLingxingReportBatchInternal(
     request,
     maxRetries,
     options.rootDownloadDir,
+    options.deferReconciledCreateFailures === true,
   );
   const resumeCheckpoints = validatedResume.checkpoints;
   const batchId = options.resumeFrom?.jobId ?? `batch_${stamp()}`;
@@ -846,6 +869,12 @@ async function runLingxingReportBatchInternal(
       createdAt: durableFile?.createdAt ?? createdAt,
       updatedAt: checkpoint.updatedAt,
     };
+    if (options.deferReconciledCreateFailures === true
+      && isReconciledCreateFailure(checkpoint)) {
+      file.errorMessage = checkpoint.detail;
+      files.push(file);
+      continue;
+    }
     let createdReportIdentity = checkpoint.createdReportIdentity;
     let readyConfirmed = checkpoint.state === 'ready';
     let reportCompleted = false;

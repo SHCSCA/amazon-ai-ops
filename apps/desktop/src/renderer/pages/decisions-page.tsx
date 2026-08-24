@@ -1328,6 +1328,7 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
   const [submittingDecision, setSubmittingDecision] = useState<DecisionSubmission | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [submittingTargetBinding, setSubmittingTargetBinding] = useState(false);
+  const [discoveringTarget, setDiscoveringTarget] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<Set<string>>(
@@ -1399,7 +1400,7 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
     loading: queue.loading,
     generating,
     handoffBusy,
-    submitting: Boolean(submittingDecision) || submittingReview || submittingTargetBinding,
+    submitting: Boolean(submittingDecision) || submittingReview || submittingTargetBinding || discoveringTarget,
   });
   const interactionLocked = transactionLocked || !authorityQueryState.matchesCurrentQuery;
   const mutationLocked = transactionLocked
@@ -1773,6 +1774,72 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
       message,
     }));
     setPageMessage(message);
+  }
+
+  async function discoverSelectedWritableTarget(): Promise<void> {
+    if (
+      !selected
+      || selected.status !== 'pending'
+      || selected.evidence?.writableTarget
+      || mutationLocked
+    ) return;
+    if (authorityQueryState.stale) {
+      setBlockedFeedback(selected, '权威队列数据已过期，刷新成功前不能从 Ads 页面识别对象。');
+      return;
+    }
+
+    const currentRow = selected;
+    const operationQueryKey = queryKey;
+    setDiscoveringTarget(true);
+    setDecisionFeedback(null);
+    setPageMessage(null);
+    try {
+      if (typeof window === 'undefined') throw new Error('当前环境无法读取 Ads 页面。');
+      const api = (window as any).electronAPI;
+      const discoverRecommendationTarget = api?.executionAuthority?.discoverRecommendationTarget;
+      if (typeof api?.getActiveStoreContext !== 'function'
+        || typeof discoverRecommendationTarget !== 'function') {
+        throw new Error('Ads 对象只读识别接口未暴露。');
+      }
+      const context = await api.getActiveStoreContext();
+      if (!context) throw new Error('当前店铺上下文不可用。');
+      const result = await discoverRecommendationTarget({
+        context,
+        recommendationId: currentRow.id,
+      });
+      if (!isDecisionsQueryKeyActive(loadRequestGuardRef.current, operationQueryKey)) return;
+      const writableTarget = result?.writableTarget;
+      const pageIdentity = result?.pageIdentity;
+      if (Number(result?.recommendationId) !== currentRow.id
+        || Number(result?.recommendationRevision) !== currentRow.revision
+        || writableTarget?.entityType !== 'keyword'
+        || String(writableTarget?.entityId || '').trim() !== String(pageIdentity?.keywordId || '').trim()
+        || !Number.isInteger(Number(writableTarget?.sourceRow))
+        || Number(writableTarget?.sourceRow) <= 0) {
+        throw new Error('Ads 页面识别结果与当前建议版本不一致。');
+      }
+      setReviewForm((current) => ({
+        ...current,
+        entityType: writableTarget.entityType,
+        entityId: String(writableTarget.entityId || ''),
+        sourceFile: String(writableTarget.sourceFile || ''),
+        sourceRow: String(writableTarget.sourceRow),
+        identitySource: 'ads_ui',
+        identityProofPath: String(writableTarget.identityProofPath || ''),
+        verificationNote: String(writableTarget.verificationNote || ''),
+      }));
+      setPageMessage(
+        `已从当前店铺 Ads 页面识别 ${decisionObjectName(currentRow)}，页面竞价 `
+        + `${formatUsd(Number(pageIdentity.bidCents || 0) / 100)}；已填入核验表单，`
+        + '不会自动绑定、批准或执行。',
+      );
+    } catch (caught) {
+      if (!isDecisionsQueryKeyActive(loadRequestGuardRef.current, operationQueryKey)) return;
+      const message = toUserFacingError(caught, '从 Ads 页面识别对象失败');
+      setBlockedFeedback(currentRow, `Ads 对象识别失败：${message}`);
+    } finally {
+      setDiscoveringTarget(false);
+    }
   }
 
   async function reviewSelectedRecommendations(): Promise<void> {
@@ -2573,6 +2640,18 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
                 <p className="decisions-review-safety-note">
                   此步骤只绑定当前建议对应的唯一 Ads 可写对象并生成不可覆盖的审计记录；不会批准建议，也不会执行 Ads 动作。
                 </p>
+                <div aria-label="Ads 页面只读识别" className="decisions-decision-actions" role="group">
+                  <button
+                    aria-busy={discoveringTarget || undefined}
+                    className="secondary-button"
+                    disabled={mutationLocked}
+                    onClick={() => { void discoverSelectedWritableTarget(); }}
+                    type="button"
+                  >
+                    {discoveringTarget ? '正在读取当前 Ads 页面...' : '从当前 Ads 页面识别（只读）'}
+                  </button>
+                  <span className="decisions-review-safety-note">只填充核验表单，不会自动绑定、批准或执行。</span>
+                </div>
                 <dl aria-label="当前锁定对象核验范围" className="decisions-review-scope">
                   <div><dt>日期</dt><dd>{scope.dateFrom} → {scope.dateTo}</dd></div>
                   <div><dt>店铺 / 站点</dt><dd>{scope.storeName} / {scope.marketplaceCode}</dd></div>

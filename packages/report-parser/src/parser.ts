@@ -25,7 +25,28 @@ export interface ParseResult {
   headers: string[];
 }
 
+export interface LingxingRawReportControlTotals {
+  expectedRows: number;
+  expectedCost: number;
+}
+
+export interface LingxingRawReportControlWindow {
+  dateStart: string;
+  dateEnd: string;
+}
+
 export class ReportParser {
+  /**
+   * Read control totals directly from provider-owned workbook cells without
+   * using mapped metrics or the canonical ReportParser row output.
+   */
+  static readLingxingRawReportControlTotals(
+    filePath: string,
+    window: LingxingRawReportControlWindow,
+  ): LingxingRawReportControlTotals {
+    return readLingxingRawReportControlTotals(filePath, window);
+  }
+
   /**
    * 解析 Excel 文件 (.xlsx, .xls)
    */
@@ -247,6 +268,85 @@ export class ReportParser {
   }
 }
 
+const CONTROL_DATE_HEADERS = new Set(['日期', '日期范围', '数据日期', 'date', 'reportdate']
+  .map(normalizeReportHeader));
+const CONTROL_COST_HEADERS = new Set(['花费-本币', '花费本币', '花费', '消耗', 'cost', 'spend']
+  .map(normalizeReportHeader));
+
+function controlDate(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (!parsed) return undefined;
+    return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+  }
+  const text = String(value ?? '').normalize('NFKC').trim();
+  if (!text) return undefined;
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(text);
+  if (!match) return undefined;
+  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+}
+
+function controlCost(value: unknown): number {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('领星原始报表花费 control total 包含非有限数值。');
+    return value;
+  }
+  const text = String(value ?? '').normalize('NFKC').trim();
+  if (!text || text === '--') return 0;
+  const negative = /^\(.*\)$/.test(text);
+  const numeric = Number(text.replace(/[,$¥￥\s()]/g, ''));
+  if (!Number.isFinite(numeric)) throw new Error('领星原始报表花费 control total 包含无效数值。');
+  return negative ? -numeric : numeric;
+}
+
+function readLingxingRawReportControlTotals(
+  filePath: string,
+  window: LingxingRawReportControlWindow,
+): LingxingRawReportControlTotals {
+  if (!fs.existsSync(filePath)) throw new Error('领星原始报表 control total 文件不存在。');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(window.dateStart)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(window.dateEnd)
+    || window.dateStart > window.dateEnd) {
+    throw new Error('领星原始报表 control total 日期窗口无效。');
+  }
+  const extension = path.extname(filePath).toLowerCase();
+  const workbook = extension === '.csv'
+    ? XLSX.read(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''), { type: 'string' })
+    : XLSX.readFile(filePath, { cellDates: false, raw: true });
+  const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!worksheet) throw new Error('领星原始报表 control total 缺少工作表。');
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    header: 1,
+    defval: '',
+    raw: true,
+    blankrows: false,
+  });
+  const headerRowIndex = rows.slice(0, 12).findIndex((row) => {
+    const normalized = row.map(normalizeReportHeader);
+    return normalized.some((header) => CONTROL_DATE_HEADERS.has(header))
+      && normalized.some((header) => CONTROL_COST_HEADERS.has(header));
+  });
+  if (headerRowIndex < 0) throw new Error('领星原始报表 control total 缺少日期或花费表头。');
+  const normalizedHeaders = rows[headerRowIndex].map(normalizeReportHeader);
+  const dateIndex = normalizedHeaders.findIndex((header) => CONTROL_DATE_HEADERS.has(header));
+  const costIndex = normalizedHeaders.findIndex((header) => CONTROL_COST_HEADERS.has(header));
+  let expectedRows = 0;
+  let expectedCost = 0;
+  for (const row of rows.slice(headerRowIndex + 1)) {
+    const date = controlDate(row[dateIndex]);
+    if (!date) continue;
+    if (date < window.dateStart || date > window.dateEnd) {
+      throw new Error(`领星原始报表 control total 日期 ${date} 超出授权窗口。`);
+    }
+    expectedRows += 1;
+    expectedCost += controlCost(row[costIndex]);
+  }
+  return {
+    expectedRows,
+    expectedCost: Math.round(expectedCost * 10_000) / 10_000,
+  };
+}
+
 const IMPORTED_METRIC_FIELDS = [
   'impressions',
   'clicks',
@@ -336,6 +436,7 @@ const AUTO_TARGETING_PROVIDER_VALUES = new Set([
   'substitutes',
   'complements',
 ].map(normalizeReportHeader));
+const PRODUCT_TARGETING_PROVIDER_VALUE = /^商品\s*[:：]\s*["“”]?B0[A-Z0-9]{8}["“”]?$/i;
 
 function normalizeReportHeader(value: unknown): string {
   return String(value ?? '')
@@ -379,6 +480,24 @@ function inferGenericAutoTargetingFromRows(
     : undefined;
 }
 
+function inferGenericProductTargetingFromRows(
+  headers: readonly string[],
+  rows: readonly Record<string, any>[],
+): LingxingReportType | undefined {
+  const targetingHeader = headers.find((header) => (
+    GENERIC_TARGETING_HEADERS.has(normalizeReportHeader(header))
+  ));
+  if (!targetingHeader) return undefined;
+
+  const values = rows
+    .map((row) => String(row[targetingHeader] ?? '').trim())
+    .filter(Boolean);
+  if (values.length === 0) return undefined;
+  return values.every((value) => PRODUCT_TARGETING_PROVIDER_VALUE.test(value))
+    ? 'product_targeting'
+    : undefined;
+}
+
 function resolveSemanticReportType(
   headers: readonly string[],
   declaredReportType: string | undefined,
@@ -386,9 +505,11 @@ function resolveSemanticReportType(
 ): LingxingReportType | undefined {
   const headerReportType = inferSemanticReportType(headers);
   const genericAutoTargetingType = inferGenericAutoTargetingFromRows(headers, rows);
-  const inferred = genericAutoTargetingType
+  const genericProductTargetingType = inferGenericProductTargetingFromRows(headers, rows);
+  const genericTargetingType = genericAutoTargetingType ?? genericProductTargetingType;
+  const inferred = genericTargetingType
     && (!headerReportType || headerReportType === 'campaign' || headerReportType === 'ad_group')
-    ? genericAutoTargetingType
+    ? genericTargetingType
     : headerReportType;
   if (!declaredReportType) return inferred;
   return inferred === declaredReportType ? inferred : undefined;

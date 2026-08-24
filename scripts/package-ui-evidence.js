@@ -1773,14 +1773,26 @@ function collectMatchingProfileBrowserProcesses(profilePath, options = {}, run =
     || entry.executableMatched
   ));
   /*
-   * An unreadable browser row cannot be proven unrelated to the isolated
-   * profile. Treat every such Chrome/Chromium/Edge row as unresolved both
-   * before and after launch. This intentionally fails closed instead of
-   * hiding it in ignoredUnresolvedCount.
+   * Unreadable rows remain fail-closed by default. The evidence orchestrator
+   * may explicitly classify a pre-existing daily browser as baseline-only
+   * after it has independently proved both packaged-process absence and an
+   * exclusive-open isolated profile tree. Cleanup may retain only those exact
+   * baseline PIDs; any new unreadable row still blocks.
    */
-  const newlyObservedUnreadableItems = enriched.filter(
-    (entry) => !entry.item.CommandLine || !entry.item.ExecutablePath,
+  const baselineUnrelatedItems = enriched.filter((entry) => {
+    if (entry.item.CommandLine && entry.item.ExecutablePath) return false;
+    if (entry.profileMatched || entry.executableMatched) return false;
+    const processId = Number(entry.item.ProcessId);
+    return options.allowUnreadableBaseline === true
+      && (!baselineProvided || baselineProcessIds.has(processId));
+  });
+  const baselineUnrelatedProcessIds = new Set(
+    baselineUnrelatedItems.map((entry) => Number(entry.item.ProcessId)),
   );
+  const newlyObservedUnreadableItems = enriched.filter((entry) => (
+    (!entry.item.CommandLine || !entry.item.ExecutablePath)
+    && !baselineUnrelatedProcessIds.has(Number(entry.item.ProcessId))
+  ));
   const unresolvedItems = [...new Set([
     ...targetItems.filter((entry) => (
       !entry.item.ExecutablePath
@@ -1821,6 +1833,12 @@ function collectMatchingProfileBrowserProcesses(profilePath, options = {}, run =
       .map((entry) => entry.profilePathBindingSha256),
   )].sort((left, right) => left.localeCompare(right, 'en'));
   return {
+    baselineUnrelated: baselineUnrelatedItems.map((entry) => browserProcessRecord(
+      entry.item,
+      entry.profileMatched,
+      entry.profilePathBindingSha256,
+    )),
+    baselineUnrelatedCount: baselineUnrelatedItems.length,
     collectionMethod,
     error: null,
     descendantProcessIds: matchingItems
@@ -1952,6 +1970,23 @@ function collectActiveBundledChromiumLineage(options, run = spawnSync) {
     rootProcessIds,
     snapshot,
   };
+}
+
+async function waitForActiveBundledChromiumLineage(options, waitOptions = {}) {
+  const collect = waitOptions.collect || collectActiveBundledChromiumLineage;
+  const attempts = Number.isInteger(waitOptions.attempts) ? waitOptions.attempts : 20;
+  const intervalMs = Number.isInteger(waitOptions.intervalMs) ? waitOptions.intervalMs : 250;
+  let evidence = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    evidence = collect(options);
+    if (chromiumLineageEvidencePassed(evidence)) {
+      return { ...evidence, attempts: attempt, passed: true };
+    }
+    if (attempt < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return { ...evidence, attempts, passed: false };
 }
 
 function chromiumLineageEvidencePassed(evidence) {
@@ -8312,6 +8347,27 @@ async function navigateToWorkspace(page, expected, settleMs) {
   return waitForWorkspaceSettled(page, selector, settleMs);
 }
 
+async function restoreWorkspaceScrollTop(page) {
+  const position = await page.evaluate(() => {
+    const content = document.querySelector('.app-content');
+    if (!(content instanceof HTMLElement)) return null;
+    const before = content.scrollTop;
+    content.scrollTop = 0;
+    return {
+      after: content.scrollTop,
+      before,
+    };
+  });
+  if (!position) {
+    fail('Shared workspace scroll owner is unavailable before capture');
+  }
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.app-content');
+    return Boolean(content) && Math.abs(content.scrollTop) <= 1;
+  }, undefined, { timeout: 10_000 });
+  return position;
+}
+
 async function workspaceTabKeyboardSnapshot(page, expected) {
   return page.evaluate((settings) => {
     const root = document.querySelector(
@@ -10751,7 +10807,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       scale.deviceScaleFactor,
     );
     setRunDiagnosticPhase(diagnostics, 'chromium-lineage');
-    const chromiumProcessLineage = collectActiveBundledChromiumLineage(options);
+    const chromiumProcessLineage = await waitForActiveBundledChromiumLineage(options);
     if (!chromiumLineageEvidencePassed(chromiumProcessLineage)) {
       fail(
         'The active browser session was not bound to the packaged Chromium process lineage',
@@ -10787,6 +10843,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
         `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
         options.settleMs,
       );
+      await restoreWorkspaceScrollTop(page);
       const compositeEvidence = await waitForRendererComposite(page, electronApp, workspaceRoot);
       const metrics = await collectPackageWorkspaceMetrics(page, workspace);
       const contract = validateWorkspaceRuntimeMetrics(metrics, workspace);
@@ -11056,7 +11113,7 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       profile.deviceScaleFactor,
     );
     setRunDiagnosticPhase(diagnostics, 'chromium-lineage');
-    const chromiumProcessLineage = collectActiveBundledChromiumLineage(options);
+    const chromiumProcessLineage = await waitForActiveBundledChromiumLineage(options);
     if (!chromiumLineageEvidencePassed(chromiumProcessLineage)) {
       fail(
         'The wide browser session was not bound to the packaged Chromium process lineage',
@@ -11088,6 +11145,7 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       const metrics = await collectPackageWorkspaceMetrics(page, workspace);
       const contract = validateWorkspaceRuntimeMetrics(metrics, workspace, profile.viewport);
       const keyboardEvidence = await exerciseWorkspaceTabKeyboard(page, workspace);
+      await restoreWorkspaceScrollTop(page);
       let experienceEvidence = null;
       let inspectorEvidence = null;
       if (PACKAGE_OBJECT_WORKSPACES.some((item) => item.workspace === workspace.workspace)) {
@@ -11232,8 +11290,6 @@ async function executeEvidenceRunWithIsolation({
     options.appContentPath || DEFAULT_APP_CONTENT_PATH,
     BUNDLED_CHROMIUM_RELATIVE_PATH,
   );
-  const profileCollectOptions = { expectedExecutablePath: chromiumPath };
-  const profileProcessesBefore = collectProfile(profileBrowserPath, profileCollectOptions);
   const profileLockOptions = {
     invocationId: options.invocationId || 'unbound-invocation',
     profileId,
@@ -11242,11 +11298,18 @@ async function executeEvidenceRunWithIsolation({
     options.userDataDir,
     profileLockOptions,
   );
+  const profileCollectOptions = {
+    allowUnreadableBaseline: packageProcessAbsencePassed(packageProcessesBefore)
+      && packageUiProfileLockSnapshotPassed(profileLocksBefore),
+    expectedExecutablePath: chromiumPath,
+  };
+  const profileProcessesBefore = collectProfile(profileBrowserPath, profileCollectOptions);
   const profileBrowserBaselineProcessIds = Array.isArray(profileProcessesBefore.observedProcessIds)
     ? profileProcessesBefore.observedProcessIds
     : [];
   options.profileBrowserBaselineProcessIds = profileBrowserBaselineProcessIds;
   const profileCleanupCollectOptions = {
+    allowUnreadableBaseline: profileCollectOptions.allowUnreadableBaseline,
     baselineProcessIds: profileBrowserBaselineProcessIds,
     expectedExecutablePath: chromiumPath,
   };
@@ -12320,6 +12383,8 @@ module.exports = {
   latestProductionSourceWatermark,
   markRunnerElectronCloseRequested,
   openStoreScopedConnectionWorkbench,
+  restoreWorkspaceScrollTop,
+  waitForActiveBundledChromiumLineage,
   isWorkspaceProbeAbsenceError,
   isRetryableLoginNavigationError,
   selectDeterministicEvidenceStoreCandidate,

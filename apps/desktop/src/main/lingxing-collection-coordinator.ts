@@ -168,6 +168,7 @@ export interface ResumeLingxingCollectionInput {
   maxRetries?: number;
   appVersion?: string;
   canary?: false;
+  deferReconciledCreateFailures?: boolean;
 }
 
 /**
@@ -426,6 +427,9 @@ export class LingxingCollectionCoordinator {
           authorityGuard: this.buildAuthorityGuard(operation, capturedContext, runtime),
           cancellationGuard: this.buildCancellationGuard(),
           resumeFrom: input.resumeFrom as LingxingInPlaceResumeState,
+          ...(input.deferReconciledCreateFailures === true
+            ? { deferReconciledCreateFailures: true }
+            : {}),
         };
         let result = await this.runCreateBatch(options);
         operation.assertStepCurrent();

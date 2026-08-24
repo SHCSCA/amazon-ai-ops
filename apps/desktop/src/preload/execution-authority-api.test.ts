@@ -21,6 +21,7 @@ describe('execution authority preload API', () => {
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.keys(api)).toEqual([
       'listBatches',
+      'discoverRecommendationTarget',
       'resolveIdentity',
       'createBatch',
       'startBatch',
@@ -28,6 +29,11 @@ describe('execution authority preload API', () => {
       'takeOverVisibleBrowser',
       'onProgress',
     ]);
+    await api.discoverRecommendationTarget({ context, recommendationId: 81 });
+    expect(invoke).toHaveBeenLastCalledWith(
+      'execution-authority:discover-recommendation-target',
+      { context, recommendationId: 81 },
+    );
     await api.createBatch({ context, grantId: 'grant-1' });
     expect(invoke).toHaveBeenLastCalledWith(
       'execution-authority:create-batch',

@@ -244,6 +244,10 @@ describe('DecisionsPage information architecture', () => {
     expect(decisionsPageSource).toContain('buildDecisionsTargetBindingRequest({');
     expect(decisionsPageSource).toContain('isConfirmedDecisionsTargetBinding(refreshed, result, bindingRequest)');
     expect(decisionsPageSource).toContain('disabled={targetBindingBlockers.length > 0 || mutationLocked}');
+    expect(decisionsPageSource).toContain('从当前 Ads 页面识别（只读）');
+    expect(decisionsPageSource).toContain('executionAuthority?.discoverRecommendationTarget');
+    expect(decisionsPageSource).toContain('setReviewForm((current) => ({');
+    expect(decisionsPageSource).toContain('不会自动绑定、批准或执行');
   });
 });
 

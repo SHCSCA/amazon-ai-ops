@@ -195,6 +195,59 @@ describe('ReportParser Lingxing ad report rows', () => {
     }
   });
 
+  it('imports Lingxing product expressions from a generic targeting column for any US store alias', () => {
+    const result = parseRows([
+      {
+        '店铺名称': 'NOVA-US',
+        '国家': 'US',
+        '广告活动': 'Campaign A',
+        '广告组': 'Ad Group A',
+        '投放': '商品:"B0ABCDEF12"',
+        '日期': '2026-08-22',
+        '曝光量': 20,
+        '点击': 2,
+        '花费-本币': 3.12,
+        '广告订单': 1,
+        '广告销售额-本币': 49.99,
+      },
+    ], { reportType: 'product_targeting' });
+
+    expect(result).toMatchObject({
+      success: true,
+      schemaValid: true,
+      totalRows: 1,
+      validation: { valid: true },
+    });
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
+      storeName: 'NOVA-US',
+      marketplaceCode: 'US',
+      targeting: '商品:"B0ABCDEF12"',
+      reportType: 'product_targeting',
+    });
+  });
+
+  it('reads independent row and cost control totals from provider-owned raw workbook cells', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-control-totals-'));
+    const filePath = path.join(dir, 'product-targeting.xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['店铺名称', '广告活动', '广告组', '投放', '日期', '曝光量', '花费-本币'],
+      ['NOVA-US', 'Campaign A', 'Ad Group A', '商品:"B0ABCDEF12"', '2026-08-21', 20, '3.1200'],
+      ['NOVA-US', 'Campaign A', 'Ad Group A', '商品:"B0ZYXWVU98"', '2026-08-22', 10, '1.5600'],
+    ]), 'sheet1');
+    XLSX.writeFile(workbook, filePath);
+
+    try {
+      expect(ReportParser.readLingxingRawReportControlTotals(filePath, {
+        dateStart: '2026-08-09',
+        dateEnd: '2026-08-22',
+      })).toEqual({ expectedRows: 2, expectedCost: 4.68 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('distinguishes a schema-valid zero-row report from an empty or unrelated file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-zero-row-report-'));
     const validPath = path.join(dir, 'keyword-empty.csv');

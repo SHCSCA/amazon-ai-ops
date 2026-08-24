@@ -233,6 +233,21 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
   });
 
+  it('rejects stale download-center preflight before full8 resume enters the Main mutation lane', () => {
+    const preflight = collectionResumeAction.indexOf(
+      'assertLingxingResumePreflightBeforeMainRuntime(job, context)',
+    );
+    const runtimeRead = collectionResumeAction.indexOf('visibleBrowserRuntimeRegistry.read()', preflight);
+    const resumeJob = collectionResumeAction.indexOf(
+      'state.storeCollectionSchedulerReadModel.resumeJob(',
+      runtimeRead,
+    );
+
+    expect(preflight).toBeGreaterThan(-1);
+    expect(runtimeRead).toBeGreaterThan(preflight);
+    expect(resumeJob).toBeGreaterThan(runtimeRead);
+  });
+
   it('protects the full8 checkpoint reconciliation navigation before resume admission', () => {
     const expectedClose = collectionResumeAction.indexOf(
       'expectedVisibleRuntimeCloseIds.add(expectedReconciliationRuntimeCloseId)',

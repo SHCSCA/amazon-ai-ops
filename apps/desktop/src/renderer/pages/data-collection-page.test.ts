@@ -367,6 +367,45 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(unknown.blockerText).toContain('禁止恢复或重复创建');
   });
 
+  it('offers a safe remaining-report action separately from recreating a reconciled-absent report', () => {
+    const source = collectionJob({
+      jobId: 'job-reconciled-absent',
+      jobState: 'failed',
+      checkpointState: 'failed',
+      downloadedCount: 6,
+    });
+    const job: LingxingCollectionJobSnapshot = {
+      ...source,
+      blockerCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+      detail: '已确认商品投放原创建记录不存在。',
+      reports: source.reports.map((checkpoint) => (
+        checkpoint.reportType === 'product_targeting'
+          ? { ...checkpoint, errorCode: 'LINGXING_CREATE_CONFIRMED_ABSENT' }
+          : checkpoint
+      )),
+    };
+    const row = buildCollectionJobWorkspaceRow(job, storeContext);
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: null,
+      jobs: [job],
+      loading: false,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+      onResumeSafeRemainder: vi.fn(),
+    } as Parameters<typeof CollectionJobWorkspace>[0] & {
+      onResumeSafeRemainder: (target: LingxingCollectionJobSnapshot) => void;
+    }));
+
+    expect(row.safeRemainderAvailable).toBe(true);
+    expect(row.blockerText).toContain('可先完成其余排队报表');
+    expect(row.blockerText).not.toContain('LINGXING_CREATE_CONFIRMED_ABSENT');
+    expect(markup).toContain('先完成其余报表');
+    expect(markup).toContain('重新创建缺失报表');
+  });
+
   it('marks canary jobs as diagnostic-only and keeps them out of production 8/8 progress', () => {
     const canary = collectionJob({
       jobId: 'job-canary',

@@ -4072,6 +4072,15 @@ function normalizeInPlaceResumeReports(
       if (identity) throw new Error('queued checkpoint 不能携带 created identity。');
       return cloneCollectionCheckpoint(checkpoint);
     }
+    if (checkpoint.state === 'failed' && (
+      checkpoint.errorCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+      || checkpoint.errorCode === 'LINGXING_CREATE_CONFIRMED_FAILED'
+    )) {
+      if (identity) {
+        throw new Error('已核对创建失败 checkpoint 不能携带 created identity。');
+      }
+      return cloneCollectionCheckpoint(checkpoint);
+    }
     if (checkpoint.state === 'created' || checkpoint.state === 'ready') {
       if (!identity) throw new Error(`${checkpoint.state} checkpoint 必须携带 created identity。`);
       return cloneCollectionCheckpoint(checkpoint);

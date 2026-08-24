@@ -320,6 +320,9 @@ async function resumeExistingCollection(
   const coordinatorResult = await options.lingxingCoordinator.resumeInPlace({
     currentStoreContext: current,
     resumeFrom,
+    ...(input.deferReconciledCreateFailures === true
+      ? { deferReconciledCreateFailures: true }
+      : {}),
   });
   const settlement = requireExactResumeSettlement(
     options,

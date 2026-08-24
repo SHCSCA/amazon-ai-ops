@@ -1,5 +1,15 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
+
+- 连接、真实 8/8 采集与 1901 行正式导入、四步策略、真实运营任务、真实经营实验均已闭合；当前实包保存凭证恢复回读为 ERP=true、Ads=true。保存密码仍由 Main-only 本机安全区托管，Renderer/执行者没有读取密码、Cookie 或 Profile。
+- 新增当前店铺 Ads 对象只读发现链：按运行时店铺别名、唯一 profile、活动、广告组、关键词和当前竞价核验，兼容生产表格固定列镜像；建议详情提供“从当前 Ads 页面识别（只读）”，只填表，不自动绑定、批准或执行。
+- 真实建议 2 已唯一找到 `U07-1P-精准 > 精准 > cupping` 的稳定广告组/关键词身份；页面竞价 `$1.80` 与报表证据 `$2.51` 不一致，因此应用按预期返回“建议已失效，禁止绑定或执行，请刷新数据后重新生成建议”。这不是 Ads 登录或店铺匹配失败。
+- 精简红→绿证据：关键词生产 DOM/固定列用例 5/5、Preload 2/2、建议页入口 1/1；desktop typecheck、Renderer production build 和 `git diff --check` 通过。当前 7 类 business UI flow（连接、采集、策略、运营任务、经营实验、弹窗、按钮）全部通过。
+- 2026-08-24T07:11:32Z Windows 七步构建通过：installer `C3587D7E48E42BDC9B28373D88264D178359315FCA6FABA76392557A2CA11D4B`，portable `317D948F28BD2C06DFAC17BEC4557334F2D9F54BAA0875923E9DF90C8C3A8791`，folder ZIP `99B40C48488B09F92FE987F31FFCC31C5ED465C0CD0A2E5935E5EB4573DA75B3`，win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；源码 native bindings 前后不变。folder ZIP 真解压启动 passed、临时目录已删除。
+- 正式库 readonly/query-only 终审：`action_recommendations=5`、`approval_tasks=0`，五张 `ad_execution_*` 表全部为 0；主库 SHA-256 前后均为 `6A9BA6DDC45CE8783259F55ACA0A11D11BE3BF9B3BE12F03B373FE3DF8C03849`。
+- 当前仍为 `APP_NEEDS_WORK / NON_READY`：DeepSeek HTTP 402 使候选为 `rule_fallback`，当前候选又超过策略 10% 上限或已发生竞价漂移，没有可批准的当前 `lower_bid`；新包还没有绑定当前哈希的 Package UI manifest。不得把 build/smoke/ZIP 启动冒充 APP_READY。
+
 ## 2026-08-21 最新交付状态：当前包已构建，Package UI 待一次可见登录
 
 - 当前 Git 分支为 `master`，本轮源码与状态文档已推送 `origin/master`；既有未跟踪本地目录保留，`output/`、正式库、Profile、报表及 EXE/ZIP 未提交。

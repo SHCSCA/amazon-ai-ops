@@ -115,7 +115,7 @@ export function buildExperimentSelectorOptions(
       .filter((mission) => mission.status !== 'archived')
       .map((mission) => ({ value: mission.id, label: mission.title })),
     products: products.map((product) => ({
-      value: String(product.id),
+      value: product.asin,
       label: `${product.title?.trim() || '未命名产品'} · ${product.asin}`,
     })),
     adObjects: adObjects

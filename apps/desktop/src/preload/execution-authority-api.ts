@@ -13,6 +13,7 @@ import type {
 
 type ExecutionAuthorityChannel =
   | 'execution-authority:list-batches'
+  | 'execution-authority:discover-recommendation-target'
   | 'execution-authority:resolve-identity'
   | 'execution-authority:create-batch'
   | 'execution-authority:start-batch'
@@ -20,6 +21,32 @@ type ExecutionAuthorityChannel =
   | 'execution-authority:take-over-browser';
 
 type ProgressHandler = (event: unknown, payload: AdExecutionProgressEvent) => void;
+
+export interface DiscoverRecommendationTargetRequest {
+  context: StoreContextEnvelope;
+  recommendationId: number;
+}
+
+export interface DiscoveredRecommendationTargetResult {
+  recommendationId: number;
+  recommendationRevision: number;
+  pageIdentity: {
+    adsAccountId: string;
+    campaignId: string;
+    adGroupId: string;
+    keywordId: string;
+    bidCents: number;
+  };
+  writableTarget: {
+    entityType: 'keyword';
+    entityId: string;
+    sourceFile: string;
+    sourceRow: number;
+    identitySource: 'ads_ui';
+    identityProofPath: string;
+    verificationNote: string;
+  };
+}
 
 export interface ExecutionAuthorityIpcBridge {
   invoke(channel: ExecutionAuthorityChannel, input: unknown): Promise<unknown>;
@@ -29,6 +56,9 @@ export interface ExecutionAuthorityIpcBridge {
 
 export interface ExecutionAuthorityPreloadApi {
   listBatches(context: StoreContextEnvelope): Promise<readonly AdExecutionBatchProjection[]>;
+  discoverRecommendationTarget(
+    input: DiscoverRecommendationTargetRequest,
+  ): Promise<DiscoveredRecommendationTargetResult>;
   resolveIdentity(input: ResolveAdExecutionIdentityRequest): Promise<AdKeywordIdentityVersionRecord>;
   createBatch(input: CreateAdExecutionBatchRequest): Promise<CreateAdExecutionBatchResult>;
   startBatch(input: StartAdExecutionBatchRequest): Promise<AdExecutionBatchProjection>;
@@ -46,6 +76,10 @@ export function createExecutionAuthorityPreloadApi(
       'execution-authority:list-batches',
       { context },
     ) as Promise<readonly AdExecutionBatchProjection[]>,
+    discoverRecommendationTarget: (input: DiscoverRecommendationTargetRequest) => ipc.invoke(
+      'execution-authority:discover-recommendation-target',
+      input,
+    ) as Promise<DiscoveredRecommendationTargetResult>,
     resolveIdentity: (input: ResolveAdExecutionIdentityRequest) => ipc.invoke(
       'execution-authority:resolve-identity',
       input,

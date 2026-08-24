@@ -124,6 +124,7 @@ export interface CollectionJobWorkspaceRow {
   progressDetail: string;
   blockerText: string;
   manualReconciliation: boolean;
+  safeRemainderAvailable: boolean;
   import: CollectionImportPresentation;
 }
 
@@ -301,6 +302,18 @@ export function buildCollectionJobWorkspaceRow(
   const failedReports = reports.filter((report) => (
     report.state === 'failed' || report.state === 'stale_authority' || report.state === 'cancelled'
   ));
+  const reconciledCreateFailures = failedReports.filter((report) => (
+    report.state === 'failed'
+    && (
+      report.errorCode === 'LINGXING_CREATE_CONFIRMED_ABSENT'
+      || report.errorCode === 'LINGXING_CREATE_CONFIRMED_FAILED'
+    )
+  ));
+  const safeRemainderAvailable = !canary
+    && job.request.reportTypes.length === 8
+    && reconciledCreateFailures.length > 0
+    && reconciledCreateFailures.length === failedReports.length
+    && reports.some((report) => report.state === 'queued');
   const manualReconciliation = manualReports.length > 0;
   const statusByState: Record<LingxingCollectionJobSnapshot['state'], {
     label: string;
@@ -344,6 +357,8 @@ export function buildCollectionJobWorkspaceRow(
   const failedNames = failedReports.map(reportDisplayName).join('、');
   const blockerText = manualReconciliation
     ? `${manualNames || '报表'}创建结果未确认；需在领星下载中心人工核对，禁止恢复或重复创建。`
+    : safeRemainderAvailable
+      ? `${reconciledCreateFailures.map(reportDisplayName).join('、')}已确认没有可复用的创建记录；可先完成其余排队报表，重新创建缺失报表需单独确认。`
     : importPresentation.state === 'failed'
       ? importPresentation.detail
       : importPresentation.state === 'legacy' && job.state === 'completed'
@@ -392,6 +407,7 @@ export function buildCollectionJobWorkspaceRow(
       : requestedCount === 8 ? '完整 8 类报表任务' : `本任务覆盖 ${requestedCount}/8 类报表`,
     blockerText,
     manualReconciliation,
+    safeRemainderAvailable,
     import: importPresentation,
   };
 }
@@ -1507,6 +1523,7 @@ export function CollectionJobWorkspace({
   actionBusyKey,
   onRefresh,
   onResume,
+  onResumeSafeRemainder,
   onReconcile,
   onCancel,
 }: {
@@ -1518,6 +1535,7 @@ export function CollectionJobWorkspace({
   actionBusyKey: string | null;
   onRefresh: () => void;
   onResume: (job: LingxingCollectionJobSnapshot) => void;
+  onResumeSafeRemainder?: (job: LingxingCollectionJobSnapshot) => void;
   onReconcile?: (job: LingxingCollectionJobSnapshot) => void;
   onCancel: (job: LingxingCollectionJobSnapshot) => void;
 }) {
@@ -1610,7 +1628,29 @@ export function CollectionJobWorkspace({
                           <span>{cancelBusy ? '提交取消...' : '取消任务'}</span>
                         </button>
                       )}
-                      {row.action === 'resume' && (
+                      {row.action === 'resume' && row.safeRemainderAvailable && onResumeSafeRemainder && (
+                        <>
+                          <button
+                            aria-busy={resumeBusy}
+                            className={resumeBusy ? 'primary-button compact-button button-loading' : 'primary-button compact-button'}
+                            disabled={Boolean(actionBusyKey)}
+                            onClick={() => onResumeSafeRemainder(row.job)}
+                            type="button"
+                          >
+                            {resumeBusy && <span aria-hidden="true" className="button-spinner" />}
+                            <span>{resumeBusy ? '处理中...' : '先完成其余报表'}</span>
+                          </button>
+                          <button
+                            className="secondary-button compact-button"
+                            disabled={Boolean(actionBusyKey)}
+                            onClick={() => onResume(row.job)}
+                            type="button"
+                          >
+                            重新创建缺失报表
+                          </button>
+                        </>
+                      )}
+                      {row.action === 'resume' && (!row.safeRemainderAvailable || !onResumeSafeRemainder) && (
                         <button
                           aria-busy={resumeBusy}
                           className={resumeBusy ? 'primary-button compact-button button-loading' : 'primary-button compact-button'}
@@ -2110,7 +2150,10 @@ export function DataCollectionPage() {
 
   async function resumeCollectionJob(
     job: LingxingCollectionJobSnapshot,
-    options: { reconcileCreateUnknown?: boolean } = {},
+    options: {
+      reconcileCreateUnknown?: boolean;
+      deferReconciledCreateFailures?: boolean;
+    } = {},
   ): Promise<void> {
     const api = (window as any).electronAPI;
     const view = buildCollectionJobWorkspaceRow(job, storeAuthority.authoritativeContext);
@@ -2153,6 +2196,8 @@ export function DataCollectionPage() {
     setActionError(null);
     setActionNotice(options.reconcileCreateUnknown
       ? '正在当前店铺下载中心精确核对原创建记录；本次只核对，不会创建报表或继续采集。'
+      : options.deferReconciledCreateFailures
+      ? '正在完成其余排队报表；已核对失败的缺失报表保持阻断，本次不会重新创建。'
       : view.action === 'supplement-import'
       ? '正在补导当前采集任务的真实报表；系统会复用已验证文件，不会重新创建领星报表。'
       : view.canary
@@ -2173,6 +2218,7 @@ export function DataCollectionPage() {
         requestId,
         storeContext: captured.storeContext,
         ...(options.reconcileCreateUnknown ? { reconcileCreateUnknown: true, reconcileOnly: true } : {}),
+        ...(options.deferReconciledCreateFailures ? { deferReconciledCreateFailures: true } : {}),
       });
       if (collectionJobActionTokenRef.current !== actionToken || !isCapturedAuthorityCurrent(captured.authorityKey)) return;
       if (result?.job && !collectionJobBelongsToStore(result.job, captured.storeContext)) return;
@@ -2181,6 +2227,8 @@ export function DataCollectionPage() {
       const returnedImportState = result?.job?.importState || result?.importState;
       setActionNotice(options.reconcileCreateUnknown
         ? '创建结果核对已完成；请根据核对结果单独点击“继续采集”。'
+        : options.deferReconciledCreateFailures
+        ? '其余排队报表处理已返回；缺失报表仍保持阻断，正在刷新当前店铺任务。'
         : view.action === 'supplement-import'
         ? returnedImportState === 'succeeded' || result?.importRecovered === true
           ? '补导已完成并持久化为生产指标已入库，正在刷新当前店铺任务与数据账本。'
@@ -2815,6 +2863,9 @@ export function DataCollectionPage() {
           }}
           onReconcile={(job) => { void resumeCollectionJob(job, { reconcileCreateUnknown: true }); }}
           onResume={(job) => { void resumeCollectionJob(job); }}
+          onResumeSafeRemainder={(job) => {
+            void resumeCollectionJob(job, { deferReconciledCreateFailures: true });
+          }}
         />
 
         {reportSelectorOpen && (

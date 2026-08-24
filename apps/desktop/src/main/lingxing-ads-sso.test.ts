@@ -5,8 +5,11 @@ import { chromium } from 'playwright';
 import {
   assertLingxingAdsSelectedStoreTags,
   dismissLingxingAdsChangeAnnouncements,
+  discoverLingxingAdsKeywordTarget,
   ensureLingxingErpAuthenticated,
+  ensureLingxingAdsHeaderStore,
   findTrustedLingxingProviderReplacementPage,
+  navigateToLingxingAdsCampaignKeywordTarget,
   findTrustedLingxingProviderPageAfterPendingNavigation,
   resolveLingxingStableIdentityFromAdsProfile,
   resolveLingxingStableIdentityFromVerifiedContinuation,
@@ -18,7 +21,323 @@ import {
   selectLingxingAdsProfileEvidence,
 } from './lingxing-ads-sso';
 
+describe('discoverLingxingAdsKeywordTarget', () => {
+  it('switches the Ads header to one exact US store and verifies the selected label', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <button id="store-control" style="position:fixed;left:20px;top:10px">FT-US 美国</button>
+        <div id="menu" style="position:fixed;left:20px;top:50px" hidden><button id="target-store">JF-US 美国</button></div>
+        <script>
+          document.querySelector('#store-control').onclick = () => { document.querySelector('#menu').hidden = false; };
+          document.querySelector('#target-store').onclick = () => {
+            document.querySelector('#store-control').textContent = 'JF-US 美国';
+            document.querySelector('#menu').hidden = true;
+          };
+        </script>
+      `);
+
+      await ensureLingxingAdsHeaderStore(page, 'JF-US');
+
+      expect(await page.locator('#store-control').innerText()).toBe('JF-US 美国');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('uses the authenticated current-profile keyword route when the sidebar has no anchor', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.route('https://ads.lingxing.com/**', async (route) => {
+        const url = new URL(route.request().url());
+        const target = url.pathname === '/ad_report/target/index/index';
+        await route.fulfill({
+          body: target
+            ? '<a href="/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07">U07-1P-精准</a>'
+            : '<button type="button">广告</button><button type="button">词</button>',
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      });
+      await page.goto('https://ads.lingxing.com/ak_download/download_center/download_report_log/index');
+
+      await navigateToLingxingAdsCampaignKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+      });
+
+      const url = new URL(page.url());
+      expect(url.searchParams.get('profile_id')).toBe('1471859509603819');
+      expect(url.searchParams.get('id')).toBe('campaign-u07');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('accepts the canonical store-scoped keyword route when the sidebar label is composite', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.route('https://ads.lingxing.com/**', async (route) => {
+        const url = new URL(route.request().url());
+        const target = url.pathname === '/ad_report/target/index/index';
+        await route.fulfill({
+          body: target
+            ? '<a href="/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07">U07-1P-精准</a>'
+            : '<a href="/ad_report/target/index/index?profile_id=1471859509603819">广告 / 词</a>',
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      });
+      await page.goto('https://ads.lingxing.com/ak_download/download_center/download_report_log/index');
+
+      await navigateToLingxingAdsCampaignKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+      });
+
+      expect(new URL(page.url()).searchParams.get('id')).toBe('campaign-u07');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('opens the exact store and campaign keyword page from the Ads sidebar without submitting data', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      let clicks = 0;
+      await page.route('https://ads.lingxing.com/**', async (route) => {
+        const url = new URL(route.request().url());
+        const target = url.pathname === '/ad_report/target/index/index';
+        await route.fulfill({
+          body: target
+            ? '<a href="/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07">U07-1P-精准</a><p>关键词页</p>'
+            : '<a id="keyword-nav" href="/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07">词</a><button onclick="window.submitClicks += 1">保存</button><script>window.submitClicks=0</script>',
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      });
+      page.on('request', (request) => {
+        if (request.isNavigationRequest()) clicks += 1;
+      });
+      await page.goto('https://ads.lingxing.com/ak_download/download_center/download_report_log/index');
+
+      await navigateToLingxingAdsCampaignKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+      });
+
+      expect(new URL(page.url())).toMatchObject({
+        origin: 'https://ads.lingxing.com',
+        pathname: '/ad_report/target/index/index',
+      });
+      expect(new URL(page.url()).searchParams.get('profile_id')).toBe('1471859509603819');
+      expect(new URL(page.url()).searchParams.get('id')).toBe('campaign-u07');
+      expect(clicks).toBe(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('resolves one exact campaign, ad group, keyword and bid without clicking a save control', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      const html = `
+        <table><tbody>
+          <tr>
+            <td>U07-1P-精准</td><td>精准</td><td>cupping set</td>
+            <td><input class="select-item" value="keyword-set" /></td>
+            <td><a href="/ad_group/index?ad_group_id=group-set">cupping set</a></td>
+            <td><input class="form-control price" value="$2.55" /></td>
+            <td><button class="Js-bid-save">save</button></td>
+          </tr>
+          <tr>
+            <td>U07-1P-精准</td><td>精准</td><td>cupping</td>
+            <td><input class="select-item" value="keyword-cupping" /></td>
+            <td><a href="/ad_group/index?ad_group_id=group-cupping">cupping</a></td>
+            <td><input class="form-control price" value="$2.51" /></td>
+            <td><button class="Js-bid-save" onclick="window.saveClicks += 1">save</button></td>
+          </tr>
+          <tr>
+            <td>OTHER-CAMPAIGN</td><td>精准</td><td>cupping</td>
+            <td><input class="select-item" value="keyword-other" /></td>
+            <td><a href="/ad_group/index?ad_group_id=group-other">cupping</a></td>
+            <td><input class="form-control price" value="$2.51" /></td>
+            <td><button class="Js-bid-save">save</button></td>
+          </tr>
+        </tbody></table>
+        <script>window.saveClicks = 0;</script>
+      `;
+      await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
+        body: html,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }));
+      await page.goto('https://ads.lingxing.com/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07');
+
+      const resolved = await discoverLingxingAdsKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+        adGroupName: '精准',
+        entityName: 'cupping',
+        currentBidCents: 251,
+      });
+
+      expect(resolved).toMatchObject({
+        adsAccountId: '1471859509603819',
+        campaignId: 'campaign-u07',
+        adGroupId: 'group-cupping',
+        keywordId: 'keyword-cupping',
+        bidCents: 251,
+      });
+      expect(await page.evaluate(() => (window as unknown as { saveClicks: number }).saveClicks)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('reads the current bid from the named bid column when production omits the legacy price classes', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      const html = `
+        <table>
+          <thead><tr><th>关键词</th><th>匹配类型</th><th>广告组</th><th>建议竞价</th><th>竞价</th></tr></thead>
+          <tbody><tr>
+            <td>cupping<input class="select-item" value="keyword-cupping" /></td>
+            <td>精准</td>
+            <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
+            <td>$2.37</td>
+            <td><input class="form-control input-sm" value="2.51" /></td>
+          </tr></tbody>
+        </table>`;
+      await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
+        body: html,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }));
+      await page.goto('https://ads.lingxing.com/ad_report/keyword/index/index?profile_id=1471859509603819&id=campaign-u07');
+
+      await expect(discoverLingxingAdsKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+        adGroupName: '精准',
+        entityName: 'cupping',
+        currentBidCents: 251,
+      })).resolves.toMatchObject({
+        adGroupId: 'group-cupping',
+        keywordId: 'keyword-cupping',
+        bidCents: 251,
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('reads the stable keyword identity from a production row checkbox without the legacy select-item class', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
+        body: `
+          <table>
+            <thead><tr><th></th><th>关键词</th><th>广告组</th><th>竞价</th></tr></thead>
+            <tbody><tr>
+              <td><input class="check-item" type="checkbox" value="keyword-cupping" /></td>
+              <td>cupping</td>
+              <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
+              <td><input value="2.51" /></td>
+            </tr></tbody>
+          </table>`,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }));
+      await page.goto('https://ads.lingxing.com/ad_report/keyword/index/index?profile_id=1471859509603819&id=campaign-u07');
+
+      await expect(discoverLingxingAdsKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+        adGroupName: '精准',
+        entityName: 'cupping',
+        currentBidCents: 251,
+      })).resolves.toMatchObject({ keywordId: 'keyword-cupping', bidCents: 251 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('reports a stale live bid after merging the production fixed-column mirror for one stable identity', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
+        body: `
+          <table><tbody>
+            <tr><td>cupping</td><td>精准</td>
+              <td><input class="native select-item" type="checkbox" value="keyword-cupping" /></td>
+              <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
+              <td><input class="form-control price" value="1.80" /></td></tr>
+            <tr data-dt-row="fixed"><td>cupping</td><td>精准</td>
+              <td><input class="native select-item" type="checkbox" value="keyword-cupping" /></td>
+              <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td></tr>
+          </tbody></table>`,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }));
+      await page.goto('https://ads.lingxing.com/ad_report/keyword/index/index?profile_id=1471859509603819&id=campaign-u07');
+
+      await expect(discoverLingxingAdsKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+        adGroupName: '精准',
+        entityName: 'cupping',
+        currentBidCents: 251,
+      })).rejects.toThrow('报表 $2.51，页面 $1.80');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('fails closed when the same business row is duplicated', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      const html = `
+        <table><tbody>${[1, 2].map((index) => `
+          <tr><td>U07-1P-精准</td><td>精准</td><td>cupping</td>
+          <td><input class="select-item" value="keyword-${index}" /></td>
+          <td><a href="/ad_group/index?ad_group_id=group-${index}">cupping</a></td>
+          <td><input class="form-control price" value="$2.51" /></td></tr>`).join('')}
+        </tbody></table>
+      `;
+      await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
+        body: html,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }));
+      await page.goto('https://ads.lingxing.com/ad_report/target/index/index?profile_id=1471859509603819&id=campaign-u07');
+
+      await expect(discoverLingxingAdsKeywordTarget(page, {
+        externalAccountId: '1471859509603819',
+        campaignName: 'U07-1P-精准',
+        adGroupName: '精准',
+        entityName: 'cupping',
+        currentBidCents: 251,
+      })).rejects.toThrow('无法唯一定位');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 describe('Lingxing Ads navigation continuity', () => {
+  it('wires current-store recommendation target discovery through the execution authority bridge', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(mainSource).toContain("registerTrackedIpcHandler('execution-authority:discover-recommendation-target'");
+    expect(mainSource).toContain("withLegacyOperatorBrowserLease(\n    'amazon_ads',\n    `discover-recommendation-target:");
+    expect(mainSource).toContain('state.recommendationRepo.findByIdForStore(context.storeId, recommendationId)');
+    expect(mainSource).toContain('navigateToLingxingAdsCampaignKeywordTarget(page, {');
+    expect(mainSource).toContain('discoverLingxingAdsKeywordTarget(page, {');
+    expect(mainSource).not.toContain('execution-authority:discover-recommendation-target-bypass');
+  });
+
   it('binds an existing report row by report type instead of a newly generated name', () => {
     const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
     const waitForReady = mainSource.slice(
@@ -32,6 +351,18 @@ describe('Lingxing Ads navigation continuity', () => {
     expect(waitForReady).toContain(
       'const context = existingReport ? existingReportContext(report, dateRange, createdReportIdentity) : reportContext',
     );
+  });
+
+  it('routes the production report download through the authenticated canceled-download recovery', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const downloadReport = mainSource.slice(
+      mainSource.indexOf('async downloadReport(report, downloadDir, dateRange, createdReportIdentity)'),
+      mainSource.indexOf('async startAttemptTrace(report, dateRange, attemptIndex)'),
+    );
+
+    expect(downloadReport).toContain('saveLingxingReportDownload({');
+    expect(downloadReport).toContain('request: page.request');
+    expect(downloadReport).not.toContain('download.saveAs(');
   });
 
   it('retries an explicit stale execution context and reads the replacement document', async () => {

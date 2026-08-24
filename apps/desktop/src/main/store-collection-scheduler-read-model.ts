@@ -262,6 +262,7 @@ export class StoreCollectionSchedulerReadModel implements StoreCollectionSchedul
   async resumeJob(
     contextInput: StoreContextEnvelope,
     jobIdInput: string,
+    options: { deferReconciledCreateFailures?: boolean } = {},
   ): Promise<StoreCollectionScheduleRunResult> {
     const requested = this.options.authority.assertActiveStoreContext(contextInput);
     assertUsContext(requested);
@@ -309,7 +310,12 @@ export class StoreCollectionSchedulerReadModel implements StoreCollectionSchedul
     if (!resumeState) {
       throw new Error('selected failed job has no exact resumable authority proof');
     }
-    const request = exactResumeRequest(requested, durable, resumeState);
+    const request = {
+      ...exactResumeRequest(requested, durable, resumeState),
+      ...(options.deferReconciledCreateFailures === true
+        ? { deferReconciledCreateFailures: true }
+        : {}),
+    };
     const previousReceipt = snapshotResumeReceipt(
       this.options.importRepository.readLatestCollectionResumeAttemptReceiptForStore(
         requested.storeId,

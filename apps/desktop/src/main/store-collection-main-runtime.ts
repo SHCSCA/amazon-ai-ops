@@ -60,6 +60,7 @@ export interface StoreCollectionExistingResumeRequest {
   dateEnd: string;
   expectedJobUpdatedAt: string;
   expectedAuthorityProofSha256: string;
+  deferReconciledCreateFailures?: boolean;
 }
 
 /**

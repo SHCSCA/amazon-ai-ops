@@ -1,6 +1,43 @@
 # BLOCKED — 2026-08-07
 
-## 当前：2026-08-21 商品投放已确认不存在，采集暂停并转项
+## 当前：2026-08-24 Ads 身份发现已闭合，Task 8B 被当前证据与授权事实阻断
+
+- 已排除登录、店铺、活动导航与活动 ID 问题：真实应用可用保存凭证恢复 ERP/Ads，且只读发现已唯一进入 JF-US 的 `U07-1P-精准` 关键词详情页；当前 profile 与活动 ID 均回读一致。
+- 真实关键词行身份已闭合：应用唯一回读 `U07-1P-精准 > 精准 > cupping` 的稳定广告组/关键词 ID，固定列镜像已按同一身份安全合并；登录、店铺、活动、身份 selector 均不再是 blocker。
+- 当前事实门改为竞价漂移：报表证据为 `$2.51`，Ads 页面当前竞价为 `$1.80`。该建议已经失效，应用已明确阻断绑定和执行；恢复动作是重新采集 keyword 报表并重新分析，禁止用旧值或手填 ID 强行绑定。
+- 建议详情的只读识别入口已进入正式 Windows 新包，只会填表，不会自动绑定/批准/执行。
+- DeepSeek 402 与策略 10% 上限仍独立存在：即使对象身份发现成功，当前 rule_fallback/超限候选也不能自动批准或执行。五张 Ads 写入表必须继续为 0。
+- Windows 新包、7 类业务 smoke 与 folder ZIP 启动现已通过；仍缺绑定新包哈希的 Package UI manifest。按“减少测试、不要重复登录”要求本轮未再启动强制 fresh typed-and-saved 的 Package UI 首档；旧 manifest 不得复用。恢复条件是操作者确认进行最后一次当前包可见登录验收。
+
+## 当前：2026-08-24 8/8、正式导入与下游业务实例已关闭，剩余为当前包验收和 Task 8B 授权事实门
+
+- 真实 8/8 外部事实门已关闭：最新生产作业 `completed / import succeeded / downloaded 8`，唯一 completed import run 为 8 files / 1901 metrics / 8 reconciliations。旧 6/8、create_unknown、control-total missing 记录均为历史，不再是当前 blocker。
+- Task 8B 已形成当前正式批次的具体 `lower_bid` 候选，但 3 条全部不可授权：DeepSeek HTTP 402 `Insufficient Balance` 导致 `rule_fallback`，变化超过启用策略的 10% 上限；其中建议 2 的稳定 Ads 身份已找到，但页面竞价已从报表 `$2.51` 漂移到 `$1.80`。正式库 action recommendations=5、approval tasks=0，五张 `ad_execution_*` 表继续全部为 0；不得为验收虚构批准或广告写入。恢复条件是补足 AI 余额/可用模型，重新采集并分析形成当前、不超过 10% 且 human eligible 的候选，再由操作者明确批准。
+- 正式库已有 enabled policy version、active 运营任务和 draft 经营实验，均绑定真实 completed 批次与现有产品；该 blocker 已关闭。实验产品选择器的本地行号/ASIN 不一致已完成源码红→绿，仍需新包界面回读。
+- 启用版本仍保持对象白名单 0、影响预算 0 USD，经营实验保持待启动；原因已从“页面身份无法发现”收窄为“没有当前、合规、已批准的候选”。不得把已过期建议的真实 ID 写入白名单或实验。
+- 正式 keyword/auto_targeting/product_targeting XLSX 的 53/33/51 个表头均无 ID/编号/标识字段，不能通过补 parser 得到稳定写入身份；当前关键词身份已由 Ads 页面只读发现链补足，但只能在报表竞价与页面当前竞价一致时绑定。
+- 当前 Package UI schema v8 第一档硬性要求本次 visible typed-and-saved 登录；runner 明确禁止 saved-login 自动化。执行者不得读取或代填密码，因此新 manifest 仍需操作者在 Package UI 窗口内完成一次手输提交；旧 manifest 不能复用。
+- 当前新包的 7 类 business smoke 与 folder ZIP launch 已通过；只剩新 Package UI manifest 尚未生成。旧 schema v8 manifest 绑定的是此前包哈希，不能复用为当前包交付证据。
+- 本轮完整 `legacy-ipc-store-authority-contract.test.ts` 暴露 2 个既有源码顺序断言失败：`resumePolicyGrantDispatches` 顺序与 legacy operator lease 首次出现顺序。新增 control-total 定点断言通过，解析器/collector 共 51 项通过。按用户“先保证主流程、其它发现记录后确认再修”要求暂不扩修；集成前必须决定修复或证明为陈旧源码切片断言，不允许 `.skip`、删测或放宽。
+
+## 历史：2026-08-24 Package UI 已关闭，剩余为 8/8 外部事实门与 Task 8B 授权事实门
+
+- Package UI 已不再阻断：当前包 schema v8 manifest `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260821-77/manifests/2026-08-24T01-13-35-545Z-2026-08-24T01-13-15-991Z-c1f8bf7d-a392-49e8-a04f-11a58455b7a2.json` 完整通过，100%/125%/1400×900 三档均 passed，console/page errors 均为 0，正式库与隔离证据库均未发生验收改写。
+- 剩余 blocker 1：真实 8 类采集仍停在 6 类 downloaded、`product_targeting=failed / LINGXING_CREATE_CONFIRMED_ABSENT`、`user_search_term=queued`，`report_import_runs=0`。连续两次 `POST .../batch_create_report -> 200（操作成功）` 均未形成下载中心精确行；当前没有新的领星外部事实或产品决定授权第三次创建。源码现已新增“先完成其余报表”安全模式，保证商品投放零创建并允许搜索词先推进，但尚未进入 Windows 包或形成正式 7/8 证据。商品投放的最终恢复条件仍是领星侧给出明确创建事实，或产品明确接受一次新的受控创建尝试。
+- 剩余 blocker 2：Task 8B 没有产品内具体、当前、已批准的正向 `lower_bid` 推荐。正式库五张 `ad_execution_*` 表全部为 0；不得为了完成验收虚构推荐、批准或广告写入。恢复条件是应用产生满足当前店铺/产品/身份/审批门的真实推荐，并由操作者批准。
+- 受 blocker 1 影响，正式 import run、enabled policy version、mission、experiment 当前均为 0；现有策略/运营任务/经营实验的界面、空依赖入口、业务 smoke 与 Package UI 已通过，但不能把界面可用冒充真实生产数据闭环。
+- 2026-08-24 readonly + `query_only=ON` 终审：正式库主文件查询前后 SHA-256 均为 `4C107960F7F75DFC566438A35817F912DDB55E9220BB7F3DFA475922529789A3`；jobs=6、attempts=12、active claims=0、events=111、imports/policy versions/missions/experiments=0、Ads 五表=0。当前状态仍为 `APP_NEEDS_WORK / NON_READY`。
+
+## 历史：2026-08-21 Package UI 等待首次可见提交；8/8 外部事实门仍未解除
+
+- Ads 连接源码/实包主链本轮已真实通过：`operator-core-20260821-76` 在 Amazon AI Ops 应用内单独“重试 Ads”后显示“ERP/Ads 已连接”，runner 接受 100% 首档连接证明并进入 125% 业务截图。它不再是当前 blocker。
+- `-76` 后续失败由 runner 自身的键盘检查滚动竞态造成；该缺陷已完成 `1 RED → 1 GREEN`，没有放宽 `WORKSPACE_NOT_AT_TOP`、视口或业务断言。runner 源码改变使 `-76` 按不可变谱系正确不可续跑。
+- 当前可恢复 run group 为 `operator-core-20260821-77`。首次 120 秒可见窗口没有收到提交，因此 `runs=0 / interactive preparation timeout`；目标应用/Profile Chrome 已清理。官方只读 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，一次性 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260821-77/22F32CD64877EF09F407DAA0A5666008510709B681CCFF4653A0794C4D5325E9.json`。
+- 唯一 Package UI 外部动作：恢复 `-77` 后，操作者在首档 Amazon AI Ops 窗口中完成一次 fresh typed-and-saved 提交；执行者不得读取/代填密码。通过前仍为 `APP_NEEDS_WORK / NON_READY`。
+- 8/8 采集仍停在 6 类 downloaded、`product_targeting=LINGXING_CREATE_CONFIRMED_ABSENT`、`user_search_term=queued`；连续两次创建 200 未形成下载中心行，当前没有新的领星外部事实授权再次创建。正式 import run、policy version、mission、experiment 仍为 0。
+- Task 8B 继续缺产品内具体、当前、已批准的 `lower_bid` 推荐；五张 Ads 执行表为 0，禁止为验收制造写入。
+
+## 历史：2026-08-21 商品投放已确认不存在，采集暂停并转项
 
 - 当前无需人工参与的检查已收口：普通界面精确技术文案检索为 0，正式库 readonly/query_only 复核保持 6 类 downloaded、商品投放 confirmed absent、搜索词 queued，正式导入/策略版本/运营任务/经营实验与 Ads 五表全为 0，主库查询前后 SHA-256 不变。没有新的独立源码缺口可在不越过外部事实门的情况下继续实现。
 - Package UI 不再缺包哈希、authority receipt 或隔离 Profile：当前 `operator-core-20260821-74` 已由只读 inspector 判定 `RESUME_SAFE`，一次性 resume receipt 已生成。当前唯一人工前置是操作者必须在首档可见窗口内手输密码、勾选“记住密码”并提交；本轮 180 秒无人提交，runner 已失败关闭且目标进程残留为 0。恢复条件是用户明确回复“现在可以输入”，随后只续跑 `-74`，不新建重复 run group。

@@ -1,4 +1,19 @@
 # Operator Core Flow Repair — 2026-08-07
+
+## 当前：2026-08-24 Ads 真实对象只读发现已闭合，建议因竞价漂移安全阻断
+
+- 保存凭证链已在当前正式 AppData 实测：Main-only `encrypted_ready / passwordAvailable=true`，无需 Renderer/执行者读取密码即可恢复 ERP 与 Ads；一次 `ADS_SESSION_NOT_READY` 按原门降级为 ERP ready / Ads attention_required，应用内重置后再次连接得到 ERP/Ads 均 ready。
+- 新增只读 `execution-authority:discover-recommendation-target`：只接受当前 StoreContext、pending 建议、keyword 报表、权威源文件/行与当前竞价；使用 `amazon_ads` 可见浏览器 lease，截图留证，但不绑定、不批准、不点击竞价保存。
+- 真实页面逐层证据已闭合到关键词详情：下载中心 JF-US → Ads 顶部唯一 `JF-US 美国` → 精确活动行 `U07-1P-精准` → 唯一活动 ID `237420834150892` → 官方详情路径 `/ad_report/keyword/index/index`，URL `profile_id` 与当前连接匹配且 `id` 唯一。逻辑按运行时店铺别名匹配，不硬编码 JF-US。
+- 页面适配覆盖领星自定义容器、frame、固定列重复 DOM、`店铺代码/美国` 分离节点、活动行多业务 ID 与 overview/detail 两条官方路径；重复店铺、不同位置同名活动、多个稳定 ID 均继续失败关闭。
+- 红→绿最小证据：最初真实调用为“侧边栏无法唯一定位关键词页”；新增核心/IPC 用例后 `lingxing-ads-sso.test.ts` 聚焦 7/7 通过、preload 2/2 通过；随后多轮真实截图逐层收敛。最新 desktop typecheck 输出 `$ tsc --noEmit`、exit 0。
+- 生产表格适配完成：兼容无旧 price 类的竞价输入、非旧 checkbox 类和固定列重复 DOM；相同稳定身份合并，不同身份仍失败关闭。新增用例先红后绿，关键词读取聚焦 5/5、UI 只读入口 1/1、desktop typecheck 均通过。
+- 真实实包最终回读：ERP=true、Ads=true；`U07-1P-精准 > 精准 > cupping` 的真实广告组/关键词 ID 已唯一找到，但页面当前竞价为 `$1.80`，与建议证据 `$2.51` 不一致。应用明确返回“建议已失效，禁止绑定或执行，请刷新数据后重新生成建议”；未形成 writable binding、approval 或 execution batch。
+- 建议详情新增“从当前 Ads 页面识别（只读）”：只填充对象核验表单，仍需操作者填写核验人/说明并显式确认绑定；不会自动绑定、批准或执行。普通反馈只显示业务对象与中文原因，内部 ID 留在诊断链。
+- 正式 Windows 七步构建完成：installer `C3587D7E48E42BDC9B28373D88264D178359315FCA6FABA76392557A2CA11D4B`、portable `317D948F28BD2C06DFAC17BEC4557334F2D9F54BAA0875923E9DF90C8C3A8791`、folder ZIP `99B40C48488B09F92FE987F31FFCC31C5ED465C0CD0A2E5935E5EB4573DA75B3`；7 类业务 flow 全通过，folder ZIP 真解压启动 passed。
+- 正式库 readonly/query-only 终审：recommendations=5、approvals=0，五张 `ad_execution_*` 表均为 0；主库 SHA-256 前后同为 `6A9BA6DDC45CE8783259F55ACA0A11D11BE3BF9B3BE12F03B373FE3DF8C03849`。
+- 早期热更新诊断包哈希已废弃；上述正式 Windows 重建、业务 smoke 与 ZIP 启动现已取代它。仅剩 Package UI 尚未绑定新包哈希，整体仍不得标记 `APP_READY`。
+
 - 目标：把当前原型修成可独立完成连接、8 类采集、策略、运营任务与经营实验的 Windows 成品。
 - 基线：`codex/preview-contract-production-p2` @ `e40861ad`；指定 6 文件 79/79 通过，skipped=0。
 - 基线：desktop typecheck 通过；renderer build 通过并生成 `index-DITJzMPt.js`。
@@ -8,7 +23,61 @@
 - 安全：Ads 身份未确认时写入为 0；历史包/启动成功不得冒充业务可用或 `APP_READY`。
 - 集成验收：用户已明确解除原 3 轮上限；同一验收连续失败 3 次仍换项并记录缺口，旧 run group/Profile 不复用。
 
-## 当前：2026-08-21 商品投放只读核对完成，立即转项
+## 当前：2026-08-24 真实策略、运营任务与经营实验已落库
+
+- 当前运营范围已通过应用自身接口从旧范围 `2026-07-24 至 2026-08-06` 切换并绑定到正式完整批次 `2026-08-09 至 2026-08-22`；批次选择器回读为 completed、8/8 真实文件、8/8 已导入、1901 行，不再使用不存在的批次或版本。
+- 复用并改正唯一旧草稿策略为“关键词竞价人工审批策略”：所选产品 `B0GVRVD4PK`、优先级 10（数字越小越优先）；版本 1 已启用，V1 动作仅“调整关键词竞价”，单次 ≤10%、每日 1 次、冷却 1440 分钟、工作日 09:00–17:00（America/Los_Angeles），五项回读证据和六项停止条件完整。
+- 当前 19 个真实广告活动均由 Main 判定 `STABLE_ENTITY_ID_UNAVAILABLE / nonExecutable=true`，没有稳定关键词写入身份；未把活动名或 objectKey 冒充可写 ID。启用版本的对象白名单为 0、影响预算为 0 USD，运行模式保持人工审批。
+- 真实运营任务“关键词竞价候选核验任务”已绑定上述 completed 批次、enabled 版本和现有产品，状态 active、阶段 fact、优先级 P1；目标明确为只识别带证据的候选，未经人工批准或稳定对象不可用时不写 Ads。
+- 真实经营实验“人工审批降价候选观察”已创建为 draft，主指标为 ACOS，守护指标为“广告订单 >= 基线 85%”；因无稳定可写广告对象，保持待启动并不冒充已执行。
+- 正式库只读回读：policies=1、enabled versions=1、missions=1、experiments=1；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全为 0。
+- 正式包回读发现实验产品选择器用本地数字行号而后端/任务使用 ASIN，导致真实产品误显“关联产品不可用”。新增断言修前 `1 failed / 9 passed`（收到 `7`，期望 `B0TEST0001`），改为 ASIN 后 `10/10 passed`；待重建当前 Windows 包确认界面。
+- 修复已进入 2026-08-24T04:14:05Z Windows 包：installer `0167174CCC2CAB5DDFBD396D5BC8C3BE40CEBC883B912EBCA2E782EEF0CA5448`、portable `1E66436E138BED942D147DD9AEBE722BA0B73783BEE50792FB936F3242B8A1D6`、folder ZIP `D4A6F309CB7FC1CF56B30FC782D3084683798DAC046E1E33C1E6023099068803`。desktop typecheck、7 条业务 smoke 与 ZIP 解压真实启动均通过。
+- 新包定点界面回读：策略、运营任务、经营实验三页均找到真实记录，`UNKNOWN`、Mission、Experiment、`DAILY MISSION CONTROL` 为 0；实验真实产品可用，唯一“未绑定广告对象”与稳定写入身份缺失事实一致。关闭后正式库业务计数保持 import/policy/version/mission/experiment=`1/1/1/1/1`，推荐、审批和 Ads 五表均为 0。
+- 应用内“运行分析”已真实执行并封存 1 个 8/8 evidence package：规则生成 5 条推荐，其中 3 条形成不可变降价候选；AI 已调用但 DeepSeek 返回 HTTP 402 `Insufficient Balance`，因此来源降级为 `rule_fallback`，不得进入授权。
+- 三条候选均被 Main 拒绝人工与策略授权：共同缺少稳定广告实体 ID、规则降级结果不可授权，且 255→229、251→206、229→206 cents 均越过当前 10% 变化上限。未创建审批任务；运营任务已推进至 analysis 并追加 1 条 blocked 分析检查点，经营实验继续保持 draft。
+- 分析后正式库只读回读：action recommendations=5、approval tasks=0，`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全为 0；没有执行 Task 8B 写入。
+- 只读检查正式 keyword/auto_targeting/product_targeting XLSX 表头：分别 53/33/51 列，三者都没有 ID、编号或标识列，仅含活动、广告组、关键词/投放名称。`STABLE_ENTITY_ID_UNAVAILABLE` 不是 parser 漏映射；不得从名称或 objectKey 猜造写入身份，后续只能由当前 Ads 页面对象绑定或带稳定 ID 的权威数据源解除。
+
+## 当前：2026-08-24 真实 8/8 已下载并完成正式导入
+
+- 新 Windows 包真实恢复同一 durable full8 作业：受限下载兜底把原 `download.saveAs: canceled` 推进为 7/8；唯一剩余 `product_targeting` 文件使用领星真实表头“投放”和受控值 `商品:"<ASIN>"`，collector 与 import parser 均按该窄格式红→绿修复，不写死店铺名。
+- 最终正式作业为 `state=completed / importState=succeeded / downloaded=8`。正式库生成唯一 completed import run `import_batch_20260824020242353_jod9gw`：source files=8、metric rows=1901、reconciliations=8、completedAt=`2026-08-24T03:54:38.138Z`。
+- control-total 门未放宽：下载中心快照证明其列表没有行数/花费列；改用 provider-owned 原始 XLSX 的独立低层单元格扫描，扫描前后 SHA-256 必须等于导入文件哈希，再由数据库逐报比较有效日期行数与 USD 花费，任何不符整笔回滚。真实八报逐报行数比对为 `196/196/471/196/36/453/8/345`，八项 rows/cost 全匹配。
+- 下载兜底只接受两个受信 COS host、HTTPS、URL 文件名与 suggested filename 精确相同、xlsx/octet-stream MIME、ZIP `PK` 文件头，并在 store capsule 内原子写入；普通 `download.saveAs` 仍优先。预检过期现在在进入 Main mutation lane 前中文阻断，不再把只读失败污染为 runtime unknown。
+- 红→绿证据：下载 helper 1/1；预检顺序修前 `expected -1`、修后 1/1，相关 Main 52/52；collector 商品投放修前误判 `ad_group`、修后 9/9；import parser 修前 `schemaValid=false`、修后 21/21；原始 control-total 静态方法修前不存在、修后定点 1/1，Main 哈希前后证据链定点 1/1。collector/report-parser/desktop typecheck 均通过。
+- 正式导入回读时 `ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全部为 0；没有为验收制造 Ads 写入。最新 Main bundle SHA-256 `E4AA61BA9AB646EAABE5A9DF44FCA94A92254ECDBE3647E79DEFABF2ACD29CBA`；当前 folder ZIP SHA-256 `D32366F6AE3692B82C3F0FE17BBC5707D44A5B0AF119E14AE28A13721BDE3152`。
+- 附带发现但按当前“先保证主流程、其它记录”约定未扩散修复：完整 `legacy-ipc-store-authority-contract.test.ts` 有 2 个既有源码顺序断言失败；本次新增证据链定点断言通过，失败详情同步到 `BLOCKED.md`，后续集成轮再处理。
+
+## 当前：2026-08-24 新增“先完成其余报表”安全恢复，待实包把 6/8 推进到 7/8
+
+- 正式库再次 readonly + `query_only=ON` 审计：recommendations=0、approvals=0、approved positive `lower_bid`=0；策略运行时为人工审批、无启用版本。Task 8B 当前没有可合法执行的产品事实，未触发 Ads 写入。
+- 完整生产作业的精确 checkpoint 为 6 类 downloaded、`product_targeting=failed / LINGXING_CREATE_CONFIRMED_ABSENT / identity=0`、`user_search_term=queued / identity=0`。现有完整恢复会把已核对失败归一化为 queued，并按固定顺序先创建商品投放，导致搜索词永远无法独立推进。
+- 新增安全余项模式：仓储在 resume packet 中保留已核对失败事实；collector 启用该模式时对该报表执行零浏览器动作并继续 untouched queued 报表；普通“重新创建缺失报表”保持原默认语义。采集页同时显示“先完成其余报表”和“重新创建缺失报表”，并把内部 blocker code 改为中文原因。
+- runner 合同修前 RED：实际创建类型为 `product_targeting, user_search_term`，期望仅 `user_search_term`；修后 GREEN=`1 passed / 18 skipped`。仓储合同修前 RED：商品投放被改写为 `queued / errorCode undefined`；修后 GREEN=`1 passed / 54 skipped`。界面合同修前 RED：`safeRemainderAvailable` 为 undefined；修后 GREEN=`1 passed / 59 skipped`。
+- 三项组合聚焦回归为 3 files / `3 passed / 131 skipped`，desktop typecheck `$ tsc --noEmit` / exit 0。尚未重建 Windows 包或触发正式搜索词采集，不能把源码通过冒充 7/8。
+
+## 当前：2026-08-24 Package UI 当前包完整通过，正式库与 Ads 写入保持安全
+
+- 当前包 Package UI schema v8 已完整通过，唯一正式 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260821-77/manifests/2026-08-24T01-13-35-545Z-2026-08-24T01-13-15-991Z-c1f8bf7d-a392-49e8-a04f-11a58455b7a2.json`：`passed=true`、`violations=[]`、`artifactHashesStable=true`、`completeness.passed=true`、`checkpointComposition.passed=true`。
+- 100% 与 125% 紧凑档各完成 10 个工作区、1 个子视图、3 个弹窗和 10 张截图；1400×900 宽屏档完成 2 个工作区和 2 张截图。三档全部 passed，console errors=0、page errors=0；旧 `WORKSPACE_NOT_AT_TOP` 没有复现。
+- 首档由操作者在可见 Amazon AI Ops 登录窗完成本次 typed+saved 提交；初次 Ads 为 `ADS_SESSION_NOT_READY` 后，仅在目标应用内点击唯一 enabled 的“重试 Ads”，正式界面变为“ERP/Ads 已连接”。Main attestation 为 `isLoggedIn=true / erpSessionReady=true / adsSessionReady=true / credentialSource=typed / credentialPersistence=saved / erpSessionReused=false / sessionIdentityVerified=true`。125% 与宽屏档使用保存凭证续接；没有读取/代填密码、Cookie 或 Profile，也没有操控其他应用。
+- Package UI 绑定的 EXE SHA-256 为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 为 `93443D3489876300D2D4EFA32E7E320D4E23109F0D1311A2DFEDE0A885AE58F8`（5118 files / 544,549,369 bytes）。manifest 记录的隔离库逻辑 SHA-256 前后均为 `151CF9EB9DD4B5E0379DCE6C5CC607CB3FCD3C0310B13CDF7CCA891FCB675D21`，`protectedDatabase.passed=true / unchanged=true`。
+- Package UI 完成后再次对正式库使用 readonly + `query_only=ON` 核对：主文件查询前后 SHA-256 均为 `4C107960F7F75DFC566438A35817F912DDB55E9220BB7F3DFA475922529789A3`。采集 jobs=6、resume attempts=12、active claims=0、events=111；import runs=0、policy versions=0、missions=0、experiments=0，五张 `ad_execution_*` 表全部为 0。
+- runner 修复证据保持有效：滚动复位合同修前 `1 failed / 203 skipped`（`restoreWorkspaceScrollTop is not a function`），修后 `1 passed / 203 skipped`；三项组合 `3 passed / 201 skipped`，全文件 `204/204 passed`、skipped=0，`node --check scripts/package-ui-evidence.js` exit 0。没有放宽 1px 顶部门、视口阈值、业务断言或键盘检查。
+- Package UI 登录与视觉门现已关闭。整体仍为 `APP_NEEDS_WORK / NON_READY`：真实 8/8 仍是 6 类 downloaded、`product_targeting=LINGXING_CREATE_CONFIRMED_ABSENT`、`user_search_term=queued`、正式 import run=0；连续两次创建 200 未形成下载中心行，当前没有新的领星外部事实允许再次创建。Task 8B 仍缺产品内具体、当前、已批准的 `lower_bid` 推荐，禁止为验收制造 Ads 写入。
+
+## 历史：2026-08-21 Package UI 已证明真实 Ads 连接，截图滚动竞态红→绿
+
+- `operator-core-20260821-76` 的首次可见提交真实形成 ERP ready；隔离库只读回读为领星 `ready`、店铺 `JF-US`，Ads 初次为 `ADS_SESSION_NOT_READY`。随后只在 Amazon AI Ops 应用内点击唯一 enabled 的“重试 Ads”，不读取/输入凭据、不操作其他应用；正式界面变为“ERP/Ads 已连接”，runner 接受该非敏感 Main attestation、完成 100% 登录门并进入 125% 业务页面。
+- `-76` 的真实失败不是连接回退，而是 125% `objects/products` 截图前 `.app-content.scrollTop=180`：导航已回到顶部，但 End→Home 键盘可达性检查会再次滚动共享容器，旧 runner 没有在指标/截图前复位。失败 manifest：`output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260821-76/manifests/2026-08-21T08-42-54-819Z-2026-08-21T08-42-54-819Z-2ce97dce-5c0c-44a7-a193-35608afe89f1.json`。
+- 按 TDD 新增“键盘焦点移动后恢复共享滚动顶部”回归：修前 `1 failed / 203 skipped`，错误为 `restoreWorkspaceScrollTop is not a function`；实现后同命令 `1 passed / 203 skipped`。紧凑档在 keyboard+settle 后、宽屏档在 keyboard 后均显式恢复 `.app-content` 顶部；`WORKSPACE_NOT_AT_TOP` 的 1px 门、视口阈值、业务断言和键盘检查均未放宽。`node --check scripts/package-ui-evidence.js` exit 0；滚动复位、Chromium 暂态等待、未读日常浏览器隔离三项组合回归为 `3 passed / 201 skipped`，随后 `pnpm exec vitest run scripts/package-ui-evidence.test.mjs` 全量 `204/204 passed`、skipped=0、exit 0。
+- runner 源码哈希变化后，官方 inspector 正确拒绝续跑 `-76`：`status=LINEAGE_CHANGED`，未伪造旧 100% 检查点。新 `operator-core-20260821-77` Profile 由正式库 readonly/query-only online backup 建立：627/627 pages、remaining 0、2,568,192 bytes、逻辑 SHA-256 `151CF9EB9DD4B5E0379DCE6C5CC607CB3FCD3C0310B13CDF7CCA891FCB675D21`。
+- `-77` 首档在 120 秒 preparation 内未检测到操作者提交，按合同 `runs=0 / RUN_FAILED` 后关闭；不是 ERP/Ads 失败。失败 manifest：`output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260821-77/manifests/2026-08-21T09-12-41-914Z-2026-08-21T09-12-41-914Z-c198e27f-5bbd-4fb7-8525-90d6e6b9a1bc.json`。事后目标应用/该 Profile Chrome 残留为 0。
+- `-77` 的官方只读 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`；一次性续跑 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260821-77/22F32CD64877EF09F407DAA0A5666008510709B681CCFF4653A0794C4D5325E9.json`。下次只需恢复该 run group，不新建 Profile。
+- 正式库主文件只读核对前后 SHA-256 均为 `4C107960F7F75DFC566438A35817F912DDB55E9220BB7F3DFA475922529789A3`；policy versions、missions、experiments 与五张 `ad_execution_*` 表全部为 0。当前仍为 `APP_NEEDS_WORK / NON_READY`，不能把 `-76` 的真实连接成功或 `-77` 的可续跑状态冒充完整 Package UI。
+
+## 历史：2026-08-21 商品投放只读核对完成，立即转项
 
 - 续接前再次按当前工作树核对：`master` @ `d3d8b27e4bb3fcec7d2d3f9d8613f7d972b67737`，相对 `origin/master` 为 ahead 12，除既有未跟踪本地目录外没有未提交源码改动。普通 Renderer 源码与当前生产 bundle 对 `DAILY MISSION CONTROL`、裸 `Mission`、`UNKNOWN`、`set_keyword_bid` 的精确用户文案检索均为 0；相关英文只存在代码内部符号或折叠诊断。正式库随后以 readonly + `query_only=1` 复核，主文件查询前后 SHA-256 均为 `4C107960F7F75DFC566438A35817F912DDB55E9220BB7F3DFA475922529789A3`；attempts 12、claims 0、events 111，6 类 downloaded、`product_targeting=failed / LINGXING_CREATE_CONFIRMED_ABSENT`、`user_search_term=queued`，imports/policy versions/missions/experiments 与 Ads 五表仍全部为 0。
 - Package UI 当前包交互验收已推进到可安全续跑：`operator-core-20260821-72` 在启动前拒绝旧 authority receipt（正式库主文件 SHA 已变化）；只读验证器随后生成 `production-authority-selection-operator-core-20260821-current-v2.json`，状态 `SELECTED_SCHEMA_READY`、`authorityDatabaseMutated=false`、`adsExecutionInvoked=false`。`-73` 继续在启动前拒绝旧隔离 DB（逻辑哈希 `43F8…` != 当前 `151C…`）；新 Profile `D:\Temp\amazon-ai-ops-package-ui-operator-core-20260821-74` 已用 readonly/query-only SQLite online backup 建立，627 pages / remaining 0，逻辑 SHA-256 `151CF9EB9DD4B5E0379DCE6C5CC607CB3FCD3C0310B13CDF7CCA891FCB675D21`，未复制浏览器 Profile/Cookie。`-74` 已真正进入 100% 首档可见登录，但 180 秒内没有收到操作者提交而按合同失败关闭；只读 inspector 返回 `RESUME_SAFE`、残留目标进程 0、下一档仍为 `100-compact`，已生成一次性 resume receipt。待用户明确在屏幕后再续跑，不再空等。正式库复核仍为 attempts 12、claims 0、events 111、imports/policy versions/missions/experiments 0、Ads 五表 0。

@@ -91,6 +91,8 @@ const {
   profileLineageStateMatches,
   markRunnerElectronCloseRequested,
   openStoreScopedConnectionWorkbench,
+  restoreWorkspaceScrollTop,
+  waitForActiveBundledChromiumLineage,
   recordPackageUiProfileAttempt,
   releasePackageUiRunGroupLease,
   resolvePackageUiProfileCursor,
@@ -754,6 +756,28 @@ describe('captureViewportScreenshot', () => {
 });
 
 describe('packaged renderer settle contract', () => {
+  it('restores the shared workspace scroll owner after keyboard focus moves it', async () => {
+    let scrollTop = 180;
+    const page = {
+      evaluate: async (callback) => {
+        expect(String(callback)).toContain("document.querySelector('.app-content')");
+        const before = scrollTop;
+        scrollTop = 0;
+        return { after: scrollTop, before };
+      },
+      waitForFunction: async (callback) => {
+        expect(String(callback)).toContain('Math.abs(content.scrollTop) <= 1');
+        expect(scrollTop).toBe(0);
+      },
+    };
+
+    await expect(restoreWorkspaceScrollTop(page)).resolves.toEqual({
+      after: 0,
+      before: 180,
+    });
+    expect(scrollTop).toBe(0);
+  });
+
   it('waits for stable non-busy workspace text across four samples', async () => {
     const waits = [];
     const page = {
@@ -1208,6 +1232,39 @@ describe('durable protected-state evidence', () => {
     }));
   });
 
+  it('classifies an unreadable unrelated daily browser only in explicit isolated baseline mode', () => {
+    const profilePath = path.join(USER_DATA_DIR, 'stores');
+    const bundledPath = 'D:\\App\\resources\\app\\playwright-browsers\\chrome-win64\\chrome.exe';
+    const snapshot = collectMatchingProfileBrowserProcesses(
+      profilePath,
+      {
+        allowUnreadableBaseline: true,
+        expectedExecutablePath: bundledPath,
+      },
+      () => ({
+        status: 0,
+        stdout: JSON.stringify([{
+          CommandLine: null,
+          ExecutablePath: null,
+          Name: 'chrome.exe',
+          ParentProcessId: 10,
+          ProcessId: 11,
+        }]),
+        stderr: '',
+      }),
+    );
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      baselineUnrelatedCount: 1,
+      matchingCount: 0,
+      passed: true,
+      unresolvedCount: 0,
+    }));
+    expect(snapshot.baselineUnrelated).toEqual([
+      expect.objectContaining({ processId: 11, profileMatched: false }),
+    ]);
+  });
+
   it('binds the packaged Chromium hash, target root and descendants without retaining command lines', () => {
     const appContentPath = 'D:\\App\\resources\\app';
     const chromiumPath = path.join(
@@ -1264,6 +1321,23 @@ describe('durable protected-state evidence', () => {
       },
     })).toBe(false);
     expect(JSON.stringify(evidence)).not.toContain('--user-data-dir');
+  });
+
+  it('waits through a transitional Chromium lineage snapshot without weakening the final verifier', async () => {
+    const valid = validChromiumLineage();
+    let calls = 0;
+    const evidence = await waitForActiveBundledChromiumLineage({}, {
+      attempts: 2,
+      collect: () => {
+        calls += 1;
+        return calls === 1 ? { ...valid, passed: false } : valid;
+      },
+      intervalMs: 0,
+    });
+
+    expect(calls).toBe(2);
+    expect(evidence).toEqual(expect.objectContaining({ attempts: 2, passed: true }));
+    expect(chromiumLineageEvidencePassed(evidence)).toBe(true);
   });
 
   it.runIf(process.platform === 'win32')(
@@ -1471,6 +1545,42 @@ describe('durable protected-state evidence', () => {
     expect(sanitizeDiagnosticText('session_token=session-secret')).toBe('session_token=[REDACTED]');
     expect(sanitizeDiagnosticText('登录 operator@example.com 失败')).toBe('登录 [REDACTED_ACCOUNT] 失败');
     expect(validRunDiagnostics(result.diagnostics, result)).toBe(false);
+  });
+
+  it('enables the unreadable daily-browser baseline only after package absence and profile-lock proof', async () => {
+    const zero = validProcessSnapshot();
+    const profileLocks = validProfileLockIsolation();
+    let observedCollectOptions = null;
+    let lockCall = 0;
+    const result = await executeEvidenceRunWithIsolation({
+      baseEvidence: { scalePercent: 100 },
+      options: {
+        appContentPath: 'D:\\App\\resources\\app',
+        executablePath: 'D:\\App\\AmazonAIOpsAgent.exe',
+        userDataDir: USER_DATA_DIR,
+      },
+      processApi: {
+        collectPackage: () => zero,
+        collectProfile: (_profilePath, collectOptions) => {
+          observedCollectOptions = collectOptions;
+          return zero;
+        },
+        collectProfileLocks: () => {
+          lockCall += 1;
+          return lockCall === 1 ? profileLocks.before : profileLocks.after;
+        },
+        waitPackage: async () => ({ ...zero, attempts: 1 }),
+        waitProfile: async () => ({ ...zero, attempts: 1 }),
+      },
+      profileId: '100-compact',
+      run: async () => ({ passed: true }),
+    });
+
+    expect(observedCollectOptions).toEqual(expect.objectContaining({
+      allowUnreadableBaseline: true,
+      expectedExecutablePath: expect.stringContaining('playwright-browsers'),
+    }));
+    expect(result.profileProcessIsolation.passed).toBe(true);
   });
 
   it('records whether Electron closed before or after the evidence runner requested shutdown', () => {

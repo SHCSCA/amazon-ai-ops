@@ -946,6 +946,104 @@ describe('runLingxingReportBatch', () => {
     expect(resumedFile.attemptErrors).toEqual(expect.arrayContaining(['prior durable failure']));
   });
 
+  it('finishes untouched queued reports without recreating a reconciled-absent report', async () => {
+    const { rootDownloadDir, source } = await createThreeOfEightResumeFixture();
+    const updatedAt = new Date(Date.parse(source.job.updatedAt) + 1).toISOString();
+    const reports = source.job.reports.map((checkpoint) => {
+      if (checkpoint.reportType === 'product_targeting') {
+        return {
+          reportType: checkpoint.reportType,
+          state: 'failed' as const,
+          attemptIndex: 0,
+          autoRetryCount: 0,
+          errorCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+          detail: '已确认原创建记录不存在，等待单独授权重新创建。',
+          updatedAt,
+        };
+      }
+      if (checkpoint.reportType === 'user_search_term') {
+        return {
+          reportType: checkpoint.reportType,
+          state: 'queued' as const,
+          attemptIndex: 0,
+          autoRetryCount: 0,
+          updatedAt,
+        };
+      }
+      return checkpoint;
+    });
+    const job = {
+      ...source.job,
+      state: 'failed' as const,
+      blockerCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+      detail: '商品投放等待单独授权重新创建。',
+      reports,
+      completedAt: updatedAt,
+      updatedAt,
+    };
+    const resumeFrom: LingxingInPlaceResumeState = {
+      jobId: job.jobId,
+      request: job.request,
+      reports,
+      job,
+      batch: {
+        ...source.batch,
+        status: 'failed',
+        completedAt: updatedAt,
+      },
+      files: source.files.filter((file) => (
+        !['product_targeting', 'user_search_term'].includes(file.reportType)
+      )),
+    };
+    const createdTypes: string[] = [];
+    const options = {
+      requestId: resumeFrom.request.requestId,
+      storeContext: resumeFrom.request.storeContext,
+      executionStoreContext: resumeFrom.request.storeContext,
+      progressEventNamespace: 'attempt-defer-reconciled-absent',
+      storeDisplayName: resumeFrom.batch.storeName ?? 'SHC001 · 美国站',
+      dateStart: resumeFrom.request.dateStart,
+      dateEnd: resumeFrom.request.dateEnd,
+      rootDownloadDir,
+      reportTypes: resumeFrom.request.reportTypes,
+      maxRetries: 0,
+      resumeFrom,
+      deferReconciledCreateFailures: true,
+      async progressSink() {},
+      authorityGuard() { return { allowed: true } as const; },
+      cancellationGuard() { return { allowed: true } as const; },
+      automation: {
+        async navigateToDownloadCenter() {},
+        async createReport(report: LingxingReportDefinition, dateRange: { start: string; end: string }) {
+          createdTypes.push(report.type);
+          return createdOutcome(report, dateRange);
+        },
+        async waitForReportReady() {},
+        async downloadReport(report: LingxingReportDefinition, downloadDir: string) {
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(
+            downloadDir,
+            `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25_deferred.xlsx`,
+          );
+          writeSemanticReportFixture(filePath, report);
+          return filePath;
+        },
+      },
+    } as RunBatchOptions & { deferReconciledCreateFailures: boolean };
+
+    const result = await runLingxingReportBatch(options);
+
+    expect(createdTypes).toEqual(['user_search_term']);
+    expect(result.job.state).toBe('completed_with_errors');
+    expect(result.job.reports.find((report) => report.reportType === 'product_targeting'))
+      .toEqual(expect.objectContaining({
+        state: 'failed',
+        errorCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+      }));
+    expect(result.job.reports.find((report) => report.reportType === 'user_search_term')?.state)
+      .toBe('downloaded');
+  });
+
   it('rejects a tampered downloaded resume file before the first browser action', async () => {
     const { rootDownloadDir, resumeFrom } = await createThreeOfEightResumeFixture();
     fs.appendFileSync(resumeFrom.files[0].filePath!, 'tampered');

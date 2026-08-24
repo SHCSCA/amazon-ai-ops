@@ -2318,6 +2318,41 @@ describe('LingxingImportRepository', () => {
     expect(packet?.reports.filter((checkpoint) => checkpoint.state === 'queued')).toHaveLength(5);
   });
 
+  it('preserves a reconciled create failure in the full-eight resume packet', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'deferred-reconciled-create');
+    terminal.job = {
+      ...terminal.job,
+      blockerCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+      reports: terminal.job.reports.map((checkpoint) => (
+        checkpoint.reportType === 'product_targeting'
+          ? {
+              reportType: checkpoint.reportType,
+              state: 'failed' as const,
+              attemptIndex: 0,
+              autoRetryCount: 0,
+              errorCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+              detail: '已确认原创建记录不存在，等待单独授权重新创建。',
+              updatedAt: checkpoint.updatedAt,
+            }
+          : checkpoint
+      )),
+    };
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+
+    const packet = repository.getCollectionInPlaceResumeStateForStore(
+      storeA,
+      terminal.job.jobId,
+    );
+
+    expect(packet?.reports.find((checkpoint) => checkpoint.reportType === 'product_targeting'))
+      .toEqual(expect.objectContaining({
+        state: 'failed',
+        errorCode: 'LINGXING_CREATE_CONFIRMED_ABSENT',
+      }));
+    expect(packet?.reports.filter((checkpoint) => checkpoint.state === 'queued')).toHaveLength(4);
+  });
+
   it('interrupts an orphaned creating resume at startup without browser work or a reusable claim', () => {
     const { repository, storeA } = createHarness();
     const terminal = failedFullAuthorityTerminal(storeA, 'startup-resume-1', 0);

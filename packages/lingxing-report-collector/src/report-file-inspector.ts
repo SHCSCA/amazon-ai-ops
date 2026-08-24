@@ -46,6 +46,7 @@ const AUTO_TARGETING_PROVIDER_VALUES = new Set([
   'substitutes',
   'complements',
 ].map(normalizeHeader));
+const PRODUCT_TARGETING_PROVIDER_VALUE = /^商品\s*[:：]\s*["“”]?B0[A-Z0-9]{8}["“”]?$/i;
 
 export interface ReportContentInspection {
   readable: boolean;
@@ -136,6 +137,27 @@ function inferGenericAutoTargetingFromRows(
     : undefined;
 }
 
+function inferGenericProductTargetingFromRows(
+  rows: readonly unknown[][],
+  headers: readonly string[],
+  headerRowIndex: number,
+): LingxingReportType | undefined {
+  const genericTargetingHeaders = new Set(GENERIC_TARGETING_HEADERS.map(normalizeHeader));
+  const targetingColumnIndex = headers.findIndex((header) => (
+    genericTargetingHeaders.has(normalizeHeader(header))
+  ));
+  if (targetingColumnIndex < 0 || headerRowIndex < 0) return undefined;
+
+  const values = rows
+    .slice(headerRowIndex + 1)
+    .map((row) => String(row[targetingColumnIndex] ?? '').trim())
+    .filter(Boolean);
+  if (values.length === 0) return undefined;
+  return values.every((value) => PRODUCT_TARGETING_PROVIDER_VALUE.test(value))
+    ? 'product_targeting'
+    : undefined;
+}
+
 /**
  * Infer one Lingxing report type from column semantics only. Filenames,
  * workbook titles and data cell values are intentionally excluded.
@@ -189,9 +211,15 @@ export function inspectReportFileContent(
       headers,
       headerRowIndex,
     );
-    const inferredReportType = genericAutoTargetingType
+    const genericProductTargetingType = inferGenericProductTargetingFromRows(
+      rows,
+      headers,
+      headerRowIndex,
+    );
+    const genericTargetingType = genericAutoTargetingType ?? genericProductTargetingType;
+    const inferredReportType = genericTargetingType
       && (!headerReportType || headerReportType === 'campaign' || headerReportType === 'ad_group')
-      ? genericAutoTargetingType
+      ? genericTargetingType
       : headerReportType;
     const sampledText = rows
       .flatMap((row) => row.slice(0, 40))
@@ -200,7 +228,8 @@ export function inspectReportFileContent(
       .join(' | ');
     const matchedTokens = matchingHeaders(
       headers,
-      expectedReportType === 'auto_targeting' && inferredReportType === 'auto_targeting'
+      (expectedReportType === 'auto_targeting' && inferredReportType === 'auto_targeting')
+        || (expectedReportType === 'product_targeting' && inferredReportType === 'product_targeting')
         ? [...aliasesForReportType(expectedReportType), ...GENERIC_TARGETING_HEADERS]
         : aliasesForReportType(expectedReportType),
     );

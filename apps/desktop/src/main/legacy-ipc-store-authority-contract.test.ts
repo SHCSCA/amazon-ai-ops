@@ -191,6 +191,10 @@ describe('collection Renderer boundary contract', () => {
   });
 
   it('fails closed before commit when the collector has no independent per-report control totals', () => {
+    const evidenceReader = between(
+      'function readIndependentLingxingReportControlTotals',
+      'function assertExactIndependentLingxingReportControlTotals',
+    );
     const controlTotalGuard = between(
       'function assertExactIndependentLingxingReportControlTotals',
       'function importStoreScopedLingxingDownloadedReportMetrics',
@@ -212,6 +216,14 @@ describe('collection Renderer boundary contract', () => {
     expect(importer).not.toContain('reconciliations: []');
     expect(importer).not.toContain('expectedRows: 0');
     expect(importer).not.toContain('expectedCost: 0');
+    expect(evidenceReader).toContain('ReportParser.readLingxingRawReportControlTotals');
+    expect(evidenceReader).toContain('const beforeHash = fileHashOrNull(importFile.filePath)');
+    expect(evidenceReader).toContain('const afterHash = fileHashOrNull(importFile.filePath)');
+    expect(evidenceReader.indexOf('const beforeHash = fileHashOrNull(importFile.filePath)'))
+      .toBeLessThan(evidenceReader.indexOf('ReportParser.readLingxingRawReportControlTotals'));
+    expect(evidenceReader.indexOf('ReportParser.readLingxingRawReportControlTotals'))
+      .toBeLessThan(evidenceReader.indexOf('const afterHash = fileHashOrNull(importFile.filePath)'));
+    expect(evidenceReader).toContain('beforeHash !== importFile.fileHash || afterHash !== importFile.fileHash');
     expect(controlTotalGuard).toContain('reconciliation.dateStart !== result.batch.dateStart');
     expect(controlTotalGuard).toContain('reconciliation.dateEnd !== result.batch.dateEnd');
     expect(controlTotalGuard).toContain('reconciliation.metricDate !== result.batch.dateEnd');

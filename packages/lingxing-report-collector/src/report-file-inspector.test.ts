@@ -73,6 +73,25 @@ describe('Lingxing report content type authority', () => {
     }).valid).toBe(true);
   });
 
+  it('recognizes Lingxing product expressions in a generic targeting column as product targeting', () => {
+    const filePath = writeCsv('领星广告数据_2026-08-09_2026-08-22.csv', [
+      '店铺名称,国家,广告活动,广告组,投放,日期,曝光量,点击,花费-本币,广告订单,广告销售额-本币',
+      'NOVA-US,US,Campaign A,Ad Group A,商品:"B0ABCDEF12",2026-08-22,20,2,3.12,1,49.99',
+      'NOVA-US,US,Campaign A,Ad Group A,商品:"B0ZYXWVU98",2026-08-22,10,1,1.56,0,0',
+    ]);
+
+    expect(inspectReportFileContent(filePath, 'product_targeting')).toMatchObject({
+      readable: true,
+      matched: true,
+      inferredReportType: 'product_targeting',
+    });
+    expect(verifyDownloadedFile(filePath, {
+      minBytes: 1,
+      expectedFilenameKeyword: 'product_targeting',
+      expectedReportType: 'product_targeting',
+    }).valid).toBe(true);
+  });
+
   it.each([
     ['header-only', undefined],
     ['an ASIN', 'B0ABCDEF12'],

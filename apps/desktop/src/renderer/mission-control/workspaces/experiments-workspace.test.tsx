@@ -187,7 +187,7 @@ describe('ExperimentsWorkspace', () => {
     );
 
     expect(options.missions).toEqual([{ value: 'MISSION-CURRENT', label: '降低核心词浪费' }]);
-    expect(options.products).toEqual([{ value: '7', label: '黑色充电器 · B0TEST0001' }]);
+    expect(options.products).toEqual([{ value: 'B0TEST0001', label: '黑色充电器 · B0TEST0001' }]);
     expect(options.adObjects).toEqual([{ value: 'INTERNAL-KEYWORD', label: '品牌活动 > 核心词组 > usb c charger' }]);
     expect(options.adObjects.map((option) => option.label).join(' ')).not.toContain('INTERNAL-KEYWORD');
   });

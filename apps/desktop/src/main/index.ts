@@ -17,10 +17,10 @@ import {
   CollectionOperationGuard,
   deriveStoreCapsulePaths,
   ensureStoreCapsulePaths,
-  resolveStoreCapsuleDownloadTarget,
   type BrowserLease,
   type StoreCapsulePaths,
 } from '@amazon-ai-ops/browser-worker';
+import { saveLingxingReportDownload } from './lingxing-download-save';
 import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager } from '@amazon-ai-ops/audit-log';
 import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetricObjectIdentity, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
@@ -209,12 +209,14 @@ import {
 } from './login-session-credential-policy';
 import {
   dismissLingxingAdsChangeAnnouncements,
+  discoverLingxingAdsKeywordTarget,
   ensureLingxingErpAuthenticated,
   findTrustedLingxingProviderPageAfterPendingNavigation,
   findTrustedLingxingProviderReplacementPage,
   isLingxingAdsExplicitlyLoggedOutPage,
   isTransientLingxingAdsNavigationError,
   isTrustedLingxingProviderUrl,
+  navigateToLingxingAdsCampaignKeywordTarget,
   openLingxingAdsFromErp,
   readLingxingAdsPageStateAfterNavigation,
   readLingxingAdsProfileEvidence,
@@ -3659,6 +3661,106 @@ function handleScreenshot(label: 'before' | 'after' | 'error'): Promise<string> 
   );
 }
 
+type DiscoverRecommendationTargetRequest = Readonly<{
+  context: StoreContextEnvelope;
+  recommendationId: number;
+}>;
+
+async function handleDiscoverRecommendationTarget(input: DiscoverRecommendationTargetRequest) {
+  const recommendationId = Number(input?.recommendationId);
+  if (!Number.isInteger(recommendationId) || recommendationId <= 0) {
+    throw new Error('Ads 对象识别被阻断：缺少有效建议。');
+  }
+  if (!state.storeCoordinator || !state.recommendationRepo) {
+    throw new Error('Ads 对象识别被阻断：当前店铺权威尚未就绪。');
+  }
+  const context = state.storeCoordinator.assertActiveStoreContext(input.context);
+  return withLegacyOperatorBrowserLease(
+    'amazon_ads',
+    `discover-recommendation-target:${recommendationId}`,
+    async (access) => {
+      if (!sameExactStoreContext(access.context, context)) {
+        throw new Error('Ads 对象识别被阻断：可见页面不属于当前店铺会话。');
+      }
+      if (!state.recommendationRepo) {
+        throw new Error('Ads 对象识别被阻断：建议仓储已停止。');
+      }
+      const recommendation = state.recommendationRepo.findByIdForStore(context.storeId, recommendationId);
+      if (!recommendation || recommendation.status !== 'pending') {
+        throw new Error('Ads 对象识别被阻断：建议不存在或已不是待处理状态。');
+      }
+      if (recommendation.evidence?.writableTarget || recommendation.evidence?.writableTargetBinding) {
+        throw new Error('Ads 对象识别被阻断：建议已有可写对象，禁止自动覆盖。');
+      }
+      const evidence = recommendation.evidence;
+      const campaignName = String(evidence?.campaignName ?? '').trim();
+      const adGroupName = String(evidence?.adGroupName ?? '').trim();
+      const entityName = String(recommendation.entityName ?? evidence?.targeting ?? '').trim();
+      const reportType = String(evidence?.reportType ?? '').trim().toLowerCase();
+      const sourceFile = String(evidence?.sourceFile ?? '').trim();
+      const sourceRow = Number(evidence?.sourceRow);
+      const currentBidCents = Math.round(Number(recommendation.currentValue) * 100);
+      if (reportType !== 'keyword'
+        || !campaignName
+        || !adGroupName
+        || !entityName
+        || !sourceFile
+        || !Number.isInteger(sourceRow)
+        || sourceRow <= 0
+        || !Number.isSafeInteger(currentBidCents)
+        || currentBidCents < 0) {
+        throw new Error('Ads 对象识别被阻断：建议缺少关键词报表的活动、广告组、关键词或当前竞价证据。');
+      }
+      const externalAccountId = access.runtime.connections?.amazonAds?.externalAccountId?.trim();
+      const expectedStoreAlias = (
+        access.runtime.connections?.lingxing?.collectionStoreName
+        || access.runtime.connections?.amazonAds?.accountLabel
+        || ''
+      ).trim();
+      const page = access.controller.getPage();
+      if (!externalAccountId || !expectedStoreAlias || !page) {
+        throw new Error('Ads 对象识别被阻断：当前店铺 Ads 页面或稳定身份不可用。');
+      }
+      let pageIdentity;
+      try {
+        await navigateToLingxingAdsCampaignKeywordTarget(page, {
+          externalAccountId,
+          campaignName,
+          expectedStoreAlias,
+        });
+        pageIdentity = await discoverLingxingAdsKeywordTarget(page, {
+          externalAccountId,
+          campaignName,
+          adGroupName,
+          entityName,
+          currentBidCents,
+        });
+      } catch (error) {
+        const diagnosticPath = await captureOperatorScreenshotCore(access, 'error').catch(() => undefined);
+        const message = error instanceof Error ? error.message : '领星 Ads 页面识别失败，操作已阻断。';
+        throw new Error(diagnosticPath ? `${message} 诊断截图：${diagnosticPath}` : message);
+      }
+      assertLegacyOperatorBrowserAccessCurrent(access);
+      const identityProofPath = await captureOperatorScreenshotCore(access, 'before');
+      assertLegacyOperatorBrowserAccessCurrent(access);
+      return {
+        recommendationId,
+        recommendationRevision: recommendation.revision,
+        pageIdentity,
+        writableTarget: {
+          entityType: 'keyword' as const,
+          entityId: pageIdentity.keywordId,
+          sourceFile,
+          sourceRow,
+          identitySource: 'ads_ui' as const,
+          identityProofPath,
+          verificationNote: `当前店铺 Ads 页面已唯一匹配 ${campaignName} > ${adGroupName} > ${entityName}，当前竞价 $${(currentBidCents / 100).toFixed(2)}。`,
+        },
+      };
+    },
+  );
+}
+
 function normalizeScreenshotLabel(value: unknown): 'before' | 'after' | 'error' {
   if (value !== 'before' && value !== 'after' && value !== 'error') {
     throw new TypeError('unsupported screenshot label');
@@ -3890,25 +3992,52 @@ const LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID =
   'LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID';
 
 /**
- * Extension point for provider-owned control totals. The current collector and
- * manifest retain file identity only; they do not capture an independently
- * observed Lingxing row/cost total. Parsed rows must never certify themselves.
- *
- * A future implementation must capture one provider-visible whole-window total
- * per report and durably bind its evidence artifact to Store/Profile/
- * businessDate, exact dateStart/dateEnd, batch/file id and SHA-256 before
- * returning reconciliation inputs here. metricDate is the canonical window-end
- * evidence date; it must never narrow a multi-day batch to a single day.
+ * Read provider-owned raw workbook control totals through a scanner that does
+ * not consume mapped metrics or canonical parser output. The source SHA-256 is
+ * checked before and after the scan, then committed with Store/Profile,
+ * businessDate, exact batch window and file identity. Parsed rows never certify
+ * themselves. metricDate remains the canonical window-end evidence date.
  */
 function readIndependentLingxingReportControlTotals(
-  _result: LingxingBatchFilesResult,
-  _importFiles: ReadonlyArray<{
+  result: LingxingBatchFilesResult,
+  importFiles: ReadonlyArray<{
     lingxingFileId: string;
     reportType: string;
+    filePath: string;
     fileHash: string;
   }>,
 ): readonly ReportImportReconciliationInput[] | undefined {
-  return undefined;
+  if (importFiles.length !== LINGXING_AD_REPORTS.length) return undefined;
+  return importFiles.map((importFile) => {
+    const beforeHash = fileHashOrNull(importFile.filePath);
+    let totals: ReturnType<typeof ReportParser.readLingxingRawReportControlTotals>;
+    try {
+      totals = ReportParser.readLingxingRawReportControlTotals(importFile.filePath, {
+        dateStart: result.batch.dateStart,
+        dateEnd: result.batch.dateEnd,
+      });
+    } catch (error) {
+      throw invalidLingxingImportReconciliationEvidence(
+        `${importFile.reportType} 的原始报表 control total 无法独立读取：`
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const afterHash = fileHashOrNull(importFile.filePath);
+    if (beforeHash !== importFile.fileHash || afterHash !== importFile.fileHash) {
+      throw invalidLingxingImportReconciliationEvidence(
+        `${importFile.reportType} 的原始报表在 control total 扫描前后发生变化。`,
+      );
+    }
+    return {
+      dateStart: result.batch.dateStart,
+      dateEnd: result.batch.dateEnd,
+      metricDate: result.batch.dateEnd,
+      reportType: importFile.reportType,
+      expectedRows: totals.expectedRows,
+      expectedCost: totals.expectedCost,
+      tolerance: 0,
+    };
+  });
 }
 
 function assertExactIndependentLingxingReportControlTotals(
@@ -5980,6 +6109,25 @@ function assertLingxingCollectionPreflightReady(dateRange: { start: string; end:
   assertDownloadCenterCollectionPreflightReady(preflight);
 }
 
+function assertLingxingResumePreflightBeforeMainRuntime(
+  job: LingxingCollectionJobSnapshot,
+  context: StoreContextEnvelope,
+): void {
+  const preflight = handlePreflightLingxingCollection({
+    start: job.request.dateStart,
+    end: job.request.dateEnd,
+    requestId: job.request.requestId,
+    storeContext: context,
+  });
+  try {
+    assertDownloadCenterCollectionPreflightReady(preflight);
+  } catch {
+    throw new Error(
+      '继续采集前检查未通过：下载中心诊断证据已过期或当前可见会话未就绪。请先重新连接当前店铺并刷新下载中心诊断，再重试；本次未启动采集。',
+    );
+  }
+}
+
 function handleExportLingxingCollectionPreflight(input: unknown): string {
   const request = normalizeLingxingCollectionRequest(input);
   const dateRange = { start: request.start, end: request.end };
@@ -7146,6 +7294,7 @@ async function handleResumeLingxingCollection(input: unknown) {
     if (!state.storeCollectionSchedulerReadModel) {
       throw new Error('完整八报表原任务恢复需要 MainRuntime 权威回读，当前尚未就绪。');
     }
+    assertLingxingResumePreflightBeforeMainRuntime(job, context);
     // Renderer requestId is only a UI action token. The MainRuntime resume
     // path derives and CAS-binds the original durable request/job; never use a
     // fresh Renderer id to create a second full8 semantic task.
@@ -7165,6 +7314,9 @@ async function handleResumeLingxingCollection(input: unknown) {
       schedule = await state.storeCollectionSchedulerReadModel.resumeJob(
         context,
         job.jobId,
+        {
+          deferReconciledCreateFailures: value.deferReconciledCreateFailures === true,
+        },
       );
     } finally {
       if (expectedClosedRuntimeId) {
@@ -7874,9 +8026,7 @@ function createDownloadCenterAutomation(
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       const existingReport = !createdReportIdentity;
-      const context = existingReport
-        ? existingReportContext(report, dateRange, createdReportIdentity)
-        : reportContext(report, dateRange, createdReportIdentity);
+      const context = existingReport ? existingReportContext(report, dateRange, createdReportIdentity) : reportContext(report, dateRange, createdReportIdentity);
       let lastRecoveryAt = 0;
       const recoverListIfNeeded = async (attempt: number) => {
         const now = Date.now();
@@ -7943,13 +8093,13 @@ function createDownloadCenterAutomation(
       if (!options.storeCapsule) {
         throw new Error('当前领星采集缺少店铺独立下载舱，拒绝保存报表。');
       }
-      const targetFile = resolveStoreCapsuleDownloadTarget(
-        options.storeCapsule,
-        download.suggestedFilename(),
+      return saveLingxingReportDownload({
+        download,
+        request: page.request,
+        storeCapsule: options.storeCapsule,
         downloadDir,
-      );
-      await download.saveAs(targetFile.path);
-      return targetFile.path;
+        fallbackTimeoutMs: selectors.downloadTimeoutMs ?? 120000,
+      });
     },
     async startAttemptTrace(report, dateRange, attemptIndex) {
       traceStartError = undefined;
@@ -13652,6 +13802,9 @@ function registerIpcHandlers(): void {
   registerMissionDomainIpcHandlers(trackedIpcRegistrar, state.missionDomainService);
   registerAnalysisAuthorityIpcHandlers(trackedIpcRegistrar, state.analysisAuthorityService);
   registerExecutionAuthorityIpcHandlers(trackedIpcRegistrar, state.executionAuthorityService);
+  registerTrackedIpcHandler('execution-authority:discover-recommendation-target',
+    (_, input: DiscoverRecommendationTargetRequest) => handleDiscoverRecommendationTarget(input),
+  );
   registerStoreRuntimeConfigIpcHandlers(
     trackedIpcRegistrar,
     state.storeRuntimeConfigService,
