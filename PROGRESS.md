@@ -12,6 +12,7 @@
 - 建议详情新增“从当前 Ads 页面识别（只读）”：只填充对象核验表单，仍需操作者填写核验人/说明并显式确认绑定；不会自动绑定、批准或执行。普通反馈只显示业务对象与中文原因，内部 ID 留在诊断链。
 - 正式 Windows 七步构建完成：installer `C3587D7E48E42BDC9B28373D88264D178359315FCA6FABA76392557A2CA11D4B`、portable `317D948F28BD2C06DFAC17BEC4557334F2D9F54BAA0875923E9DF90C8C3A8791`、folder ZIP `99B40C48488B09F92FE987F31FFCC31C5ED465C0CD0A2E5935E5EB4573DA75B3`；7 类业务 flow 全通过，folder ZIP 真解压启动 passed。
 - 正式库 readonly/query-only 终审：recommendations=5、approvals=0，五张 `ad_execution_*` 表均为 0；主库 SHA-256 前后同为 `6A9BA6DDC45CE8783259F55ACA0A11D11BE3BF9B3BE12F03B373FE3DF8C03849`。
+- 本轮源码与文档已本地提交 `1b2eca14`；`git push origin master` 返回 `Recv failure: Connection was reset`，远端尚未包含该提交，未反复重试。
 - 早期热更新诊断包哈希已废弃；上述正式 Windows 重建、业务 smoke 与 ZIP 启动现已取代它。仅剩 Package UI 尚未绑定新包哈希，整体仍不得标记 `APP_READY`。
 
 - 目标：把当前原型修成可独立完成连接、8 类采集、策略、运营任务与经营实验的 Windows 成品。

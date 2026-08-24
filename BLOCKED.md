@@ -8,6 +8,7 @@
 - 建议详情的只读识别入口已进入正式 Windows 新包，只会填表，不会自动绑定/批准/执行。
 - DeepSeek 402 与策略 10% 上限仍独立存在：即使对象身份发现成功，当前 rule_fallback/超限候选也不能自动批准或执行。五张 Ads 写入表必须继续为 0。
 - Windows 新包、7 类业务 smoke 与 folder ZIP 启动现已通过；仍缺绑定新包哈希的 Package UI manifest。按“减少测试、不要重复登录”要求本轮未再启动强制 fresh typed-and-saved 的 Package UI 首档；旧 manifest 不得复用。恢复条件是操作者确认进行最后一次当前包可见登录验收。
+- Git 推送被本机到 GitHub 的网络重置阻断：本地提交 `1b2eca14` 已生成，但 `git push origin master` 返回 `Recv failure: Connection was reset`。恢复条件是 github.com:443 连通后执行一次推送；未把本地提交冒充远端已更新。
 
 ## 当前：2026-08-24 8/8、正式导入与下游业务实例已关闭，剩余为当前包验收和 Task 8B 授权事实门
 
