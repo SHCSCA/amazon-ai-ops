@@ -4,7 +4,7 @@
 
 - 正式应用使用 Main-only 保存连接完成新业务日采集：`batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，八类报表全部 `downloaded`、作业 `completed`；没有读取或代填密码、Cookie 或 Profile。
 - 正式导入 `import_batch_20260825055104954_vk66s3` 为 8 source files / 1961 metric rows / 8 reconciliations，状态 `completed`。采集与导入主链已再次在最新业务日闭合。
-- 正式库只读核对仍为 `approval_tasks=0`，五张 `ad_execution_*` 表全部为 0；工作范围尚指向上一批，因此新批次 AI 分析与 Task 8B 仍未完成。必须先通过应用范围接口选择新 completed 批次，再生成当前建议。
+- 正式应用已把工作范围保存并回读为 `JF-US / US / USD / 2026-08-10 至 2026-08-23`，界面同时显示 8/8、1961 行；旧批次候选继续作废。正式库只读核对仍为 `approval_tasks=0`，五张 `ad_execution_*` 表全部为 0；当前还需新建绑定该 completed 批次的运营任务并完成续费后 AI 实测。
 - Package UI 新包身份为 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、app content `67C1F19552B04963BCC22E0C7DC9F1EA3EADD323467E9652D7BA4A5F7A195BB0`（5118 files / 544,649,353 bytes）。`operator-core-20260825-78` 暴露 Electron 启动导航期间身份读取竞态；有限重试修复只接受 navigation execution-context 错误，其他身份错误仍立即失败。
 - runner 回归为定点 RED → 4/4 GREEN，随后全文件 207/207 passed、skipped=0；修复已提交并推送 `993654ab`。`operator-core-20260825-79` 已稳定显示登录页但未检测到操作者提交，当前 Package UI 仍缺通过 manifest，不能标记 `APP_READY`。
 - 连接、采集、策略、运营任务、经营实验、Windows build、7 类业务 smoke 与文件夹 ZIP 的既有通过证据保持有效；当前剩余为新批次范围/AI/具体批准后的 Task 8B，以及当前哈希 Package UI 三档。

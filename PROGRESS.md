@@ -5,7 +5,8 @@
 - 正式应用保存连接已恢复为 `lingxing=ready / amazon_ads=ready`，未读取或代填密码；最新作业 `batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，8 类 checkpoint 全部为 `downloaded`，作业 `completed`。
 - 同批次正式导入 `import_batch_20260825055104954_vk66s3` 已 `completed`：source files=8、metric rows=1961、reconciliations=8、completedAt=`2026-08-25T05:54:03.283Z`。
 - 导入后正式库只读核对：`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全部为 0；本轮没有广告写入。
-- 当前工作范围仍指向上一批 `2026-08-09 至 2026-08-22`，下一步必须先通过应用范围接口切换到新 completed 批次，再运行续费后 AI 分析；不得把旧范围的候选当作当前建议。
+- 已通过正式应用把当前店铺工作范围保存为 `JF-US / US / USD / 2026-08-10 至 2026-08-23 / batch=new`；只读回读 `operation_scope:store-8cf446cb-6c63-4688-807c-8621248e6809` 与界面 8/8、1961 行一致。范围切换门已关闭，旧批次候选继续作废。
+- 当前下游仍只有一条绑定旧批次的运营任务；已打开“新建运营任务”，下一步选择上述最新 completed 批次、已启用策略和现有产品，再运行续费后的真实 AI 分析。正式库现有 analysis evidence/action batch 仍各 1 条、proposal 3 条，均属于旧批次；五张 Ads 执行表仍为 0。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，准备新鲜首档
 
