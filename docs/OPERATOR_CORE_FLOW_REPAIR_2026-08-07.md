@@ -10,7 +10,9 @@
 - 新 Windows 七步构建通过：installer `A25219E34C569C87C8B8421559B9308698350DB95BC8BE1E65DEF5901C62F018`、portable `345A33A708DE8F183AB6236FB5AEDB9E65B3EF356A9BDEBB96F005BE91418768`、folder ZIP `7B645884BDC530F135C98F868B1D2E97E3F90A8663B6E609157E3A69099F608E`；EXE `67DC2A...5E89`、app content `08390336ED278B5B9825291A7DB74540C5905F4D7E3178A0C25C84B39DE54F3A`。新 ZIP 真解压启动通过，临时进程和目录均清理。
 - 新包 7 类 business UI smoke 再次全部通过，summary 为 `output/codex-evidence/current-business-ui-smoke-1787643311350.json`。随后正式库 `query_only=1` 复核：approval tasks=0、Ads 五表=0、主文件 SHA-256 `A12AC8014E643EA0FDA986D2AF0BEAB2EDEC49A0FC8263AF5E9B3893D8F2D3B4`。
 - Package UI 全新 `operator-core-20260825-80` 已绑定当前包、authority 与 readonly/query-only 隔离 Profile；首次 60 秒内没有操作者提交，严格以 runs=0 关闭。官方 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact` 并生成一次性 receipt；下一次只续跑 `-80`，由操作者本人手输一次，不重复构建或前置测试。
-- 当前总体仍为 `APP_NEEDS_WORK / NON_READY`：Package UI 三档尚缺当前通过 manifest；Task 8B 没有当前、稳定对象、≤10% 且经具体批准的候选。不得把真实 AI 成功、build/smoke 或 ZIP 启动冒充 `APP_READY`。
+- 随后的最终核心六文件复验真实暴露 Ads 多店铺切换缺口：打开下拉后，菜单内目标标签被误当成顶部已选标签，导致顶部仍为 `FT-US 美国`。修复不写死 JF-US：只有期望标签唯一且顶部控件总数唯一才允许提前成功，否则继续动态选择并回读。最终原命令 `148/148 passed / skipped=0`，typecheck 通过。
+- Main 修复使 `-80` 谱系失效。最终包已重建：installer `96EB004032E7FEDAA0C353CC0DAE8699C6637DCD17D7D01C41567FBE27EF9686`、portable `6B0F7BDB9D27FA53098F1D98ADCE2D71B9F5BCBAD5AB568BEA3D02D65B7C7602`、folder ZIP `E951A8ABDD68A9221C3B98E6848F0A3A4F0D0D8E8CFB7CB1F1733CD05B67FA47`、app content `AD87081CB0CFB375E1022BA9F0872E3DBB87F6C77EEF4838AF14C68B3F499502`。ZIP 真启动与最终 7 类业务 smoke 均通过。
+- 全新 `operator-core-20260825-81` authority 与 readonly/query-only 隔离 Profile 已准备，尚未启动；只在操作者确认在窗口前时开启 60 秒可见手输。当前总体仍为 `APP_NEEDS_WORK / NON_READY`：Package UI 三档尚缺当前通过 manifest；Task 8B 没有当前、稳定对象、≤10% 且经具体批准的候选。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 

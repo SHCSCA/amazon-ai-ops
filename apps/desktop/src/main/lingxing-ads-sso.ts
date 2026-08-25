@@ -110,7 +110,11 @@ export async function ensureLingxingAdsHeaderStore(page: Page, expectedAlias: st
   const refreshedHeaderStates = await Promise.all(page.frames().map(async (frame) => ({
     state: await readHeaderState(frame).catch(() => ({ selectedCount: 0, controlCount: 0 })),
   })));
-  if (refreshedHeaderStates.reduce((sum, current) => sum + current.state.selectedCount, 0) === 1) {
+  const refreshedSelectedCount = refreshedHeaderStates
+    .reduce((sum, current) => sum + current.state.selectedCount, 0);
+  const refreshedControlCount = refreshedHeaderStates
+    .reduce((sum, current) => sum + current.state.controlCount, 0);
+  if (refreshedSelectedCount === 1 && refreshedControlCount === 1) {
     await page.keyboard.press('Escape').catch(() => undefined);
     return;
   }

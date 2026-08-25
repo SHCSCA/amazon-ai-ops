@@ -11,7 +11,7 @@
 - 分析精确绑定最新 evidence package：`batch_20260825055104954_vk66s3`、import `import_batch_20260825055104954_vk66s3`、产品 `B0GVRVD4PK`、8/8 报表、434 指标行、有效期至 `2026-08-27T05:54:03.283Z`；来源为 `rule_ai`。
 - 7 条真实建议中只有 4 条进入不可变策略快照，全部为 `lower_bid`，但都没有稳定广告对象 authority/id/revision，且降幅分别为 19.6507%、26.1044%、20% 与 20.2586%，全部超过启用策略单次 10% 上限。正式应用已封存分析但未生成批准任务；当前任务保持 `active / fact`。
 - 分析后正式库只读回读：latest recommendations=7、proposal snapshots=4、approval tasks=0；`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全为 0。当前没有可向操作者请求批准的合格候选，Task 8B 继续安全阻断。
-- 本轮应用实屏发现候选卡把 `MISSING_STABLE_AD_ENTITY · CHANGE_LIMIT_EXCEEDED` 直接显示在普通界面；已用精确映射改为“缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试”和“建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试”，底层安全码与授权门不变。定点断言修前 `1 failed / 12 skipped`、修后 `1 passed / 12 skipped`，desktop typecheck `$ tsc --noEmit` 通过；修复已进入 app content `08390336...4F3A` 的新正式包，待 Package UI 实屏证据闭合。
+- 本轮应用实屏发现候选卡把 `MISSING_STABLE_AD_ENTITY · CHANGE_LIMIT_EXCEEDED` 直接显示在普通界面；已用精确映射改为“缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试”和“建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试”，底层安全码与授权门不变。定点断言修前 `1 failed / 12 skipped`、修后 `1 passed / 12 skipped`，desktop typecheck `$ tsc --noEmit` 通过；修复已进入最终 app content `AD87081C...9502`，待 Package UI 实屏证据闭合。
 - 正式界面复现的“范围保存成功后因页面重挂载又显示未确认”已按用户后续全量修改授权修复：确认签名按当前店铺保存在 renderer session，只有同一日期/店铺/站点/产品/批次继续显示“范围已保存”，范围变化仍回到待确认；Main 持久化与生产安全门未改。
 - 该缺口定点测试先为 `1 failed / 10 skipped`（`operationScopeSignature is not a function`），修后同命令 `1 passed / 10 skipped`；随后 `operation-scope-page.test.ts` 完整 `11/11 passed`、desktop typecheck `$ tsc --noEmit` 通过。
 - 当前 production Renderer 在候选阻断文案修复后复建通过：4735 modules，`index-BbtiQUFp.js` 1,682,858 bytes / SHA-256 `6D5E78535679E112D4DAC2B8696A85E9B1EF0323DDF0A75C38A99FF5C442D9E5`；`s is not defined` 与 `DAILY MISSION CONTROL` 精确命中为 0。`UNKNOWN`/`set_keyword_bid` 仍存在于内部映射和折叠诊断实现，普通候选卡的两个实测阻断码已由定点反向断言证明不会裸露。
@@ -22,13 +22,18 @@
 - 新 ZIP 已真实解压启动通过，解压 EXE 与 win-unpacked SHA-256 同为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，测试进程停止、临时目录清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787643178693.json`。
 - 新包 `pnpm run smoke:business-ui-current` 再次 exit 0，summary `output/codex-evidence/current-business-ui-smoke-1787643311350.json`：连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 条全部 `passed=true`。正式库随后 `query_only=1` 回读，五张 Ads 执行表与 approval tasks 均为 0，主文件 SHA-256 为 `A12AC8014E643EA0FDA986D2AF0BEAB2EDEC49A0FC8263AF5E9B3893D8F2D3B4`。
 - 本轮候选文案修复、回归断言与三份状态文档已选择性提交为 `05e7457a`，`git push origin master` 成功：`7b121cb4..05e7457a master -> master`；未提交 `output/`、正式库、Profile、报表、EXE/ZIP 或既有未跟踪目录。
+- 最终核心六文件复验首次为 `147 passed / 1 failed`：Ads 顶部店铺切换用例期望 `JF-US 美国`、实际仍为 `FT-US 美国`。根因是打开下拉后旧逻辑仅看到菜单选项唯一匹配就提前返回，没有同时证明顶部控件已唯一收敛；这正是多店铺动态匹配主链缺口，不是测试问题。
+- 最小修复不写死任何店铺：下拉打开后的提前成功必须同时满足“期望标签唯一命中”和“顶部控件总数唯一”，否则继续点击动态目标并回读。定点修后 `1 passed / 46 skipped`；同一原始六文件命令最终 `6 files / 148 passed / skipped=0`，desktop typecheck `$ tsc --noEmit` 通过。
+- Main 修复使 `-80` 的 app content 谱系失效，旧 resume receipt 不再使用。最终 Windows 七步重建 generatedAt=`2026-08-25T07:50:32.712Z`、七步 status=0、`freshCurrentRun=true`、native bindings `unchangedExact=true`；installer `96EB004032E7FEDAA0C353CC0DAE8699C6637DCD17D7D01C41567FBE27EF9686`、portable `6B0F7BDB9D27FA53098F1D98ADCE2D71B9F5BCBAD5AB568BEA3D02D65B7C7602`、folder ZIP `E951A8ABDD68A9221C3B98E6848F0A3A4F0D0D8E8CFB7CB1F1733CD05B67FA47`、app content `AD87081CB0CFB375E1022BA9F0872E3DBB87F6C77EEF4838AF14C68B3F499502`。
+- 最终 ZIP 真解压启动通过，解压 EXE 与 win-unpacked 同为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，测试进程和临时目录已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787644255866.json`。最终 7 类 business smoke 也再次全绿，summary `output/codex-evidence/current-business-ui-smoke-1787644382680.json`。
+- 全新 `operator-core-20260825-81` authority 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`；隔离 Profile 已用当前正式库 readonly/query-only online backup 建立（1874/1874 pages）并通过 current-user/SYSTEM/Administrators 三主体 ACL。该 run group 尚未启动，等待操作者明确在窗口前后只进行一次 60 秒可见手输。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
 
-- 当前新包 Package UI 哈希更新为 EXE `67DC2A...5E89` / app content `08390336...4F3A`。全新 `operator-core-20260825-80` Profile 使用正式库 readonly/query-only online backup 建立（1874/1874 pages），authority receipt `production-authority-selection-operator-core-20260825-80.json` 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`。
-- `-80` 首次 60 秒可见准备期未检测到操作者提交，严格以 runs=0 / `RUN_FAILED` 关闭；失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260825-80/manifests/2026-08-25T07-30-24-193Z-2026-08-25T07-30-24-193Z-6e5f1c62-2622-4c34-93a2-0737cec467fa.json`，不是连接失败或业务通过。官方 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，一次性 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260825-80/D2070644971D876A4648745BD07A855B8E8155DD50B435E7CD313B7EC203F57B.json`。
+- `operator-core-20260825-81` 已取代 `-80`：当前绑定 EXE `67DC2A...5E89` / app content `AD87081C...9502`，Profile、authority 与正式库备份均已准备，尚未创建 run group 或启动应用。下一步只在操作者确认可立即输入时启动，60 秒未提交即安全停止。
+- 历史 `-80` 首次 60 秒内未检测到操作者提交，严格以 runs=0 关闭；后续 Main 修复改变 app content，因此其 manifest/receipt 只保留失败谱系，不得续跑或晋升。
 
-- 当前正式包身份预检：EXE SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 `F83E7CEA589AF04115C7948745834C3772C1293F56525929191554A00C77FA9C`，5118 files / 544,649,844 bytes。它取代 `operator-core-20260825-79` 绑定的旧 app content，旧 run group 不得续跑或复用。
+- 历史 `-79` 绑定的是更早 app content `F83E7CEA...FA9C`，不得续跑或复用。
 - `operator-core-20260825-78` 在登录提交前因 runner 读取 Electron 身份时遇到瞬时页面导航而失败：`electronApplication.evaluate: Execution context was destroyed`；runs=0，未取得或复用登录证据，正式库未改写。
 - 新增有限身份读取重试，只有 `execution context was destroyed / navigation` 可重试，最多 3 次；其他错误仍立即失败，身份哈希、Profile、正式库与业务门均未放宽。
 - 红测：`pnpm exec vitest run scripts/package-ui-evidence.test.mjs -t "retries a bounded Electron identity read"` 为 1 failed / 204 skipped；修后 `-t "collectElectronIdentity"` 为 4 passed / 203 skipped。
