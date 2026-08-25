@@ -1,5 +1,16 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，准备新鲜首档
+
+- 当前正式包身份预检：EXE SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 `67C1F19552B04963BCC22E0C7DC9F1EA3EADD323467E9652D7BA4A5F7A195BB0`，5118 files / 544,649,353 bytes。
+- `operator-core-20260825-78` 在登录提交前因 runner 读取 Electron 身份时遇到瞬时页面导航而失败：`electronApplication.evaluate: Execution context was destroyed`；runs=0，未取得或复用登录证据，正式库未改写。
+- 新增有限身份读取重试，只有 `execution context was destroyed / navigation` 可重试，最多 3 次；其他错误仍立即失败，身份哈希、Profile、正式库与业务门均未放宽。
+- 红测：`pnpm exec vitest run scripts/package-ui-evidence.test.mjs -t "retries a bounded Electron identity read"` 为 1 failed / 204 skipped；修后 `-t "collectElectronIdentity"` 为 4 passed / 203 skipped。
+- 下一步只创建新的隔离 Profile/run group，稳定启动后由操作者在目标应用内手输一次；随后立即用已续费 AI 重采最新数据并重新生成候选。任何 Ads 写入仍需当前、≤10%、可授权候选和操作者对具体变更的单独批准。
+- `operator-core-20260825-79` 首次稳定等待 300 秒仍未检测到提交，runner 安全失败；官方 inspector 随后返回 `RESUME_SAFE / violations=[]`。按检查器原样参数续跑后再次稳定进入登录页，但 60 秒内仍无提交，已由执行者主动停止，不再空等 15 分钟。两次均未形成 run，正式库主文件 SHA-256 仍为 `6A9BA6DDC45CE8783259F55ACA0A11D11BE3BF9B3BE12F03B373FE3DF8C03849`。
+- Package UI 人工提交暂时让出主线；现在先用正式应用保存连接推进最新数据采集和续费后 AI 实测。下次只在操作者明确看到登录窗并可立即输入时续跑，不重建或伪造旧证据。
+- runner 修复完整回归已通过：`pnpm exec vitest run scripts/package-ui-evidence.test.mjs` 为 1 file / 207 tests passed / skipped=0，exit 0；`node --check scripts/package-ui-evidence.js` 同样 exit 0。
+
 ## 当前：2026-08-24 Ads 真实对象只读发现已闭合，建议因竞价漂移安全阻断
 
 - 保存凭证链已在当前正式 AppData 实测：Main-only `encrypted_ready / passwordAvailable=true`，无需 Renderer/执行者读取密码即可恢复 ERP 与 Ads；一次 `ADS_SESSION_NOT_READY` 按原门降级为 ERP ready / Ads attention_required，应用内重置后再次连接得到 ERP/Ads 均 ready。

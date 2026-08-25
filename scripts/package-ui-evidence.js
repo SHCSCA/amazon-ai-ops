@@ -10153,29 +10153,43 @@ async function runOverlayChecks(page, runOptions) {
   return [reportCheck, decisionsCheck, readbackCheck];
 }
 
-async function collectElectronIdentity(electronApp, page) {
-  const mainIdentity = await electronApp.evaluate(
-    ({ app }, envKeys) => ({
-      appName: app.getName(),
-      appPath: app.getAppPath(),
-      appVersion: app.getVersion(),
-      actualExecutablePath: process.execPath,
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      actualUserDataDir: app.getPath('userData'),
-      evidenceMode: process.env[envKeys.evidenceMode] || null,
-      requestedUserDataDir: process.env[envKeys.userDataDir] || null,
-    }),
-    {
-      evidenceMode: EVIDENCE_MODE_ENV,
-      userDataDir: EVIDENCE_USER_DATA_DIR_ENV,
-    },
-  );
-  return {
-    ...mainIdentity,
-    rendererTitle: await page.title(),
-    rendererUrl: page.url(),
-  };
+async function collectElectronIdentity(electronApp, page, options = {}) {
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || 3));
+  const retryIntervalMs = Math.max(0, Number(options.retryIntervalMs ?? 150));
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const mainIdentity = await electronApp.evaluate(
+        ({ app }, envKeys) => ({
+          appName: app.getName(),
+          appPath: app.getAppPath(),
+          appVersion: app.getVersion(),
+          actualExecutablePath: process.execPath,
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          actualUserDataDir: app.getPath('userData'),
+          evidenceMode: process.env[envKeys.evidenceMode] || null,
+          requestedUserDataDir: process.env[envKeys.userDataDir] || null,
+        }),
+        {
+          evidenceMode: EVIDENCE_MODE_ENV,
+          userDataDir: EVIDENCE_USER_DATA_DIR_ENV,
+        },
+      );
+      return {
+        ...mainIdentity,
+        rendererTitle: await page.title(),
+        rendererUrl: page.url(),
+      };
+    } catch (error) {
+      if (attempt >= maxAttempts || !isRetryableLoginNavigationError(error?.message || error)) {
+        throw error;
+      }
+      if (retryIntervalMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
+      }
+    }
+  }
+  throw new Error('Package UI Electron identity collection exhausted without a result.');
 }
 
 function readPackageUiSchedulerAudit(userDataDir) {
