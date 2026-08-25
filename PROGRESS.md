@@ -27,6 +27,7 @@
 - Main 修复使 `-80` 的 app content 谱系失效，旧 resume receipt 不再使用。最终 Windows 七步重建 generatedAt=`2026-08-25T07:50:32.712Z`、七步 status=0、`freshCurrentRun=true`、native bindings `unchangedExact=true`；installer `96EB004032E7FEDAA0C353CC0DAE8699C6637DCD17D7D01C41567FBE27EF9686`、portable `6B0F7BDB9D27FA53098F1D98ADCE2D71B9F5BCBAD5AB568BEA3D02D65B7C7602`、folder ZIP `E951A8ABDD68A9221C3B98E6848F0A3A4F0D0D8E8CFB7CB1F1733CD05B67FA47`、app content `AD87081CB0CFB375E1022BA9F0872E3DBB87F6C77EEF4838AF14C68B3F499502`。
 - 最终 ZIP 真解压启动通过，解压 EXE 与 win-unpacked 同为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，测试进程和临时目录已清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787644255866.json`。最终 7 类 business smoke 也再次全绿，summary `output/codex-evidence/current-business-ui-smoke-1787644382680.json`。
 - 全新 `operator-core-20260825-81` authority 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`；隔离 Profile 已用当前正式库 readonly/query-only online backup 建立（1874/1874 pages）并通过 current-user/SYSTEM/Administrators 三主体 ACL。该 run group 尚未启动，等待操作者明确在窗口前后只进行一次 60 秒可见手输。
+- Ads 多店铺顶部回读修复及当前状态文档已选择性提交 `e60ba8f6` 并推送：`d02f0e24..e60ba8f6 master -> master`；最终包、Profile、正式库、`output/` 与既有未跟踪目录均未进入 Git。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
 
