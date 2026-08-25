@@ -49,6 +49,28 @@ export function normalizeOperationScopeDraft(draft: OperationScope): OperationSc
   };
 }
 
+export function operationScopeSignature(scope: OperationScope): string {
+  const normalized = normalizeOperationScopeDraft(scope);
+  return JSON.stringify([
+    normalized.dateFrom,
+    normalized.dateTo,
+    normalized.storeName,
+    normalized.marketplaceCode,
+    normalized.asin || '',
+    normalized.batchId || '',
+    normalized.currency,
+  ]);
+}
+
+export function resolveOperationScopeSaveStatus(
+  liveStatus: OperationScopeSaveStatus,
+  scope: OperationScope,
+  confirmedSignature: string,
+): OperationScopeSaveStatus {
+  if (liveStatus !== 'idle') return liveStatus;
+  return confirmedSignature && confirmedSignature === operationScopeSignature(scope) ? 'saved' : 'idle';
+}
+
 export function buildOperationScopeSelectOptions(current: string | undefined, candidates: Array<string | undefined | null>): string[] {
   const seen = new Set<string>();
   return [current, ...candidates]
@@ -127,6 +149,14 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<OperationScope>(scope);
   const [saveStatus, setSaveStatus] = useState<OperationScopeSaveStatus>('idle');
+  const confirmationStorageKey = `amazon-ai-ops:confirmed-operation-scope:${storeContext.storeId}`;
+  const [confirmedScopeSignature, setConfirmedScopeSignature] = useState(() => {
+    try {
+      return window.sessionStorage.getItem(confirmationStorageKey) || '';
+    } catch {
+      return '';
+    }
+  });
   const [saveError, setSaveError] = useState('');
   const [collectionJobs, setCollectionJobs] = useState<LingxingCollectionJobSnapshot[]>([]);
   const [collectionJobsLoading, setCollectionJobsLoading] = useState(false);
@@ -190,18 +220,27 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
         ? 'import'
         : 'collect',
   };
+  const visibleSaveStatus = resolveOperationScopeSaveStatus(saveStatus, scope, confirmedScopeSignature);
   const taskState = buildOperationScopeTaskState({
     realReportCount,
     importedReportTypeCount,
     importedRows,
     activeBatch,
-    saveStatus,
+    saveStatus: visibleSaveStatus,
     readiness: effectiveReadiness,
   });
 
   useEffect(() => {
     if (!editing) setDraft(scope);
   }, [editing, scope]);
+
+  useEffect(() => {
+    try {
+      setConfirmedScopeSignature(window.sessionStorage.getItem(confirmationStorageKey) || '');
+    } catch {
+      setConfirmedScopeSignature('');
+    }
+  }, [confirmationStorageKey]);
 
   useEffect(() => {
     const sequence = ++collectionJobsLoadSequenceRef.current;
@@ -269,6 +308,13 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
       setScope(normalizedDraft);
       setDraft(normalizedDraft);
       setEditing(false);
+      const confirmedSignature = operationScopeSignature(normalizedDraft);
+      try {
+        window.sessionStorage.setItem(confirmationStorageKey, confirmedSignature);
+      } catch {
+        // The scope is already persisted through Main; session feedback is best-effort only.
+      }
+      setConfirmedScopeSignature(confirmedSignature);
       setSaveStatus('saved');
       window.dispatchEvent(new CustomEvent('business-ui:data-updated'));
     } catch (caught) {
@@ -311,25 +357,25 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
           },
           { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute), disabled: taskState.primaryActionBusy },
         ]}
-        status={saveStatus !== 'idle'
-          ? operationScopeSaveFeedbackLabel(saveStatus)
+        status={visibleSaveStatus !== 'idle'
+          ? operationScopeSaveFeedbackLabel(visibleSaveStatus)
           : collectionJobsLoading
             ? '核对生产血缘中'
             : canQuantify
-              ? operationScopeSaveFeedbackLabel(saveStatus)
+              ? operationScopeSaveFeedbackLabel(visibleSaveStatus)
               : '生产血缘未闭合'}
         title={taskState.title}
         tone={canQuantify ? 'confirmed' : taskState.tone === 'warning' ? 'attention' : 'blocked'}
       />
 
-      {saveStatus !== 'idle' && (
+      {visibleSaveStatus !== 'idle' && (
         <p
           aria-live="polite"
           className="operation-scope-save-feedback"
-          data-tone={saveStatus === 'saved' ? 'success' : saveStatus === 'error' ? 'error' : 'pending'}
-          role={saveStatus === 'error' ? 'alert' : 'status'}
+          data-tone={visibleSaveStatus === 'saved' ? 'success' : visibleSaveStatus === 'error' ? 'error' : 'pending'}
+          role={visibleSaveStatus === 'error' ? 'alert' : 'status'}
         >
-          {operationScopeSaveFeedbackLabel(saveStatus)}
+          {operationScopeSaveFeedbackLabel(visibleSaveStatus)}
         </p>
       )}
 
@@ -416,7 +462,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
           className="operation-scope-confirm-panel"
           title="范围字段确认"
           tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}
-          titleAccessory={<StatusPill tone={taskState.tone}>{operationScopeSaveFeedbackLabel(saveStatus)}</StatusPill>}
+          titleAccessory={<StatusPill tone={taskState.tone}>{operationScopeSaveFeedbackLabel(visibleSaveStatus)}</StatusPill>}
         >
           <div className="operation-scope-card">
             <div className="operation-scope-fields" aria-label="当前范围字段">

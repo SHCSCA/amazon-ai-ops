@@ -7,6 +7,8 @@
 - 导入后正式库只读核对：`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全部为 0；本轮没有广告写入。
 - 已通过正式应用把当前店铺工作范围保存为 `JF-US / US / USD / 2026-08-10 至 2026-08-23 / batch=new`；只读回读 `operation_scope:store-8cf446cb-6c63-4688-807c-8621248e6809` 与界面 8/8、1961 行一致。范围切换门已关闭，旧批次候选继续作废。
 - 当前下游仍只有一条绑定旧批次的运营任务；已打开“新建运营任务”，下一步选择上述最新 completed 批次、已启用策略和现有产品，再运行续费后的真实 AI 分析。正式库现有 analysis evidence/action batch 仍各 1 条、proposal 3 条，均属于旧批次；五张 Ads 执行表仍为 0。
+- 正式界面复现的“范围保存成功后因页面重挂载又显示未确认”已按用户后续全量修改授权修复：确认签名按当前店铺保存在 renderer session，只有同一日期/店铺/站点/产品/批次继续显示“范围已保存”，范围变化仍回到待确认；Main 持久化与生产安全门未改。
+- 该缺口定点测试先为 `1 failed / 10 skipped`（`operationScopeSignature is not a function`），修后同命令 `1 passed / 10 skipped`；随后 `operation-scope-page.test.ts` 完整 `11/11 passed`、desktop typecheck `$ tsc --noEmit` 通过。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，准备新鲜首档
 

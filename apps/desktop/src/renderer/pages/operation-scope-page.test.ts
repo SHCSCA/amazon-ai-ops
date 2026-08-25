@@ -4,7 +4,9 @@ import {
   buildOperationScopeSelectOptions,
   buildOperationScopeTaskState,
   normalizeOperationScopeDraft,
+  operationScopeSignature,
   operationScopeSaveFeedbackLabel,
+  resolveOperationScopeSaveStatus,
 } from './operation-scope-page';
 
 describe('operation scope task state', () => {
@@ -94,6 +96,23 @@ describe('operation scope task state', () => {
     expect(operationScopeSaveFeedbackLabel('saving')).toBe('正在保存范围...');
     expect(operationScopeSaveFeedbackLabel('saved')).toBe('范围已保存，后续页面会按此读取');
     expect(operationScopeSaveFeedbackLabel('error')).toBe('范围保存失败，请展开处理');
+  });
+
+  it('keeps a successfully confirmed scope visibly saved across page remounts', () => {
+    const scope = {
+      dateFrom: '2026-08-10',
+      dateTo: '2026-08-23',
+      storeName: 'JF-US',
+      marketplaceCode: 'US',
+      currency: 'USD' as const,
+      batchId: 'batch_20260825055104954_vk66s3',
+    };
+    const confirmedSignature = operationScopeSignature(scope);
+
+    expect(resolveOperationScopeSaveStatus('idle', scope, confirmedSignature)).toBe('saved');
+    expect(resolveOperationScopeSaveStatus('saving', scope, confirmedSignature)).toBe('saving');
+    expect(resolveOperationScopeSaveStatus('error', scope, confirmedSignature)).toBe('error');
+    expect(resolveOperationScopeSaveStatus('idle', { ...scope, dateTo: '2026-08-24' }, confirmedSignature)).toBe('idle');
   });
 
   it('normalizes draft scope before saving it to the shared operation scope', () => {
