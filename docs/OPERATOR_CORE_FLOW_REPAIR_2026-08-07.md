@@ -1,16 +1,16 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-25 最新状态：新业务日 8/8 已导入，Package UI runner 竞态已关闭
+## 2026-08-25 最新状态：新业务日 8/8 与真实 AI 已闭合，Task 8B 安全阻断
 
-- 正式应用使用 Main-only 保存连接完成新业务日采集：`batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，八类报表全部 `downloaded`、作业 `completed`；没有读取或代填密码、Cookie 或 Profile。
-- 正式导入 `import_batch_20260825055104954_vk66s3` 为 8 source files / 1961 metric rows / 8 reconciliations，状态 `completed`。采集与导入主链已再次在最新业务日闭合。
-- 正式应用已把工作范围保存并回读为 `JF-US / US / USD / 2026-08-10 至 2026-08-23`，界面同时显示 8/8、1961 行；旧批次候选继续作废。正式库只读核对仍为 `approval_tasks=0`，五张 `ad_execution_*` 表全部为 0；当前还需新建绑定该 completed 批次的运营任务并完成续费后 AI 实测。
-- 范围确认反馈已改为当前店铺 renderer session 内的范围签名：同一已保存范围跨页面重挂载继续显示“范围已保存”，任一范围字段变化仍回到待确认；定点 `1 RED → 1 GREEN`，该页完整 11/11 与 desktop typecheck 通过，未改 Main 持久化或 Ads 门。
-- 当前生产 Renderer `index-D7OgIIFn.js` SHA-256 为 `599C069CC2513AEB2FD5F5A1BBBC4D48E51881CC563AF111AF8C73B02625EF6A`，四类技术裸文案与 `s is not defined` 均为 0；current business smoke 7 条 flowCoverage 全部通过，正式库 Ads 五表继续为 0。该 Renderer 已进入新 Windows 包。
-- 新包七步构建与 folder ZIP 启动均通过：installer `55B63A9132D1054173D4D9ED76FA25C073226485515FFCB04DFB747B9D6F417C`、portable `2718977FB18D2C4C56F91BD1B1ED9493156B384771C06856608501933C2AFA7D`、folder ZIP `BCAF1D926E902BE9668AE6A858643BBB7334E67028FD34791C730914B2748272`；EXE `67DC2A...5E89`、app content `F83E7CEA589AF04115C7948745834C3772C1293F56525929191554A00C77FA9C`（5118 files / 544,649,844 bytes）。旧 `-79` 不得续跑，下一 Package UI 必须绑定当前新包。
-- `operator-core-20260825-78` 暴露 Electron 启动导航期间身份读取竞态；有限重试修复只接受 navigation execution-context 错误，其他身份错误仍立即失败。
-- runner 回归为定点 RED → 4/4 GREEN，随后全文件 207/207 passed、skipped=0；修复已提交并推送 `993654ab`。`operator-core-20260825-79` 已稳定显示登录页但未检测到操作者提交，当前 Package UI 仍缺通过 manifest，不能标记 `APP_READY`。
-- 连接、采集、策略、运营任务、经营实验、Windows build、7 类业务 smoke 与文件夹 ZIP 的既有通过证据保持有效；当前剩余为新批次范围/AI/具体批准后的 Task 8B，以及当前哈希 Package UI 三档。
+- 正式应用使用 Main-only 保存连接完成新业务日采集：`batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，八类报表全部 `downloaded`、作业 `completed`；正式导入 `import_batch_20260825055104954_vk66s3` 为 8 source files / 1961 metric rows / 8 reconciliations，状态 `completed`。没有读取或代填密码、Cookie 或 Profile。
+- 正式应用已保存并回读工作范围 `JF-US / US / USD / 2026-08-10 至 2026-08-23`，随后新建运营任务 `2026-08-10 至 2026-08-23 数据分析`，精确绑定上述 completed 批次、启用策略版本 1 与产品 `B0GVRVD4PK`。
+- 续费后的真实 AI 分析成功：最新 `ai_diagnosis_runs` 为 `success=1 / model=deepseek-v4-flash / formal_recommendation_count=7`；同轮 1 次诊断与 7 次动作说明调用全部成功，来源为 `rule_ai`，不再是 HTTP 402 或 `rule_fallback`。
+- 7 条建议中只有 4 条进入不可变策略快照。它们均为 `lower_bid`，但稳定广告对象 authority/id/revision 全为空，且降幅为 19.6507%–26.1044%，全部超过启用策略 10% 上限。approval tasks=0，五张 `ad_execution_*` 表全部为 0；当前没有可请求人工批准的合格候选，Task 8B 必须继续阻断。
+- 实屏发现候选卡裸露两个英文安全码，已精确改为中文原因与下一步，底层安全码和授权门不变；定点回归为 `1 RED → 1 GREEN`，desktop typecheck 通过。当前 Renderer `index-BbtiQUFp.js` SHA-256 为 `6D5E78535679E112D4DAC2B8696A85E9B1EF0323DDF0A75C38A99FF5C442D9E5`，`s is not defined` 为 0。
+- 新 Windows 七步构建通过：installer `A25219E34C569C87C8B8421559B9308698350DB95BC8BE1E65DEF5901C62F018`、portable `345A33A708DE8F183AB6236FB5AEDB9E65B3EF356A9BDEBB96F005BE91418768`、folder ZIP `7B645884BDC530F135C98F868B1D2E97E3F90A8663B6E609157E3A69099F608E`；EXE `67DC2A...5E89`、app content `08390336ED278B5B9825291A7DB74540C5905F4D7E3178A0C25C84B39DE54F3A`。新 ZIP 真解压启动通过，临时进程和目录均清理。
+- 新包 7 类 business UI smoke 再次全部通过，summary 为 `output/codex-evidence/current-business-ui-smoke-1787643311350.json`。随后正式库 `query_only=1` 复核：approval tasks=0、Ads 五表=0、主文件 SHA-256 `A12AC8014E643EA0FDA986D2AF0BEAB2EDEC49A0FC8263AF5E9B3893D8F2D3B4`。
+- Package UI 全新 `operator-core-20260825-80` 已绑定当前包、authority 与 readonly/query-only 隔离 Profile；首次 60 秒内没有操作者提交，严格以 runs=0 关闭。官方 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact` 并生成一次性 receipt；下一次只续跑 `-80`，由操作者本人手输一次，不重复构建或前置测试。
+- 当前总体仍为 `APP_NEEDS_WORK / NON_READY`：Package UI 三档尚缺当前通过 manifest；Task 8B 没有当前、稳定对象、≤10% 且经具体批准的候选。不得把真实 AI 成功、build/smoke 或 ZIP 启动冒充 `APP_READY`。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 

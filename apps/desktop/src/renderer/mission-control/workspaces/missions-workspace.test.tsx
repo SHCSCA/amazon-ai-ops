@@ -181,6 +181,8 @@ describe('MissionsWorkspace contracts', () => {
     expect(label).toContain('重试');
     expect(label).not.toMatch(/Main|StoreContext|Authority|revision|POLICY_/i);
     expect(missionAnalysisBlockerLabel('证据尚未满足自动授权条件')).toBe('证据尚未满足自动授权条件');
+    expect(missionAnalysisBlockerLabel('MISSING_STABLE_AD_ENTITY')).toBe('缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试');
+    expect(missionAnalysisBlockerLabel('CHANGE_LIMIT_EXCEEDED')).toBe('建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试');
   });
 
   it('builds immutable authority on create and revision CAS on update', () => {

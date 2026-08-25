@@ -163,6 +163,13 @@ function operatorFacingBlocker(reason: string | null | undefined, subject: strin
 }
 
 export function missionAnalysisBlockerLabel(value: string): string {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'MISSING_STABLE_AD_ENTITY') {
+    return '缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试';
+  }
+  if (normalized === 'CHANGE_LIMIT_EXCEEDED') {
+    return '建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试';
+  }
   return operatorFacingBlocker(value, '策略自动授权');
 }
 
