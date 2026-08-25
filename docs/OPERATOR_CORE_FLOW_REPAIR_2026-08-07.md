@@ -17,6 +17,7 @@
 - runner 修复与状态文档已选择性提交 `a43c0a4b` 并推送到 `origin/master`；证据输出、Profile、正式库、报表及 EXE/ZIP 未进入 Git。
 - 随后只读终审确认最终四类产物哈希、7 类业务 smoke、ZIP 启动、`-83` 包/authority/Profile 谱系均一致；resume receipt 保留未消费、目标进程为 0。由于连续三轮没有新的首档人工手输，任务按阻断规则停止自动重启；用户回复“启动”后只续跑 `-83`。
 - 用户要求继续使用电脑后，再次只在后台完成无窗口复核：Git 起始为 `master=c67b01b4=origin/master`，最终 installer/portable/folder ZIP/win-unpacked EXE 的现场哈希保持一致，7 类 business smoke 与 ZIP 真启动证据仍为 passed。正式库以 readonly + `query_only=1` 打开后，approval tasks 与五张 `ad_execution_*` 表仍全为 0，主文件 SHA-256、大小及 mtime 前后不变；`-83` 的单次 resume receipt 未消费。没有启动、点击或操控 Amazon AI Ops、Chrome 或其他桌面应用。
+- 同一无窗口审计直接从正式库完成业务对象矩阵：ERP/Ads provider 均为 ready；最新业务日作业为 completed、8/8 downloaded；最新导入为 completed、8 files、1961 metrics、8 reconciliations；当前店铺存在 enabled 策略版本、active/fact 运营任务和 draft 经营实验。该矩阵证明连接、采集、导入、策略、运营任务、经营实验已经真实落库；剩余唯一产品验收门仍是与当前包绑定的 Package UI 三档通过 manifest。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 
