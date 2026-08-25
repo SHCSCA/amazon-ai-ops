@@ -9,6 +9,7 @@
 
 ## 当前：2026-08-25 Package UI 仅待新的可见手输提交
 
+- 当前新包已更新为 EXE `67DC2A...5E89` / app content `F83E7CEA...FA9C`，Windows 七步、7 类业务 smoke 与 folder ZIP 启动均通过；下一次 Package UI 必须使用该新哈希和新隔离 Profile/run group，旧 `-79` 因 app content 不同已不可续跑。
 - `operator-core-20260825-78` 未进入登录判定即因 runner 启动导航竞态失败，runs=0；这不是账号、ERP 或 Ads 失败。竞态已完成定点红→绿，失败 run group 不复用。
 - 恢复动作：用相同正式包哈希和正式库只读备份创建新 Profile/run group，确认目标应用窗口稳定后由操作者手输一次。执行者不读取、不代填密码，不操控其他应用。
 - 用户已确认 AI 余额恢复；AI 不再作为已知外部 blocker，但尚需实际调用证明。Task 8B 仍必须先重采并形成当前、变化不超过 10%、human eligible 的 `lower_bid`，再对具体动作取得单独批准；此前 `$2.51`→当前 `$1.80` 的过期候选继续禁止写入。

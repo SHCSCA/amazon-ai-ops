@@ -9,10 +9,14 @@
 - 当前下游仍只有一条绑定旧批次的运营任务；已打开“新建运营任务”，下一步选择上述最新 completed 批次、已启用策略和现有产品，再运行续费后的真实 AI 分析。正式库现有 analysis evidence/action batch 仍各 1 条、proposal 3 条，均属于旧批次；五张 Ads 执行表仍为 0。
 - 正式界面复现的“范围保存成功后因页面重挂载又显示未确认”已按用户后续全量修改授权修复：确认签名按当前店铺保存在 renderer session，只有同一日期/店铺/站点/产品/批次继续显示“范围已保存”，范围变化仍回到待确认；Main 持久化与生产安全门未改。
 - 该缺口定点测试先为 `1 failed / 10 skipped`（`operationScopeSignature is not a function`），修后同命令 `1 passed / 10 skipped`；随后 `operation-scope-page.test.ts` 完整 `11/11 passed`、desktop typecheck `$ tsc --noEmit` 通过。
+- production Renderer 复建通过：4735 modules，`index-D7OgIIFn.js` 1,682,574 bytes / SHA-256 `599C069CC2513AEB2FD5F5A1BBBC4D48E51881CC563AF111AF8C73B02625EF6A`；`s is not defined`、`DAILY MISSION CONTROL`、裸 `UNKNOWN`、`set_keyword_bid` 精确命中均为 0。
+- `pnpm run smoke:business-ui-current` 通过，summary `output/codex-evidence/current-business-ui-smoke-1787639611845.json` 的连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 条 flowCoverage 全部 `passed=true`；生产采集请求 ID `lx:recreate-full:mt8afakt:375402fc-7a0f-444d-bff1-a875db73`。smoke 后正式库 query_only=1，运营任务仍 1 条旧批次记录，五张 `ad_execution_*` 表仍全部为 0。
+- 含范围确认修复的新 Windows 七步构建通过，generatedAt=`2026-08-25T06:41:39.216Z`、七步 status=0、`freshCurrentRun=true`、native source bindings `unchangedExact=true`。独立哈希：installer `55B63A9132D1054173D4D9ED76FA25C073226485515FFCB04DFB747B9D6F417C`，portable `2718977FB18D2C4C56F91BD1B1ED9493156B384771C06856608501933C2AFA7D`，folder ZIP `BCAF1D926E902BE9668AE6A858643BBB7334E67028FD34791C730914B2748272`，EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`。
+- Package UI hash preflight 为 app content `F83E7CEA589AF04115C7948745834C3772C1293F56525929191554A00C77FA9C`，5118 files / 544,649,844 bytes。新 folder ZIP 真解压启动通过：311,689,190 bytes，解压 EXE 与 win-unpacked 一致，目标窗口及 packaged renderer 就绪、PID 11608 已停止、临时文件清理成功；证据 `output/codex-evidence/folder-zip-launch-smoke-1787640122544.json`。
 
-## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，准备新鲜首档
+## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
 
-- 当前正式包身份预检：EXE SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 `67C1F19552B04963BCC22E0C7DC9F1EA3EADD323467E9652D7BA4A5F7A195BB0`，5118 files / 544,649,353 bytes。
+- 当前正式包身份预检：EXE SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 `F83E7CEA589AF04115C7948745834C3772C1293F56525929191554A00C77FA9C`，5118 files / 544,649,844 bytes。它取代 `operator-core-20260825-79` 绑定的旧 app content，旧 run group 不得续跑或复用。
 - `operator-core-20260825-78` 在登录提交前因 runner 读取 Electron 身份时遇到瞬时页面导航而失败：`electronApplication.evaluate: Execution context was destroyed`；runs=0，未取得或复用登录证据，正式库未改写。
 - 新增有限身份读取重试，只有 `execution context was destroyed / navigation` 可重试，最多 3 次；其他错误仍立即失败，身份哈希、Profile、正式库与业务门均未放宽。
 - 红测：`pnpm exec vitest run scripts/package-ui-evidence.test.mjs -t "retries a bounded Electron identity read"` 为 1 failed / 204 skipped；修后 `-t "collectElectronIdentity"` 为 4 passed / 203 skipped。
