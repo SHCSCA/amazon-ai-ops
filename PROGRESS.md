@@ -21,6 +21,7 @@
 - 候选中文阻断文案已进入新的 Windows 七步构建：generatedAt=`2026-08-25T07:26:00.780Z`、七步 status=0、`freshCurrentRun=true`、native bindings `unchangedExact=true`。installer `A25219E34C569C87C8B8421559B9308698350DB95BC8BE1E65DEF5901C62F018`，portable `345A33A708DE8F183AB6236FB5AEDB9E65B3EF356A9BDEBB96F005BE91418768`，folder ZIP `7B645884BDC530F135C98F868B1D2E97E3F90A8663B6E609157E3A69099F608E`，app content `08390336ED278B5B9825291A7DB74540C5905F4D7E3178A0C25C84B39DE54F3A`（5118 files / 544,650,128 bytes）。
 - 新 ZIP 已真实解压启动通过，解压 EXE 与 win-unpacked SHA-256 同为 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，测试进程停止、临时目录清理；证据 `output/codex-evidence/folder-zip-launch-smoke-1787643178693.json`。
 - 新包 `pnpm run smoke:business-ui-current` 再次 exit 0，summary `output/codex-evidence/current-business-ui-smoke-1787643311350.json`：连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 条全部 `passed=true`。正式库随后 `query_only=1` 回读，五张 Ads 执行表与 approval tasks 均为 0，主文件 SHA-256 为 `A12AC8014E643EA0FDA986D2AF0BEAB2EDEC49A0FC8263AF5E9B3893D8F2D3B4`。
+- 本轮候选文案修复、回归断言与三份状态文档已选择性提交为 `05e7457a`，`git push origin master` 成功：`7b121cb4..05e7457a master -> master`；未提交 `output/`、正式库、Profile、报表、EXE/ZIP 或既有未跟踪目录。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
 
