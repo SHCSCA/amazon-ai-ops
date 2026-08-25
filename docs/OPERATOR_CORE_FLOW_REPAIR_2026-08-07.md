@@ -14,6 +14,7 @@
 - Main 修复使 `-80` 谱系失效。最终包已重建：installer `96EB004032E7FEDAA0C353CC0DAE8699C6637DCD17D7D01C41567FBE27EF9686`、portable `6B0F7BDB9D27FA53098F1D98ADCE2D71B9F5BCBAD5AB568BEA3D02D65B7C7602`、folder ZIP `E951A8ABDD68A9221C3B98E6848F0A3A4F0D0D8E8CFB7CB1F1733CD05B67FA47`、app content `AD87081CB0CFB375E1022BA9F0872E3DBB87F6C77EEF4838AF14C68B3F499502`。ZIP 真启动与最终 7 类业务 smoke 均通过。
 - `operator-core-20260825-81` 已收到操作者本次手输，隔离库随后回读 ERP/Ads 均 ready，但 Ads ready 比 60 秒 authorization 截止晚约 3 秒，因此 manifest 严格失败。resume 又暴露 runner 把工作区连接状态卡误判为登录页；新增回归修前 `1 failed / 207 skipped`，修后完整 runner `208/208`，fresh typed 及 Main attestation 门未放宽。
 - `-82` 因误复用被写入的旧 Profile，在启动前被 `PROFILE_DATABASE_HASH_MISMATCH` 安全拒绝。全新 `-83` 已用正式库 readonly/query-only online backup 建立（1874/1874 pages、logical SHA-256 `16642C...34EBF2`、三主体 ACL、authority `SELECTED_SCHEMA_READY`），但首次 60 秒 preparation 无操作者提交而安全关闭；官方 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`。当前总体仍为 `APP_NEEDS_WORK / NON_READY`：Package UI 三档尚缺当前通过 manifest；Task 8B 没有当前、稳定对象、≤10% 且经具体批准的候选。
+- runner 修复与状态文档已选择性提交 `a43c0a4b` 并推送到 `origin/master`；证据输出、Profile、正式库、报表及 EXE/ZIP 未进入 Git。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 

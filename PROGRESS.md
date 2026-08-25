@@ -30,6 +30,7 @@
 - 随后的 resume 暴露 Package UI runner 误判：工作区“当前店铺外部连接”卡仍保留 `[data-login-connection-status]`，旧逻辑把它当成登录页，导致已显示“ERP 与 Ads 已连接”仍停在 preparation。新增用例修前 `1 failed / 207 skipped`，修后定点通过；完整 `scripts/package-ui-evidence.test.mjs` 为 `208/208 passed`。实现只在 Main 的非秘密 session attestation 已满足 ERP/Ads ready 时进入 authorization，后续 fresh typed proof 校验没有放宽。
 - `operator-core-20260825-82` 因误复用已发生登录写入的 `-81` Profile，被 `PROFILE_DATABASE_HASH_MISMATCH` 在启动前安全拒绝；没有启动应用。此错误流程不再复用。
 - 全新 `operator-core-20260825-83` 已从正式库重新执行 readonly/query-only online backup：1874/1874 pages，逻辑 SHA-256 `16642C58384461A0AFAB3D11A5A39FA52DF9918CD89CCC7F2B5343517A34EBF2`，ACL 精确为当前用户/SYSTEM/Administrators；authority receipt 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`。首次 60 秒 preparation 未检测到操作者提交，严格失败关闭；正式库主文件仍为 `A12AC801...D3B4`，approval tasks 与 Ads 五表全部为 0。官方只读 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，下一次只续跑 `-83`。
+- runner 修复、回归断言与当前三份状态文档已选择性提交为 `a43c0a4b`，`git push origin master` 成功：`77d3a4c7..a43c0a4b master -> master`；本地 `output/`、隔离 Profile、正式库、报表与 Windows 产物均未提交。
 - Ads 多店铺顶部回读修复及当前状态文档已选择性提交 `e60ba8f6` 并推送：`d02f0e24..e60ba8f6 master -> master`；最终包、Profile、正式库、`output/` 与既有未跟踪目录均未进入 Git。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
