@@ -1,5 +1,11 @@
 # BLOCKED — 2026-08-07
 
+## 当前：2026-08-25 最新 8/8 已关闭，等待范围切换与 AI 实测
+
+- 最新 `2026-08-10 至 2026-08-23` 已完成 8/8 下载与正式导入（8 files / 1961 metrics / 8 reconciliations），采集与导入不再是 blocker。
+- 当前 operation scope 仍绑定上一批；在应用切换到新 completed 批次前，禁止沿用旧分析结果解除 Task 8B。用户已确认 AI 续费，但仍需当前批次的真实 AI 调用证明。
+- Ads 五张执行表继续为 0；只有新批次产生当前、≤10%、human eligible 的具体 `lower_bid`，并由操作者对该对象和金额单独批准后，才允许进入 Task 8B。
+
 ## 当前：2026-08-25 Package UI 仅待新的可见手输提交
 
 - `operator-core-20260825-78` 未进入登录判定即因 runner 启动导航竞态失败，runs=0；这不是账号、ERP 或 Ads 失败。竞态已完成定点红→绿，失败 run group 不复用。
@@ -15,7 +21,7 @@
 - 建议详情的只读识别入口已进入正式 Windows 新包，只会填表，不会自动绑定/批准/执行。
 - DeepSeek 402 与策略 10% 上限仍独立存在：即使对象身份发现成功，当前 rule_fallback/超限候选也不能自动批准或执行。五张 Ads 写入表必须继续为 0。
 - Windows 新包、7 类业务 smoke 与 folder ZIP 启动现已通过；仍缺绑定新包哈希的 Package UI manifest。按“减少测试、不要重复登录”要求本轮未再启动强制 fresh typed-and-saved 的 Package UI 首档；旧 manifest 不得复用。恢复条件是操作者确认进行最后一次当前包可见登录验收。
-- Git 推送被本机到 GitHub 的网络重置阻断：本地提交 `1b2eca14` 已生成，但 `git push origin master` 返回 `Recv failure: Connection was reset`。恢复条件是 github.com:443 连通后执行一次推送；未把本地提交冒充远端已更新。
+- Git 推送阻断已于 2026-08-25 关闭：`git push origin master` 成功把 `2a7e3674..993654ab` 推到远端，包含此前本地积压提交；不再列为当前 blocker。
 
 ## 当前：2026-08-24 8/8、正式导入与下游业务实例已关闭，剩余为当前包验收和 Task 8B 授权事实门
 

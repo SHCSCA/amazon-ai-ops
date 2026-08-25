@@ -1,5 +1,12 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 当前：2026-08-25 最新业务日 8/8 已真实采集并导入
+
+- 正式应用保存连接已恢复为 `lingxing=ready / amazon_ads=ready`，未读取或代填密码；最新作业 `batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，8 类 checkpoint 全部为 `downloaded`，作业 `completed`。
+- 同批次正式导入 `import_batch_20260825055104954_vk66s3` 已 `completed`：source files=8、metric rows=1961、reconciliations=8、completedAt=`2026-08-25T05:54:03.283Z`。
+- 导入后正式库只读核对：`ad_execution_batches/jobs/events/evidence/domain_reconciliations` 五表仍全部为 0；本轮没有广告写入。
+- 当前工作范围仍指向上一批 `2026-08-09 至 2026-08-22`，下一步必须先通过应用范围接口切换到新 completed 批次，再运行续费后 AI 分析；不得把旧范围的候选当作当前建议。
+
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，准备新鲜首档
 
 - 当前正式包身份预检：EXE SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content SHA-256 `67C1F19552B04963BCC22E0C7DC9F1EA3EADD323467E9652D7BA4A5F7A195BB0`，5118 files / 544,649,353 bytes。
@@ -10,6 +17,7 @@
 - `operator-core-20260825-79` 首次稳定等待 300 秒仍未检测到提交，runner 安全失败；官方 inspector 随后返回 `RESUME_SAFE / violations=[]`。按检查器原样参数续跑后再次稳定进入登录页，但 60 秒内仍无提交，已由执行者主动停止，不再空等 15 分钟。两次均未形成 run，正式库主文件 SHA-256 仍为 `6A9BA6DDC45CE8783259F55ACA0A11D11BE3BF9B3BE12F03B373FE3DF8C03849`。
 - Package UI 人工提交暂时让出主线；现在先用正式应用保存连接推进最新数据采集和续费后 AI 实测。下次只在操作者明确看到登录窗并可立即输入时续跑，不重建或伪造旧证据。
 - runner 修复完整回归已通过：`pnpm exec vitest run scripts/package-ui-evidence.test.mjs` 为 1 file / 207 tests passed / skipped=0，exit 0；`node --check scripts/package-ui-evidence.js` 同样 exit 0。
+- runner 修复与本次状态文档已提交为 `993654ab`，`git push origin master` 成功：`2a7e3674..993654ab master -> master`；此前本地积压的 `1b2eca14`、`060dc764` 也已随本次推送进入远端。
 
 ## 当前：2026-08-24 Ads 真实对象只读发现已闭合，建议因竞价漂移安全阻断
 
