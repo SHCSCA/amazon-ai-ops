@@ -10,13 +10,16 @@
 - 当前正式应用候选卡裸露阻断码的源码缺口已完成精确中文映射与红→绿，并进入最终 app content `AD87081C...9502`；底层安全码、审批门不变。尚待当前 Package UI 通过 manifest 提供新包实屏证据，确认前不得复用旧截图。
 - “范围已保存”重挂载反馈缺口已完成红→绿、该页 11/11、desktop typecheck 和最终 Windows 重建，不再列为 blocker；尚待同一次 Package UI 实屏证据闭合。
 
-## 当前：2026-08-25 Package UI 仅待新的可见手输提交
+## 当前：2026-08-25 Package UI runner 已修，仍待 `-83` 的可见手输提交
 
 - 当前最终包为 EXE `67DC2A...5E89` / app content `AD87081C...9502`，最终核心六文件 `148/148`、typecheck、Windows 七步、7 类业务 smoke 与 folder ZIP 真启动全部通过。
-- `-80` 因后续 Ads 多店铺切换 Main 修复而谱系失效，不得使用其 resume receipt。全新 `operator-core-20260825-81` authority 与合规隔离 Profile 已准备但尚未启动；唯一人工前置仍是操作者确认在窗口前后，本人在 60 秒内完成一次可见手输提交。
+- `-80` 因后续 Ads 多店铺切换 Main 修复而谱系失效，不得使用其 resume receipt。`-81` 已收到手输并最终形成 ERP/Ads ready，但 Ads ready 比 60 秒授权阶段截止晚约 3 秒，因此该 manifest 合法失败，不能晋升。
+- `-81` 的 resume 发现 runner 会把已登录工作区内仍可见的连接状态卡误判成登录页；该缺口已完成 `1 RED → 1 GREEN`，完整 Package UI runner 文件 `208/208`。fresh typed-and-saved、Main session attestation、正式库及 Ads 写入门均未放宽。
+- `-82` 因复用已经被 `-81` 写入的隔离 Profile，被启动前 provenance 门以 `PROFILE_DATABASE_HASH_MISMATCH` 拒绝，不是产品登录失败。全新 `-83` 已用正式库 readonly/query-only 在线备份重新建立且 logical hash/ACL/authority 均通过。
+- `-83` 首次 60 秒 preparation 内没有检测到提交，已安全关闭；官方只读 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`。当前唯一人工前置仍是操作者在 resume 后本人完成本次可见手输提交。执行者不读取、不代填密码，也不以保存凭证替代首档证明。
 - 历史 `-80` 曾绑定 app content `08390336...4F3A` 并因 60 秒内没有操作者提交而 runs=0 安全关闭；后续 Main 修复已使其 resume receipt 失效。
 - `operator-core-20260825-78` 未进入登录判定即因 runner 启动导航竞态失败，runs=0；这不是账号、ERP 或 Ads 失败。竞态已完成定点红→绿，失败 run group 不复用。
-- 恢复动作：操作者明确在窗口前后启动全新 `-81`，目标应用窗口稳定后由操作者手输一次。执行者不读取、不代填密码，不操控其他应用。
+- 恢复动作：官方只读 inspector 确认 `-83` 为 `RESUME_SAFE` 后，仅续跑该 run group；目标应用窗口稳定后由操作者手输一次。执行者不读取、不代填密码，不操控其他应用。
 - AI 余额恢复已由真实成功调用证明，不再是外部 blocker。Task 8B 仍必须形成带稳定对象、变化不超过 10%、human eligible 的 `lower_bid`，再对具体动作取得单独批准；本轮无稳定对象且超限的候选及此前 `$2.51`→当前 `$1.80` 的过期候选都继续禁止写入。
 - 历史 `-79` 两次稳定显示目标登录页但均未检测到提交；它及 `-80` 都不得用于最终包证据。
 

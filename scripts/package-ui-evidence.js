@@ -8882,6 +8882,20 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
       if (workspaceVisible && !loginVisible && phase === 'preparation') {
         transitionTo('authorization');
       }
+      if (workspaceVisible && loginVisible && phase === 'preparation') {
+        const attestationProbe = await runBoundedHandoffProbe(
+          () => collectLoginSessionAttestation(page),
+          phaseDeadline,
+          monotonicNow,
+        );
+        if (attestationProbe.timedOut) return null;
+        if (validateLoginSessionAttestation(
+          attestationProbe.value,
+          'interactive-operator-login',
+        ).passed) {
+          transitionTo('authorization');
+        }
+      }
       if (workspaceVisible && phase === 'authorization') {
         const attestationProbe = await runBoundedHandoffProbe(
           () => collectLoginSessionAttestation(page),

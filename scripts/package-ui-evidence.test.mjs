@@ -2097,6 +2097,47 @@ describe('saved-login navigation retry contract', () => {
     }));
   });
 
+  it('recognizes a ready workspace when the connection workbench status remains visible', async () => {
+    let monotonicTime = 0;
+    const phaseTransitions = [];
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: true,
+        credentialPersistence: 'saved',
+        credentialSource: 'typed',
+        erpSessionReady: true,
+        erpSessionReused: false,
+        ok: true,
+        sessionIdentityVerified: true,
+      }),
+      locator: (selector) => ({
+        getAttribute: async () => '0',
+        isVisible: async () => (
+          selector === 'nav[aria-label="主业务导航"]'
+          || selector === '[data-login-connection-status]'
+        ),
+      }),
+      waitForTimeout: async (waitMs) => {
+        monotonicTime += waitMs;
+      },
+    }, 1_100, {
+      monotonicNow: () => monotonicTime,
+      now: () => Date.parse('2026-08-25T08:05:00.000Z') + monotonicTime,
+      onPhaseChange: (transition) => phaseTransitions.push(transition),
+    });
+
+    expect(phaseTransitions.map(({ phase }) => phase)).toEqual([
+      'preparation',
+      'authorization',
+    ]);
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      credentialSource: 'typed',
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
   it('keeps authorization active when an authority remount drops the local busy button', async () => {
     let monotonicTime = 0;
     const phaseTransitions = [];
