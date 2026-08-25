@@ -38,6 +38,7 @@
 - 用户要求不操控电脑或应用后的恢复审计已连续三次得到同一结论：全部后台可做项已完成，当前只缺 Package UI 首档本次可见手输。第三次复核时 `master=origin/master=5188efff`、`-83` receipt SHA-256 仍为 `2F7B925512AC98AD10A0EDAE2D95FEC0918F63A57C4A43611C8993E2D5EA96F7`、目标应用/Electron 进程为 0、正式库主文件仍为 `A12AC801...D3B4`。目标按规则停在可恢复阻断点，不再自动启动或重复审计；用户明确说“启动 Amazon AI Ops 验收”后从 `-83` 继续。
 - 用户随后明确“启动验证”，本轮只启动 `operator-core-20260825-83` 的目标应用且没有操控鼠标、键盘或其他窗口。runner 正常进入 `100-compact / operator preparation`，60 秒内未检测到手输提交，按用户既定时限发送中止；失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260825-83/manifests/2026-08-25T09-07-24-147Z-2026-08-25T08-24-09-032Z-4538cf66-976d-4667-b3b8-19a9a9d874d6.json`，`runs=0 / RUN_FAILED`，不是 ERP/Ads 产品失败。目标应用/Electron 进程已为 0，protected DB unchanged；正式库 query_only 回读 approval tasks 与 Ads 五表仍全 0，主文件哈希前后均为 `A12AC801...D3B4`。
 - 旧单次 receipt 已由本轮合法消费；官方只读 inspector 随后 exit 0，返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，新一次性 receipt 为 `.../operator-core-20260825-83/F037AB10169832096EA874E1067B32D4524CABD7E40EC4D0310AA46B90A4CED5.json`，文件 SHA-256 `9B23EB86C17EADCCA803AE7E5BACABD8B62172F8D7D1E893B57CDD274D6E1078`。下一次仍只续跑 `-83`，不重建 Profile、不复用旧 receipt。
+- 上次“启动验证”未提交后的恢复审计现已连续三次未出现外部状态变化：`master=origin/master=8a2c3826`，新 receipt 仍存在且 SHA-256 为 `9B23EB86...E1078`，目标应用/Electron 进程为 0。没有可在后台替代 fresh typed submit 的剩余动作，目标再次按规则停为 blocked；不再自动开窗，待用户在屏幕前明确重新启动。
 - Ads 多店铺顶部回读修复及当前状态文档已选择性提交 `e60ba8f6` 并推送：`d02f0e24..e60ba8f6 master -> master`；最终包、Profile、正式库、`output/` 与既有未跟踪目录均未进入 Git。
 
 ## 当前：2026-08-25 Package UI 启动导航竞态已红→绿，当前新包待新鲜首档
