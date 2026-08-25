@@ -17,6 +17,7 @@
 - `-81` 的 resume 发现 runner 会把已登录工作区内仍可见的连接状态卡误判成登录页；该缺口已完成 `1 RED → 1 GREEN`，完整 Package UI runner 文件 `208/208`。fresh typed-and-saved、Main session attestation、正式库及 Ads 写入门均未放宽。
 - `-82` 因复用已经被 `-81` 写入的隔离 Profile，被启动前 provenance 门以 `PROFILE_DATABASE_HASH_MISMATCH` 拒绝，不是产品登录失败。全新 `-83` 已用正式库 readonly/query-only 在线备份重新建立且 logical hash/ACL/authority 均通过。
 - `-83` 首次 60 秒 preparation 内没有检测到提交，已安全关闭；官方只读 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`。当前唯一人工前置仍是操作者在 resume 后本人完成本次可见手输提交。执行者不读取、不代填密码，也不以保存凭证替代首档证明。
+- 同一外部前置已连续三轮未变化，且当前没有其他可安全推进项：resume receipt 仍存在且未消费，Amazon AI Ops 进程数为 0。目标现按阻断规则停止自动续跑；用户回复“启动”即视为恢复，届时使用现存 `-83` receipt，首档手输后自动继续 125% 与宽屏档。
 - 历史 `-80` 曾绑定 app content `08390336...4F3A` 并因 60 秒内没有操作者提交而 runs=0 安全关闭；后续 Main 修复已使其 resume receipt 失效。
 - `operator-core-20260825-78` 未进入登录判定即因 runner 启动导航竞态失败，runs=0；这不是账号、ERP 或 Ads 失败。竞态已完成定点红→绿，失败 run group 不复用。
 - 恢复动作：官方只读 inspector 确认 `-83` 为 `RESUME_SAFE` 后，仅续跑该 run group；目标应用窗口稳定后由操作者手输一次。执行者不读取、不代填密码，不操控其他应用。
