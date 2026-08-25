@@ -16,6 +16,7 @@
 - `-82` 因误复用被写入的旧 Profile，在启动前被 `PROFILE_DATABASE_HASH_MISMATCH` 安全拒绝。全新 `-83` 已用正式库 readonly/query-only online backup 建立（1874/1874 pages、logical SHA-256 `16642C...34EBF2`、三主体 ACL、authority `SELECTED_SCHEMA_READY`），但首次 60 秒 preparation 无操作者提交而安全关闭；官方 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`。当前总体仍为 `APP_NEEDS_WORK / NON_READY`：Package UI 三档尚缺当前通过 manifest；Task 8B 没有当前、稳定对象、≤10% 且经具体批准的候选。
 - runner 修复与状态文档已选择性提交 `a43c0a4b` 并推送到 `origin/master`；证据输出、Profile、正式库、报表及 EXE/ZIP 未进入 Git。
 - 随后只读终审确认最终四类产物哈希、7 类业务 smoke、ZIP 启动、`-83` 包/authority/Profile 谱系均一致；resume receipt 保留未消费、目标进程为 0。由于连续三轮没有新的首档人工手输，任务按阻断规则停止自动重启；用户回复“启动”后只续跑 `-83`。
+- 用户要求继续使用电脑后，再次只在后台完成无窗口复核：Git 起始为 `master=c67b01b4=origin/master`，最终 installer/portable/folder ZIP/win-unpacked EXE 的现场哈希保持一致，7 类 business smoke 与 ZIP 真启动证据仍为 passed。正式库以 readonly + `query_only=1` 打开后，approval tasks 与五张 `ad_execution_*` 表仍全为 0，主文件 SHA-256、大小及 mtime 前后不变；`-83` 的单次 resume receipt 未消费。没有启动、点击或操控 Amazon AI Ops、Chrome 或其他桌面应用。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 
