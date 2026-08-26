@@ -22,6 +22,70 @@ const context = normalizeStoreContextEnvelope({
 });
 
 describe('Mission Control legacy adapter', () => {
+  it('makes every canonical production view available when all registered providers are ready', async () => {
+    const runtime = {
+      mode: 'manual_approval' as const,
+      killSwitch: false,
+      circuitBreakerState: 'closed' as const,
+      activePolicyVersionId: 'policy-version-one',
+      revision: 1,
+      canAutoExecute: true,
+    };
+    const adapter = createMissionControlLegacyAdapter({
+      analysisAuthorityReady: true,
+      buildTodayProjection: (authoritativeContext) => buildMissionControlTodayProjection({
+        context: authoritativeContext,
+        products: [],
+        collectionJobs: [],
+        reportImportProofs: [],
+        importedMetricRows: 0,
+        operationEventsToday: 0,
+        browserSessionReady: false,
+      }),
+      deliveryReadinessReady: true,
+      executionAuthorityReady: true,
+      missionDomain: {
+        getAutonomyProjection: () => runtime,
+        setAutonomyMode: () => runtime,
+      },
+      storeAutomationReady: true,
+      storeRuntimeConfigReady: true,
+    });
+    const response = await adapter.query(normalizeMissionControlQueryRequest({
+      query: 'workspace-bootstrap',
+      requestId: 'bootstrap-all-production-views',
+      contextEpoch: 4,
+      context,
+    }), context);
+    const canonicalViewCapabilities = response.data.capabilities.filter((capability) => (
+      capability.action === 'view' && capability.capabilityId.endsWith('.view')
+    ));
+    const availableViews = canonicalViewCapabilities
+      .filter((capability) => (
+        capability.state === 'PRODUCTION_NATIVE' || capability.state === 'LEGACY_ADAPTER'
+      ))
+      .map((capability) => capability.view);
+
+    expect(new Set(availableViews)).toEqual(new Set(MISSION_CONTROL_VIEW_IDS));
+    expect(canonicalViewCapabilities.filter((capability) => capability.state === 'BLOCKED')).toEqual([]);
+    const completedCoreWorkspaces = new Set([
+      'today',
+      'missions',
+      'decisions',
+      'experiments',
+      'objects',
+      'collection',
+      'policy',
+      'settings',
+    ]);
+    expect(response.data.capabilities.filter((capability) => (
+      completedCoreWorkspaces.has(capability.workspace)
+      && capability.action !== 'delete'
+      && capability.state === 'BLOCKED'
+    ))).toEqual([]);
+    expect(response.data.capabilities.filter((capability) => capability.state === 'BLOCKED')).toEqual([]);
+  });
+
   it('projects every canonical view granularly without marking unscoped legacy handlers green', async () => {
     const adapter = createMissionControlLegacyAdapter();
     const request = normalizeMissionControlQueryRequest({
@@ -242,6 +306,7 @@ describe('Mission Control legacy adapter', () => {
       'execution.queue.start',
       'execution.queue.cancel',
       'execution.queue.takeover',
+      'execution.queue.reconcile-unknown',
       'execution.evidence.view',
     ];
     const blocked = await createMissionControlLegacyAdapter().query(
@@ -274,6 +339,10 @@ describe('Mission Control legacy adapter', () => {
       .filter((row) => row.workspace === 'execution' && !implementedExecutionCapabilities.includes(row.capabilityId))
       .every((row) => row.state === 'BLOCKED'))
       .toBe(true);
+    expect(ready.data.capabilities.filter((row) => [
+      'missions.mission.delete',
+      'experiments.experiment.delete',
+    ].includes(row.capabilityId))).toEqual([]);
   });
 
   it('keeps the system AI page adapted while promoting store runtime CRUD only when Main is ready', async () => {

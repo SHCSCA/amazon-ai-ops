@@ -2,11 +2,13 @@ import type {
   AdExecutionBatchProjection,
   AdExecutionProgressEvent,
   AdExecutionTakeoverResult,
+  AdExecutionUnknownReconciliationResult,
   AdKeywordIdentityVersionRecord,
   CancelAdExecutionBatchRequest,
   CreateAdExecutionBatchRequest,
   CreateAdExecutionBatchResult,
   ResolveAdExecutionIdentityRequest,
+  ReconcileUnknownAdExecutionBatchRequest,
   StartAdExecutionBatchRequest,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -18,6 +20,7 @@ type ExecutionAuthorityChannel =
   | 'execution-authority:create-batch'
   | 'execution-authority:start-batch'
   | 'execution-authority:cancel-batch'
+  | 'execution-authority:reconcile-unknown'
   | 'execution-authority:take-over-browser';
 
 type ProgressHandler = (event: unknown, payload: AdExecutionProgressEvent) => void;
@@ -63,6 +66,9 @@ export interface ExecutionAuthorityPreloadApi {
   createBatch(input: CreateAdExecutionBatchRequest): Promise<CreateAdExecutionBatchResult>;
   startBatch(input: StartAdExecutionBatchRequest): Promise<AdExecutionBatchProjection>;
   cancelBatch(input: CancelAdExecutionBatchRequest): Promise<AdExecutionBatchProjection>;
+  reconcileUnknownBatch(
+    input: ReconcileUnknownAdExecutionBatchRequest,
+  ): Promise<AdExecutionUnknownReconciliationResult>;
   takeOverVisibleBrowser(input: StartAdExecutionBatchRequest): Promise<AdExecutionTakeoverResult>;
   onProgress(callback: (event: AdExecutionProgressEvent) => void): () => void;
 }
@@ -96,6 +102,10 @@ export function createExecutionAuthorityPreloadApi(
       'execution-authority:cancel-batch',
       input,
     ) as Promise<AdExecutionBatchProjection>,
+    reconcileUnknownBatch: (input: ReconcileUnknownAdExecutionBatchRequest) => ipc.invoke(
+      'execution-authority:reconcile-unknown',
+      input,
+    ) as Promise<AdExecutionUnknownReconciliationResult>,
     takeOverVisibleBrowser: (input: StartAdExecutionBatchRequest) => ipc.invoke(
       'execution-authority:take-over-browser',
       input,

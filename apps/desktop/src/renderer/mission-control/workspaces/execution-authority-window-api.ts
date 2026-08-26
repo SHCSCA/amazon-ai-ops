@@ -3,11 +3,13 @@ import {
   type AdExecutionBatchProjection,
   type AdExecutionProgressEvent,
   type AdExecutionTakeoverResult,
+  type AdExecutionUnknownReconciliationResult,
   type AdKeywordIdentityVersionRecord,
   type CancelAdExecutionBatchRequest,
   type CreateAdExecutionBatchRequest,
   type CreateAdExecutionBatchResult,
   type ResolveAdExecutionIdentityRequest,
+  type ReconcileUnknownAdExecutionBatchRequest,
   type StartAdExecutionBatchRequest,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -18,6 +20,7 @@ export interface ExecutionAuthorityRendererApi {
   createBatch(input: CreateAdExecutionBatchRequest): Promise<CreateAdExecutionBatchResult>;
   startBatch(input: StartAdExecutionBatchRequest): Promise<AdExecutionBatchProjection>;
   cancelBatch(input: CancelAdExecutionBatchRequest): Promise<AdExecutionBatchProjection>;
+  reconcileUnknownBatch(input: ReconcileUnknownAdExecutionBatchRequest): Promise<AdExecutionUnknownReconciliationResult>;
   takeOverVisibleBrowser(input: StartAdExecutionBatchRequest): Promise<AdExecutionTakeoverResult>;
   onProgress(callback: (event: AdExecutionProgressEvent) => void): () => void;
 }
@@ -28,6 +31,7 @@ const REQUIRED_METHODS = [
   'createBatch',
   'startBatch',
   'cancelBatch',
+  'reconcileUnknownBatch',
   'takeOverVisibleBrowser',
   'onProgress',
 ] as const satisfies readonly (keyof ExecutionAuthorityRendererApi)[];
@@ -375,6 +379,29 @@ export function createPreviewExecutionAuthorityApi(): ExecutionAuthorityRenderer
       replace(state, projection);
       emit(input.context, state, input.batchId, projection.jobs[0].id, 'terminal', 'cancelled', '队列已在 intent 前取消。');
       return clone(projection);
+    },
+    async reconcileUnknownBatch(input: ReconcileUnknownAdExecutionBatchRequest) {
+      const state = stateFor(input.context);
+      const projection = requireBatch(state, input.batchId);
+      const job = projection.jobs.find((candidate) => candidate.status === 'unknown');
+      if (projection.batch.status !== 'unknown' || !job) {
+        throw new Error('只有结果不确定批次可以进行只读对账。');
+      }
+      const now = new Date().toISOString();
+      emit(input.context, state, input.batchId, job.id, 'readback', 'unknown', '只读对账命中目标值；预览不会重试保存。');
+      return {
+        status: 'CONFIRMED_TARGET',
+        batchId: input.batchId,
+        jobId: job.id,
+        originalStatus: 'unknown',
+        firstObservedBidCents: job.targetBidCents,
+        reloadObservedBidCents: job.targetBidCents,
+        observedBidCents: job.targetBidCents,
+        observedAt: now,
+        firstEvidenceRef: 'artifact:execution:v1:'.concat('8'.repeat(64)),
+        reloadEvidenceRef: 'artifact:execution:v1:'.concat('9'.repeat(64)),
+        detail: '仅开发预览：两次只读核验均命中目标值；没有再次提交。',
+      };
     },
     async takeOverVisibleBrowser(input: StartAdExecutionBatchRequest): Promise<AdExecutionTakeoverResult> {
       const state = stateFor(input.context);

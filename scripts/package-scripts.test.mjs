@@ -8,6 +8,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 describe('root package smoke scripts', () => {
+  it('keeps the release version aligned across package, Main, ZIP smoke, and v1.5 evidence gates', () => {
+    const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const desktopPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
+    const mainSource = fs.readFileSync(path.join(root, 'apps', 'desktop', 'src', 'main', 'index.ts'), 'utf8');
+    const zipSmoke = fs.readFileSync(path.join(root, 'scripts', 'smoke-folder-zip-launch.ps1'), 'utf8');
+    const listingDraftSmoke = fs.readFileSync(path.join(root, 'scripts', 'smoke-listing-draft-renderer.js'), 'utf8');
+    const versionHelper = fs.readFileSync(path.join(root, 'scripts', 'current-app-version.js'), 'utf8');
+    const evidenceGates = [
+      'verify-v15-diagnostic-evidence.js',
+      'verify-v15-canary-evidence.js',
+      'verify-v15-delivery-evidence.js',
+      'verify-v15-enablement-evidence.js',
+    ].map((file) => fs.readFileSync(path.join(root, 'scripts', file), 'utf8'));
+
+    expect(rootPackage.version).toBe('1.5.1');
+    expect(desktopPackage.version).toBe(rootPackage.version);
+    expect(mainSource).toContain(`const APP_VERSION = '${rootPackage.version}'`);
+    expect(mainSource).toContain("registerTrackedIpcHandler('app:get-version', () => APP_VERSION)");
+    expect(zipSmoke).toContain('$desktopPackageVersion');
+    expect(zipSmoke).not.toContain('AmazonAIOpsAgent-1.5.0.zip');
+    expect(rootPackage.scripts['smoke:listing-draft-renderer']).toBe('node scripts/smoke-listing-draft-renderer.js');
+    expect(listingDraftSmoke).toContain("require('./current-app-version')");
+    expect(listingDraftSmoke).toContain('getVersion: async () => version');
+    expect(listingDraftSmoke).not.toContain("getVersion: async () => '1.5.0'");
+    expect(versionHelper).toContain('Root/desktop version mismatch');
+    for (const gate of evidenceGates) {
+      expect(gate).toContain("require('./current-app-version')");
+      expect(gate).not.toMatch(/app_version\s*===\s*'1\.5\.0'|app_version\s*=\s*'1\.5\.0'/);
+    }
+  });
+
   it('prepares the shared SQLite native module for Node before Vitest runs', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 

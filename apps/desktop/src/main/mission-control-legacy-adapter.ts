@@ -48,6 +48,8 @@ export interface MissionControlAdapterOptions {
   executionAuthorityReady?: boolean;
   /** Main-authorized, store-keyed operating configuration CRUD is registered. */
   storeRuntimeConfigReady?: boolean;
+  /** Existing delivery readiness IPC and its read-only compatibility page are registered. */
+  deliveryReadinessReady?: boolean;
   /**
    * Main-only StoreContext scheduler plus retention dry-run preview are
    * registered. The view remains behind the legacy route compatibility
@@ -98,7 +100,6 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('missions.mission.resume', 'missions', 'missions/overview', 'resume', '任务恢复服务尚未接入 Main。'),
   serviceBlocked('missions.mission.archive', 'missions', 'missions/overview', 'archive', '任务归档服务尚未接入 Main。'),
   serviceBlocked('missions.mission.restore', 'missions', 'missions/overview', 'restore', '任务恢复归档服务尚未接入 Main。'),
-  serviceBlocked('missions.mission.delete', 'missions', 'missions/overview', 'delete', '任务删除服务尚未接入 Main。'),
   serviceBlocked('missions.mission.facts.view', 'missions', 'missions/facts', 'view', '任务事实服务尚未接入 Main。'),
   serviceBlocked('missions.checkpoint.create', 'missions', 'missions/facts', 'create', '任务事实检查点追加服务尚未接入 Main。'),
   blocked('decisions.recommendations.view', 'decisions', 'decisions/recommendations', 'recommendations', '建议列表尚未接入按店铺授权的后端。'),
@@ -120,14 +121,11 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('experiments.experiment.archive', 'experiments', 'experiments/ledger', 'archive', '实验归档服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.restore', 'experiments', 'experiments/ledger', 'restore', '实验恢复服务尚未接入 Main。'),
   serviceBlocked('experiments.observation.create', 'experiments', 'experiments/ledger', 'create', '实验观察追加服务尚未接入 Main。'),
-  serviceBlocked('experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete', '实验删除服务尚未接入 Main。'),
   serviceBlocked('execution.queue.view', 'execution', 'execution/live', 'view', '真实执行队列尚未接入 Main。'),
   serviceBlocked('execution.queue.start', 'execution', 'execution/live', 'start', '真实执行启动服务尚未接入 Main。'),
   serviceBlocked('execution.queue.cancel', 'execution', 'execution/live', 'cancel', 'intent 前整批取消服务尚未接入 Main。'),
   serviceBlocked('execution.queue.takeover', 'execution', 'execution/live', 'takeover', '执行接管服务尚未接入 Main。'),
   serviceBlocked('execution.queue.reconcile-unknown', 'execution', 'execution/live', 'reconcile-unknown', 'UNKNOWN 对账服务尚未接入 Main。'),
-  serviceBlocked('execution.queue.skip', 'execution', 'execution/live', 'skip', '执行跳过服务尚未接入 Main。'),
-  serviceBlocked('execution.queue.kill-switch', 'execution', 'execution/live', 'kill-switch', '执行急停服务尚未接入 Main。'),
   blocked('execution.evidence.view', 'execution', 'execution/evidence', 'readback', '执行证据仍依赖未按店铺隔离的旧回读查询。'),
   serviceBlocked('memory.timeline.view', 'memory', 'memory/timeline', 'view', '因果记忆服务尚未接入 Main。'),
   serviceBlocked('memory.timeline.create', 'memory', 'memory/timeline', 'create', '人工事实与分析追加服务尚未接入 Main。'),
@@ -222,6 +220,7 @@ export function createMissionControlLegacyAdapter(
           'execution.queue.start',
           'execution.queue.cancel',
           'execution.queue.takeover',
+          'execution.queue.reconcile-unknown',
           'execution.evidence.view',
         ].includes(capability.capabilityId)) {
           return native(
@@ -280,6 +279,15 @@ export function createMissionControlLegacyAdapter(
             capability.view,
             capability.action,
             '证据保留仅返回当前店铺 dry-run 汇总，固定 deletionSupported=false，不暴露删除或应用入口。',
+          );
+        }
+        if (options.deliveryReadinessReady && capability.capabilityId === 'settings.delivery.view') {
+          return adapted(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            'delivery',
+            '交付验收页通过 Main 的只读就绪度与证据接口核对当前候选，不执行广告或改写正式库。',
           );
         }
         const missionDomainDetail = options.missionDomain
@@ -395,6 +403,8 @@ const MISSION_DOMAIN_CAPABILITY_DETAILS: Readonly<Record<string, string>> = Obje
   'memory.timeline.view': '因果时间线由 Main 追加式账本按当前店铺读取。',
   'memory.timeline.create': '人工只能追加 FACT 或 ANALYSIS；动作、回读和效果由 Main 权威流程写入。',
   'memory.timeline.correct': '修正记录由 Main 校验同任务、同实体、同阶段后追加，原事件保持不变。',
+  'memory.timeline.export': '时间线导出只使用当前已授权店铺事件，并在 Renderer 生成本地 JSON 下载。',
+  'memory.timeline.rebuild-index': '搜索索引从当前店铺已核验事件重新构建，不写入或改写因果历史。',
   'policy.version.view': '策略、不可变版本与运行时状态由 Main 按店铺读取。',
   'policy.policy.create': '策略创建绑定当前店铺并记录审计事件。',
   'policy.policy.update': '策略元数据编辑使用 expectedRevision，拒绝过期写入。',

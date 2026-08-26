@@ -34,6 +34,7 @@ import {
   type AdExecutionBatchProjection,
   type AdExecutionJobProjection,
   type AdExecutionStartupRecoveryResult,
+  type AdExecutionUnknownReconciliationResult,
   type AdKeywordIdentityVersionRecord,
   type CreateAdExecutionBatchRequest,
   type CreateAdExecutionBatchResult,
@@ -41,6 +42,7 @@ import {
   type MissionGrantRecord,
   type PolicyVersionRules,
   type ResolveAdExecutionIdentityRequest,
+  type ReconcileUnknownAdExecutionBatchRequest,
   type StartAdExecutionBatchRequest,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -49,6 +51,8 @@ import {
   buildExecutionEvidenceInput,
   executionEvidencePath,
   executionIdentityResolutionProofPath,
+  executionReconciliationArtifact,
+  executionReconciliationEvidencePath,
 } from './execution-artifacts';
 import type { PolicyDispatchSuppressionReadPort } from './store-collection-policy-suppression';
 
@@ -436,6 +440,151 @@ export class ExecutionAuthorityService {
     this.revokeGrantAndStopMission(context, current, '批次在保存意图前由操作员取消。', false);
     this.progress(context, batchId, undefined, 'terminal', 'cancelled', '批次已在保存意图前安全取消。');
     return this.requireBatch(context, batchId);
+  }
+
+  reconcileUnknownBatch(
+    request: ReconcileUnknownAdExecutionBatchRequest,
+  ): Promise<AdExecutionUnknownReconciliationResult> {
+    return this.withAdmittedBrowserOperation(
+      'reconcile-unknown-execution-batch',
+      () => this.reconcileUnknownBatchAdmitted(request),
+    );
+  }
+
+  private async reconcileUnknownBatchAdmitted(
+    request: ReconcileUnknownAdExecutionBatchRequest,
+  ): Promise<AdExecutionUnknownReconciliationResult> {
+    const context = this.assertContext(request.context);
+    const batchId = requiredId(request.batchId, 'batchId');
+    const projection = this.requireBatch(context, batchId);
+    const unknownJobs = projection.jobs.filter((job) => job.status === 'unknown');
+    if (projection.batch.status !== 'unknown' || unknownJobs.length !== 1) {
+      throw new Error('只有恰好包含一个结果不确定动作的终态批次可以进行人工对账。');
+    }
+    const job = unknownJobs[0]!;
+    const grant = this.missionRepository.getMissionGrant(context, projection.batch.grantId);
+    if (!grant) throw new Error('结果不确定批次缺少原始执行授权，无法重建只读核验条件。');
+    const lease = this.leases.acquire({
+      storeId: context.storeId,
+      purpose: 'external_write',
+      owner: `reconcile-unknown:${batchId}`,
+      ttlMs: EXECUTION_LEASE_TTL_MS,
+    });
+    try {
+      const runtime = await this.navigateToJob(context, job, lease);
+      const command = this.commandFor(context, grant, job, runtime.capsule);
+      const page = new PlaywrightLingxingKeywordBidPage(runtime.page);
+      const firstPath = executionReconciliationEvidencePath(
+        runtime.capsule, batchId, job.id, 'first', context.sessionGeneration,
+      );
+      const reloadPath = executionReconciliationEvidencePath(
+        runtime.capsule, batchId, job.id, 'reload', context.sessionGeneration,
+      );
+      fs.mkdirSync(path.dirname(firstPath), { recursive: true });
+      fs.mkdirSync(path.dirname(reloadPath), { recursive: true });
+
+      const first = await page.readSnapshot(command);
+      await page.captureScreenshot(firstPath);
+      const confirmedFirst = await page.readSnapshot(command);
+      const firstIdentityHash = fingerprintKeywordBidPageSnapshot(first);
+      if (firstIdentityHash !== fingerprintKeywordBidPageSnapshot(confirmedFirst)
+        || first.keyword.bidCents !== confirmedFirst.keyword.bidCents) {
+        throw new Error('首次结果对账截图前后对象或竞价发生变化，请保持页面稳定后重试。');
+      }
+      await page.reload();
+      const reload = await page.readSnapshot(command);
+      await page.captureScreenshot(reloadPath);
+      const confirmedReload = await page.readSnapshot(command);
+      const reloadIdentityHash = fingerprintKeywordBidPageSnapshot(reload);
+      if (reloadIdentityHash !== fingerprintKeywordBidPageSnapshot(confirmedReload)
+        || reload.keyword.bidCents !== confirmedReload.keyword.bidCents) {
+        throw new Error('刷新结果对账截图前后对象或竞价发生变化，请保持页面稳定后重试。');
+      }
+      if (firstIdentityHash !== reloadIdentityHash) {
+        throw new Error('两次结果对账没有命中同一广告对象，操作已阻断。');
+      }
+
+      const firstBid = confirmedFirst.keyword.bidCents;
+      const reloadBid = confirmedReload.keyword.bidCents;
+      const status = firstBid !== reloadBid
+        ? 'STILL_UNKNOWN' as const
+        : reloadBid === job.targetBidCents
+          ? 'CONFIRMED_TARGET' as const
+          : reloadBid === job.expectedBidCents
+            ? 'CONFIRMED_ORIGINAL' as const
+            : 'CURRENT_VALUE_DRIFT' as const;
+      const statusCopy = status === 'CONFIRMED_TARGET'
+        ? '两次只读核验均命中目标竞价；原结果不确定历史保持不变。'
+        : status === 'CONFIRMED_ORIGINAL'
+          ? '两次只读核验均命中原竞价；未再次提交，原结果不确定历史保持不变。'
+          : status === 'CURRENT_VALUE_DRIFT'
+            ? '两次只读核验一致，但当前竞价既不是原值也不是目标值；需要重新分析。'
+            : '两次只读核验竞价不一致；结果仍不确定，禁止自动重试。';
+      const firstArtifact = executionReconciliationArtifact(
+        String(context.storeId), batchId, job.id, 'first', firstPath,
+      );
+      const reloadArtifact = executionReconciliationArtifact(
+        String(context.storeId), batchId, job.id, 'reload', reloadPath,
+      );
+      const observedAt = this.now().toISOString();
+      const eventId = compactId('causal:execution-reconciliation', [
+        context.storeId,
+        batchId,
+        job.id,
+        context.sessionGeneration,
+        firstArtifact.contentSha256,
+        reloadArtifact.contentSha256,
+      ]);
+      const existing = this.missionRepository.listCausalEvents(context, { missionId: projection.batch.missionId })
+        .find((event) => event.id === eventId);
+      if (!existing) {
+        this.missionRepository.appendCausalEvent(context, {
+          id: eventId,
+          stage: 'READBACK',
+          eventType: 'execution_unknown_reconciled',
+          entityType: 'ad_execution_batch',
+          entityId: batchId,
+          missionId: projection.batch.missionId,
+          title: '结果不确定批次人工对账',
+          signal: `首次 ${firstBid} 美分；刷新后 ${reloadBid} 美分。`,
+          observedEffect: statusCopy,
+          confidence: firstBid === reloadBid ? 1 : 0,
+          status: status.toLowerCase(),
+          source: 'execution-authority',
+          actorId: OPERATOR_ACTOR,
+        });
+        this.missionRepository.appendEvidenceRef(context, {
+          id: `${eventId}:first`,
+          eventId,
+          evidenceType: 'ad_execution_reconciliation_first',
+          evidenceRef: firstArtifact.artifactRef,
+          sha256: firstArtifact.contentSha256,
+        });
+        this.missionRepository.appendEvidenceRef(context, {
+          id: `${eventId}:reload`,
+          eventId,
+          evidenceType: 'ad_execution_reconciliation_reload',
+          evidenceRef: reloadArtifact.artifactRef,
+          sha256: reloadArtifact.contentSha256,
+        });
+      }
+      this.progress(context, batchId, job.id, 'readback', 'unknown', statusCopy);
+      return {
+        status,
+        batchId,
+        jobId: job.id,
+        originalStatus: 'unknown',
+        firstObservedBidCents: firstBid,
+        reloadObservedBidCents: reloadBid,
+        observedBidCents: reloadBid,
+        observedAt,
+        firstEvidenceRef: firstArtifact.artifactRef,
+        reloadEvidenceRef: reloadArtifact.artifactRef,
+        detail: statusCopy,
+      };
+    } finally {
+      releaseLeaseQuietly(this.leases, lease);
+    }
   }
 
   takeOverVisibleBrowser(

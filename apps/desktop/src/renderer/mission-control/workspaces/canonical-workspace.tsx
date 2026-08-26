@@ -145,7 +145,6 @@ const WORKSPACE_SPECS: Record<CanonicalWorkspaceKey, CanonicalWorkspaceSpec> = {
       { label: '暂停', capabilityId: 'experiments.experiment.pause' },
       { label: '恢复', capabilityId: 'experiments.experiment.resume' },
       { label: '归档', capabilityId: 'experiments.experiment.archive' },
-      { label: '删除', capabilityId: 'experiments.experiment.delete' },
     ],
   },
   execution: {
@@ -167,7 +166,6 @@ const WORKSPACE_SPECS: Record<CanonicalWorkspaceKey, CanonicalWorkspaceSpec> = {
       { label: '人工接管', capabilityId: 'execution.queue.takeover' },
       { label: '对账结果不确定项', capabilityId: 'execution.queue.reconcile-unknown' },
       { label: '取消未提交批次', capabilityId: 'execution.queue.cancel' },
-      { label: '终止队列', capabilityId: 'execution.queue.kill-switch' },
     ],
   },
   memory: {

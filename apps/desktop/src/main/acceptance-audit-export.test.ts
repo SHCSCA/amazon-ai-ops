@@ -12,7 +12,6 @@ import {
 } from './acceptance-audit-export';
 
 const tempDirs: string[] = [];
-const supportsFileSymlink = canCreateFileSymlink();
 
 function makeTempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-audit-'));
@@ -43,21 +42,6 @@ function reportFile(overrides: Partial<LingxingReportFile> = {}): LingxingReport
     updatedAt: '2026-06-01T00:01:00.000Z',
     ...overrides,
   };
-}
-
-function canCreateFileSymlink(): boolean {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-symlink-check-'));
-  try {
-    const target = path.join(dir, 'target.json');
-    const link = path.join(dir, 'link.json');
-    fs.writeFileSync(target, '{}', 'utf8');
-    fs.symlinkSync(target, link, 'file');
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 afterEach(() => {
@@ -113,19 +97,20 @@ describe('acceptance audit export path helpers', () => {
     expect(readLingxingManifestForAudit(batch(downloadDir, badManifestPath))).toBeUndefined();
   });
 
-  it.skipIf(!supportsFileSymlink)('rejects a manifest symlink that resolves outside the download directory', () => {
+  it('rejects a manifest junction that resolves outside the download directory', () => {
     const root = makeTempDir();
     const downloadDir = path.join(root, 'downloads');
     const outsideDir = path.join(root, 'outside');
     fs.mkdirSync(downloadDir);
     fs.mkdirSync(outsideDir);
     const outsideManifest = path.join(outsideDir, 'manifest.json');
-    const symlinkManifest = path.join(downloadDir, 'manifest.json');
+    const junctionDir = path.join(downloadDir, 'outside-link');
+    const junctionManifest = path.join(junctionDir, 'manifest.json');
     fs.writeFileSync(outsideManifest, JSON.stringify({ batch: { id: 'forged' }, files: [] }), 'utf8');
-    fs.symlinkSync(outsideManifest, symlinkManifest, 'file');
+    fs.symlinkSync(outsideDir, junctionDir, 'junction');
 
-    expect(isSafeManifestPath(symlinkManifest, downloadDir)).toBe(false);
-    expect(readLingxingManifestForAudit(batch(downloadDir, symlinkManifest))).toBeUndefined();
+    expect(isSafeManifestPath(junctionManifest, downloadDir)).toBe(false);
+    expect(readLingxingManifestForAudit(batch(downloadDir, junctionManifest))).toBeUndefined();
   });
 
   it('builds a downloaded report evidence index with path safety and filename date analysis', () => {

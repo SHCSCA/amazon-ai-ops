@@ -2,6 +2,7 @@ import type {
   CancelAdExecutionBatchRequest,
   CreateAdExecutionBatchRequest,
   ResolveAdExecutionIdentityRequest,
+  ReconcileUnknownAdExecutionBatchRequest,
   StartAdExecutionBatchRequest,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -14,6 +15,7 @@ export const EXECUTION_AUTHORITY_IPC_CHANNELS = Object.freeze([
   'execution-authority:create-batch',
   'execution-authority:start-batch',
   'execution-authority:cancel-batch',
+  'execution-authority:reconcile-unknown',
   'execution-authority:take-over-browser',
 ] as const);
 
@@ -29,6 +31,7 @@ type ExecutionAuthorityServicePort = Pick<ExecutionAuthorityService,
   | 'createBatch'
   | 'startBatch'
   | 'cancelBatch'
+  | 'reconcileUnknownBatch'
   | 'takeOverVisibleBrowser'>;
 
 export function registerExecutionAuthorityIpcHandlers(
@@ -60,6 +63,12 @@ export function registerExecutionAuthorityIpcHandlers(
     return rendererSafe(service.cancelBatch(request as unknown as CancelAdExecutionBatchRequest));
   });
   ipc.handle(EXECUTION_AUTHORITY_IPC_CHANNELS[5], async (_event, rawRequest) => {
+    const request = exactRequest(rawRequest, ['context', 'batchId'], ['context', 'batchId']);
+    return rendererSafe(await service.reconcileUnknownBatch(
+      request as unknown as ReconcileUnknownAdExecutionBatchRequest,
+    ));
+  });
+  ipc.handle(EXECUTION_AUTHORITY_IPC_CHANNELS[6], async (_event, rawRequest) => {
     const request = exactRequest(rawRequest, ['context', 'batchId'], ['context', 'batchId']);
     return rendererSafe(await service.takeOverVisibleBrowser(
       request as unknown as StartAdExecutionBatchRequest,

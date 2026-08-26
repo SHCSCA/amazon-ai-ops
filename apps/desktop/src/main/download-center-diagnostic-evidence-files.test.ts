@@ -14,7 +14,6 @@ let screenshotsDir = '';
 let domSnapshotsDir = '';
 let tracesDir = '';
 let outsideDir = '';
-const supportsFileSymlink = canCreateFileSymlink();
 
 beforeEach(() => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-evidence-'));
@@ -34,21 +33,6 @@ afterEach(() => {
 
 function directories() {
   return { screenshotsDir, domSnapshotsDir };
-}
-
-function canCreateFileSymlink(): boolean {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-evidence-symlink-check-'));
-  try {
-    const target = path.join(dir, 'target.png');
-    const link = path.join(dir, 'link.png');
-    fs.writeFileSync(target, 'png');
-    fs.symlinkSync(target, link, 'file');
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 describe('evaluateDownloadCenterDiagnosticEvidenceFiles', () => {
@@ -166,18 +150,19 @@ describe('copyDiagnosticEvidenceFileToBundle', () => {
     expect(fs.readdirSync(bundleDir)).toEqual([]);
   });
 
-  it.skipIf(!supportsFileSymlink)('does not copy a symlink that resolves outside the app evidence directory', () => {
+  it('does not copy a junction path that resolves outside the app evidence directory', () => {
     const bundleDir = path.join(rootDir, 'bundle');
     const outsidePath = path.join(outsideDir, 'diagnostic.png');
-    const symlinkPath = path.join(screenshotsDir, 'diagnostic.png');
+    const junctionDir = path.join(screenshotsDir, 'outside-link');
+    const junctionPath = path.join(junctionDir, 'diagnostic.png');
     fs.mkdirSync(bundleDir);
     fs.writeFileSync(outsidePath, 'png');
-    fs.symlinkSync(outsidePath, symlinkPath, 'file');
+    fs.symlinkSync(outsideDir, junctionDir, 'junction');
 
     expect(copyDiagnosticEvidenceFileToBundle(
-      symlinkPath,
+      junctionPath,
       bundleDir,
-      'symlink',
+      'junction',
       screenshotsDir,
       new Set(['.png']),
     )).toBeUndefined();

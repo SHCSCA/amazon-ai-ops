@@ -145,6 +145,7 @@ describe('desktop scheduler scope contract', () => {
     expect(registration).toContain(
       'state.storeCollectionMainRuntime && state.storeEvidenceRetentionService',
     );
+    expect(registration).toContain('deliveryReadinessReady: true');
     expect(composition).toContain('onAuthoritySettled: () => {');
     expect(composition).toContain('getActiveStoreWorkspaceView()');
     expect(composition).toContain('state.currentStore = view.store.displayName');

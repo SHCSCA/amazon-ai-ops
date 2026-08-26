@@ -130,7 +130,7 @@ const BUSINESS_PLAN_STEPS = [
   { id: 'readback', title: '验证与回读', detail: '变更前 / 提交后 / 刷新后同对象核验' },
 ] as const;
 
-const UNKNOWN_DIAGNOSTIC_DETAIL = 'UNKNOWN · 队列已停止；UNKNOWN 对账 BLOCKED';
+const UNKNOWN_DIAGNOSTIC_DETAIL = 'UNKNOWN · 队列已停止；只允许只读双次对账，禁止重试保存';
 
 const DETAIL_TABS: ReadonlyArray<{ id: ExecutionDetailTab; label: string }> = [
   { id: 'action', label: '动作详情' },
@@ -373,7 +373,10 @@ function PreviewBanner({ onInspectBoundary }: { onInspectBoundary?: () => void }
       {onInspectBoundary && <button onClick={onInspectBoundary} type="button">查看接入边界</button>}
       <details>
         <summary>诊断详情</summary>
-        <code>内存 mock · Amazon US / USD · 不调用真实 API · 不写入 Ads</code>
+        <code>MISSIONGRANT → SERIAL EXECUTION</code>
+        <code>内存 mock · Amazon US / USD · 不调用真实 API、不写入 Ads</code>
+        <code>只演示降价且单次不超过 10%</code>
+        <button disabled type="button">从完整 Grant 建队列</button>
       </details>
     </div>
   );
@@ -393,9 +396,6 @@ export function ExecutionWorkspace({
   const takeoverCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.takeover, previewEnabled);
   const cancelCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.cancel, previewEnabled);
   const reconcileCapabilityProjected = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.reconcileUnknown, previewEnabled);
-  // No Main reconciliation command exists yet. A projected row alone must never create local fake authority.
-  const reconciliationAuthorityReady = false;
-  const canReconcileUnknown = reconcileCapabilityProjected && reconciliationAuthorityReady;
   const previewApiRef = useRef<ExecutionAuthorityRendererApi>();
   if (previewEnabled && !previewApiRef.current) previewApiRef.current = createPreviewExecutionAuthorityApi();
   const authorityApi = useMemo(
@@ -403,6 +403,7 @@ export function ExecutionWorkspace({
     [apiOverride, previewEnabled],
   );
   const api = viewCapabilityReady ? authorityApi : null;
+  const canReconcileUnknown = reconcileCapabilityProjected && Boolean(api);
   const selectionAuthorityApi = useMemo(
     () => selectionApiOverride ?? (previewEnabled ? null : readExecutionSelectionAuthorityApi()),
     [previewEnabled, selectionApiOverride],
@@ -710,6 +711,16 @@ export function ExecutionWorkspace({
     });
     replaceProjection(projection);
     setFeedback('未提交批次已在执行意图写入前整体取消；审计记录继续保留。');
+  });
+
+  const reconcileUnknown = () => mutate('reconcile-unknown', async () => {
+    if (!reconcileCapabilityProjected) throw new Error('当前店铺未获准进行结果不确定对账。');
+    if (!api || !storeContext || !selected || !selectedUnknown) {
+      throw new Error('请先选择一个结果不确定的执行批次。');
+    }
+    const result = await api.reconcileUnknownBatch({ context: storeContext, batchId: selected.batch.id });
+    setFeedback(result.detail);
+    await load(true);
   });
 
   const selectedUnknown = selected?.batch.status === 'unknown'
@@ -1046,10 +1057,10 @@ export function ExecutionWorkspace({
               <div><dt>执行模式</dt><dd>{selectedIssuer ?? '人工签发'}</dd></div>
             </dl>
             <div className="execution-action-reason"><section><h3>调整原因</h3><p>近 7 日 CPC 上扬但转化率稳定，温和降价用于修复 ACOS，并避免破坏曝光。</p></section><section><h3>风险校验</h3><p>US / USD、当前会话、完整执行授权、只降价与 10% 上限必须同时通过。</p></section></div>
-            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>结果不确定 · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。仅允许人工接管当前可见浏览器；主进程对账能力尚未接入。</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown} title="结果不确定的对账能力尚未接入" type="button">结果不确定对账尚未接入</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由本机安全进程自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
+            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>结果不确定 · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。可人工接管当前可见浏览器，或执行两次只读核验并把结果追加到因果记录。</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由本机安全进程自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
           </div>}
           {detailTab === 'compare' && <section className="execution-evidence"><h3>变更前 / 提交后 / 刷新后</h3>{(['before', 'after', 'reload'] as const).map((slot) => { const evidence = selected ? evidenceFor(selected, slot) : undefined; return <article data-state={evidence ? 'ready' : 'pending'} key={slot}><span>{evidence ? <CheckCircle size={17} weight="fill" /> : <Circle size={17} />}</span><div><strong>{EVIDENCE_SLOT_LABELS[slot]}</strong><small>{evidence ? `${money(evidence.observedBidCents)} · ${formatTime(evidence.capturedAt)}` : slot === 'before' ? '提交意图前捕获' : slot === 'after' ? '提交后捕获' : '刷新后同对象核验'}</small>{evidence && <details><summary>诊断详情</summary><code>{evidence.contentSha256.slice(0, 12)}…</code></details>}</div></article>; })}</section>}
-          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? '结果不确定 · 人工对账尚未接入' : '等待真实执行后回读'}</strong><p>提交后与刷新后的证据必须独立证明同一标准化关键词和目标值；任何不确定性都停止队列且不自动重试。当前没有真实的结果不确定对账能力。</p><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown} title="结果不确定的对账能力尚未接入" type="button">结果不确定对账尚未接入</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></div>}
+          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? '结果不确定 · 可进行只读双次对账' : '等待真实执行后回读'}</strong><p>提交后与刷新后的证据必须独立证明同一标准化关键词和目标值；任何不确定性都停止队列且不自动重试。对账只读取当前值并追加证据，不会再次提交。</p><button className="execution-button execution-button--secondary" disabled={!selectedUnknown || !canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></div>}
           {detailTab === 'evidence' && <div className="execution-archive-panel"><h3>证据与归档</h3><p>串行批次、执行授权终态、因果事件以及变更前 / 提交后 / 刷新后截图和内容哈希均只允许追加。</p><dl><div><dt>批次</dt><dd>{selected ? '已生成' : '待生成'}</dd></div><div><dt>执行授权</dt><dd>{selected?.batch.grantId || grantId ? '已选择' : '待选择'}</dd></div><div><dt>事件数</dt><dd>{consoleRows.length}</dd></div><div><dt>归档状态</dt><dd>{selected?.batch.status === 'succeeded' ? '可归档' : '等待终态'}</dd></div></dl><details><summary>诊断详情</summary><code>{selected?.batch.id ?? '—'}</code><code>{(selected?.batch.grantId ?? grantId) || '—'}</code></details></div>}
           {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联实验</span><strong>核心词竞价弹性 · 7 日</strong><dl><div><dt>假设</dt><dd>竞价下降不超过 10% 可降低 CPC，同时守住订单量。</dd></div><div><dt>观察窗口</dt><dd>7 个美国业务日</dd></div><div><dt>守护栏</dt><dd>转化率、订单量、目标 ACOS 与数据新鲜度</dd></div></dl><button className="execution-button execution-button--secondary" disabled type="button">实验详情（未接入）</button></div>}
         </div>

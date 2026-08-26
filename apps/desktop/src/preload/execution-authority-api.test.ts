@@ -26,6 +26,7 @@ describe('execution authority preload API', () => {
       'createBatch',
       'startBatch',
       'cancelBatch',
+      'reconcileUnknownBatch',
       'takeOverVisibleBrowser',
       'onProgress',
     ]);
@@ -42,6 +43,11 @@ describe('execution authority preload API', () => {
     await api.startBatch({ context, batchId: 'batch-1' });
     expect(invoke).toHaveBeenLastCalledWith(
       'execution-authority:start-batch',
+      { context, batchId: 'batch-1' },
+    );
+    await api.reconcileUnknownBatch({ context, batchId: 'batch-1' });
+    expect(invoke).toHaveBeenLastCalledWith(
+      'execution-authority:reconcile-unknown',
       { context, batchId: 'batch-1' },
     );
   });

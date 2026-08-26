@@ -578,6 +578,53 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     `).get(harness.batchId)).toEqual({ batchStatus: 'unknown', evidenceRefCount: 1 });
   });
 
+  it('reconciles an UNKNOWN batch with two read-only page observations without retrying save', async () => {
+    const harness = createHarness();
+    harness.page.clickError = new Error('browser disconnected during save');
+    const unknown = await harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+    expect(unknown.batch.status).toBe('unknown');
+    expect(harness.page.clickCount).toBe(1);
+
+    harness.page.clickError = undefined;
+    harness.page.allowAfterScreenshot();
+    const result = await harness.service.reconcileUnknownBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+
+    expect(result).toMatchObject({
+      status: 'CONFIRMED_ORIGINAL',
+      batchId: harness.batchId,
+      observedBidCents: 149,
+      originalStatus: 'unknown',
+    });
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.getExecutionBatch(harness.context, harness.batchId))
+      .toEqual(expect.objectContaining({ batch: expect.objectContaining({ status: 'unknown' }) }));
+    expect(harness.missionRepository.listCausalEvents(harness.context, { missionId: 'mission-1' }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'READBACK',
+          eventType: 'execution_unknown_reconciled',
+          entityId: harness.batchId,
+          status: 'confirmed_original',
+        }),
+      ]));
+    expect(harness.database.prepare(`
+      SELECT evidence_type AS evidenceType
+      FROM evidence_refs
+      WHERE store_id = 'store-one'
+        AND event_id LIKE 'causal:execution-reconciliation:%'
+      ORDER BY evidence_type
+    `).all()).toEqual([
+      { evidenceType: 'ad_execution_reconciliation_first' },
+      { evidenceType: 'ad_execution_reconciliation_reload' },
+    ]);
+  });
+
   it('revalidates the kill switch after the final save control is resolved and before click', async () => {
     const harness = createHarness();
     harness.page.pauseBeforePermit = true;

@@ -230,6 +230,7 @@ describe('execution workspace', () => {
       executionCapability(EXECUTION_CAPABILITY_IDS.start, 'start', 'PRODUCTION_NATIVE'),
       executionCapability(EXECUTION_CAPABILITY_IDS.takeover, 'takeover', 'PRODUCTION_NATIVE'),
       executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PRODUCTION_NATIVE'),
+      executionCapability(EXECUTION_CAPABILITY_IDS.reconcileUnknown, 'reconcile-unknown', 'PRODUCTION_NATIVE'),
     ];
     const surfaces = {
       preview: renderToStaticMarkup(<ExecutionWorkspace
@@ -261,7 +262,7 @@ describe('execution workspace', () => {
     }
 
     expect(surfaces.preview).toContain('<details>');
-    expect(surfaces.preview).toContain('UNKNOWN · 队列已停止；UNKNOWN 对账 BLOCKED');
+    expect(surfaces.preview).toContain('UNKNOWN · 队列已停止；只允许只读双次对账，禁止重试保存');
   });
 
   it('replaces legacy preview and queue copy with Chinese business labels outside diagnostics', () => {
@@ -414,14 +415,14 @@ describe('execution workspace', () => {
     expect(markup).not.toContain('preview-grant-human');
   });
 
-  it('keeps UNKNOWN reconciliation explicitly blocked until a real Main authority exists', () => {
+  it('routes UNKNOWN reconciliation through the real read-only Main authority without retrying execution', () => {
     const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
     expect(source).toContain('UNKNOWN · 队列已停止');
     expect(source).toContain('禁止自动重试');
     expect(source).toContain('人工接管');
-    expect(source).toContain('UNKNOWN 对账 BLOCKED');
-    expect(source).toContain('const reconciliationAuthorityReady = false');
-    expect(source).not.toContain('setReconciliation');
+    expect(source).toContain('api.reconcileUnknownBatch');
+    expect(source).toContain('执行只读双次对账');
+    expect(source).not.toContain('const reconciliationAuthorityReady = false');
     expect(source).not.toMatch(/重试(?:执行|队列|UNKNOWN)/);
   });
 
@@ -441,6 +442,8 @@ describe('execution workspace', () => {
       .toBeLessThan(source.indexOf('api.startBatch', source.indexOf('const startBatch')));
     expect(source.indexOf('if (!cancelCapabilityReady)', source.indexOf('const cancelBatch')))
       .toBeLessThan(source.indexOf('api.cancelBatch', source.indexOf('const cancelBatch')));
+    expect(source.indexOf('if (!reconcileCapabilityProjected)', source.indexOf('const reconcileUnknown')))
+      .toBeLessThan(source.indexOf('api.reconcileUnknownBatch', source.indexOf('const reconcileUnknown')));
     expect(source).toContain('取消未提交批次');
     expect(source).not.toContain('跳过此对象');
   });

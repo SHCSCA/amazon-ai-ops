@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
+const { currentAppVersion } = require('./current-app-version');
 
 const REPORTS = [
   ['campaign', 'campaign'],
@@ -17,6 +18,7 @@ const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|tr
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
+const APP_VERSION = currentAppVersion();
 
 function pass(message) {
   return { ok: true, message };
@@ -198,7 +200,7 @@ function verifyEnablementEvidence(evidencePath) {
         f.attempt_errors_json AS attemptErrorsJson
       FROM lingxing_report_batches b
       JOIN lingxing_report_files f ON f.batch_id = b.id
-      WHERE b.app_version = '1.5.0'
+      WHERE b.app_version = ?
         AND b.date_start = ?
         AND b.date_end = ?
         AND COALESCE(b.store_name, '') = COALESCE(?, '')
@@ -211,7 +213,7 @@ function verifyEnablementEvidence(evidencePath) {
           WHERE count_files.batch_id = b.id
         ) = 1
       ORDER BY b.created_at DESC, b.id DESC
-    `).all(scope.dateStart, scope.dateEnd, scope.storeName || '', scope.marketplaceCode || '');
+    `).all(APP_VERSION, scope.dateStart, scope.dateEnd, scope.storeName || '', scope.marketplaceCode || '');
 
     const covered = new Set();
     const startToken = compactDate(scope.dateStart);

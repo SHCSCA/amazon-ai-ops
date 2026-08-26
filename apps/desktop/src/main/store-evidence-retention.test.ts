@@ -144,7 +144,7 @@ describe('store evidence retention dry-run', () => {
     expect(JSON.stringify(manifest)).not.toContain(capsuleB.storeRoot);
   });
 
-  it('refuses symlinks or junctions without following them', (context) => {
+  it('refuses symlinks or junctions without following them', () => {
     const capsule = createCapsule();
     const externalDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'store-retention-link-target-'));
     roots.push(externalDirectory);
@@ -152,9 +152,10 @@ describe('store evidence retention dry-run', () => {
     const linkPath = path.join(capsule.screenshotsDir, 'linked');
     try {
       fs.symlinkSync(externalDirectory, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch {
-      context.skip();
-      return;
+    } catch (error) {
+      throw new Error('test environment must support a directory symlink or Windows junction', {
+        cause: error,
+      });
     }
 
     const manifest = buildStoreEvidenceRetentionManifest({
@@ -172,16 +173,15 @@ describe('store evidence retention dry-run', () => {
     }));
   });
 
-  it('fails closed on files with multiple hard links', (context) => {
+  it('fails closed on files with multiple hard links', () => {
     const capsule = createCapsule();
     const first = path.join(capsule.tracesDir, 'first.zip');
     const second = path.join(capsule.tracesDir, 'second.zip');
     writeDated(first, 'hard-link', 90);
     try {
       fs.linkSync(first, second);
-    } catch {
-      context.skip();
-      return;
+    } catch (error) {
+      throw new Error('test environment must support hard links', { cause: error });
     }
 
     const manifest = buildStoreEvidenceRetentionManifest({

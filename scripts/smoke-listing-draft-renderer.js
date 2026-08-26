@@ -2,8 +2,10 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
+const { currentAppVersion } = require('./current-app-version');
 
 const root = path.resolve(__dirname, '..');
+const appVersion = currentAppVersion();
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -40,7 +42,7 @@ async function main() {
     }
   });
 
-  await page.addInitScript(() => {
+  await page.addInitScript((version) => {
     const calls = [];
     const opportunities = [{
       asin: 'B001',
@@ -163,7 +165,7 @@ async function main() {
       productContext: { products: [], productCount: 0, notes: [] },
     };
     window.electronAPI = {
-      getVersion: async () => '1.5.0',
+      getVersion: async () => version,
       getState: async () => ({ isLoggedIn: true, currentStore: 'SHC001', loginSession: { erpSessionReused: true, adsTitle: '仪表盘' } }),
       getBusinessUiDataPipeline: async () => readyPipeline,
       listOperationEvents: async () => [],
@@ -224,7 +226,7 @@ async function main() {
         return { success: true };
       },
     };
-  });
+  }, appVersion);
 
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await page.waitForTimeout(500);

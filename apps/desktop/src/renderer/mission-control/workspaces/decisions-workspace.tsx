@@ -16,6 +16,8 @@ import {
   missionControlContextKey,
   type AnalysisProposalSnapshotRecord,
   type AuthorizeAnalysisProposalBatchRequest,
+  type BindRecommendationWritableTargetRequest,
+  type BindRecommendationWritableTargetResult,
   type CreateDecisionInput,
   type DecisionHistoryRecord,
   type DecisionRecord,
@@ -57,6 +59,90 @@ export type DecisionsWorkspaceProps = {
   storeContext: StoreContextEnvelope | null;
   view: DecisionWorkspaceView;
 };
+
+type DiscoveredRecommendationTarget = {
+  recommendationId: number;
+  recommendationRevision: number;
+  pageIdentity: {
+    adsAccountId: string;
+    campaignId: string;
+    adGroupId: string;
+    keywordId: string;
+    bidCents: number;
+  };
+  writableTarget: BindRecommendationWritableTargetRequest['binding']['writableTarget'];
+};
+
+type RecommendationTargetBindingRendererApi = {
+  getOperationScope(context: StoreContextEnvelope): Promise<Record<string, unknown>>;
+  executionAuthority: {
+    discoverRecommendationTarget(input: {
+      context: StoreContextEnvelope;
+      recommendationId: number;
+    }): Promise<DiscoveredRecommendationTarget>;
+  };
+  bindRecommendationWritableTarget(
+    input: BindRecommendationWritableTargetRequest,
+  ): Promise<BindRecommendationWritableTargetResult>;
+};
+
+function readRecommendationTargetBindingWindowApi(
+  target: unknown = typeof window === 'undefined' ? undefined : window,
+): RecommendationTargetBindingRendererApi | null {
+  const candidate = target as Partial<RecommendationTargetBindingRendererApi> | null;
+  if (!candidate
+    || typeof candidate.getOperationScope !== 'function'
+    || typeof candidate.bindRecommendationWritableTarget !== 'function'
+    || typeof candidate.executionAuthority?.discoverRecommendationTarget !== 'function') return null;
+  return candidate as RecommendationTargetBindingRendererApi;
+}
+
+export function proposalHasVerifiedAdsAuthority(proposal: AnalysisProposalSnapshotRecord): boolean {
+  return Boolean(
+    proposal.adEntityAuthorityId
+    && proposal.adEntityId
+    && Number.isInteger(proposal.adEntityRevision)
+    && Number(proposal.adEntityRevision) > 0,
+  );
+}
+
+export function proposalIsSafeTargetVerificationCandidate(
+  proposal: AnalysisProposalSnapshotRecord,
+): boolean {
+  const current = Number(proposal.currentBidCents);
+  const proposed = Number(proposal.proposedBidCents);
+  if (proposal.actionType !== 'set_keyword_bid'
+    || proposal.entityType !== 'keyword'
+    || !Number.isInteger(current)
+    || !Number.isInteger(proposed)
+    || current <= 0
+    || proposed <= 0
+    || proposed >= current) return false;
+  return ((current - proposed) / current) * 100 <= 10.000001;
+}
+
+export function AnalysisProposalAuthorityStatus({
+  busy,
+  onVerify,
+  proposal,
+}: {
+  busy: boolean;
+  onVerify?: () => void;
+  proposal: AnalysisProposalSnapshotRecord;
+}) {
+  if (proposalHasVerifiedAdsAuthority(proposal)) {
+    return <small className="decision-domain-proposal-authority" data-verified>对象版本已校验</small>;
+  }
+  return <span className="decision-domain-proposal-authority" data-verified="false">
+    <small>Ads 对象待核验</small>
+    {onVerify && <button
+      className="workspace-button workspace-button--secondary"
+      disabled={busy}
+      onClick={onVerify}
+      type="button"
+    >{busy ? '核验中…' : '核验 Ads 对象'}</button>}
+  </span>;
+}
 
 export type DecisionDraft = {
   title: string;
@@ -472,6 +558,9 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const authorityRef = useRef(authorityKey); authorityRef.current = authorityKey;
   const api = apiOverride ?? readDecisionDomainWindowApi();
   const analysisApi = analysisApiOverride ?? readAnalysisAuthorityWindowApi();
+  const targetBindingApi = previewMode || typeof window === 'undefined'
+    ? null
+    : readRecommendationTargetBindingWindowApi((window as unknown as { electronAPI?: unknown }).electronAPI);
   const expectedState = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
   const viewId = view === 'decisions/recommendations' ? 'decisions.recommendations.view' : view === 'decisions/approval' ? 'decisions.approval.view' : 'decisions.decided.view';
   const viewReady = decisionCapabilityReady(capabilities, viewId, view, previewMode);
@@ -691,6 +780,102 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     ? analysis?.proposals.find((proposal) => proposal.id === selectedProposalLink.proposalId)
     : undefined;
 
+  const verifySelectedProposalTarget = async () => {
+    if (!selectedProposal || !selected || !storeContext || !analysisApi || !api || !targetBindingApi || busy) {
+      setError('当前建议无法核验 Ads 对象；请确认店铺与 Ads 已连接后重试。');
+      return;
+    }
+    if (proposalHasVerifiedAdsAuthority(selectedProposal)) {
+      setFeedback('当前建议的 Ads 对象版本已经核验，无需重复操作。');
+      return;
+    }
+    const capturedKey = authorityKey;
+    const current = ++mutationSequence.current;
+    setPending('target-verify'); setError(''); setFeedback('');
+    try {
+      const operationScope = await targetBindingApi.getOperationScope(storeContext);
+      const text = (value: unknown) => String(value ?? '').trim();
+      let safetyProposal = proposalIsSafeTargetVerificationCandidate(selectedProposal)
+        ? selectedProposal
+        : undefined;
+      if (!safetyProposal) {
+        const prepared = await analysisApi.runMissionAnalysis({
+          context: storeContext,
+          missionId: selected.missionId,
+          dateFrom: text(operationScope.dateFrom),
+          dateTo: text(operationScope.dateTo),
+        });
+        safetyProposal = prepared.proposals.find((proposal) => (
+          proposal.entityName.trim().toLowerCase() === selectedProposal.entityName.trim().toLowerCase()
+          && proposal.currentBidCents === selectedProposal.currentBidCents
+          && proposalIsSafeTargetVerificationCandidate(proposal)
+        ));
+      }
+      if (!safetyProposal) {
+        throw new Error('重新分析后没有生成单次降幅不超过 10% 的安全建议，未核验 Ads 对象。');
+      }
+      const discovery = await targetBindingApi.executionAuthority.discoverRecommendationTarget({
+        context: storeContext,
+        recommendationId: safetyProposal.legacyRecommendationId,
+      });
+      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (discovery.recommendationId !== safetyProposal.legacyRecommendationId
+        || discovery.writableTarget.entityType !== 'keyword'
+        || discovery.writableTarget.entityId !== discovery.pageIdentity.keywordId
+        || discovery.pageIdentity.bidCents !== safetyProposal.currentBidCents
+        || !Number.isInteger(discovery.recommendationRevision)
+        || discovery.recommendationRevision <= 0) {
+        throw new Error('当前 Ads 页面与建议中的店铺、关键词或竞价不一致，未保存核验结果。');
+      }
+      await targetBindingApi.bindRecommendationWritableTarget({
+        recommendationId: discovery.recommendationId,
+        expectedRevision: discovery.recommendationRevision,
+        scope: {
+          dateFrom: text(operationScope.dateFrom),
+          dateTo: text(operationScope.dateTo),
+          storeName: text(operationScope.storeName),
+          marketplaceCode: text(operationScope.marketplaceCode),
+          asin: text(operationScope.asin),
+          batchId: safetyProposal.dataBatchId,
+        },
+        binding: {
+          boundBy: OPERATOR,
+          note: '已通过当前店铺可见 Ads 页面唯一核验对象和当前竞价。',
+          writableTarget: discovery.writableTarget,
+        },
+      });
+      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      const rerun = await analysisApi.runMissionAnalysis({
+        context: storeContext,
+        missionId: selected.missionId,
+        dateFrom: text(operationScope.dateFrom),
+        dateTo: text(operationScope.dateTo),
+      });
+      const verified = rerun.proposals.find((proposal) => (
+        proposal.legacyRecommendationId === discovery.recommendationId
+        && proposalHasVerifiedAdsAuthority(proposal)
+      ));
+      if (!verified) {
+        throw new Error('对象核验已保存，但重新分析没有生成对应的安全建议；请刷新后检查，不要重复核验。');
+      }
+      const [projection, refreshedDecisions] = await Promise.all([
+        analysisApi.getMissionProjection(storeContext, selected.missionId),
+        api.listDecisions(storeContext),
+      ]);
+      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      assertAnalysisProjectionBelongsToContext(storeContext, selected.missionId, projection);
+      refreshedDecisions.forEach((item) => assertDecisionBelongsToContext(item, storeContext));
+      setAnalysis(projection);
+      setDecisions(refreshedDecisions);
+      setSelectedId((id) => refreshedDecisions.some((item) => item.id === id) ? id : preferredDecisionId(view, refreshedDecisions));
+      setFeedback(`Ads 对象已核验；新分析批次已生成，当前值 $${(verified.currentBidCents / 100).toFixed(2)}，建议值 $${(verified.proposedBidCents / 100).toFixed(2)}。尚未批准或执行。`);
+    } catch (verificationError) {
+      if (authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(verificationError));
+    } finally {
+      if (authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+    }
+  };
+
   const authorizeSelectedBatch = async () => {
     if (view !== 'decisions/decided' || !canAuthorizeAnalysisBatch || !analysisApi || !api || !storeContext
       || !authorizationMissionId || !authorizationBatchId || authorizationProposals.length === 0 || pending) {
@@ -782,7 +967,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
                   </select>
                 </label>
               </div>
-              {authorizationAnalysisError ? <p className="decision-domain-analysis-error">{visibleAuthorizationAnalysisError}</p> : authorizationAnalysisLoading ? <p>正在读取所选运营任务的分析建议…</p> : authorizationProposals.length ? <div className="decision-domain-analysis-proposals">{authorizationProposals.map((proposal) => <article key={proposal.id}><span><b>{proposal.entityName}</b><small>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'} · 对象版本已校验</small></span><strong>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</strong><em data-eligible={(proposal.authorization.human.eligible || proposal.authorization.policy.eligible) || undefined}>{proposalAuthorizationLabel(proposal)}</em><details><summary>诊断详情</summary><code>{proposal.id}</code><code>{proposal.adEntityRevision ?? '—'}</code></details></article>)}</div> : <p>请选择包含分析建议的运营任务；策略内自动可以直接校验待审批或待复核经营决策。</p>}
+              {authorizationAnalysisError ? <p className="decision-domain-analysis-error">{visibleAuthorizationAnalysisError}</p> : authorizationAnalysisLoading ? <p>正在读取所选运营任务的分析建议…</p> : authorizationProposals.length ? <div className="decision-domain-analysis-proposals">{authorizationProposals.map((proposal) => <article key={proposal.id}><span><b>{proposal.entityName}</b><small>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'}</small><AnalysisProposalAuthorityStatus busy={busy} proposal={proposal} /></span><strong>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</strong><em data-eligible={(proposal.authorization.human.eligible || proposal.authorization.policy.eligible) || undefined}>{proposalAuthorizationLabel(proposal)}</em><details><summary>诊断详情</summary><code>{proposal.id}</code><code>{proposal.adEntityRevision ?? '—'}</code></details></article>)}</div> : <p>请选择包含分析建议的运营任务；策略内自动可以直接校验待审批或待复核经营决策。</p>}
               <details><summary>诊断详情</summary><code>{authorizationMissionId || '—'}</code><code>{authorizationBatchId || '—'}</code></details>
             </section>
           )}
@@ -805,7 +990,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
             <div className="decision-domain-actions">{actionVisibility?.revise && <button className="workspace-button workspace-button--primary" disabled={!can('decisions.recommendations.update') || busy} onClick={() => storeContext && setEditor({ record: selected, draft: decisionDraft(storeContext, selected) })} type="button"><PencilSimple size={15} />修订</button>}{actionVisibility?.resolve && <><button className="workspace-button workspace-button--primary" disabled={!can('decisions.approval.approve') || busy} onClick={() => setResolution('approved')} type="button"><Check size={15} />批准</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('rejected')} type="button"><ThumbsDown size={15} />拒绝</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('blocked')} type="button"><Prohibit size={15} />阻断</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('superseded')} type="button"><ArrowRight size={15} />标记被替代</button></>}</div>
           </section>
           <section className="decision-domain-recommendation">
-            <div><FileText size={20} weight="duotone" /><div><span>推荐动作</span><strong>{selected.recommendation}</strong><p>{selected.rationale}</p>{selectedProposal && <small className="decision-domain-proposal-source">{selectedProposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'} · 证据已锁定 · 对象版本已校验</small>}</div></div>
+            <div><FileText size={20} weight="duotone" /><div><span>推荐动作</span><strong>{selected.recommendation}</strong><p>{selected.rationale}</p>{selectedProposal && <div className="decision-domain-proposal-source"><small>{selectedProposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'} · 证据已锁定</small><AnalysisProposalAuthorityStatus busy={pending === 'target-verify'} onVerify={targetBindingApi ? () => void verifySelectedProposalTarget() : undefined} proposal={selectedProposal} /></div>}</div></div>
             <dl><div><dt>当前值</dt><dd>{formatDecisionMoney(selected.currentValue, selectedProposal?.currentBidCents)}</dd></div><div><dt>推荐值</dt><dd>{formatDecisionMoney(selected.recommendedValue, selectedProposal?.proposedBidCents)}</dd></div><div><dt>策略快照</dt><dd>已锁定策略版本</dd></div><div><dt>有效期</dt><dd>{selected.validUntil?.slice(0, 10) ?? '未设置'}</dd></div></dl>
             <details><summary>诊断详情</summary><code>{selected.policyVersionId}</code><code>{selected.policyRevision}</code>{selectedProposal && <><code>{selectedProposal.evidencePackageHash}</code><code>{selectedProposal.adEntityRevision ?? '—'}</code></>}</details>
           </section>

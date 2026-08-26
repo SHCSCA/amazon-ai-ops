@@ -6,6 +6,7 @@ import type { DecisionRecord, MissionControlCapabilityProjection, StoreContextEn
 import { createPreviewDecisionDomainApi } from './mission-domain-window-api';
 import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-api';
 import {
+  AnalysisProposalAuthorityStatus,
   DecisionsWorkspace,
   DecisionEvidenceFacts,
   DecisionDialog,
@@ -21,6 +22,7 @@ import {
   decisionRevisionDisplayLabel,
   formatDecisionMoney,
   preferredDecisionId,
+  proposalIsSafeTargetVerificationCandidate,
   responseMatchesDecisionDetail,
   type DecisionWorkspaceView,
   type DecisionDraft,
@@ -46,6 +48,43 @@ const actionCapabilities = [
 ];
 
 describe('DecisionsWorkspace', () => {
+  it('reuses an already-safe proposal instead of forcing another analysis before Ads discovery', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const proposal = projection.proposals[0];
+
+    expect(proposalIsSafeTargetVerificationCandidate({
+      ...proposal,
+      currentBidCents: 232,
+      proposedBidCents: 209,
+      changePct: -9.9138,
+    })).toBe(true);
+    expect(proposalIsSafeTargetVerificationCandidate({
+      ...proposal,
+      currentBidCents: 232,
+      proposedBidCents: 185,
+      changePct: -20.2586,
+    })).toBe(false);
+  });
+
+  it('fails closed and exposes Ads target verification when a linked proposal has no authority', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const proposal = {
+      ...projection.proposals[0],
+      adEntityAuthorityId: undefined,
+      adEntityId: undefined,
+      adEntityRevision: undefined,
+    };
+    const markup = renderToStaticMarkup(<AnalysisProposalAuthorityStatus
+      busy={false}
+      onVerify={() => undefined}
+      proposal={proposal}
+    />);
+
+    expect(markup).toContain('Ads 对象待核验');
+    expect(markup).toContain('核验 Ads 对象');
+    expect(markup).not.toContain('对象版本已校验');
+  });
+
   it('leaves vertical scrolling to the page instead of the decision detail column', () => {
     const css = readFileSync(new URL('./decisions-workspace.css', import.meta.url), 'utf8');
     const detailRule = css.match(/\.decision-domain-detail\s*\{([^}]*)\}/)?.[1] ?? '';

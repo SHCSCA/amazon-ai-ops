@@ -67,6 +67,44 @@ export function executionIdentityResolutionProofPath(
   );
 }
 
+export function executionReconciliationEvidencePath(
+  capsule: StoreCapsulePaths,
+  batchId: string,
+  jobId: string,
+  observation: 'first' | 'reload',
+  sessionGeneration: number,
+): string {
+  const reconciliationDirectory = `batch-${sha256(requiredText(batchId, 'batchId')).slice(0, 24)}`;
+  const jobDirectory = `job-${sha256(requiredText(jobId, 'jobId')).slice(0, 24)}`;
+  return resolveStoreCapsulePath(
+    capsule,
+    'evidence',
+    'ad-execution-reconciliation',
+    reconciliationDirectory,
+    jobDirectory,
+    `session-${nonNegativeInteger(sessionGeneration, 'sessionGeneration')}-${observation}.png`,
+  );
+}
+
+export function executionReconciliationArtifact(
+  storeId: string,
+  batchId: string,
+  jobId: string,
+  observation: 'first' | 'reload',
+  absolutePath: string,
+): { artifactRef: string; contentSha256: string } {
+  if (!fs.statSync(absolutePath).isFile()) throw new Error('执行结果对账证据不是可读取文件。');
+  return {
+    artifactRef: assertOpaqueExecutionArtifactRef(`artifact:execution:v1:${sha256(stableJson({
+      storeId: requiredText(storeId, 'storeId'),
+      batchId: requiredText(batchId, 'batchId'),
+      jobId: requiredText(jobId, 'jobId'),
+      observation,
+    }))}`),
+    contentSha256: createHash('sha256').update(fs.readFileSync(absolutePath)).digest('hex'),
+  };
+}
+
 export function buildExecutionEvidenceInput(input: {
   storeId: string;
   batchId: string;

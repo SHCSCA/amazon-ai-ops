@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
+const { currentAppVersion } = require('./current-app-version');
 
 const VALID_REPORT_TYPES = new Set([
   'campaign',
@@ -28,6 +29,7 @@ const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|tr
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
+const APP_VERSION = currentAppVersion();
 
 function fail(message) {
   return { ok: false, message };
@@ -276,7 +278,7 @@ function verifyCanaryEvidence(evidencePath, options = {}) {
 
     checks.push(pass(`batch 存在：${batch.id}`));
     checks.push(batch.status === 'completed' ? pass('batch.status = completed') : fail(`batch.status 不是 completed：${batch.status}`));
-    checks.push(batch.app_version === '1.5.0' ? pass('batch.app_version = 1.5.0') : fail(`batch.app_version 不匹配：${batch.app_version}`));
+    checks.push(batch.app_version === APP_VERSION ? pass(`batch.app_version = ${APP_VERSION}`) : fail(`batch.app_version 不匹配：${batch.app_version}`));
     checks.push(batch.date_start === scope.dateStart ? pass('batch.date_start 匹配') : fail(`batch.date_start 不匹配：${batch.date_start}`));
     checks.push(batch.date_end === scope.dateEnd ? pass('batch.date_end 匹配') : fail(`batch.date_end 不匹配：${batch.date_end}`));
     checks.push(batch.store_name === scope.storeName ? pass('batch.store_name 匹配') : fail(`batch.store_name 不匹配：${batch.store_name}`));

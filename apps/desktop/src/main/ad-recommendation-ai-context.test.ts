@@ -440,6 +440,76 @@ describe('ad recommendation AI context', () => {
     expect(annotated[0].evidence.decisionReasons).toContain('AI: 应小幅降价。');
   });
 
+  it('keeps the rule bid when an aligned AI absolute bid would decrease more than 10 percent', () => {
+    const recommendations = [recommendation({
+      entityType: 'target',
+      entityName: 'back massager',
+      actionType: 'lower_bid',
+      currentValue: '2.32',
+      recommendedValue: '2.09',
+      reason: '规则建议在安全上限内小幅降价。',
+      confidence: 0.82,
+    })];
+    const diagnosis: AdStrategyDiagnosisOutput = {
+      schemaVersion: 'ad_strategy_diagnosis_v1',
+      evidenceSufficiency: TEST_EVIDENCE_SUFFICIENCY,
+      lifecycleStage: 'stable_conversion',
+      lifecycleStageReason: '已有稳定关键词事实。',
+      lifecycleStageEvidenceRefs: ['metric_1'],
+      summary: 'AI 与规则方向一致，但 AI 幅度超过单次安全上限。',
+      mainProblems: ['high_acos'],
+      thresholdSuggestions: {
+        targetAcos: { value: 0.3, reason: '产品目标 ACOS。' },
+        highAcosThreshold: { value: 0.45, reason: '高 ACOS 阈值。' },
+        noOrderClickThreshold: { value: 18, reason: '点击样本足够。' },
+        minSpend: { value: 12, reason: '最低样本花费。' },
+      },
+      aiCandidates: [{
+        entityType: 'target',
+        entityName: 'back massager',
+        actionType: 'lower_bid',
+        recommendedValue: '1.85',
+        reason: 'AI 建议降低竞价。',
+        reasoningSteps: ['metric_1 显示 ACOS 偏高。'],
+        evidenceRefs: ['metric_1'],
+        riskWarnings: [],
+        confidence: 0.89,
+      }],
+      insightOnlyCandidates: [],
+      riskWarnings: [],
+      source: 'ai',
+    };
+    const decisions: MergedAdDecision[] = [{
+      agreement: 'aligned',
+      source: 'rule_ai',
+      entityType: 'target',
+      entityName: 'back massager',
+      actionType: 'lower_bid',
+      recommendedValue: '1.85',
+      confidence: 0.89,
+      reasons: ['Rule: 安全幅度降价。', 'AI: 降价。'],
+      riskWarnings: [],
+      requiresReview: false,
+    }];
+
+    const [annotated] = annotateRecommendationsWithStrategy({
+      recommendations,
+      diagnosis,
+      decisions,
+      operationEventCount: 0,
+      evidencePack: [evidenceItem({
+        evidenceId: 'metric_1',
+        type: 'metric',
+        label: 'back massager / 2026-08-23',
+        sourceFile: 'C:/reports/keyword.xlsx',
+        sourceRow: 432,
+      })],
+    });
+
+    expect(annotated.recommendedValue).toBe('2.09');
+    expect(annotated.evidence.decisionSource).toBe('rule_ai');
+  });
+
   it('moves conflicting or review-required strategy decisions out of the normal approval queue', () => {
     const recommendations = [
       recommendation({

@@ -105,6 +105,28 @@ describe('Mission Control sidebar', () => {
     expect(workspaceCapabilityState(capabilities, 'objects')).toBe('MIXED');
     expect(workspaceCapabilityState(capabilities, 'today')).toBeUndefined();
   });
+
+  it('treats a workspace as ready only when every real action is native or a connected production adapter', () => {
+    const capabilities = [
+      {
+        capabilityId: 'collection.reports.view', workspace: 'collection', view: 'collection/reports',
+        action: 'view', state: 'LEGACY_ADAPTER', legacyRoute: 'data-collection', detail: '已接入生产采集页',
+      },
+      {
+        capabilityId: 'collection.reports.start', workspace: 'collection', view: 'collection/reports',
+        action: 'start', state: 'PRODUCTION_NATIVE', detail: 'Main 已接入真实启动动作',
+      },
+    ] satisfies MissionControlCapabilityProjection[];
+
+    expect(workspaceCapabilityState(capabilities, 'collection')).toBe('PRODUCTION_NATIVE');
+    expect(workspaceCapabilityState([
+      ...capabilities,
+      {
+        capabilityId: 'collection.reports.import', workspace: 'collection', view: 'collection/reports',
+        action: 'import', state: 'BLOCKED', blockerCode: 'IMPORT_NOT_READY', detail: '导入未接入',
+      },
+    ], 'collection')).toBe('MIXED');
+  });
 });
 
 describe('NextSafeActionHandoff', () => {
@@ -194,4 +216,5 @@ describe('Mission Control top-level shell', () => {
     expect(markup).toContain('data-authority-blocked="true"');
     expect(markup).toContain('尚未获得真实执行权限');
   });
+
 });

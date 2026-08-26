@@ -8,6 +8,7 @@ import {
   CheckCircle,
   ClockCounterClockwise,
   Database,
+  DownloadSimple,
   Funnel,
   LockKey,
   NotePencil,
@@ -37,6 +38,10 @@ import './memory-workspace.css';
 const PAGE_SIZE = 10;
 const OPERATOR = 'desktop-operator';
 const RENDERER_WRITABLE_STAGES: readonly CausalLedgerStage[] = ['FACT', 'ANALYSIS'];
+
+export interface CausalTimelineDownloadPort {
+  download(input: { fileName: string; mimeType: string; content: string }): void;
+}
 
 const STAGE_COPY: Record<CausalLedgerStage, { label: string; description: string; authority: string }> = {
   FACT: { label: '事实', description: '数据、观察与可复核信号。', authority: '可人工补充' },
@@ -144,6 +149,74 @@ export function memoryOperatorMessage(error: unknown): string {
     return '因果记忆请求未完成。请检查网络后重试；若仍失败，请展开诊断详情排查。';
   }
   return '因果记忆操作未完成。请刷新当前店铺后重试；若仍失败，请展开诊断详情排查。';
+}
+
+export function buildMemorySearchIndex(
+  context: StoreContextEnvelope,
+  events: readonly CausalEventRecord[],
+): ReadonlyMap<string, string> {
+  missionControlContextKey(context);
+  const index = new Map<string, string>();
+  for (const event of events) {
+    if (String(event.storeId) !== String(context.storeId)) {
+      throw new Error('因果记忆包含跨店铺记录，索引重建已阻断。');
+    }
+    index.set(event.id, [
+      event.id,
+      event.title,
+      event.eventType,
+      event.entityType,
+      event.entityId,
+      event.missionId,
+      event.signal,
+      event.intervention,
+      event.expectedEffect,
+      event.observedEffect,
+      event.status,
+    ].filter(Boolean).join('\n').toLowerCase());
+  }
+  return index;
+}
+
+const browserCausalTimelineDownload: CausalTimelineDownloadPort = {
+  download({ fileName, mimeType, content }) {
+    if (typeof document === 'undefined' || typeof URL === 'undefined') {
+      throw new Error('当前环境不能创建时间线下载。');
+    }
+    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
+    try {
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.rel = 'noopener';
+      anchor.click();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+};
+
+export function exportCausalTimeline(
+  context: StoreContextEnvelope,
+  events: readonly CausalEventRecord[],
+  port: CausalTimelineDownloadPort = browserCausalTimelineDownload,
+): { fileName: string; recordCount: number } {
+  const searchIndex = buildMemorySearchIndex(context, events);
+  const records = [...events].sort((left, right) => left.sequence - right.sequence);
+  const fileName = `amazon-ai-ops-memory-${context.businessDate}.json`;
+  const content = `${JSON.stringify({
+    formatVersion: 'amazon-ai-ops-causal-memory-v1',
+    scope: {
+      marketplace: 'US',
+      currency: 'USD',
+      businessDate: context.businessDate,
+    },
+    recordCount: records.length,
+    records,
+    searchTermsByRecord: Object.fromEntries(searchIndex),
+  }, null, 2)}\n`;
+  port.download({ fileName, mimeType: 'application/json;charset=utf-8', content });
+  return { fileName, recordCount: records.length };
 }
 
 function capabilityReady(
@@ -278,6 +351,7 @@ export function MemoryWorkspace({
   const mutationSequence = useRef(0);
   const idSequence = useRef(0);
   const [events, setEvents] = useState<CausalEventRecord[]>([]);
+  const [searchIndex, setSearchIndex] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [selectedId, setSelectedId] = useState('');
   const [phase, setPhase] = useState<'loading' | 'ready' | 'blocked' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -300,6 +374,7 @@ export function MemoryWorkspace({
     const capturedKey = authorityKey;
     if (!storeContext || !viewReady) {
       setEvents([]);
+      setSearchIndex(new Map());
       setSelectedId('');
       setPhase('blocked');
       const reason = !storeContext ? 'StoreContext missing' : blockedReason;
@@ -311,6 +386,7 @@ export function MemoryWorkspace({
     }
     if (!api) {
       setEvents([]);
+      setSearchIndex(new Map());
       setSelectedId('');
       setPhase('blocked');
       setError('因果记忆服务暂不可用，操作已阻断。请刷新后重试；若仍失败，请展开诊断详情排查。');
@@ -326,11 +402,13 @@ export function MemoryWorkspace({
       if (currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
       rows.forEach((event) => assertCausalEventBelongsToContext(event, storeContext));
       setEvents(rows);
+      setSearchIndex(buildMemorySearchIndex(storeContext, rows));
       setSelectedId((current) => rows.some((event) => event.id === current) ? current : rows[0]?.id ?? '');
       setPhase('ready');
     } catch (loadError) {
       if (currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
       setEvents([]);
+      setSearchIndex(new Map());
       setSelectedId('');
       setPhase('error');
       setError(memoryOperatorMessage(loadError));
@@ -350,9 +428,8 @@ export function MemoryWorkspace({
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return events.filter((event) => (stageFilter === 'ALL' || event.stage === stageFilter)
-      && (!needle || [event.id, event.title, event.eventType, event.entityType, event.entityId, event.missionId, event.signal, event.observedEffect]
-        .filter(Boolean).some((value) => String(value).toLowerCase().includes(needle))));
-  }, [events, search, stageFilter]);
+      && (!needle || searchIndex.get(event.id)?.includes(needle)));
+  }, [events, search, searchIndex, stageFilter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -384,7 +461,11 @@ export function MemoryWorkspace({
       const saved = await api.appendManualCausalEvent(storeContext, input);
       if (currentAuthorityKey.current !== capturedKey || mutationSequence.current !== sequence) return;
       assertCausalEventBelongsToContext(saved, storeContext);
-      setEvents((current) => [saved, ...current]);
+      setEvents((current) => {
+        const next = [saved, ...current];
+        setSearchIndex(buildMemorySearchIndex(storeContext, next));
+        return next;
+      });
       setSelectedId(saved.id);
       setEditor(null);
       setFeedback(correction ? '修正记录已追加，原记录保持不变。' : `${STAGE_COPY[saved.stage].label}记录已追加到当前店铺因果链。`);
@@ -400,6 +481,36 @@ export function MemoryWorkspace({
 
   const stageCounts = Object.fromEntries(CAUSAL_LEDGER_STAGES.map((stage) => [stage, events.filter((event) => event.stage === stage).length])) as Record<CausalLedgerStage, number>;
   const canCorrectSelected = Boolean(selected && RENDERER_WRITABLE_STAGES.includes(selected.stage));
+
+  const rebuildSearchIndex = () => {
+    if (!storeContext || !actionReady('memory.timeline.rebuild-index')) {
+      setError('当前店铺尚未获准重建因果记忆索引。请刷新后重试。');
+      return;
+    }
+    try {
+      setSearchIndex(buildMemorySearchIndex(storeContext, events));
+      setError(null);
+      setFeedback(`搜索索引已从当前店铺 ${events.length} 条真实记录重建。`);
+    } catch (indexError) {
+      setError(memoryOperatorMessage(indexError));
+      setDiagnosticError(diagnosticMessage(indexError));
+    }
+  };
+
+  const exportTimeline = () => {
+    if (!storeContext || !actionReady('memory.timeline.export')) {
+      setError('当前店铺尚未获准导出因果时间线。请刷新后重试。');
+      return;
+    }
+    try {
+      const result = exportCausalTimeline(storeContext, events);
+      setError(null);
+      setFeedback(`已导出当前店铺 ${result.recordCount} 条因果记录。`);
+    } catch (exportError) {
+      setError(memoryOperatorMessage(exportError));
+      setDiagnosticError(diagnosticMessage(exportError));
+    }
+  };
 
   return (
     <div className="mission-control-workspace-root memory-workspace" data-canonical-surface="memory" data-capability-state={viewReady ? expectedCapability : 'BLOCKED'} data-preview-mode={previewMode || undefined}>
@@ -419,7 +530,7 @@ export function MemoryWorkspace({
         <section aria-label="因果阶段权限" className="memory-stage-rail">{CAUSAL_LEDGER_STAGES.map((stage, index) => <React.Fragment key={stage}><button aria-label={`${STAGE_COPY[stage].label}，${stageCounts[stage]} 条，${STAGE_COPY[stage].authority}`} aria-pressed={stageFilter === stage} data-active={stageFilter === stage || undefined} data-stage={stage} onClick={() => { setStageFilter(stage); setPage(1); }} title={`${STAGE_COPY[stage].description} ${STAGE_COPY[stage].authority}`} type="button"><StageTag stage={stage} /><strong>{STAGE_COPY[stage].label}</strong><small>{stageCounts[stage]} 条</small><span>{STAGE_COPY[stage].authority}{!RENDERER_WRITABLE_STAGES.includes(stage) && <LockKey size={11} />}</span></button>{index < CAUSAL_LEDGER_STAGES.length - 1 && <ArrowBendDownRight aria-hidden="true" className="memory-stage-arrow" size={16} />}</React.Fragment>)}</section>
         <details className="memory-diagnostic-details"><summary>诊断详情</summary><p>Stages: FACT / ANALYSIS / DECISION / ACTION / READBACK / EFFECT. Renderer may append FACT / ANALYSIS; DECISION / ACTION / READBACK / EFFECT are Main-only 只读. Source is an append-only ledger ordered by sequence. Crux Decision values and internal IDs remain diagnostic-only.</p></details>
         <div className="memory-layout">
-          <WorkbenchPanel className="memory-timeline" description="按记录时间读取当前店铺的因果记忆。" footer={filtered.length ? `第 ${safePage}/${pageCount} 页 · ${filtered.length} 条匹配记录` : '当前筛选没有记录。'} title="因果时间线" toolbar={<button className="workspace-button workspace-button--secondary" onClick={() => { setStageFilter('ALL'); setSearch(''); setPage(1); }} type="button"><Funnel size={15} />全部阶段</button>}>
+          <WorkbenchPanel className="memory-timeline" description="按记录时间读取当前店铺的因果记忆。" footer={filtered.length ? `第 ${safePage}/${pageCount} 页 · ${filtered.length} 条匹配记录` : '当前筛选没有记录。'} title="因果时间线" toolbar={<><button className="workspace-button workspace-button--secondary" onClick={() => { setStageFilter('ALL'); setSearch(''); setPage(1); }} type="button"><Funnel size={15} />全部阶段</button><button className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.rebuild-index') || busy} onClick={rebuildSearchIndex} type="button"><ArrowClockwise size={15} />重建搜索索引</button><button className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.export') || busy} onClick={exportTimeline} type="button"><DownloadSimple size={15} />导出时间线</button></>}>
             <div className="memory-search"><input aria-label="搜索因果记忆" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索标题、运营任务、对象或信号" value={search} /><button className="workspace-button workspace-button--primary" disabled={!actionReady('memory.timeline.create') || busy} onClick={() => setEditor(memoryDraftFor())} type="button"><Plus size={15} />追加</button></div>
             {phase === 'loading' && <WorkspaceState description="正在读取当前店铺的因果记录，请稍候。" kind="loading" title="读取因果记忆" />}
             {blocked && <WorkspaceState description="不会加载未经核验的临时数据。" details={error ?? '请确认当前店铺后刷新重试。'} kind="blocked" title="因果记忆已失败关闭" />}

@@ -266,10 +266,22 @@ function chooseExecutableRecommendedValue(
 ): string {
   const decisionValue = decision?.recommendedValue;
   if (!decisionValue) return recommendation.recommendedValue;
-  if (isExecutableActionValue(recommendation.actionType, recommendation.currentValue, decisionValue)) {
+  if (isExecutableActionValue(recommendation.actionType, recommendation.currentValue, decisionValue)
+    && isSafeAlignedBidOverride(recommendation, decisionValue)) {
     return decisionValue;
   }
   return recommendation.recommendedValue;
+}
+
+function isSafeAlignedBidOverride(
+  recommendation: ActionRecommendation,
+  decisionValue: unknown,
+): boolean {
+  if (normalize(recommendation.actionType) !== 'lower_bid') return true;
+  const current = parseExecutableNumber(recommendation.currentValue);
+  const recommended = parseExecutableNumber(decisionValue);
+  if (current === undefined || recommended === undefined || recommended >= current) return false;
+  return ((current - recommended) / current) * 100 <= 10.000001;
 }
 
 function isExecutableActionValue(actionType: string, currentValue: unknown, recommendedValue: unknown): boolean {

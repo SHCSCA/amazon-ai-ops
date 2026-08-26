@@ -529,7 +529,11 @@ describe('StoreCollectionOrchestrator', () => {
         message: error instanceof Error ? error.message : String(error),
       }),
     );
-    expect(interruptedResult).toEqual({ ok: false, code: 'SAFETY_STATE_UNKNOWN' });
+    expect(interruptedResult).toEqual({
+      ok: false,
+      code: 'SAFETY_STATE_UNKNOWN',
+      message: '编排器安全状态未知；必须由 Main 完成人工恢复后才能继续。',
+    });
     const pending = readHistory(interrupted).transitions.find((item: any) => (
       item.purpose === 'collection' && item.phase === 'scheduler_accepted'
     ));

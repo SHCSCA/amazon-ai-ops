@@ -204,6 +204,12 @@ function MissionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
         <div><dt>观察窗口</dt><dd>{fixture.mission.observationTotal} 个业务日</dd></div>
         <div><dt>审批模式</dt><dd>人工审批</dd></div>
       </dl>
+      {!props.onInspectBoundary && (
+        <details>
+          <summary>诊断详情</summary>
+          <code>MISSION · {fixture.mission.id}</code>
+        </details>
+      )}
       <div className="canonical-mission-layout">
         <section className="canonical-flight-plan">
           <header><div><span>运营任务 · {fixture.primaryAsin}</span><h3>{fixture.mission.title}</h3></div><DisabledAction reason={props.blockedReason}>编辑运营任务</DisabledAction></header>

@@ -304,7 +304,7 @@ import { registerStoreCollectionSchedulerIpcHandlers } from './store-collection-
 import {
   assertStoreCollectionCommittedImportProofForRecovery,
 } from './store-collection-orchestrator-scheduler-adapter';
-import { deriveStoreCollectionWindow } from './store-collection-scheduler';
+import { deriveStoreCollectionWindow } from './store-collection-window';
 import { StoreCollectionPolicySuppressionController } from './store-collection-policy-suppression';
 import {
   createStoreCollectionProductionComposition,
@@ -554,7 +554,7 @@ const DOWNLOAD_CENTER_PAGE_MODEL_OVERRIDE_FILENAME = 'lingxing-download-center.o
 const DB_PATH = path.join(USER_DATA_DIR, 'amazon-ai-ops.db');
 const STORE_SESSION_GENERATION_SETTING_PREFIX = 'store_session_generation:';
 const OPERATOR_WORKSPACE_SELECTION_SETTING_KEY = 'operator_workspace_selection:v1';
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const RECOMMENDATION_METRIC_LOAD_LIMIT = 5000;
 const LINGXING_REPORT_TYPE_SET = new Set<string>(LINGXING_AD_REPORTS.map((report) => report.type));
 type KeywordImportDuplicateStrategy = 'overwrite' | 'merge' | 'skip';
@@ -2529,6 +2529,28 @@ async function retryCurrentAmazonAdsSession(
   }
 }
 
+async function resumePolicyGrantDispatchesAfterVerifiedAdsSession(
+  context: StoreContextEnvelope,
+  failureLog: string,
+): Promise<void> {
+  await state.executionAuthorityService!.resumePolicyGrantDispatches(
+    context,
+    'session_ready',
+  ).catch(() => {
+    console.error(failureLog);
+  });
+}
+
+function withAdmittedVisibleBrowserOperation<Result>(
+  owner: string,
+  work: () => Promise<Result> | Result,
+): Promise<Result> {
+  if (!state.executionAuthorityService) {
+    throw new Error('浏览器操作安全门尚未初始化。');
+  }
+  return state.executionAuthorityService.withAdmittedBrowserOperation(owner, work);
+}
+
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
   if (!state.storeCoordinator || !state.executionAuthorityService
     || !state.storeCollectionMainRuntime) {
@@ -2553,24 +2575,29 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
       operation: 'browser:retry-ads',
       targetStoreId: String(preflightContext.storeId),
     };
-    const retryCurrent = async (): Promise<BrowserLoginResult> => {
-      const lease = browserOperationLeases.acquire({
-        storeId: preflightContext.storeId,
-        purpose: 'external_write',
-        owner: 'browser-login-ads-retry',
-        ttlMs: 10 * 60 * 1_000,
-      });
-      try {
-        return await retryCurrentAmazonAdsSession(
-          request,
-          preflightContext,
-          retryConnections,
-          lease,
-        );
-      } finally {
-        browserOperationLeases.release(lease);
-      }
-    };
+    const retryCurrent = async (): Promise<BrowserLoginResult> => (
+      withAdmittedVisibleBrowserOperation(
+        'browser-login-ads-retry',
+        async () => {
+          const lease = browserOperationLeases.acquire({
+            storeId: preflightContext.storeId,
+            purpose: 'external_write',
+            owner: 'browser-login-ads-retry',
+            ttlMs: 10 * 60 * 1_000,
+          });
+          try {
+            return await retryCurrentAmazonAdsSession(
+              request,
+              preflightContext,
+              retryConnections,
+              lease,
+            );
+          } finally {
+            browserOperationLeases.release(lease);
+          }
+        },
+      )
+    );
     const result = packageUiReadOnlyRuntime
       ? await withPackageUiVisibleLoginContinuationMutation(
           'browser:retry-ads',
@@ -2582,12 +2609,10 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
           retryCurrent,
         );
     if (result.adsSessionReady) {
-      await state.executionAuthorityService.resumePolicyGrantDispatches(
+      await resumePolicyGrantDispatchesAfterVerifiedAdsSession(
         preflightContext,
-        'session_ready',
-      ).catch(() => {
-        console.error('[Execution] persisted policy-grant recovery failed after Ads retry readiness');
-      });
+        '[Execution] persisted policy-grant recovery failed after Ads retry readiness',
+      );
     }
     return result;
   }
@@ -2749,6 +2774,12 @@ async function performBrowserLoginInUserLane(
   pendingBrowserLogin.controllers.add(lingxingController);
   pendingBrowserLogin.controllers.add(amazonAdsController);
   let erpStageCommitted = false;
+  let claimedAmazonAdsIdentity: AmazonAdsVisibleIdentityClaim | null = null;
+  const blockFailedAmazonAdsIdentity = (
+    adsIdentityClaim: AmazonAdsVisibleIdentityClaim,
+  ): void => {
+    visibleBrowserRuntimeRegistry.blockAmazonAdsIdentity(adsIdentityClaim);
+  };
 
   try {
     await lingxingController.launch();
@@ -3091,6 +3122,7 @@ async function performBrowserLoginInUserLane(
       epoch: lingxingVerifiedRuntime.epoch,
       context: lingxingVerifiedRuntime.context,
     });
+    claimedAmazonAdsIdentity = adsIdentityClaim;
     try {
       if (adsRecognitionFailure) throw new Error(adsRecognitionFailure);
       await amazonAdsController.launch();
@@ -3240,6 +3272,15 @@ async function performBrowserLoginInUserLane(
     }
     return loginResult;
   } catch (error) {
+    const failedRuntime = visibleBrowserRuntimeRegistry.read();
+    if (claimedAmazonAdsIdentity
+      && failedRuntime
+      && failedRuntime.providerIdentityStatus.amazonAds === 'pending'
+      && sameExactStoreContext(failedRuntime.context, loginContext)) {
+      blockFailedAmazonAdsIdentity(claimedAmazonAdsIdentity);
+      pendingAmazonAdsIdentityConfirmation = null;
+      pendingAmazonAdsIdentityRetry = null;
+    }
     if (state.storeCoordinator && state.storeRepo) {
       const observedAt = new Date().toISOString();
       try {
@@ -13792,6 +13833,7 @@ function registerIpcHandlers(): void {
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
       analysisAuthorityReady: Boolean(state.analysisAuthorityService),
       executionAuthorityReady: Boolean(state.executionAuthorityService),
+      deliveryReadinessReady: true,
       storeRuntimeConfigReady: Boolean(state.storeRuntimeConfigService),
       storeAutomationReady: Boolean(
         state.storeCollectionMainRuntime && state.storeEvidenceRetentionService
@@ -13830,7 +13872,14 @@ function registerIpcHandlers(): void {
             );
           },
         }
-      : state.storeCollectionSchedulerReadModel,
+      : state.storeCollectionSchedulerReadModel
+        ? {
+            get: (context) => state.storeCollectionSchedulerReadModel!.get(context),
+            runNow: (context) => state.storeCollectionSchedulerReadModel!.runNow(context),
+          }
+        : (() => {
+            throw new Error('正式采集调度读模型尚未初始化。');
+          })(),
   );
   registerStoreScopedObjectsIpcHandlers(
     trackedIpcRegistrar,
@@ -13873,7 +13922,7 @@ function registerIpcHandlers(): void {
   );
 
   // App
-  registerTrackedIpcHandler('app:get-version', () => '1.5.0');
+  registerTrackedIpcHandler('app:get-version', () => APP_VERSION);
   registerTrackedIpcHandler('app:get-state', () => ({
     isLoggedIn: state.isLoggedIn,
     currentStore: state.currentStore,

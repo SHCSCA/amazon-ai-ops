@@ -61,6 +61,9 @@ export function workspaceCapabilityState(
       .map((capability) => capability.state),
   );
   if (states.size === 0) return undefined;
+  if ([...states].every((state) => state === 'PRODUCTION_NATIVE' || state === 'LEGACY_ADAPTER')) {
+    return states.has('PRODUCTION_NATIVE') ? 'PRODUCTION_NATIVE' : 'LEGACY_ADAPTER';
+  }
   if (states.size === 1) return [...states][0];
   return 'MIXED';
 }

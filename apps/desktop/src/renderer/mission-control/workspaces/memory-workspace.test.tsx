@@ -1,11 +1,13 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CausalEventRecord, MissionControlCapabilityProjection, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { createPreviewExperimentMemoryDomainSuite } from './mission-domain-window-api';
 import {
   MemoryEditor,
   MemoryWorkspace,
+  buildMemorySearchIndex,
+  exportCausalTimeline,
   buildManualCausalEventInput,
   memoryDraftFor,
   memoryOperatorCopy,
@@ -26,6 +28,8 @@ const previewCapabilities = [
   capability('memory.timeline.view'),
   capability('memory.timeline.create'),
   capability('memory.timeline.correct'),
+  capability('memory.timeline.export'),
+  capability('memory.timeline.rebuild-index'),
 ];
 
 function ordinaryVisibleCopy(markup: string): string {
@@ -38,6 +42,28 @@ function ordinaryVisibleCopy(markup: string): string {
 }
 
 describe('MemoryWorkspace', () => {
+  it('rebuilds the real search index and exports only the authorized current-store timeline', () => {
+    const event = {
+      id: 'CAUSAL-FACT-001', storeId: context.storeId, stage: 'FACT', eventType: 'source_fact',
+      entityType: 'data_batch', entityId: 'BATCH-001', missionId: 'MISSION-001', title: '广告事实完成',
+      signal: '八类报表已导入', status: 'recorded', source: 'collector', actorId: 'main-agent', businessDate: '2026-07-22',
+      sessionGeneration: 1, sequence: 1, createdAt: '2026-07-22T00:00:00.000Z',
+    } as CausalEventRecord;
+    const index = buildMemorySearchIndex(context, [event]);
+    expect(index.get(event.id)).toContain('八类报表已导入');
+
+    const download = vi.fn();
+    const result = exportCausalTimeline(context, [event], { download });
+    expect(result.fileName).toBe('amazon-ai-ops-memory-2026-07-22.json');
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({
+      fileName: result.fileName,
+      mimeType: 'application/json;charset=utf-8',
+      content: expect.stringContaining('八类报表已导入'),
+    }));
+    expect(() => buildMemorySearchIndex(context, [{ ...event, storeId: 'foreign-store' as CausalEventRecord['storeId'] }]))
+      .toThrow(/跨店铺/);
+  });
+
   it('keeps internal causal vocabulary out of ordinary operator copy', () => {
     const suite = createPreviewExperimentMemoryDomainSuite();
     const markup = renderToStaticMarkup(<MemoryWorkspace

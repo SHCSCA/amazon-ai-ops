@@ -788,7 +788,31 @@ function shouldReplaceIncompleteDuplicate(
   return (
     (!hasExecutionTraceability(existing) && hasExecutionTraceability(incoming))
     || hasBetterAiEvidence(existing, incoming)
+    || isSaferPendingBidCorrection(existing, incoming)
   );
+}
+
+function isSaferPendingBidCorrection(
+  existing: ActionRecommendation,
+  incoming: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>,
+): boolean {
+  if (existing.actionType !== 'lower_bid' || incoming.actionType !== 'lower_bid') return false;
+  const existingCurrent = Number(existing.currentValue);
+  const incomingCurrent = Number(incoming.currentValue);
+  const existingTarget = Number(existing.recommendedValue);
+  const incomingTarget = Number(incoming.recommendedValue);
+  if (![existingCurrent, incomingCurrent, existingTarget, incomingTarget].every(Number.isFinite)
+    || existingCurrent <= 0
+    || Math.round(existingCurrent * 100) !== Math.round(incomingCurrent * 100)
+    || existingTarget >= existingCurrent
+    || incomingTarget >= incomingCurrent) return false;
+  const existingDecreasePercent = ((existingCurrent - existingTarget) / existingCurrent) * 100;
+  const incomingDecreasePercent = ((incomingCurrent - incomingTarget) / incomingCurrent) * 100;
+  return existingDecreasePercent > 10.000001
+    && incomingDecreasePercent > 0
+    && incomingDecreasePercent <= 10.000001
+    && incomingTarget > existingTarget
+    && hasExecutionTraceability(incoming);
 }
 
 function hasCurrentReviewResolution(recommendation: ActionRecommendation): boolean {

@@ -1,9 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
+const { currentAppVersion } = require('./current-app-version');
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
+const APP_VERSION = currentAppVersion();
 
 function pass(message) {
   return { ok: true, message };
@@ -150,7 +152,7 @@ function verifyDiagnosticEvidence(evidencePath) {
       return checks;
     }
 
-    checks.push(row.app_version === '1.5.0' ? pass('diagnostic.app_version = 1.5.0') : fail(`diagnostic.app_version 不匹配：${row.app_version}`));
+    checks.push(row.app_version === APP_VERSION ? pass(`diagnostic.app_version = ${APP_VERSION}`) : fail(`diagnostic.app_version 不匹配：${row.app_version}`));
     checks.push(row.ready === 1 ? pass('DB diagnostic.ready = 1') : fail(`DB diagnostic.ready 不是 1：${row.ready}`));
     checks.push(!row.error_message ? pass('DB diagnostic.error_message 为空') : fail(`DB diagnostic.error_message：${row.error_message}`));
     checks.push(row.date_start === scope.dateStart ? pass('diagnostic.date_start 匹配') : fail(`diagnostic.date_start 不匹配：${row.date_start}`));

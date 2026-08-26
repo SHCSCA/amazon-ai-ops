@@ -260,6 +260,33 @@ export interface CancelAdExecutionBatchRequest extends StartAdExecutionBatchRequ
   reason?: string;
 }
 
+export interface ReconcileUnknownAdExecutionBatchRequest extends StartAdExecutionBatchRequest {}
+
+export type AdExecutionUnknownReconciliationStatus =
+  | 'CONFIRMED_TARGET'
+  | 'CONFIRMED_ORIGINAL'
+  | 'CURRENT_VALUE_DRIFT'
+  | 'STILL_UNKNOWN';
+
+/**
+ * Read-only reconciliation result for a terminal UNKNOWN batch. The original
+ * execution ledger remains UNKNOWN; Main appends a separate READBACK fact and
+ * never retries the saved command.
+ */
+export interface AdExecutionUnknownReconciliationResult {
+  status: AdExecutionUnknownReconciliationStatus;
+  batchId: string;
+  jobId: string;
+  originalStatus: 'unknown';
+  firstObservedBidCents: number;
+  reloadObservedBidCents: number;
+  observedBidCents: number;
+  observedAt: string;
+  firstEvidenceRef: string;
+  reloadEvidenceRef: string;
+  detail: string;
+}
+
 export interface AdExecutionTakeoverResult {
   status: 'VISIBLE';
   batchId: string;

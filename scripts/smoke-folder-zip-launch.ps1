@@ -8,7 +8,12 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $releaseDir = Join-Path $repoRoot 'apps\desktop\release'
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
-  $ZipPath = Join-Path $releaseDir 'AmazonAIOpsAgent-1.5.0.zip'
+  $desktopPackagePath = Join-Path $repoRoot 'apps\desktop\package.json'
+  $desktopPackageVersion = [string]((Get-Content -Raw -LiteralPath $desktopPackagePath | ConvertFrom-Json).version)
+  if ($desktopPackageVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Desktop package version is invalid: $desktopPackageVersion"
+  }
+  $ZipPath = Join-Path $releaseDir "AmazonAIOpsAgent-$desktopPackageVersion.zip"
 }
 $ZipPath = [System.IO.Path]::GetFullPath($ZipPath)
 $winUnpackedExe = Join-Path $releaseDir 'win-unpacked\AmazonAIOpsAgent.exe'

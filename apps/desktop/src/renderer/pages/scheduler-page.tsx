@@ -428,23 +428,11 @@ export function SchedulerPage({
     }
   }
 
-  async function loadCurrentStore(options: { keepMessage?: boolean } = {}) {
-    const sequence = ++requestSequence.current;
-    const key = authorityKey;
-    const context = storeContext;
-    setLoading(true);
-    setRetentionLoading(false);
-    setError(null);
-    setProjection(null);
-    setRetention(null);
-    setRetentionError(null);
-    setConfirmRun(false);
-    if (!options.keepMessage) setMessage(null);
-    if (!access.view.allowed) {
-      setLoading(false);
-      setError('当前店铺自动化视图不可用，请刷新或检查运行设置。');
-      return;
-    }
+  async function loadCurrentStoreAuthorized(
+    context: StoreContextEnvelope,
+    sequence: number,
+    key: string,
+  ) {
     if (!api) {
       setLoading(false);
       setError('当前店铺自动化接口不可用，请重新打开最新安装版后重试。');
@@ -467,6 +455,27 @@ export function SchedulerPage({
     } finally {
       if (isCurrentRequest(sequence, key)) setLoading(false);
     }
+  }
+
+  async function loadCurrentStore(options: { keepMessage?: boolean } = {}) {
+    const sequence = ++requestSequence.current;
+    const key = authorityKey;
+    const context = storeContext;
+    setLoading(true);
+    // Every new StoreContext sequence owns its own retention request state.
+    setRetentionLoading(false);
+    setError(null);
+    setProjection(null);
+    setRetention(null);
+    setRetentionError(null);
+    setConfirmRun(false);
+    if (!options.keepMessage) setMessage(null);
+    if (!access.view.allowed) {
+      setLoading(false);
+      setError('当前店铺自动化视图不可用，请刷新或检查运行设置。');
+      return;
+    }
+    await loadCurrentStoreAuthorized(context, sequence, key);
   }
 
   useEffect(() => {

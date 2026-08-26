@@ -24,6 +24,7 @@ describe('execution authority fixed IPC surface', () => {
       createBatch: vi.fn(() => ({ created: true, projection: { batch: {}, jobs: [] } })),
       startBatch: vi.fn(async () => ({ batch: {}, jobs: [] })),
       cancelBatch: vi.fn(() => ({ batch: {}, jobs: [] })),
+      reconcileUnknownBatch: vi.fn(async () => ({ status: 'CONFIRMED_ORIGINAL', batchId: 'batch-1' })),
       takeOverVisibleBrowser: vi.fn(async () => ({ status: 'VISIBLE', batchId: 'batch-1' })),
     };
     registerExecutionAuthorityIpcHandlers(
@@ -40,6 +41,8 @@ describe('execution authority fixed IPC surface', () => {
     });
     await handlers.get('execution-authority:start-batch')?.({}, { context, batchId: 'batch-1' });
     expect(service.startBatch).toHaveBeenCalledWith({ context, batchId: 'batch-1' });
+    await handlers.get('execution-authority:reconcile-unknown')?.({}, { context, batchId: 'batch-1' });
+    expect(service.reconcileUnknownBatch).toHaveBeenCalledWith({ context, batchId: 'batch-1' });
   });
 
   it('rejects Renderer bid, stable-id and path injection and path-bearing results', async () => {
@@ -52,6 +55,7 @@ describe('execution authority fixed IPC surface', () => {
         createBatch: vi.fn(),
         startBatch: vi.fn(),
         cancelBatch: vi.fn(),
+        reconcileUnknownBatch: vi.fn(),
         takeOverVisibleBrowser: vi.fn(),
       } as never,
     );

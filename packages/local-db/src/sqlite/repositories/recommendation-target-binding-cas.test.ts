@@ -32,6 +32,56 @@ function createRepository() {
 }
 
 describe('recommendation writable target binding CAS', () => {
+  it('refreshes an unbound pending duplicate from an over-limit bid to a safe bid', () => {
+    const { db, repo } = createRepository();
+    try {
+      const evidence = {
+        impressions: 1090,
+        clicks: 6,
+        cost: 13.91,
+        orders: 1,
+        sales: 32.96,
+        acos: 0.422,
+        cpc: 2.32,
+        cvr: 0.0055,
+        date: '2026-08-23',
+        sourceFiles: ['D:/reports/keyword.xlsx'],
+        sourceRow: 432,
+        explanationSource: 'ai' as const,
+        aiExplanation: '规则与 AI 均建议降低竞价。',
+        aiStrategySource: 'ai' as const,
+        aiEvidenceRefs: ['metric:1'],
+      };
+      const base = {
+        taskId: 'task-safe-refresh',
+        storeName: 'JF-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        msku: 'MSKU-safe-refresh',
+        entityType: 'target' as const,
+        entityId: 'campaign_adgroup_back-massager',
+        entityName: 'back massager',
+        actionType: 'lower_bid' as const,
+        currentValue: '2.32',
+        reason: 'ACOS above target.',
+        evidence,
+        confidence: 0.89,
+        riskLevel: 'APPROVAL' as const,
+        status: 'pending' as const,
+      };
+      const id = repo.insert({ ...base, recommendedValue: '1.85' });
+
+      expect(repo.insertIfNoDuplicate({ ...base, recommendedValue: '2.09' }))
+        .toEqual({ id, inserted: false, updated: true });
+      expect(repo.findById(id)).toMatchObject({
+        revision: 1,
+        recommendedValue: '2.09',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps pending status, increments revision once, and never overwrites an existing binding audit', () => {
     const { db, repo } = createRepository();
     try {

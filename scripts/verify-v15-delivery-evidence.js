@@ -3,6 +3,7 @@ const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
 const { reconcile } = require('./reconcile-lingxing-full8-data');
+const { currentAppVersion } = require('./current-app-version');
 
 const EXPECTED_REPORT_TYPES = [
   'campaign',
@@ -28,6 +29,7 @@ const REPORT_KEYWORDS = {
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
+const APP_VERSION = currentAppVersion();
 
 function fail(message) {
   return { ok: false, message };
@@ -280,7 +282,7 @@ function verifyDeliveryEvidence(evidencePath) {
 
     const scope = collectScope(data, dbBatch);
     checks.push(dbBatch.status === 'completed' ? pass('DB batch.status = completed') : fail(`DB batch.status 不是 completed：${dbBatch.status}`));
-    checks.push(dbBatch.app_version === '1.5.0' ? pass('DB batch.app_version = 1.5.0') : fail(`DB batch.app_version 不匹配：${dbBatch.app_version}`));
+    checks.push(dbBatch.app_version === APP_VERSION ? pass(`DB batch.app_version = ${APP_VERSION}`) : fail(`DB batch.app_version 不匹配：${dbBatch.app_version}`));
     checks.push(dbBatch.date_start === scope.dateStart ? pass('DB batch.date_start 匹配') : fail(`DB batch.date_start 不匹配：${dbBatch.date_start} vs ${scope.dateStart || '-'}`));
     checks.push(dbBatch.date_end === scope.dateEnd ? pass('DB batch.date_end 匹配') : fail(`DB batch.date_end 不匹配：${dbBatch.date_end} vs ${scope.dateEnd || '-'}`));
     checks.push(dbBatch.store_name === scope.storeName ? pass('DB batch.store_name 匹配') : fail(`DB batch.store_name 不匹配：${dbBatch.store_name} vs ${scope.storeName || '-'}`));
