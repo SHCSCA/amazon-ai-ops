@@ -1,5 +1,20 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 当前：2026-08-26 Package UI 已跨过登录，决策页两项实包缺口完成红→绿
+
+- 全新 `operator-core-20260826-84` 使用正式库 readonly/query-only online backup 建立隔离 Profile；操作者本次手输提交已被 runner 正确识别，真实连接完成并进入 `decisions/recommendations`。这证明当前验证不再卡在登录、ERP 或 Ads 连接。
+- `100-compact` 随后由正式包运行时合同严格失败：`.decision-domain-detail` 在 1366×768 下形成 `524/957px` 未标注嵌套滚动区；同页普通界面还直接显示 `rule-revision:<hash>` 与 `model-revision:<hash>`。失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-84/manifests/2026-08-26T01-03-38-598Z-2026-08-26T01-03-38-597Z-8e78d965-d4c8-4117-b31e-5d17243aa95f.json`，`runs=0 / RUN_FAILED / protected DB unchanged`；目标进程已清理为 0。
+- 详情列滚动合同先红：`1 failed / 16 skipped`，旧规则为 `max-height: min(...) / overflow: auto`；最小修复改为由页面统一滚动，聚焦复验 `1 passed / 16 skipped`。
+- 技术证据展示合同先红：`DecisionEvidenceFacts` 不存在，`1 failed / 17 skipped`；最小修复保留原始 `evidence-package/rule-revision/model-revision/proposal-source` 在可折叠“诊断详情”，普通界面只显示中文业务结论。聚焦复验 `1 passed / 17 skipped`，底层证据没有删除或改写。
+- 完整 `decisions-workspace.test.tsx` 随后 `18/18 passed`、skipped=0；desktop typecheck 同轮输出 `$ tsc --noEmit`、exit 0。没有删除、跳过或放宽既有断言。
+- production Renderer 构建通过：4735 modules，JS `index-BSpYGz9j.js` 1,683,671 bytes / SHA-256 `8656FFCBE5678ED774752CA679F577E10290CA6C6E3ACC2C0003A2C276A0548D`，CSS `index-BUxkUFrI.css` 483,088 bytes / `BAA30CC7F87ADBAFB29F68103A8EB697A79515684AC45F54732F4721DCFF5B77`。
+- `pnpm run smoke:business-ui-current` exit 0；summary `output/codex-evidence/current-business-ui-smoke-1787707204127.json`，连接、采集、策略、运营任务、经营实验、弹窗、按钮 7 类主流程保持通过。正式库主文件 smoke 前后均为 7,675,904 bytes / SHA-256 `A12AC8014E643EA0FDA986D2AF0BEAB2EDEC49A0FC8263AF5E9B3893D8F2D3B4` / mtime `2026-08-25T07:28:23.7863713Z`；readonly + `query_only=1` 回读 approval tasks 与 Ads 五表全部为 0。
+- Windows 七步重建通过：generatedAt `2026-08-26T01:28:30.288Z`、全部 step status 0、`freshCurrentRun=true`、native source bindings `unchangedExact=true`。独立哈希：installer `8DE17BB72E99A3C8A79AF61EF18FF89289B147A28872758B9F515D719805C10D`，portable `C8B33E6BA67F47A2C770DF5028E8EA67F42C55BABD526FB0B8F10F9A2F0F3063`，folder ZIP `5A07273192BD56CE7681BD12844B0EC1F2AA313818345DDC553F9F9258074F82`，EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，app content `A86E1AA21C026C8509B5320075AF51A6B79BC1DA7CE3B2F32D29AE352F15B963`（5118 files / 544,651,332 bytes）。
+- 新 folder ZIP 真解压启动通过：311,689,619 bytes，解压 EXE 与 win-unpacked 一致，目标窗口与 packaged renderer 就绪，PID 10984 已停止且临时目录清理成功；证据 `output/codex-evidence/folder-zip-launch-smoke-1787707736463.json`。
+- 全新 `operator-core-20260826-85` 已准备：Profile 仅含正式库 readonly online backup（1874/1874 pages、raw/logical SHA-256 `16642C58384461A0AFAB3D11A5A39FA52DF9918CD89CCC7F2B5343517A34EBF2`），integrity=ok、query_only=1、三主体精确 ACL；authority receipt 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`。下一步只启动该新谱系首档验证。
+- `-85` 已按用户“启动验证”实际打开新包并稳定进入 `100-compact` operator preparation；60 秒内 runner 未检测到本次提交，故按既定时限安全停止为 `runs=0 / RUN_FAILED`，没有进入 ERP/Ads 连接，也没有重新执行决策页合同。失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-85/manifests/2026-08-26T01-33-07-545Z-2026-08-26T01-33-07-545Z-965cfb32-d26c-4713-ab89-6861a8403e92.json`，protected DB unchanged、目标进程已清理为 0。
+- 官方只读 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，一次性 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260826-85/AF93F3B794C6A6B8038BBCA725311CD7309E7814B5DB2A2FD19B29F9DE24C6A3.json`。正式库再以 readonly/query_only 回读：approval tasks 与 Ads 五表仍全 0；主文件 SHA/大小/mtime 前后不变，SHA-256 仍为 `A12AC801...D3B4`。
+
 ## 当前：2026-08-25 最新业务日 8/8 已真实采集并导入
 
 - 正式应用保存连接已恢复为 `lingxing=ready / amazon_ads=ready`，未读取或代填密码；最新作业 `batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，8 类 checkpoint 全部为 `downloaded`，作业 `completed`。

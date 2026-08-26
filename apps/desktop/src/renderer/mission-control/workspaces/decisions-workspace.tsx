@@ -219,6 +219,50 @@ export function decisionRevisionDisplayLabel(revision: number): string {
   return '版本已校验';
 }
 
+export function decisionFactProjection(facts: readonly string[]): {
+  diagnosticFacts: string[];
+  operatorFacts: string[];
+} {
+  const diagnosticFacts: string[] = [];
+  const operatorFacts: string[] = [];
+  const appendOperatorFact = (fact: string) => {
+    if (!operatorFacts.includes(fact)) operatorFacts.push(fact);
+  };
+
+  for (const rawFact of facts) {
+    const fact = rawFact.trim();
+    if (!fact) continue;
+    if (/^evidence-package:/i.test(fact)) {
+      diagnosticFacts.push(fact);
+      appendOperatorFact('证据包已锁定');
+      continue;
+    }
+    if (/^(?:rule|model)-revision:/i.test(fact)) {
+      diagnosticFacts.push(fact);
+      appendOperatorFact('规则与模型版本已校验');
+      continue;
+    }
+    if (/^proposal-source:/i.test(fact)) {
+      diagnosticFacts.push(fact);
+      appendOperatorFact(/:rule_ai$/i.test(fact) ? '规则与 AI 分析一致' : '分析来源已记录，需人工复核');
+      continue;
+    }
+    appendOperatorFact(fact);
+  }
+
+  return { diagnosticFacts, operatorFacts };
+}
+
+export function DecisionEvidenceFacts({ facts }: { facts: readonly string[] }): React.ReactElement {
+  const projection = decisionFactProjection(facts);
+  return <>
+    {projection.operatorFacts.length
+      ? <ul>{projection.operatorFacts.map((fact) => <li key={fact}><CheckCircle size={15} weight="fill" />{fact}</li>)}</ul>
+      : <p>未记录可核验事实。</p>}
+    {projection.diagnosticFacts.length > 0 && <details><summary>诊断详情</summary>{projection.diagnosticFacts.map((fact) => <code key={fact}>{fact}</code>)}</details>}
+  </>;
+}
+
 export function decisionListScopeLabel(record: Pick<DecisionRecord, 'productId' | 'actionType'>): string {
   const scope = record.productId ? '指定产品' : '店铺级';
   const action = record.actionType === 'set_keyword_bid' ? '调整关键词竞价' : '其他受控动作';
@@ -765,7 +809,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
             <dl><div><dt>当前值</dt><dd>{formatDecisionMoney(selected.currentValue, selectedProposal?.currentBidCents)}</dd></div><div><dt>推荐值</dt><dd>{formatDecisionMoney(selected.recommendedValue, selectedProposal?.proposedBidCents)}</dd></div><div><dt>策略快照</dt><dd>已锁定策略版本</dd></div><div><dt>有效期</dt><dd>{selected.validUntil?.slice(0, 10) ?? '未设置'}</dd></div></dl>
             <details><summary>诊断详情</summary><code>{selected.policyVersionId}</code><code>{selected.policyRevision}</code>{selectedProposal && <><code>{selectedProposal.evidencePackageHash}</code><code>{selectedProposal.adEntityRevision ?? '—'}</code></>}</details>
           </section>
-          <div className="decision-domain-evidence-grid"><section><h3>可核验事实</h3><ul>{selected.facts.map((fact) => <li key={fact}><CheckCircle size={15} weight="fill" />{fact}</li>)}</ul></section><section><h3>备选方案</h3>{selected.alternatives.length ? <ol>{selected.alternatives.map((alternative) => <li key={alternative}>{alternative}</li>)}</ol> : <p>未记录备选方案。</p>}<strong>预期效果</strong><p>{selected.expectedEffect ?? '未记录'}</p></section></div>
+          <div className="decision-domain-evidence-grid"><section><h3>可核验事实</h3><DecisionEvidenceFacts facts={selected.facts} /></section><section><h3>备选方案</h3>{selected.alternatives.length ? <ol>{selected.alternatives.map((alternative) => <li key={alternative}>{alternative}</li>)}</ol> : <p>未记录备选方案。</p>}<strong>预期效果</strong><p>{selected.expectedEffect ?? '未记录'}</p></section></div>
           <section className="decision-domain-history">
             <header><div><h3>决策历史</h3><p>每次修订与人工决议都保留快照。</p></div><ClockCounterClockwise size={19} /></header>
             <div>{history.map((item) => <article key={item.id}><span>{decisionHistoryEventLabel(item.eventType)}</span><strong>版本快照已保留</strong><small>{item.reason ?? item.createdAt}</small><details><summary>诊断详情</summary><code>{item.id}</code><code>{item.eventType}</code><code>{item.decisionRevision}</code><code>{item.actorId}</code></details></article>)}</div>

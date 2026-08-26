@@ -1,5 +1,14 @@
 # BLOCKED — 2026-08-07
 
+## 当前：2026-08-26 登录与连接已通过，Package UI 等待决策页修复进入新包
+
+- `operator-core-20260826-84` 已收到操作者本次手输并完成真实 ERP/Ads 连接；当前不再把登录、保存密码或 Ads 身份识别列为 blocker。
+- 首档正式包失败点已收窄到 `decisions/recommendations` 两项：不必要的详情列嵌套滚动，以及普通界面裸露 `rule-revision/model-revision`。两项源码均已形成独立 `1 RED → 1 GREEN`，安全门、证据原值与审批/回读逻辑未放宽。
+- 当前阻断是“修复尚未进入重建包并通过全新 Package UI 100%/125%/wide manifest”。`-84` 只能保留为失败证据，不得 resume 或改名为通过；重建前先完成完整决策页测试、typecheck、业务 smoke 与正式库零写入复核。
+- 该修复现已进入新 app content `A86E1AA2...B963`；Windows 七步、独立哈希、7 类 business smoke 与新 ZIP 真启动均通过。全新 `operator-core-20260826-85` Profile/authority 已准备，当前唯一 Package UI 动作是启动首档并由操作者完成本次手输，随后让 runner 自动检查 100%/125%/wide。
+- `-85` 本次已启动，但 60 秒 preparation 内没有提交，按规则 `runs=0` 安全关闭；这不是登录失败、ERP/Ads 回退或决策页修复失败。只读 inspector 已生成 `RESUME_SAFE` 单次 receipt `AF93F3B...4C6A3.json`，下次明确启动时只续跑同一 `-85`，由操作者在 60 秒内完成应用内提交；执行者不代填、不点击、不自动重复开窗。
+- Task 8B 仍独立阻断：现有四条 `lower_bid` 快照缺少稳定广告对象 authority/id/revision，且变化 19.6507%–26.1044% 超过启用策略 10% 上限；approval tasks 与 Ads 五表均为 0。没有具体合格候选时不得请求批准或写入。
+
 ## 当前：2026-08-25 最新真实 AI 已成功，Task 8B 因候选不合格继续阻断
 
 - 最新 `2026-08-10 至 2026-08-23` 已完成 8/8 下载与正式导入（8 files / 1961 metrics / 8 reconciliations），采集与导入不再是 blocker。

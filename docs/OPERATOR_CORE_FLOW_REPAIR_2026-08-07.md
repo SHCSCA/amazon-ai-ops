@@ -1,5 +1,17 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 2026-08-26 最新状态：Package UI 已跨登录，决策页实包缺口红→绿
+
+- 全新 `operator-core-20260826-84` 已识别操作者本次手输提交并完成 ERP/Ads 真实连接，随后进入 `decisions/recommendations`；登录链与 Ads 身份识别不是本轮失败点。
+- 正式包首档运行时合同发现两项真实缺陷：详情列在 1366×768 形成 `524/957px` 嵌套滚动；普通界面把不可变分析事实中的 `rule-revision/model-revision` 原样展示。失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-84/manifests/2026-08-26T01-03-38-598Z-2026-08-26T01-03-38-597Z-8e78d965-d4c8-4117-b31e-5d17243aa95f.json`，protected DB unchanged、Ads 写入仍为 0。
+- 滚动合同修前 `1 failed / 16 skipped`、修后 `1 passed / 16 skipped`；详情列不再独立 `overflow:auto`，由页面统一承担纵向滚动。
+- 技术证据展示修前 `1 failed / 17 skipped`、修后 `1 passed / 17 skipped`；原始 evidence/rule/model/source 技术值只进入可折叠“诊断详情”，普通界面显示“证据包已锁定 / 规则与模型版本已校验 / 规则与 AI 分析一致”，没有删除真实证据。
+- 完整决策页回归为 `18/18 passed`、skipped=0，desktop typecheck 为 `$ tsc --noEmit`、exit 0；既有断言没有删除、跳过或放宽。
+- production Renderer 已构建为 `index-BSpYGz9j.js`（1,683,671 bytes / SHA-256 `8656FFCBE5678ED774752CA679F577E10290CA6C6E3ACC2C0003A2C276A0548D`）与 `index-BUxkUFrI.css`（483,088 bytes / `BAA30CC7F87ADBAFB29F68103A8EB697A79515684AC45F54732F4721DCFF5B77`）。随后 7 类 business UI smoke 全绿，summary `output/codex-evidence/current-business-ui-smoke-1787707204127.json`；正式库 SHA/大小/mtime 前后不变，query_only 回读 approval tasks 与 Ads 五表仍全部为 0。
+- 修复已进入新 Windows 包：七步构建 generatedAt `2026-08-26T01:28:30.288Z`、全部 status 0；installer `8DE17BB7...C10D`、portable `C8B33E6...3063`、folder ZIP `5A072731...4F82`、app content `A86E1AA2...B963`。新 ZIP 真解压启动通过，证据 `output/codex-evidence/folder-zip-launch-smoke-1787707736463.json`。
+- 全新 `operator-core-20260826-85` 只含正式库 readonly online backup（1874/1874 pages、logical SHA `16642C58...EBF2`），integrity/query_only/ACL/authority 均通过。当前仍为 `APP_NEEDS_WORK / NON_READY`，直到该新谱系 Package UI 三档通过；Task 8B 仍需稳定对象、≤10% 且经具体批准的候选。
+- `-85` 已真实启动并稳定显示首档连接工作台，但 60 秒内未检测到操作者提交，故严格以 `runs=0 / RUN_FAILED` 关闭；manifest `.../operator-core-20260826-85/manifests/2026-08-26T01-33-07-545Z-...json` 证明 protected DB unchanged。官方 inspector 返回 `RESUME_SAFE / violations=[]` 并生成单次 receipt `AF93F3B...4C6A3.json`；下次只续跑同一谱系，不重建或空开新窗口。
+
 ## 2026-08-25 最新状态：新业务日 8/8 与真实 AI 已闭合，Task 8B 安全阻断
 
 - 正式应用使用 Main-only 保存连接完成新业务日采集：`batch_20260825055104954_vk66s3` 覆盖 `2026-08-10 至 2026-08-23`，八类报表全部 `downloaded`、作业 `completed`；正式导入 `import_batch_20260825055104954_vk66s3` 为 8 source files / 1961 metric rows / 8 reconciliations，状态 `completed`。没有读取或代填密码、Cookie 或 Profile。

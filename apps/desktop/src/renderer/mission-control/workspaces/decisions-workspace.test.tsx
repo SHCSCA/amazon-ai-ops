@@ -1,4 +1,5 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { DecisionRecord, MissionControlCapabilityProjection, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
@@ -6,6 +7,7 @@ import { createPreviewDecisionDomainApi } from './mission-domain-window-api';
 import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-api';
 import {
   DecisionsWorkspace,
+  DecisionEvidenceFacts,
   DecisionDialog,
   analysisActionBatchOptions,
   authorizationMissionIds,
@@ -44,6 +46,35 @@ const actionCapabilities = [
 ];
 
 describe('DecisionsWorkspace', () => {
+  it('leaves vertical scrolling to the page instead of the decision detail column', () => {
+    const css = readFileSync(new URL('./decisions-workspace.css', import.meta.url), 'utf8');
+    const detailRule = css.match(/\.decision-domain-detail\s*\{([^}]*)\}/)?.[1] ?? '';
+
+    expect(detailRule).toContain('max-height: none');
+    expect(detailRule).toContain('overflow: visible');
+  });
+
+  it('keeps analysis revision evidence in diagnostics while showing Chinese fact summaries', () => {
+    const markup = renderToStaticMarkup(<DecisionEvidenceFacts facts={[
+      '近 7 天广告花费高于目标',
+      'evidence-package:8647e30da7a0c617d9',
+      'rule-revision:b2923136e5822503a3532c49e3ce2e0540ab6a9fea09582',
+      'model-revision:218a41aabb37f39468b93c43a9c6182c5a3c0aa112b38b6',
+      'proposal-source:rule_ai',
+    ]} />);
+    const ordinaryMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    const ordinaryText = ordinaryMarkup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(ordinaryText).toContain('近 7 天广告花费高于目标');
+    expect(ordinaryText).toContain('证据包已锁定');
+    expect(ordinaryText).toContain('规则与模型版本已校验');
+    expect(ordinaryText).toContain('规则与 AI 分析一致');
+    expect(ordinaryText).not.toMatch(/evidence-package|rule-revision|model-revision|proposal-source/i);
+    expect(markup).toContain('<summary>诊断详情</summary>');
+    expect(markup).toContain('rule-revision:b2923136e5822503a3532c49e3ce2e0540ab6a9fea09582');
+    expect(markup).toContain('model-revision:218a41aabb37f39468b93c43a9c6182c5a3c0aa112b38b6');
+  });
+
   it.each([
     ['decisions/recommendations', 'AI 建议', '先把建议修订成可核验决策'],
     ['decisions/approval', '人工审批', '处理等待人工决议'],

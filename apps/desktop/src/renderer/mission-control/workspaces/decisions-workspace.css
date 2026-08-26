@@ -373,9 +373,9 @@
   min-width: 0;
   align-content: start;
   gap: 8px;
-  max-height: min(590px, calc(100vh - 176px));
+  max-height: none;
   padding-right: 2px;
-  overflow: auto;
+  overflow: visible;
 }
 
 .decision-domain-detail-head,
