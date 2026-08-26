@@ -16,6 +16,7 @@
 - 正式库当前仍为 ERP/Ads ready、8/8 downloaded、8 files / 1961 metrics / 8 reconciliations、enabled 策略、active/fact 运营任务与 draft 经营实验；readonly/query_only 前后主文件 SHA-256 均为 `A12AC801...D3B4`。最新 4 条 `rule_ai` 建议仍缺稳定广告对象且降幅 19.6507%–26.1044%，human/policy 均不可授权，approval/authority/identity/Ads execution 全为 0。
 - 因此后台门已收敛，仍不能标记 APP_READY：`-85` 恢复 receipt 完整但新包 Package UI 三档未实际通过；Task 8B 也没有具体、稳定、≤10% 且经操作者批准的候选。未收到明确再次启动指令前不空开窗口。
 - 第 2 次自动续接审计再次得到完全相同的包、正式库、候选与零写入结果；`-85` receipt 未消费，应用/runner 为 0。本轮没有重复测试、构建或开窗；若下一轮外部状态仍不变，将依阻断规则停止自动续接。
+- 第 3 次审计仍无任何变化，连续三次同一外部条件已满足 blocked 门槛。当前不再自动重试；用户明确“再次启动验证”后，使用现有 `-85` receipt 续跑，并由用户在 60 秒内本人提交。Package UI 三档通过前继续 `APP_NEEDS_WORK / NON_READY`，Task 8B 也继续因无稳定、≤10%、已批准候选而阻断。
 
 ## 2026-08-25 最新状态：新业务日 8/8 与真实 AI 已闭合，Task 8B 安全阻断
 

@@ -21,6 +21,7 @@
 - Task 8B 当前资格没有改善：最新 4 条 `rule_ai` 快照虽为受控关键词竞价调整，但 `ad_entity_authority_id/ad_entity_id/ad_entity_revision` 全为空，降幅为 19.6507%–26.1044%；human/policy eligibility 均为 false，approval tasks=0、verified authority=0、identity versions=0、Ads 五表=0。未出现具体、稳定、≤10% 且经人工批准的 `lower_bid`，因此不允许真实写入。
 - `-85` 单次恢复 receipt 仍存在且 SHA-256 为 `5A41459A...8BE2D`，目标应用进程为 0；本轮不自动再次开窗。唯一剩余 Package UI 动作仍是操作者明确启动后在 60 秒内完成应用内提交，再让 runner 自动检查 100%/125%/wide。
 - 第 2 次自动续接审计仍无外部状态变化：`HEAD=origin/master=922433d8`、受控文件 clean，receipt/ZIP/EXE/正式库 SHA-256 仍分别为 `5A41459A...8BE2D` / `5A072731...4F82` / `67DC2A70...5E89` / `A12AC801...D3B4`，目标应用与 Package UI runner 均为 0。最新 4 条 `rule_ai` 仍无 authority/id/revision、human/policy eligibility 均 false、最小降幅 19.6507%，approval/authority/identity/Ads 五表全 0；因此没有可合法推进的 Ads 写入，也不重复构建或空开窗口。
+- 第 3 次自动续接审计仍为同一外部条件：`HEAD=origin/master=980774be`、受控文件 clean，receipt/ZIP/EXE/正式库哈希逐字不变，目标应用与 runner 均为 0；最新 4 条候选依然无稳定对象、变化 19.6507%–26.1044%、human/policy eligibility=false，所有 approval/authority/identity/Ads execution 计数为 0。连续三次门槛已满足，自动续接在此正式停止；恢复只需用户明确“再次启动验证”并在窗口出现后 60 秒内本人提交，届时沿用 `-85` 单次 receipt。
 
 ## 当前：2026-08-25 最新业务日 8/8 已真实采集并导入
 
