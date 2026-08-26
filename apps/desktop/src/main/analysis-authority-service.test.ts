@@ -115,21 +115,20 @@ function createHarness(options: {
     now: () => new Date(NOW),
     references: {
       productBelongsToStore: () => true,
-      adEntityBelongsToStore: (_authorized, adEntityId) => adEntityId.startsWith('opaque-keyword-'),
+      adEntityBelongsToStore: (authorized, adEntityId) => (
+        analysisRepository.adEntityBelongsToStore(authorized, adEntityId)
+      ),
+      adEntitySupportsKeywordBid: (authorized, adEntityId) => {
+        const authority = analysisRepository.getLatestVerifiedAdEntityById(authorized, adEntityId);
+        return authority?.entityType === 'keyword' && authority.sourceReportType === 'keyword';
+      },
     },
   });
   const recommendationRepository = new RecommendationRepository(database);
-  const policy = missionRepository.createPolicy(context, {
-    id: 'policy-1',
-    name: 'US keyword bid policy',
-    scope: 'store',
-    priority: 1,
-    actorId: 'operator',
-  });
   const rules: PolicyVersionRules = {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: ['opaque-keyword-1', 'opaque-keyword-2'],
-    maxChangePct: 20,
+    maxChangePct: 10,
     totalImpactBudget: 100,
     maxDailyActionCount: options.maxDailyActionCount ?? 100,
     cooldownMinutes: options.cooldownMinutes ?? 0,
@@ -153,6 +152,24 @@ function createHarness(options: {
     ],
     killSwitch: false,
   };
+  seedBootstrapPolicyAuthorities({
+    database,
+    context,
+    analysisRepository,
+    missionRepository,
+    rules,
+    entities: [
+      { adEntityId: 'opaque-keyword-1', entityName: 'door lock', sourceRow: 7 },
+      { adEntityId: 'opaque-keyword-2', entityName: 'door lock 2', sourceRow: 8 },
+    ],
+  });
+  const policy = missionRepository.createPolicy(context, {
+    id: 'policy-1',
+    name: 'US keyword bid policy',
+    scope: 'store',
+    priority: 1,
+    actorId: 'operator',
+  });
   const draftVersion = missionRepository.createPolicyVersion(context, {
     id: 'policy-version-1',
     policyId: policy.id,
@@ -337,13 +354,31 @@ function seedImportAuthority(database: Database.Database, directory: string): Re
     fs.writeFileSync(filePath, Buffer.from(`report:${reportType}`));
     reportPaths[reportType] = filePath;
     const fileHash = (index + 1).toString(16).repeat(64).slice(0, 64);
+    const reportFileId = Number(database.prepare(`
+      INSERT INTO report_files (
+        store_id, batch_id, report_type, file_path, file_name, file_size,
+        status, imported_rows, file_hash, import_error, last_imported_at,
+        created_at, updated_at
+      ) VALUES ('store-one', 'batch-1', ?, ?, ?, 100,
+        'imported', ?, ?, NULL, ?, ?, ?)
+    `).run(
+      reportType,
+      filePath,
+      `${reportType}.xlsx`,
+      reportType === 'keyword' ? 2 : 1,
+      fileHash,
+      NOW,
+      NOW,
+      NOW,
+    ).lastInsertRowid);
     database.prepare(`
       INSERT INTO report_import_file_snapshots (
-        store_id, snapshot_id, run_id, batch_id, report_type,
+        store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
         file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
-      ) VALUES ('store-one', ?, 'run-1', 'batch-1', ?, ?, ?, 100, ?, ?, ?)
+      ) VALUES ('store-one', ?, 'run-1', 'batch-1', ?, ?, ?, ?, 100, ?, ?, ?)
     `).run(
       `snapshot-${reportType}`,
+      reportFileId,
       reportType,
       filePath,
       `${reportType}.xlsx`,
@@ -391,6 +426,109 @@ function seedImportAuthority(database: Database.Database, directory: string): Re
   return reportPaths;
 }
 
+function seedBootstrapPolicyAuthorities(input: {
+  database: Database.Database;
+  context: StoreContextEnvelope;
+  analysisRepository: AnalysisAuthorityRepository;
+  missionRepository: MissionDomainRepository;
+  rules: PolicyVersionRules;
+  entities: ReadonlyArray<{ adEntityId: string; entityName: string; sourceRow: number }>;
+}): void {
+  const bootstrapPolicy = input.missionRepository.createPolicy(input.context, {
+    id: 'bootstrap-policy-analysis-authority',
+    name: 'Bootstrap verified keyword authority',
+    scope: 'store',
+    priority: 9_999,
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapDraft = input.missionRepository.createPolicyVersion(input.context, {
+    id: 'bootstrap-policy-version-analysis-authority',
+    policyId: bootstrapPolicy.id,
+    version: 1,
+    rules: { ...input.rules, allowedAdEntityIds: [] },
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapVersion = input.missionRepository.enablePolicyVersion(input.context, {
+    policyId: bootstrapPolicy.id,
+    versionId: bootstrapDraft.id,
+    expectedPolicyRevision: bootstrapPolicy.revision,
+    expectedVersionRevision: bootstrapDraft.revision,
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapMission = input.missionRepository.createMission(input.context, {
+    id: 'bootstrap-mission-analysis-authority',
+    dataBatchId: 'batch-1',
+    policyVersionId: bootstrapVersion.id,
+    productId: 'B0TEST',
+    title: 'Bootstrap immutable Ads identity evidence',
+    objective: 'Bind imported keyword rows to verified opaque Ads entities.',
+    observationStartsAt: '2026-07-22T00:00:00.000Z',
+    observationEndsAt: '2026-07-29T00:00:00.000Z',
+    successCriteria: ['Verified keyword authority is materialized'],
+    guardrails: ['Bootstrap policy cannot authorize an Ads object'],
+    actorId: 'fixture-bootstrap',
+  });
+  const evidence = input.analysisRepository.sealEvidencePackage(input.context, {
+    missionId: bootstrapMission.id,
+    dateFrom: '2026-07-01',
+    dateTo: '2026-07-22',
+    asin: 'B0TEST',
+    freshnessWindowHours: 48,
+    ruleRevision: RULE_REVISION,
+    modelRevision: 'fixture-bootstrap-authority-v1',
+  });
+  const keywordSnapshot = input.database.prepare(`
+    SELECT file_hash AS fileHash
+    FROM report_import_file_snapshots
+    WHERE store_id = ? AND run_id = ? AND batch_id = ? AND report_type = 'keyword'
+      AND report_file_id IS NOT NULL
+    ORDER BY snapshot_id
+    LIMIT 1
+  `).get(
+    input.context.storeId,
+    evidence.importRunId,
+    evidence.dataBatchId,
+  ) as { fileHash: string } | undefined;
+  if (!keywordSnapshot) throw new Error('Expected imported keyword snapshot for bootstrap authority.');
+  input.entities.forEach((entity, index) => {
+    input.analysisRepository.registerVerifiedAdEntity(input.context, {
+      authorityId: `bootstrap-authority-${entity.adEntityId}`,
+      evidencePackageId: evidence.id,
+      adEntityId: entity.adEntityId,
+      entityType: 'keyword',
+      entityName: entity.entityName,
+      campaignName: 'Campaign A',
+      adGroupName: 'Ad Group A',
+      sourceReportType: 'keyword',
+      sourceFileHash: keywordSnapshot.fileHash,
+      sourceRow: entity.sourceRow,
+      identitySource: 'ads_ui',
+      proofSha256: (index + 10).toString(16).repeat(64).slice(0, 64),
+      verifiedBy: 'fixture-bootstrap',
+      verifiedAt: NOW,
+    });
+  });
+  input.missionRepository.archiveMission(input.context, {
+    id: bootstrapMission.id,
+    expectedRevision: bootstrapMission.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+  const activeBootstrapPolicy = input.missionRepository.getPolicy(input.context, bootstrapPolicy.id)!;
+  const disabledBootstrapPolicy = input.missionRepository.disablePolicy(input.context, {
+    id: activeBootstrapPolicy.id,
+    expectedRevision: activeBootstrapPolicy.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+  input.missionRepository.archivePolicy(input.context, {
+    id: disabledBootstrapPolicy.id,
+    expectedRevision: disabledBootstrapPolicy.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+}
+
 function recommendation(overrides: Partial<Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>> = {}): Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'> {
   return {
     taskId: 'task-1',
@@ -403,7 +541,7 @@ function recommendation(overrides: Partial<Omit<ActionRecommendation, 'id' | 'cr
     entityName: 'door lock',
     actionType: 'lower_bid',
     currentValue: '1.49',
-    recommendedValue: '1.29',
+    recommendedValue: '1.35',
     reason: 'ACOS is above the configured guardrail.',
     evidence: {
       impressions: 1000,
@@ -521,7 +659,7 @@ describe('AnalysisAuthorityService', () => {
       projection.decisionLinks[0].decisionId,
     );
     expect(decision?.status).toBe('needs_approval');
-    expect(decision).toMatchObject({ currentValue: 1.49, recommendedValue: 1.29 });
+    expect(decision).toMatchObject({ currentValue: 1.49, recommendedValue: 1.35 });
   });
 
   it('fails closed when the Mission changes during asynchronous recommendation generation', async () => {

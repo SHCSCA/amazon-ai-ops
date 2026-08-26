@@ -1100,6 +1100,10 @@ async function initApp(): Promise<void> {
       adEntityBelongsToStore: (context, adEntityId) => Boolean(
         currentAdEntityBelongsToStore(analysisAuthorityRepo, state.db!, context, adEntityId),
       ),
+      adEntitySupportsKeywordBid: (context, adEntityId) => {
+        const authority = analysisAuthorityRepo.getLatestVerifiedAdEntityById(context, adEntityId);
+        return authority?.entityType === 'keyword' && authority.sourceReportType === 'keyword';
+      },
     },
   });
   const missionDomainService = new MissionDomainService({

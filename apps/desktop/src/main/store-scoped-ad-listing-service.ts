@@ -28,10 +28,17 @@ export interface StoreScopedAdObjectFact {
   kind: StoreScopedAdObjectKind;
   objectKey: string;
   entityId?: string;
+  entityRevision?: number;
+  adsAccountId?: string;
+  campaignId?: string;
+  adGroupId?: string;
+  keywordId?: string;
+  objectRevision?: number;
   resolved: boolean;
   nonExecutable: boolean;
   resolutionReason?: 'STABLE_ENTITY_ID_UNAVAILABLE';
   name: string;
+  matchType?: string;
   campaignName?: string;
   adGroupName?: string;
   asin?: string;
@@ -277,6 +284,36 @@ type ProductionAdAuthority = {
   batchByReportType: ReadonlyMap<LingxingReportType, string>;
 };
 
+type StableAdEntityAuthorityRow = {
+  authority_id: string;
+  ad_entity_id: string;
+  entity_revision: number;
+  source_report_type: string;
+  entity_name: string;
+  campaign_name: string;
+  ad_group_name: string;
+  match_type: string | null;
+  ads_account_id: string | null;
+  campaign_id: string | null;
+  ad_group_id: string | null;
+  keyword_id: string | null;
+  object_revision: number | null;
+};
+
+type CanonicalKeywordIdentity = {
+  adsAccountId: string;
+  campaignId: string;
+  adGroupId: string;
+  keywordId: string;
+  objectRevision: number;
+};
+
+type StableAdEntityAuthority = {
+  entityId: string;
+  entityRevision: number;
+  canonicalKeywordIdentity?: CanonicalKeywordIdentity;
+};
+
 /**
  * Main-only store authority boundary for imported advertising facts and local
  * Listing content. All reads require the current full StoreContextEnvelope and
@@ -362,6 +399,7 @@ export class StoreScopedAdListingService {
         ${shape.nameExpression} AS object_name,
         ${shape.campaignExpression} AS campaign_name,
         ${shape.adGroupExpression} AS ad_group_name,
+        ${shape.matchTypeExpression} AS match_type,
         report_type AS authority_report_type,
         CASE
           WHEN COUNT(DISTINCT NULLIF(upper(trim(asin)), '')) = 1
@@ -376,6 +414,7 @@ export class StoreScopedAdListingService {
         COALESCE(SUM(orders), 0) AS orders,
         COALESCE(SUM(sales), 0) AS sales,
         COUNT(*) AS source_row_count,
+        COUNT(DISTINCT NULLIF(date, '')) AS observation_date_count,
         COUNT(DISTINCT NULLIF(source_file, '')) AS source_file_count,
         COUNT(DISTINCT NULLIF(report_type, '')) AS report_type_count
       FROM ad_daily_metrics
@@ -384,16 +423,42 @@ export class StoreScopedAdListingService {
       ORDER BY spend DESC, clicks DESC, object_name COLLATE NOCASE
       LIMIT ?
     `).all(...parameters, limit) as Array<Record<string, unknown>>;
+    const stableAuthorityByPath = kind === 'target'
+      ? this.loadCurrentStableAdEntityAuthorities(
+        store.storeId,
+        contextInput.sessionGeneration,
+        productionAuthority,
+        selectedReportBatches,
+      )
+      : new Map<string, StableAdEntityAuthority[]>();
 
     return rows.map((row) => {
       const campaignName = nonEmptyString(row.campaign_name);
       const adGroupName = nonEmptyString(row.ad_group_name);
       const authorityReportType = nonEmptyString(row.authority_report_type);
-      const name = nonEmptyString(row.object_name) ?? '未命名对象';
+      const rawName = nonEmptyString(row.object_name) ?? '未命名对象';
+      const matchType = nonEmptyString(row.match_type)?.toLocaleLowerCase();
+      const name = readableTargetName(rawName, authorityReportType, matchType);
       const spend = finiteNumber(row.spend);
       const sales = finiteNumber(row.sales);
       const clicks = finiteNumber(row.clicks);
       const orders = finiteNumber(row.orders);
+      const sourceRowCount = finiteNumber(row.source_row_count);
+      const hasUniqueObservableGrain = kind !== 'target'
+        || sourceRowCount === 1;
+      const hasRequiredKeywordMatchType = authorityReportType !== 'keyword' || Boolean(matchType);
+      const stableAuthority = kind === 'target'
+        && authorityReportType
+        && hasRequiredKeywordMatchType
+        && hasUniqueObservableGrain
+        ? uniqueStableAdEntityAuthority(stableAuthorityByPath.get(stableAdEntityPathKey(
+          authorityReportType,
+          campaignName,
+          adGroupName,
+          rawName,
+          matchType,
+        )))
+        : undefined;
       return {
         storeId: store.storeId,
         marketplace: 'US',
@@ -403,13 +468,28 @@ export class StoreScopedAdListingService {
           kind,
           campaignName,
           adGroupName,
-          name,
+          rawName,
           kind === 'target' ? authorityReportType : undefined,
+          kind === 'target' ? matchType : undefined,
         ),
-        resolved: false,
-        nonExecutable: true,
-        resolutionReason: 'STABLE_ENTITY_ID_UNAVAILABLE',
+        ...(stableAuthority
+          ? {
+            entityId: stableAuthority.entityId,
+            entityRevision: stableAuthority.entityRevision,
+            ...(stableAuthority.canonicalKeywordIdentity ?? {}),
+            resolved: true,
+            // V1 execution only supports keyword bid changes. Auto/product
+            // targeting identities remain useful read-only facts but must not
+            // enter a set_keyword_bid policy allowlist.
+            nonExecutable: authorityReportType !== 'keyword',
+          }
+          : {
+            resolved: false,
+            nonExecutable: true,
+            resolutionReason: 'STABLE_ENTITY_ID_UNAVAILABLE' as const,
+          }),
         name,
+        ...(matchType ? { matchType } : {}),
         campaignName,
         adGroupName,
         asin: nonEmptyString(row.asin)?.toUpperCase(),
@@ -423,11 +503,165 @@ export class StoreScopedAdListingService {
         acos: safeRatio(spend, sales),
         cpc: safeRatio(spend, clicks),
         cvr: safeRatio(orders, clicks),
-        sourceRowCount: finiteNumber(row.source_row_count),
+        sourceRowCount,
         sourceFileCount: finiteNumber(row.source_file_count),
         reportTypeCount: finiteNumber(row.report_type_count),
       };
     });
+  }
+
+  private loadCurrentStableAdEntityAuthorities(
+    storeId: StoreId,
+    sessionGeneration: number,
+    productionAuthority: ProductionAdAuthority,
+    selectedReportBatches: readonly { reportType: LingxingReportType; batchId: string }[],
+  ): Map<string, StableAdEntityAuthority[]> {
+    const writableReportBatches = selectedReportBatches.filter(
+      (item): item is { reportType: 'keyword' | 'auto_targeting' | 'product_targeting'; batchId: string } => (
+        item.reportType === 'keyword'
+        || item.reportType === 'auto_targeting'
+        || item.reportType === 'product_targeting'
+      ),
+    );
+    if (writableReportBatches.length === 0) return new Map();
+    const rows = this.db.prepare(`
+      SELECT DISTINCT
+        authority.authority_id,
+        authority.ad_entity_id,
+        authority.entity_revision,
+        authority.source_report_type,
+        authority.entity_name,
+        authority.campaign_name,
+        authority.ad_group_name,
+        CASE
+          WHEN authority.source_report_type = 'keyword'
+          THEN NULLIF(lower(trim(metrics.match_type)), '')
+          ELSE NULL
+        END AS match_type,
+        identity.ads_account_id,
+        identity.campaign_id,
+        identity.ad_group_id,
+        identity.keyword_id,
+        identity.object_revision
+      FROM verified_ad_entity_authority authority
+      INNER JOIN analysis_evidence_packages evidence
+        ON evidence.store_id = authority.store_id
+       AND evidence.id = authority.evidence_package_id
+      INNER JOIN report_import_runs import_run
+        ON import_run.store_id = evidence.store_id
+       AND import_run.run_id = evidence.import_run_id
+       AND import_run.batch_id = evidence.data_batch_id
+       AND import_run.status = 'completed'
+      INNER JOIN report_import_file_snapshots snapshots
+        ON snapshots.store_id = evidence.store_id
+       AND snapshots.run_id = evidence.import_run_id
+       AND snapshots.batch_id = evidence.data_batch_id
+       AND snapshots.report_type = authority.source_report_type
+       AND snapshots.file_hash = authority.source_file_hash
+       AND snapshots.report_file_id IS NOT NULL
+      INNER JOIN ad_daily_metrics metrics
+        ON metrics.store_id = evidence.store_id
+       AND metrics.batch_id = evidence.data_batch_id
+       AND metrics.report_type = authority.source_report_type
+       AND metrics.source_file = snapshots.file_path
+       AND metrics.source_row = authority.source_row
+      LEFT JOIN ad_keyword_identity_versions identity
+        ON authority.source_report_type = 'keyword'
+       AND identity.store_id = authority.store_id
+       AND identity.ad_entity_id = authority.ad_entity_id
+       AND identity.entity_revision = authority.entity_revision
+       AND identity.source_authority_id = authority.authority_id
+       AND identity.source_authority_proof_sha256 = authority.proof_sha256
+       AND identity.resolved_session_generation = ?
+       AND identity.marketplace = 'US'
+       AND identity.currency = 'USD'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM ad_keyword_identity_versions newer_identity
+         WHERE newer_identity.store_id = identity.store_id
+           AND newer_identity.canonical_keyword_id = identity.canonical_keyword_id
+           AND newer_identity.object_revision > identity.object_revision
+       )
+      WHERE authority.store_id = ?
+        AND authority.entity_type = authority.source_report_type
+        AND (${writableReportBatches.map(() => (
+          '(authority.source_report_type = ? AND evidence.data_batch_id = ?)'
+        )).join(' OR ')})
+        AND metrics.date >= ?
+        AND metrics.date <= ?
+        AND metrics.store_authority_quarantined = 0
+        AND lower(trim(COALESCE(metrics.campaign_name, '')))
+          = lower(trim(authority.campaign_name))
+        AND lower(trim(COALESCE(metrics.ad_group_name, '')))
+          = lower(trim(authority.ad_group_name))
+        AND lower(trim(COALESCE(metrics.targeting, '')))
+          = lower(trim(authority.entity_name))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM store_migration_quarantine quarantine
+          WHERE quarantine.source_table = 'ad_daily_metrics'
+            AND quarantine.source_row_id = CAST(metrics.id AS TEXT)
+            AND quarantine.status = 'pending'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM verified_ad_entity_authority newer
+          WHERE newer.store_id = authority.store_id
+            AND newer.ad_entity_id = authority.ad_entity_id
+            AND newer.entity_revision > authority.entity_revision
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM report_import_runs newer_run
+          INNER JOIN report_import_file_snapshots newer_snapshot
+            ON newer_snapshot.store_id = newer_run.store_id
+           AND newer_snapshot.run_id = newer_run.run_id
+           AND newer_snapshot.batch_id = newer_run.batch_id
+          WHERE newer_run.store_id = import_run.store_id
+            AND newer_run.status = 'completed'
+            AND newer_snapshot.report_type = snapshots.report_type
+            AND (
+              newer_run.completed_at > import_run.completed_at
+              OR (
+                newer_run.completed_at = import_run.completed_at
+                AND newer_run.created_at > import_run.created_at
+              )
+              OR (
+                newer_run.completed_at = import_run.completed_at
+                AND newer_run.created_at = import_run.created_at
+                AND newer_run.run_id > import_run.run_id
+              )
+            )
+        )
+    `).all(
+      sessionGeneration,
+      storeId,
+      ...writableReportBatches.flatMap(({ reportType, batchId }) => [reportType, batchId]),
+      productionAuthority.dateStart,
+      productionAuthority.dateEnd,
+    ) as StableAdEntityAuthorityRow[];
+    const byPath = new Map<string, StableAdEntityAuthority[]>();
+    for (const row of rows) {
+      const entityId = nonEmptyString(row.ad_entity_id);
+      const entityRevision = Number(row.entity_revision);
+      if (!entityId || !Number.isInteger(entityRevision) || entityRevision < 1) continue;
+      const canonicalKeywordIdentity = canonicalKeywordIdentityFromRow(row);
+      const key = stableAdEntityPathKey(
+        row.source_report_type,
+        row.campaign_name,
+        row.ad_group_name,
+        row.entity_name,
+        row.match_type,
+      );
+      const candidates = byPath.get(key) ?? [];
+      candidates.push({
+        entityId,
+        entityRevision,
+        ...(canonicalKeywordIdentity ? { canonicalKeywordIdentity } : {}),
+      });
+      byPath.set(key, candidates);
+    }
+    return byPath;
   }
 
   private resolveProductionAdAuthority(
@@ -1124,6 +1358,7 @@ const AD_OBJECT_SHAPES: Record<StoreScopedAdObjectKind, {
   nameExpression: string;
   campaignExpression: string;
   adGroupExpression: string;
+  matchTypeExpression: string;
   groupBy: string[];
   searchExpressions: string[];
 }> = {
@@ -1132,6 +1367,7 @@ const AD_OBJECT_SHAPES: Record<StoreScopedAdObjectKind, {
     nameExpression: 'campaign_name',
     campaignExpression: 'campaign_name',
     adGroupExpression: 'NULL',
+    matchTypeExpression: 'NULL',
     groupBy: ['campaign_name'],
     searchExpressions: ['campaign_name'],
   },
@@ -1140,6 +1376,7 @@ const AD_OBJECT_SHAPES: Record<StoreScopedAdObjectKind, {
     nameExpression: 'ad_group_name',
     campaignExpression: 'campaign_name',
     adGroupExpression: 'ad_group_name',
+    matchTypeExpression: 'NULL',
     groupBy: ['campaign_name', 'ad_group_name'],
     searchExpressions: ['campaign_name', 'ad_group_name'],
   },
@@ -1148,14 +1385,30 @@ const AD_OBJECT_SHAPES: Record<StoreScopedAdObjectKind, {
     nameExpression: 'targeting',
     campaignExpression: 'campaign_name',
     adGroupExpression: 'ad_group_name',
-    groupBy: ['report_type', 'campaign_name', 'ad_group_name', 'targeting'],
-    searchExpressions: ['campaign_name', 'ad_group_name', 'targeting'],
+    matchTypeExpression: `CASE
+      WHEN report_type = 'keyword'
+      THEN NULLIF(lower(trim(match_type)), '')
+      ELSE NULL
+    END`,
+    groupBy: [
+      'report_type',
+      'campaign_name',
+      'ad_group_name',
+      'targeting',
+      `CASE
+        WHEN report_type = 'keyword'
+        THEN NULLIF(lower(trim(match_type)), '')
+        ELSE NULL
+      END`,
+    ],
+    searchExpressions: ['campaign_name', 'ad_group_name', 'targeting', 'match_type'],
   },
   search_term: {
     reportTypes: ['user_search_term'],
     nameExpression: 'search_term',
     campaignExpression: 'campaign_name',
     adGroupExpression: 'ad_group_name',
+    matchTypeExpression: 'NULL',
     groupBy: ['campaign_name', 'ad_group_name', 'search_term'],
     searchExpressions: ['campaign_name', 'ad_group_name', 'search_term'],
   },
@@ -1384,13 +1637,76 @@ function adObjectKey(
   adGroupName: string | undefined,
   name: string,
   reportType?: string,
+  matchType?: string,
 ): string {
   const parts = reportType
-    ? [kind, reportType, campaignName ?? '', adGroupName ?? '', name]
+    ? [kind, reportType, campaignName ?? '', adGroupName ?? '', name, ...(matchType ? [matchType] : [])]
     : [kind, campaignName ?? '', adGroupName ?? '', name];
   return parts
     .map((part) => encodeURIComponent(part))
     .join('/');
+}
+
+function stableAdEntityPathKey(
+  reportType: unknown,
+  campaignName: unknown,
+  adGroupName: unknown,
+  entityName: unknown,
+  matchType?: unknown,
+): string {
+  return [reportType, campaignName, adGroupName, entityName, matchType]
+    .map(normalizeIdentity)
+    .join('\u0000');
+}
+
+function readableTargetName(
+  rawName: string,
+  reportType: string | undefined,
+  matchType: string | undefined,
+): string {
+  if (reportType !== 'keyword' || !matchType) return rawName;
+  const label = keywordMatchTypeLabel(matchType);
+  return `${rawName}（${label}）`;
+}
+
+function keywordMatchTypeLabel(matchType: string): string {
+  const normalized = normalizeIdentity(matchType);
+  if (normalized === 'exact' || normalized === 'exact match' || normalized === '精准') {
+    return '精准匹配';
+  }
+  if (normalized === 'phrase' || normalized === 'phrase match' || normalized === '词组') {
+    return '词组匹配';
+  }
+  if (normalized === 'broad' || normalized === 'broad match' || normalized === '广泛') {
+    return '广泛匹配';
+  }
+  return '其他匹配方式';
+}
+
+function uniqueStableAdEntityAuthority(
+  candidates: readonly StableAdEntityAuthority[] | undefined,
+): StableAdEntityAuthority | undefined {
+  if (!candidates || candidates.length !== 1) return undefined;
+  return candidates[0];
+}
+
+function canonicalKeywordIdentityFromRow(
+  row: StableAdEntityAuthorityRow,
+): CanonicalKeywordIdentity | undefined {
+  const adsAccountId = nonEmptyString(row.ads_account_id);
+  const campaignId = nonEmptyString(row.campaign_id);
+  const adGroupId = nonEmptyString(row.ad_group_id);
+  const keywordId = nonEmptyString(row.keyword_id);
+  const objectRevision = Number(row.object_revision);
+  if (
+    !adsAccountId
+    || !campaignId
+    || !adGroupId
+    || !keywordId
+    || !Number.isInteger(objectRevision)
+    || objectRevision < 1
+  ) return undefined;
+  return { adsAccountId, campaignId, adGroupId, keywordId, objectRevision };
 }
 
 function keywordFactKey(asin: string | undefined, keyword: string): string {

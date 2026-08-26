@@ -119,7 +119,7 @@ export function createPreviewAnalysisAuthorityApi(): AnalysisAuthorityRendererAp
           actionRevision: 1,
           allowedActionTypes: ['set_keyword_bid'],
           allowedAdEntityIds: projection.proposals.map((proposal) => proposal.adEntityId!),
-          maxChangePct: 15,
+          maxChangePct: 10,
           totalImpactBudget: 0.35,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           policyVersionId: projection.proposals[0].policyVersionId,

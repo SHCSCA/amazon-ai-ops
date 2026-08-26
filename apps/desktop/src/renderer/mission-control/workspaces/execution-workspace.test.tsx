@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type {
   AdExecutionBatchProjection,
+  AdExecutionProgressEvent,
   AnalysisProposalSnapshotRecord,
   DecisionRecord,
   MissionAnalysisProjection,
@@ -20,7 +21,13 @@ import {
   ExecutionWorkspace,
   executionUserFacingError,
   executionCapabilityReady,
+  executionMutationCanCommit,
+  executionProgressBelongsToSelection,
+  executionMissionsForContext,
+  evidenceForExecutionJob,
+  missionForExecutionBatch,
   preferredExecutionBatchId,
+  preferredExecutionJobId,
   selectableExecutionMissions,
 } from './execution-workspace';
 
@@ -462,8 +469,12 @@ describe('execution workspace', () => {
     const fixture = authorityFixture();
     const archived = { ...fixture.mission, id: 'MISSION-ARCHIVED', status: 'archived' as const };
     const foreign = { ...fixture.mission, id: 'MISSION-FOREIGN', storeId: 'preview-store-shc002' as MissionRecord['storeId'] };
+    expect(executionMissionsForContext(context, [archived, foreign, fixture.mission]).map((mission) => mission.id))
+      .toEqual([archived.id, fixture.mission.id]);
     expect(selectableExecutionMissions(context, [archived, foreign, fixture.mission]).map((mission) => mission.id))
       .toEqual([fixture.mission.id]);
+    expect(readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8'))
+      .toContain("listMissions(context, { includeArchived: true })");
 
     const selections = buildExecutableGrantSelections({
       context,
@@ -549,5 +560,165 @@ describe('execution workspace', () => {
     ] as unknown as AdExecutionBatchProjection[];
     expect(preferredExecutionBatchId(rows)).toBe('BATCH-ACTIVE');
     expect(rows.map((row) => row.batch.id)).toEqual(['BATCH-DONE', 'BATCH-ACTIVE', 'BATCH-UNKNOWN']);
+  });
+
+  it('accepts identity progress only for the currently selected execution grant', () => {
+    const currentIdentity = {
+      storeId: context.storeId,
+      batchId: 'GRANT-CURRENT',
+      phase: 'identity',
+      status: 'ready',
+      message: '当前授权身份已核验',
+      occurredAt: '2026-07-23T12:00:00.000Z',
+    } as AdExecutionProgressEvent;
+
+    expect(executionProgressBelongsToSelection(currentIdentity, context, null, 'GRANT-CURRENT')).toBe(true);
+    expect(executionProgressBelongsToSelection(
+      { ...currentIdentity, batchId: 'GRANT-OTHER' },
+      context,
+      null,
+      'GRANT-CURRENT',
+    )).toBe(false);
+    expect(executionProgressBelongsToSelection(
+      { ...currentIdentity, jobId: 'JOB-FOREIGN' },
+      context,
+      null,
+      'GRANT-CURRENT',
+    )).toBe(false);
+  });
+
+  it('accepts non-identity progress only for the selected batch and one of its jobs', () => {
+    const selected = {
+      batch: { id: 'BATCH-CURRENT' },
+      jobs: [{ id: 'JOB-CURRENT' }],
+    } as unknown as AdExecutionBatchProjection;
+    const currentJobProgress = {
+      storeId: context.storeId,
+      batchId: selected.batch.id,
+      jobId: selected.jobs[0].id,
+      phase: 'submit',
+      status: 'submitted',
+      message: '当前批次对象已提交',
+      occurredAt: '2026-07-23T12:01:00.000Z',
+    } as AdExecutionProgressEvent;
+
+    for (const phase of ['submit', 'readback', 'terminal'] as const) {
+      const phaseProgress = { ...currentJobProgress, phase };
+      expect(executionProgressBelongsToSelection(phaseProgress, context, selected, 'GRANT-CURRENT')).toBe(true);
+      expect(executionProgressBelongsToSelection(
+        { ...phaseProgress, batchId: 'BATCH-OTHER' },
+        context,
+        selected,
+        'GRANT-CURRENT',
+      )).toBe(false);
+      expect(executionProgressBelongsToSelection(
+        { ...phaseProgress, jobId: 'JOB-OTHER' },
+        context,
+        selected,
+        'GRANT-CURRENT',
+      )).toBe(false);
+    }
+    expect(executionProgressBelongsToSelection(
+      { ...currentJobProgress, storeId: 'preview-store-shc002' as StoreContextEnvelope['storeId'] },
+      context,
+      selected,
+      'GRANT-CURRENT',
+    )).toBe(false);
+  });
+
+  it('applies the current selection guard before listener updates and when deriving console rows', () => {
+    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const listener = source.indexOf('return api.onProgress((event) => {');
+    const listenerGuard = source.indexOf('executionProgressBelongsToSelection(', listener);
+    const listenerWrite = source.indexOf('setProgressEvents(', listener);
+
+    expect(listener).toBeGreaterThan(-1);
+    expect(listenerGuard).toBeGreaterThan(listener);
+    expect(listenerGuard).toBeLessThan(listenerWrite);
+    expect(source).toContain('progressSelectionRef.current');
+    expect(source).toContain('progressEvents.filter((event) => executionProgressBelongsToSelection(');
+  });
+
+  it('invalidates an in-flight mutation across A to B to A authority changes', () => {
+    const firstRequest = { authorityKey: 'store-a/session-1', sequence: 1 };
+
+    expect(executionMutationCanCommit(firstRequest, 'store-a/session-1', 1)).toBe(true);
+    expect(executionMutationCanCommit(firstRequest, 'store-b/session-1', 2)).toBe(false);
+    expect(executionMutationCanCommit(firstRequest, 'store-a/session-1', 3)).toBe(false);
+    expect(executionMutationCanCommit(
+      { authorityKey: 'store-a/session-1', sequence: 3 },
+      'store-a/session-1',
+      3,
+    )).toBe(true);
+
+    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('mutationSequence.current += 1');
+    expect(source).toContain('const commitMutation = (commit: () => void) =>');
+    expect(source).toContain("browserReadyGrantIdRef.current === selected!.batch.grantId");
+  });
+
+  it('keeps the operator-selected job instead of forcing every batch back to its first job', () => {
+    const projection = {
+      batch: { id: 'BATCH-MULTI', missionId: 'MISSION-B' },
+      jobs: [
+        { id: 'JOB-FIRST', evidence: [] },
+        { id: 'JOB-SECOND', evidence: [] },
+      ],
+    } as unknown as AdExecutionBatchProjection;
+
+    expect(preferredExecutionJobId(projection, 'JOB-SECOND')).toBe('JOB-SECOND');
+    expect(preferredExecutionJobId(projection, 'MISSING-JOB')).toBe('JOB-FIRST');
+
+    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('name="selected-execution-job"');
+    expect(source).toContain('onChange={() => setSelectedJobId(job.id)}');
+    expect(source).not.toMatch(/aria-label="选择当前执行对象"[^>]+readOnly[^>]+type="radio"/);
+  });
+
+  it('reads before, after and reload evidence only from the selected job', () => {
+    const firstBefore = {
+      id: 'EVIDENCE-FIRST-BEFORE', batchId: 'BATCH-MULTI', jobId: 'JOB-FIRST', slot: 'before',
+    };
+    const secondBefore = {
+      id: 'EVIDENCE-SECOND-BEFORE', batchId: 'BATCH-MULTI', jobId: 'JOB-SECOND', slot: 'before',
+    };
+    const foreignAfter = {
+      id: 'EVIDENCE-FOREIGN-AFTER', batchId: 'BATCH-OTHER', jobId: 'JOB-SECOND', slot: 'after',
+    };
+    const projection = {
+      batch: { id: 'BATCH-MULTI', missionId: 'MISSION-B' },
+      jobs: [
+        { id: 'JOB-FIRST', evidence: [firstBefore] },
+        { id: 'JOB-SECOND', evidence: [secondBefore, foreignAfter] },
+      ],
+    } as unknown as AdExecutionBatchProjection;
+
+    expect(evidenceForExecutionJob(projection, 'JOB-SECOND', 'before')?.id).toBe('EVIDENCE-SECOND-BEFORE');
+    expect(evidenceForExecutionJob(projection, 'JOB-SECOND', 'after')).toBeUndefined();
+    expect(evidenceForExecutionJob(projection, 'JOB-FIRST', 'before')?.id).toBe('EVIDENCE-FIRST-BEFORE');
+  });
+
+  it('derives an existing batch title from the batch mission rather than the queue-creation selector', () => {
+    const fixture = authorityFixture();
+    const otherMission = { ...fixture.mission, id: 'MISSION-B', title: '批次绑定的真实运营任务' };
+    const projection = {
+      batch: { id: 'BATCH-MULTI', missionId: otherMission.id, missionRevision: otherMission.revision },
+      jobs: [],
+    } as unknown as AdExecutionBatchProjection;
+
+    expect(missionForExecutionBatch([fixture.mission, otherMission], projection)?.title)
+      .toBe('批次绑定的真实运营任务');
+    expect(missionForExecutionBatch([fixture.mission], projection)).toBeNull();
+    expect(missionForExecutionBatch([{ ...otherMission, revision: otherMission.revision + 1 }], projection)).toBeNull();
+  });
+
+  it('does not ship fixed example objects, reasons or an unimplemented experiment as production facts', () => {
+    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('smart lock exact');
+    expect(source).not.toContain('US Exact Core');
+    expect(source).not.toContain('近 7 日 CPC 上扬但转化率稳定');
+    expect(source).not.toContain('核心词竞价弹性');
+    expect(source).not.toContain('实验详情（未接入）');
+    expect(source).toContain('当前批次没有可核验的关联经营实验');
   });
 });

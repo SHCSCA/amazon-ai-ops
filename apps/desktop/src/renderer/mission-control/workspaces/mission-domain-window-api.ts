@@ -891,7 +891,7 @@ function seedPreviewDecisions(context: StoreContextEnvelope): PreviewDecisionSta
     actionRevision: approved.actionRevision,
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: approvedBatch.map((decision) => decision.adEntityId!),
-    maxChangePct: 15,
+    maxChangePct: 10,
     totalImpactBudget: 50,
     expiresAt: '2026-07-29T07:00:00.000Z',
     policyVersionId: approved.policyVersionId,
@@ -1072,7 +1072,7 @@ type PreviewPolicyState = {
   runtime: AutonomyProjection;
 };
 
-function defaultPreviewRules(entityId: string, maxChangePct = 15): PolicyVersionRules {
+function defaultPreviewRules(entityId: string, maxChangePct = 10): PolicyVersionRules {
   return {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: [entityId],

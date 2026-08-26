@@ -207,6 +207,12 @@ export interface MissionLineageProjection {
 export interface MissionDomainReferenceValidator {
   productBelongsToStore(context: StoreContextEnvelope, productId: string): boolean;
   adEntityBelongsToStore(context: StoreContextEnvelope, adEntityId: string): boolean;
+  /**
+   * Optional injected authority used by isolated repository tests. Production
+   * falls back to the append-only verified authority table and therefore never
+   * treats generic store ownership as keyword-bid authority.
+   */
+  adEntitySupportsKeywordBid?(context: StoreContextEnvelope, adEntityId: string): boolean;
 }
 
 export interface MissionDomainRepositoryOptions {
@@ -469,6 +475,17 @@ export class MissionDomainRepository {
     const priority = patch.priority === undefined ? current.priority : priorityOf(patch.priority);
     const now = nextTimestamp(current.updatedAt, this.now());
     const update = this.db.transaction(() => {
+      if (scope !== current.scope) {
+        const existingVersion = this.db.prepare(`
+          SELECT 1 AS present
+          FROM policy_versions
+          WHERE store_id = ? AND policy_id = ?
+          LIMIT 1
+        `).get(context.storeId, current.id) as { present: number } | undefined;
+        if (existingVersion) {
+          throw stateConflict('策略已有版本，对象范围已冻结；如需其他范围，请新建策略。');
+        }
+      }
       const updated = this.db.prepare(`
         UPDATE policies
         SET name = @name, scope = @scope, priority = @priority,
@@ -595,15 +612,18 @@ export class MissionDomainRepository {
   ): PolicyVersionRecord {
     const context = this.assertContext(contextInput);
     const id = idOf(input.id, 'policyVersionId');
-    const policy = this.requirePolicy(context, input.policyId);
-    if (policy.status === 'archived') throw stateConflict('Archived policy cannot accept a new version.');
     const rules = rulesOf(input.rules);
-    this.assertAdEntities(context, rules.allowedAdEntityIds);
     const validFrom = optionalTimestamp(input.validFrom, 'validFrom');
     const validUntil = optionalTimestamp(input.validUntil, 'validUntil');
     assertTimeRange(validFrom, validUntil, 'Policy validity window');
     const now = this.timestamp();
     const create = this.db.transaction(() => {
+      const policy = this.requirePolicy(context, input.policyId);
+      if (policy.status === 'archived') throw stateConflict('Archived policy cannot accept a new version.');
+      // Keep the mutable authority and frozen-scope checks under the same
+      // IMMEDIATE lock as the draft insert so a concurrent authority/scope
+      // change cannot leave a draft with a boundary that was never valid.
+      this.assertPolicyRules(context, policy, rules);
       this.db.prepare(`
           INSERT INTO policy_versions (
             id, store_id, policy_id, version, status, rules_json,
@@ -663,25 +683,27 @@ export class MissionDomainRepository {
     input: UpdateDraftPolicyVersionInput,
   ): PolicyVersionRecord {
     const context = this.assertContext(contextInput);
-    const current = this.requirePolicyVersion(context, input.id);
-    this.assertRevision(current.revision, input.expectedRevision, 'Policy version');
-    if (current.status !== 'draft') {
-      throw new MissionDomainRepositoryError(
-        'IMMUTABLE_RECORD',
-        'Enabled or retired policy versions are immutable; create a new version.',
-      );
-    }
-    const rules = input.rules === undefined ? current.rules : rulesOf(input.rules);
-    this.assertAdEntities(context, rules.allowedAdEntityIds);
-    const validFrom = input.validFrom === undefined
-      ? current.validFrom ?? null
-      : optionalTimestamp(input.validFrom, 'validFrom');
-    const validUntil = input.validUntil === undefined
-      ? current.validUntil ?? null
-      : optionalTimestamp(input.validUntil, 'validUntil');
-    assertTimeRange(validFrom, validUntil, 'Policy validity window');
-    const updatedAt = nextTimestamp(current.updatedAt, this.now());
+    const versionId = idOf(input.id, 'policyVersionId');
     const update = this.db.transaction(() => {
+      const current = this.requirePolicyVersion(context, versionId);
+      this.assertRevision(current.revision, input.expectedRevision, 'Policy version');
+      if (current.status !== 'draft') {
+        throw new MissionDomainRepositoryError(
+          'IMMUTABLE_RECORD',
+          'Enabled or retired policy versions are immutable; create a new version.',
+        );
+      }
+      const rules = input.rules === undefined ? current.rules : rulesOf(input.rules);
+      const policy = this.requirePolicy(context, current.policyId);
+      this.assertPolicyRules(context, policy, rules);
+      const validFrom = input.validFrom === undefined
+        ? current.validFrom ?? null
+        : optionalTimestamp(input.validFrom, 'validFrom');
+      const validUntil = input.validUntil === undefined
+        ? current.validUntil ?? null
+        : optionalTimestamp(input.validUntil, 'validUntil');
+      assertTimeRange(validFrom, validUntil, 'Policy validity window');
+      const updatedAt = nextTimestamp(current.updatedAt, this.now());
       const result = this.db.prepare(`
         UPDATE policy_versions
         SET rules_json = @rulesJson, valid_from = @validFrom, valid_until = @validUntil,
@@ -725,7 +747,8 @@ export class MissionDomainRepository {
       // Revalidate the stored JSON at the irreversible draft -> enabled boundary.
       // This fails closed for legacy drafts that predate required rate-limit and
       // execution-window fields instead of activating an incomplete policy.
-      rulesOf(version.rules);
+      const rules = rulesOf(version.rules);
+      this.assertPolicyRules(context, policy, rules);
       const now = this.timestamp();
       if (version.validUntil && Date.parse(version.validUntil) <= Date.parse(now)) {
         throw stateConflict('Expired policy version cannot be enabled.');
@@ -1146,11 +1169,20 @@ export class MissionDomainRepository {
         throw referenceConflict('MissionGrant policy version must exactly match the Mission policy snapshot.');
       }
       this.assertRevision(policyVersion.revision, input.policyRevision, 'Policy version');
-      const issuedAt = this.timestamp();
-      const approvedDecisions = this.requireApprovedDecisionsForGrant(context, mission, input, issuedAt);
       if (policyVersion.status !== 'enabled') {
         throw stateConflict('MissionGrant issuance requires the Mission policy version to remain enabled.');
       }
+      const policy = this.requirePolicy(context, policyVersion.policyId);
+      if (policy.status !== 'active' || policy.activeVersionId !== policyVersion.id) {
+        throw stateConflict('MissionGrant issuance requires the policy version to remain the active policy authority.');
+      }
+      // Re-parse historical rows and revalidate frozen scope/current evidence
+      // under the same IMMEDIATE lock as the grant insert. An enabled version
+      // is not durable permission after import, entity, or Ads session drift.
+      const rules = rulesOf(policyVersion.rules);
+      this.assertPolicyRules(context, policy, rules);
+      const issuedAt = this.timestamp();
+      const approvedDecisions = this.requireApprovedDecisionsForGrant(context, mission, input, issuedAt);
       const runtime = this.getPolicyRuntime(context);
       if (runtime.killSwitch
         || runtime.circuitBreakerState !== 'closed'
@@ -1160,8 +1192,7 @@ export class MissionDomainRepository {
           'MissionGrant issuer is blocked by autonomy mode, kill switch, circuit breaker, or active policy mismatch.',
         );
       }
-      this.assertGrantWithinPolicy(input, policyVersion, issuedAt);
-      this.assertAdEntities(context, input.allowedAdEntityIds);
+      this.assertGrantWithinPolicy(input, policyVersion, rules, issuedAt);
       if (Date.parse(input.expiresAt) <= Date.parse(issuedAt)) {
         throw invalid('MissionGrant expiresAt must be in the future.');
       }
@@ -2010,7 +2041,7 @@ export class MissionDomainRepository {
     const productId = idOf(productIdInput, 'productId');
     if (!this.references?.productBelongsToStore(context, productId)) {
       throw referenceConflict(
-        `Product ${productId} has no proven store-scoped authority for ${context.storeId}.`,
+        '当前产品缺少此店铺的可信归属证据；请从当前店铺产品列表重新选择。',
       );
     }
   }
@@ -2019,7 +2050,7 @@ export class MissionDomainRepository {
     const adEntityId = idOf(adEntityIdInput, 'adEntityId');
     if (!this.references?.adEntityBelongsToStore(context, adEntityId)) {
       throw referenceConflict(
-        `Ad entity ${adEntityId} has no proven store-scoped authority for ${context.storeId}.`,
+        '当前广告对象缺少此店铺的可信身份与版本证据；请重新核验当前店铺广告对象。',
       );
     }
   }
@@ -2028,12 +2059,240 @@ export class MissionDomainRepository {
     for (const entityId of entityIds) this.assertAdEntity(context, entityId);
   }
 
+  private assertPolicyRules(
+    context: StoreContextEnvelope,
+    policy: PolicyRecord,
+    rules: PolicyVersionRules,
+  ): void {
+    this.assertAdEntities(context, rules.allowedAdEntityIds);
+    for (const entityId of rules.allowedAdEntityIds) {
+      if (!this.adEntitySupportsKeywordBid(context, entityId)) {
+        throw referenceConflict(
+          '所选广告对象不是经当前店铺核验的关键词；V1 仅允许调整关键词竞价，请重新选择关键词。',
+        );
+      }
+      if (!this.adEntityBelongsToPolicyScope(context, policy.scope, entityId)) {
+        throw referenceConflict(
+          '所选广告对象不属于此策略的冻结范围；请重新选择当前店铺真实对象或新建策略。',
+        );
+      }
+    }
+  }
+
+  private adEntitySupportsKeywordBid(
+    context: StoreContextEnvelope,
+    entityId: string,
+  ): boolean {
+    if (this.references?.adEntitySupportsKeywordBid) {
+      return this.references.adEntitySupportsKeywordBid(context, entityId);
+    }
+    const authority = this.db.prepare(`
+      SELECT entity_type AS entityType, source_report_type AS sourceReportType
+      FROM verified_ad_entity_authority
+      WHERE store_id = ? AND ad_entity_id = ?
+      ORDER BY entity_revision DESC
+      LIMIT 1
+    `).get(context.storeId, entityId) as {
+      entityType: string;
+      sourceReportType: string;
+    } | undefined;
+    return authority?.entityType === 'keyword' && authority.sourceReportType === 'keyword';
+  }
+
+  private adEntityBelongsToPolicyScope(
+    context: StoreContextEnvelope,
+    scope: string,
+    entityId: string,
+  ): boolean {
+    let level: 'store' | 'product' | 'campaign' | 'ad_group' | 'keyword';
+    let token = '';
+    if (scope === 'store' || scope === 'sponsored-products-keywords') {
+      level = 'store';
+    } else {
+      const separator = scope.indexOf(':');
+      // Only the one historical store-wide token is migrated implicitly. Any
+      // other unstructured value has no provable V1 boundary and must not widen
+      // itself to the whole store.
+      if (separator < 0) return false;
+      const candidateLevel = scope.slice(0, separator);
+      if (!['product', 'campaign', 'ad_group', 'keyword'].includes(candidateLevel)) return false;
+      level = candidateLevel as typeof level;
+      token = scope.slice(separator + 1);
+      if (!token) return false;
+    }
+
+    // Every scope, including store-wide and exact-keyword scopes, must first
+    // prove that the selected entity is the latest Stage 5 revision backed by
+    // the current completed keyword import's exact immutable snapshot row.
+    // Main-side existence callbacks cannot replace this evidence chain.
+    const authorities = this.db.prepare(`
+      SELECT verified.entity_name AS entityName,
+             verified.campaign_name AS campaignName,
+             verified.ad_group_name AS adGroupName,
+             verified.authority_id AS authorityId,
+             verified.proof_sha256 AS authorityProofSha256,
+             verified.entity_revision AS entityRevision,
+             verified.entity_type AS entityType,
+             verified.source_report_type AS sourceReportType,
+             verified.source_file_hash AS sourceFileHash,
+             verified.source_row AS sourceRow,
+             evidence.data_batch_id AS dataBatchId,
+             evidence.import_run_id AS importRunId,
+             metrics.asin AS asin
+      FROM verified_ad_entity_authority verified
+      JOIN analysis_evidence_packages evidence
+        ON evidence.store_id = verified.store_id
+       AND evidence.id = verified.evidence_package_id
+      JOIN report_import_runs runs
+        ON runs.store_id = evidence.store_id
+       AND runs.run_id = evidence.import_run_id
+       AND runs.batch_id = evidence.data_batch_id
+       AND runs.status = 'completed'
+      JOIN report_import_file_snapshots snapshots
+        ON snapshots.store_id = runs.store_id
+       AND snapshots.run_id = runs.run_id
+       AND snapshots.batch_id = runs.batch_id
+       AND snapshots.report_type = verified.source_report_type
+       AND snapshots.file_hash = verified.source_file_hash
+       AND snapshots.report_file_id IS NOT NULL
+      JOIN ad_daily_metrics metrics
+        ON metrics.store_id = evidence.store_id
+       AND metrics.batch_id = evidence.data_batch_id
+       AND metrics.report_type = verified.source_report_type
+       AND metrics.source_file = snapshots.file_path
+       AND metrics.source_row = verified.source_row
+       AND metrics.store_authority_quarantined = 0
+      WHERE verified.store_id = ?
+        AND verified.ad_entity_id = ?
+        AND verified.entity_type = 'keyword'
+        AND verified.source_report_type = 'keyword'
+        AND lower(trim(metrics.campaign_name)) = lower(trim(verified.campaign_name))
+        AND lower(trim(metrics.ad_group_name)) = lower(trim(verified.ad_group_name))
+        AND lower(trim(metrics.targeting)) = lower(trim(verified.entity_name))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM store_migration_quarantine quarantine
+          WHERE quarantine.source_table = 'ad_daily_metrics'
+            AND quarantine.source_row_id = CAST(metrics.id AS TEXT)
+            AND quarantine.status = 'pending'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM verified_ad_entity_authority newer_authority
+          WHERE newer_authority.store_id = verified.store_id
+            AND newer_authority.ad_entity_id = verified.ad_entity_id
+            AND newer_authority.entity_revision > verified.entity_revision
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM report_import_runs newer_run
+          JOIN report_import_file_snapshots newer_snapshot
+            ON newer_snapshot.store_id = newer_run.store_id
+           AND newer_snapshot.run_id = newer_run.run_id
+           AND newer_snapshot.batch_id = newer_run.batch_id
+          WHERE newer_run.store_id = runs.store_id
+            AND newer_run.status = 'completed'
+            AND newer_snapshot.report_type = snapshots.report_type
+            AND (
+              newer_run.completed_at > runs.completed_at
+              OR (
+                newer_run.completed_at = runs.completed_at
+                AND newer_run.created_at > runs.created_at
+              )
+              OR (
+                newer_run.completed_at = runs.completed_at
+                AND newer_run.created_at = runs.created_at
+                AND newer_run.run_id > runs.run_id
+              )
+            )
+        )
+      ORDER BY verified.entity_revision DESC, verified.authority_id DESC
+    `).all(context.storeId, entityId) as Array<{
+      entityName: string;
+      campaignName: string;
+      adGroupName: string;
+      authorityId: string;
+      authorityProofSha256: string;
+      entityRevision: number;
+      entityType: string;
+      sourceReportType: string;
+      sourceFileHash: string;
+      sourceRow: number;
+      dataBatchId: string;
+      importRunId: string;
+      asin: string | null;
+    }>;
+    if (authorities.length !== 1) return false;
+    const authority = authorities[0]!;
+
+    if (level === 'store') return true;
+    if (level === 'keyword') return entityId === token;
+
+    if (level === 'product') {
+      const asin = decodePolicyScopePart(token)?.toUpperCase();
+      if (!asin) return false;
+      return scopeText(authority.asin) === scopeText(asin);
+    }
+
+    const parts = decodePolicyScopeParts(token);
+    if (!parts) return false;
+    // Campaign/ad-group names from report evidence are display labels, not
+    // write authority. A policy boundary must use the current Stage 6 opaque
+    // identity that is tied to the latest verified Stage 5 entity revision.
+    const currentIdentities = this.db.prepare(`
+      SELECT identity.ads_account_id AS adsAccountId,
+             identity.campaign_id AS campaignId,
+             identity.ad_group_id AS adGroupId
+      FROM ad_keyword_identity_versions identity
+      WHERE identity.store_id = ?
+        AND identity.ad_entity_id = ?
+        AND identity.entity_revision = ?
+        AND identity.source_authority_id = ?
+        AND identity.source_authority_proof_sha256 = ?
+        AND identity.resolved_session_generation = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ad_keyword_identity_versions newer
+          WHERE newer.store_id = identity.store_id
+            AND newer.canonical_keyword_id = identity.canonical_keyword_id
+            AND newer.object_revision > identity.object_revision
+        )
+      ORDER BY identity.canonical_keyword_id,
+               identity.object_revision DESC,
+               identity.identity_version_id DESC
+    `).all(
+      context.storeId,
+      entityId,
+      authority.entityRevision,
+      authority.authorityId,
+      authority.authorityProofSha256,
+      context.sessionGeneration,
+    ) as Array<{
+      adsAccountId: string;
+      campaignId: string;
+      adGroupId: string;
+    }>;
+    if (currentIdentities.length !== 1) return false;
+    const identity = currentIdentities[0]!;
+    if (level === 'campaign') {
+      return parts.length === 2
+        && Boolean(parts[0] && parts[1])
+        && identity.adsAccountId === parts[0]
+        && identity.campaignId === parts[1];
+    }
+    return parts.length === 3
+      && Boolean(parts[0] && parts[1] && parts[2])
+      && identity.adsAccountId === parts[0]
+      && identity.campaignId === parts[1]
+      && identity.adGroupId === parts[2];
+  }
+
   private assertGrantWithinPolicy(
     input: CreateMissionGrantInput,
     policyVersion: PolicyVersionRecord,
+    rules: PolicyVersionRules,
     issuedAt: string,
   ): void {
-    const rules = policyVersion.rules;
     if (rules.killSwitch) throw stateConflict('Policy version kill switch blocks MissionGrant issuance.');
     if (rules.allowedAdEntityIds.length === 0) {
       throw stateConflict('Policy version has no authorized ad entities; MissionGrant issuance is blocked.');
@@ -2781,6 +3040,29 @@ function mapEvidenceRef(row: Record<string, unknown>): CausalEvidenceRefRecord {
   };
 }
 
+function decodePolicyScopePart(value: string): string | undefined {
+  try {
+    const decoded = decodeURIComponent(value).trim();
+    return decoded || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodePolicyScopeParts(value: string): string[] | undefined {
+  const parts: string[] = [];
+  for (const part of value.split('/')) {
+    const decoded = decodePolicyScopePart(part);
+    if (decoded === undefined && part !== '') return undefined;
+    parts.push(decoded ?? '');
+  }
+  return parts;
+}
+
+function scopeText(value: unknown): string {
+  return String(value ?? '').trim().toLocaleLowerCase('en-US');
+}
+
 function rulesOf(value: PolicyVersionRules): PolicyVersionRules {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid('Policy rules must be an object.');
   const allowedActionTypes = listOf(value.allowedActionTypes, 'allowedActionTypes', true) as PolicyVersionRules['allowedActionTypes'];
@@ -2827,8 +3109,8 @@ function rulesOf(value: PolicyVersionRules): PolicyVersionRules {
   if (mandatoryStopCodes.some((code) => !configuredStopCodes.includes(code))) {
     throw invalid('Policy stopConditions must retain every mandatory V1 fail-closed condition.');
   }
-  if (!Number.isFinite(value.maxChangePct) || value.maxChangePct <= 0 || value.maxChangePct > 100) {
-    throw invalid('Policy maxChangePct must be greater than 0 and at most 100.');
+  if (!Number.isFinite(value.maxChangePct) || value.maxChangePct <= 0 || value.maxChangePct > 10) {
+    throw invalid('V1 关键词竞价单次变化必须大于 0% 且不超过 10%。');
   }
   if (!Number.isFinite(value.totalImpactBudget) || value.totalImpactBudget < 0) {
     throw invalid('Policy totalImpactBudget must be non-negative.');

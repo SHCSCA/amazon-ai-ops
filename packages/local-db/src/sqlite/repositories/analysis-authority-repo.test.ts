@@ -101,26 +101,25 @@ function createHarness(options: { missingReportType?: string } = {}): Harness {
     businessDate: '2026-07-22',
     sessionGeneration: 4,
   });
+  seedImportAuthority(database, context.storeId, 'batch-store-one', options.missingReportType);
+  const repository = new AnalysisAuthorityRepository(database, { now: () => new Date(NOW) });
   const missionRepository = new MissionDomainRepository(database, {
     now: () => new Date(NOW),
     references: {
       productBelongsToStore: () => true,
       adEntityBelongsToStore: (authorized, adEntityId) => (
-        authorized.storeId === 'store-one' && adEntityId === 'opaque-keyword-1'
+        repository.adEntityBelongsToStore(authorized, adEntityId)
       ),
+      adEntitySupportsKeywordBid: (authorized, adEntityId) => {
+        const authority = repository.getLatestVerifiedAdEntityById(authorized, adEntityId);
+        return authority?.entityType === 'keyword' && authority.sourceReportType === 'keyword';
+      },
     },
   });
-  const policy = missionRepository.createPolicy(context, {
-    id: 'policy-1',
-    name: 'US keyword bid guardrail',
-    scope: 'store',
-    priority: 1,
-    actorId: 'operator',
-  });
-  const rules: PolicyVersionRules = {
+  const authorityRules: PolicyVersionRules = {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: ['opaque-keyword-1'],
-    maxChangePct: 20,
+    maxChangePct: 10,
     totalImpactBudget: 100,
     maxDailyActionCount: 100,
     cooldownMinutes: 0,
@@ -144,6 +143,25 @@ function createHarness(options: { missingReportType?: string } = {}): Harness {
     ],
     killSwitch: false,
   };
+  if (!options.missingReportType) {
+    seedBootstrapPolicyAuthority({
+      database,
+      context,
+      repository,
+      missionRepository,
+      rules: authorityRules,
+    });
+  }
+  const rules: PolicyVersionRules = options.missingReportType
+    ? { ...authorityRules, allowedAdEntityIds: [] }
+    : authorityRules;
+  const policy = missionRepository.createPolicy(context, {
+    id: 'policy-1',
+    name: 'US keyword bid guardrail',
+    scope: 'store',
+    priority: 1,
+    actorId: 'operator',
+  });
   const draftVersion = missionRepository.createPolicyVersion(context, {
     id: 'policy-version-1',
     policyId: policy.id,
@@ -170,10 +188,9 @@ function createHarness(options: { missingReportType?: string } = {}): Harness {
     guardrails: ['Orders do not fall more than 10%'],
     actorId: 'operator',
   });
-  seedImportAuthority(database, context.storeId, 'batch-store-one', options.missingReportType);
   return {
     database,
-    repository: new AnalysisAuthorityRepository(database, { now: () => new Date(NOW) }),
+    repository,
     missionRepository,
     recommendationRepository: new RecommendationRepository(database),
     context,
@@ -199,15 +216,34 @@ function seedImportAuthority(
   ANALYSIS_REQUIRED_REPORT_TYPES.forEach((reportType, index) => {
     if (reportType === missingReportType) return;
     const filePath = `D:/reports/${reportType}.xlsx`;
+    const reportFileId = Number(database.prepare(`
+      INSERT INTO report_files (
+        store_id, batch_id, report_type, file_path, file_name, file_size,
+        status, imported_rows, file_hash, import_error, last_imported_at,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 100,
+        'imported', 1, ?, NULL, ?, ?, ?)
+    `).run(
+      storeId,
+      batchId,
+      reportType,
+      filePath,
+      `${reportType}.xlsx`,
+      HASHES[index],
+      NOW,
+      NOW,
+      NOW,
+    ).lastInsertRowid);
     database.prepare(`
       INSERT INTO report_import_file_snapshots (
-        store_id, snapshot_id, run_id, batch_id, report_type,
+        store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
         file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
-      ) VALUES (?, ?, 'run-1', ?, ?, ?, ?, 100, ?, 1, ?)
+      ) VALUES (?, ?, 'run-1', ?, ?, ?, ?, ?, 100, ?, 1, ?)
     `).run(
       storeId,
       `snapshot-${reportType}`,
       batchId,
+      reportFileId,
       reportType,
       filePath,
       `${reportType}.xlsx`,
@@ -234,6 +270,105 @@ function seedImportAuthority(
   });
 }
 
+function seedBootstrapPolicyAuthority(input: {
+  database: Database.Database;
+  context: StoreContextEnvelope;
+  repository: AnalysisAuthorityRepository;
+  missionRepository: MissionDomainRepository;
+  rules: PolicyVersionRules;
+}): void {
+  const bootstrapPolicy = input.missionRepository.createPolicy(input.context, {
+    id: 'bootstrap-policy-analysis-authority',
+    name: 'Bootstrap verified keyword authority',
+    scope: 'store',
+    priority: 9_999,
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapDraft = input.missionRepository.createPolicyVersion(input.context, {
+    id: 'bootstrap-policy-version-analysis-authority',
+    policyId: bootstrapPolicy.id,
+    version: 1,
+    rules: { ...input.rules, allowedAdEntityIds: [] },
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapVersion = input.missionRepository.enablePolicyVersion(input.context, {
+    policyId: bootstrapPolicy.id,
+    versionId: bootstrapDraft.id,
+    expectedPolicyRevision: bootstrapPolicy.revision,
+    expectedVersionRevision: bootstrapDraft.revision,
+    actorId: 'fixture-bootstrap',
+  });
+  const bootstrapMission = input.missionRepository.createMission(input.context, {
+    id: 'bootstrap-mission-analysis-authority',
+    dataBatchId: 'batch-store-one',
+    policyVersionId: bootstrapVersion.id,
+    title: 'Bootstrap immutable Ads identity evidence',
+    objective: 'Bind an imported keyword row to one verified opaque Ads entity.',
+    observationStartsAt: '2026-07-22T00:00:00.000Z',
+    observationEndsAt: '2026-07-29T00:00:00.000Z',
+    successCriteria: ['Verified keyword authority is materialized'],
+    guardrails: ['Bootstrap policy cannot authorize an Ads object'],
+    actorId: 'fixture-bootstrap',
+  });
+  const evidence = input.repository.sealEvidencePackage(input.context, {
+    missionId: bootstrapMission.id,
+    dateFrom: '2026-07-01',
+    dateTo: '2026-07-22',
+    asin: 'B0TEST',
+    freshnessWindowHours: 48,
+    ruleRevision: 'a'.repeat(64),
+    modelRevision: 'fixture-bootstrap-authority-v1',
+  });
+  const keywordSnapshot = input.database.prepare(`
+    SELECT file_hash AS fileHash
+    FROM report_import_file_snapshots
+    WHERE store_id = ? AND run_id = ? AND batch_id = ? AND report_type = 'keyword'
+      AND report_file_id IS NOT NULL
+    ORDER BY snapshot_id
+    LIMIT 1
+  `).get(
+    input.context.storeId,
+    evidence.importRunId,
+    evidence.dataBatchId,
+  ) as { fileHash: string } | undefined;
+  if (!keywordSnapshot) throw new Error('Expected imported keyword snapshot for bootstrap authority.');
+  input.repository.registerVerifiedAdEntity(input.context, {
+    authorityId: 'bootstrap-authority-opaque-keyword-1',
+    evidencePackageId: evidence.id,
+    adEntityId: 'opaque-keyword-1',
+    entityType: 'keyword',
+    entityName: 'door lock',
+    campaignName: 'Campaign A',
+    adGroupName: 'Ad Group A',
+    sourceReportType: 'keyword',
+    sourceFileHash: keywordSnapshot.fileHash,
+    sourceRow: 7,
+    identitySource: 'ads_ui',
+    proofSha256: 'e'.repeat(64),
+    verifiedBy: 'fixture-bootstrap',
+    verifiedAt: NOW,
+  });
+  input.missionRepository.archiveMission(input.context, {
+    id: bootstrapMission.id,
+    expectedRevision: bootstrapMission.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+  const activeBootstrapPolicy = input.missionRepository.getPolicy(input.context, bootstrapPolicy.id)!;
+  const disabledBootstrapPolicy = input.missionRepository.disablePolicy(input.context, {
+    id: activeBootstrapPolicy.id,
+    expectedRevision: activeBootstrapPolicy.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+  input.missionRepository.archivePolicy(input.context, {
+    id: disabledBootstrapPolicy.id,
+    expectedRevision: disabledBootstrapPolicy.revision,
+    actorId: 'fixture-bootstrap',
+    reason: 'Bootstrap identity evidence is complete.',
+  });
+}
+
 function seedCorrectedImportAuthority(database: Database.Database, storeId: string, batchId: string): void {
   database.prepare(`
     INSERT INTO report_import_runs (
@@ -251,19 +386,32 @@ function seedCorrectedImportAuthority(database: Database.Database, storeId: stri
   );
   ANALYSIS_REQUIRED_REPORT_TYPES.forEach((reportType, index) => {
     const filePath = `D:/reports/${reportType}.xlsx`;
+    const correctedHash = (index + 9).toString(16).repeat(64).slice(0, 64);
+    const reportFile = database.prepare(`
+      SELECT id
+      FROM report_files
+      WHERE store_id = ? AND batch_id = ? AND report_type = ? AND file_path = ?
+    `).get(storeId, batchId, reportType, filePath) as { id: number } | undefined;
+    if (!reportFile) throw new Error(`Expected imported report file for corrected ${reportType} snapshot.`);
+    database.prepare(`
+      UPDATE report_files
+      SET file_hash = ?, status = 'imported', last_imported_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(correctedHash, '2026-07-22T11:10:00.000Z', NOW, reportFile.id);
     database.prepare(`
       INSERT INTO report_import_file_snapshots (
-        store_id, snapshot_id, run_id, batch_id, report_type,
+        store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
         file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
-      ) VALUES (?, ?, 'run-2', ?, ?, ?, ?, 100, ?, 1, ?)
+      ) VALUES (?, ?, 'run-2', ?, ?, ?, ?, ?, 100, ?, 1, ?)
     `).run(
       storeId,
       `snapshot-corrected-${reportType}`,
       batchId,
+      reportFile.id,
       reportType,
       filePath,
       `${reportType}.xlsx`,
-      (index + 9).toString(16).repeat(64).slice(0, 64),
+      correctedHash,
       '2026-07-22T11:10:00.000Z',
     );
     database.prepare(`
@@ -303,7 +451,7 @@ function insertRecommendation(
     entityName: 'door lock',
     actionType: 'lower_bid',
     currentValue: '1.49',
-    recommendedValue: '1.29',
+    recommendedValue: '1.35',
     reason: 'ACOS is above the configured guardrail.',
     evidence: {
       impressions: 1000,
@@ -427,7 +575,7 @@ describe('AnalysisAuthorityRepository', () => {
     const harness = createHarness();
     const evidence = seal(harness);
     const first = registerAuthority(harness, evidence.id);
-    expect(first.entityRevision).toBe(1);
+    expect(first.entityRevision).toBe(2);
     expect(first.adEntityId).toBe('opaque-keyword-1');
     expect(JSON.stringify(first)).not.toMatch(/\.png|D:[\\/]/i);
     const second = harness.repository.registerVerifiedAdEntity(harness.context, {
@@ -448,7 +596,7 @@ describe('AnalysisAuthorityRepository', () => {
         verifiedAt: '2026-07-22T12:01:00.000Z',
       },
     });
-    expect(second.entityRevision).toBe(2);
+    expect(second.entityRevision).toBe(3);
     expect(harness.repository.adEntityBelongsToStore(harness.context, 'opaque-keyword-1')).toBe(true);
     expect(harness.repository.adEntityBelongsToStore(harness.otherContext, 'opaque-keyword-1')).toBe(false);
   });

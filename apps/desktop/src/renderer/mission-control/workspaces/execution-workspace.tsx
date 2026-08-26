@@ -111,6 +111,33 @@ const STATUS_LABELS: Record<AdExecutionStatus, string> = {
   cancelled: '已取消',
 };
 
+export function executionProgressBelongsToSelection(
+  event: AdExecutionProgressEvent,
+  context: StoreContextEnvelope | null,
+  selected: AdExecutionBatchProjection | null,
+  grantId: string,
+): boolean {
+  if (!context || String(event.storeId) !== String(context.storeId)) return false;
+  if (event.phase === 'identity') {
+    return !event.jobId && Boolean(grantId.trim()) && event.batchId === grantId.trim();
+  }
+  if (!selected || event.batchId !== selected.batch.id) return false;
+  return !event.jobId || selected.jobs.some((job) => job.id === event.jobId);
+}
+
+export type ExecutionMutationTicket = Readonly<{
+  authorityKey: string;
+  sequence: number;
+}>;
+
+export function executionMutationCanCommit(
+  ticket: ExecutionMutationTicket,
+  currentAuthorityKey: string,
+  currentSequence: number,
+): boolean {
+  return ticket.authorityKey === currentAuthorityKey && ticket.sequence === currentSequence;
+}
+
 const STEP_DEFINITIONS = [
   { id: 'queue', label: '排队', detail: '绑定执行授权与完整批次' },
   { id: 'preflight', label: '预检', detail: '重查店铺、会话、身份与变更前值' },
@@ -168,7 +195,7 @@ function createExecutionSelectionAuthorityApi(
   analysis: Pick<AnalysisAuthorityRendererApi, 'getMissionProjection'>,
 ): ExecutionSelectionAuthorityApi {
   return Object.freeze({
-    listMissions: (context: StoreContextEnvelope) => missions.listMissions(context, { includeArchived: false }),
+    listMissions: (context: StoreContextEnvelope) => missions.listMissions(context, { includeArchived: true }),
     listDecisions: (context: StoreContextEnvelope, missionId: string) => decisions.listDecisions(context, { missionId }),
     listGrants: (context: StoreContextEnvelope, missionId: string) => decisions.listHumanGrants(context, missionId),
     listGrantEvents: (context: StoreContextEnvelope, missionId: string) => decisions.listHumanGrantEvents(context, missionId),
@@ -180,12 +207,18 @@ export function selectableExecutionMissions(
   context: StoreContextEnvelope,
   missions: readonly MissionRecord[],
 ): MissionRecord[] {
+  return executionMissionsForContext(context, missions).filter((mission) => mission.status === 'active');
+}
+
+export function executionMissionsForContext(
+  context: StoreContextEnvelope,
+  missions: readonly MissionRecord[],
+): MissionRecord[] {
   missionControlContextKey(context);
   return missions.filter((mission) => (
     String(mission.storeId) === String(context.storeId)
     && mission.marketplace === 'US'
     && mission.currency === 'USD'
-    && mission.status === 'active'
   ));
 }
 
@@ -326,8 +359,9 @@ function hasCanonicalIdentity(projection: AdExecutionBatchProjection): boolean {
 function stepState(
   projection: AdExecutionBatchProjection,
   index: number,
+  jobId: string,
 ): 'pending' | 'active' | 'done' | 'error' {
-  const job = projection.jobs[0];
+  const job = projection.jobs.find((candidate) => candidate.id === jobId);
   if (!job) return 'pending';
   if (job.status === 'unknown' || job.status === 'blocked') {
     const evidenceCount = new Set(job.evidence.map((item) => item.slot)).size;
@@ -353,16 +387,43 @@ export function preferredExecutionBatchId(rows: readonly AdExecutionBatchProject
     ?? '';
 }
 
+export function preferredExecutionJobId(
+  projection: AdExecutionBatchProjection | null,
+  currentJobId = '',
+): string {
+  if (!projection) return '';
+  return projection.jobs.some((job) => job.id === currentJobId)
+    ? currentJobId
+    : projection.jobs[0]?.id ?? '';
+}
+
+export function missionForExecutionBatch(
+  missions: readonly MissionRecord[],
+  projection: AdExecutionBatchProjection | null,
+): MissionRecord | null {
+  if (!projection) return null;
+  return missions.find((mission) => (
+    mission.id === projection.batch.missionId
+    && mission.revision === projection.batch.missionRevision
+  )) ?? null;
+}
+
 function confirmStop(): boolean {
   return typeof window !== 'undefined'
     && window.confirm('确认终止当前队列？只有执行意图写入前的动作可以安全取消；审计记录会继续保留。');
 }
 
-function evidenceFor(
+export function evidenceForExecutionJob(
   projection: AdExecutionBatchProjection,
+  jobId: string,
   slot: AdExecutionEvidenceSlot,
 ) {
-  return projection.jobs.flatMap((job) => job.evidence).find((evidence) => evidence.slot === slot);
+  const job = projection.jobs.find((candidate) => candidate.id === jobId);
+  return job?.evidence.find((evidence) => (
+    evidence.batchId === projection.batch.id
+    && evidence.jobId === job.id
+    && evidence.slot === slot
+  ));
 }
 
 function PreviewBanner({ onInspectBoundary }: { onInspectBoundary?: () => void }) {
@@ -414,9 +475,13 @@ export function ExecutionWorkspace({
   const requestSequence = useRef(0);
   const missionRequestSequence = useRef(0);
   const grantRequestSequence = useRef(0);
+  const mutationSequence = useRef(0);
+  const mutationAuthorityKeyRef = useRef(authorityKey);
+  const browserReadyGrantIdRef = useRef(previewEnabled ? 'preview-grant-human' : '');
   const [phase, setPhase] = useState<LoadPhase>(() => (!storeContext || !api) ? 'blocked' : 'loading');
   const [batches, setBatches] = useState<AdExecutionBatchProjection[]>([]);
   const [selectedId, setSelectedId] = useState('');
+  const [selectedJobId, setSelectedJobId] = useState('');
   const [missions, setMissions] = useState<MissionRecord[]>([]);
   const [selectedMissionId, setSelectedMissionId] = useState(previewEnabled ? 'preview-mission:keyword-efficiency' : '');
   const [grantSelections, setGrantSelections] = useState<ExecutionGrantSelection[]>([]);
@@ -442,7 +507,20 @@ export function ExecutionWorkspace({
   const [keywordSearch, setKeywordSearch] = useState('');
 
   authorityKeyRef.current = authorityKey;
+  if (mutationAuthorityKeyRef.current !== authorityKey) {
+    mutationAuthorityKeyRef.current = authorityKey;
+    mutationSequence.current += 1;
+  }
   const selected = batches.find((projection) => projection.batch.id === selectedId) ?? null;
+  const progressSelectionRef = useRef<{
+    context: StoreContextEnvelope | null;
+    grantId: string;
+    selected: AdExecutionBatchProjection | null;
+  }>({ context: storeContext, grantId, selected });
+  progressSelectionRef.current = { context: storeContext, grantId, selected };
+  const effectiveSelectedJobId = preferredExecutionJobId(selected, selectedJobId);
+  const selectedJob = selected?.jobs.find((job) => job.id === effectiveSelectedJobId) ?? null;
+  const selectedBatchMission = missionForExecutionBatch(missions, selected);
   const selectedMission = missions.find((mission) => mission.id === selectedMissionId) ?? null;
   const selectedGrantSelection = grantSelections.find((selection) => selection.grant.id === grantId) ?? null;
   const selectableEntities = selectedGrantSelection?.entities ?? [];
@@ -459,6 +537,7 @@ export function ExecutionWorkspace({
     if (!storeContext) {
       setBatches([]);
       setSelectedId('');
+      setSelectedJobId('');
       setPhase('blocked');
       setError('尚未选择可执行店铺，实时执行已安全关闭。');
       return;
@@ -466,6 +545,7 @@ export function ExecutionWorkspace({
     if (!api) {
       setBatches([]);
       setSelectedId('');
+      setSelectedJobId('');
       setPhase('blocked');
       setError(!viewCapabilityReady
         ? `${EXECUTION_CAPABILITY_IDS.view} BLOCKED；Renderer 不会调用 Execution API。`
@@ -500,6 +580,7 @@ export function ExecutionWorkspace({
       if (authorityKeyRef.current !== capturedKey || requestSequence.current !== sequence) return;
       setBatches([]);
       setSelectedId('');
+      setSelectedJobId('');
       setPhase('error');
       setError(executionUserFacingError(loadError));
     }
@@ -507,13 +588,17 @@ export function ExecutionWorkspace({
 
   useEffect(() => {
     setMissions([]);
+    setSelectedJobId('');
     setSelectedMissionId(previewEnabled ? 'preview-mission:keyword-efficiency' : '');
     setGrantSelections([]);
     setGrantId(previewEnabled ? 'preview-grant-human' : '');
     setAdEntityId(previewEnabled ? 'preview-ad-entity-keyword-1' : '');
     setResolvedEntityIds(new Set());
+    setPending(null);
+    setFeedback('');
     setSelectionError(null);
     setSelectionPhase(previewEnabled ? 'ready' : 'loading');
+    browserReadyGrantIdRef.current = previewEnabled ? 'preview-grant-human' : '';
     setBrowserSession(previewEnabled ? 'ready' : 'unchecked');
     setProgressEvents([]);
     setIssuerByGrantId({});
@@ -535,8 +620,9 @@ export function ExecutionWorkspace({
     }
     void selectionApi.listMissions(storeContext).then((records) => {
       if (authorityKeyRef.current !== capturedKey || missionRequestSequence.current !== sequence) return;
-      const eligible = selectableExecutionMissions(storeContext, records);
-      setMissions(eligible);
+      const scoped = executionMissionsForContext(storeContext, records);
+      const eligible = selectableExecutionMissions(storeContext, scoped);
+      setMissions(scoped);
       setSelectedMissionId(eligible[0]?.id ?? '');
       setSelectionPhase('ready');
       if (!eligible.length) setSelectionError('当前店铺没有可执行的美国站运营任务，不能创建执行队列。');
@@ -602,12 +688,31 @@ export function ExecutionWorkspace({
   }, [authorityKey, previewEnabled, selectedMission, selectionApi, storeContext]);
 
   useEffect(() => {
+    setProgressEvents([]);
+    const expectedGrantId = selected?.batch.grantId ?? grantId.trim();
+    if (previewEnabled) {
+      browserReadyGrantIdRef.current = expectedGrantId || 'preview-grant-human';
+      setBrowserSession('ready');
+      return;
+    }
+    if (!expectedGrantId || browserReadyGrantIdRef.current !== expectedGrantId) {
+      setBrowserSession('unchecked');
+    }
+  }, [grantId, previewEnabled, selected?.batch.grantId, selected?.batch.id]);
+
+  useEffect(() => {
     if (!api || !storeContext) return undefined;
-    const currentStoreId = String(storeContext.storeId);
     return api.onProgress((event) => {
-      if (String(event.storeId) !== currentStoreId) return;
+      const currentSelection = progressSelectionRef.current;
+      if (!executionProgressBelongsToSelection(
+        event,
+        currentSelection.context,
+        currentSelection.selected,
+        currentSelection.grantId,
+      )) return;
       setProgressEvents((events) => [event, ...events].slice(0, 80));
       if (event.phase === 'identity' && event.status === 'ready') {
+        browserReadyGrantIdRef.current = event.batchId;
         setBrowserSession('ready');
       }
       if (event.phase === 'terminal' || event.phase === 'readback' || event.phase === 'submit') {
@@ -629,21 +734,33 @@ export function ExecutionWorkspace({
     setSelectedId(projection.batch.id);
   };
 
-  const mutate = async (name: string, action: () => Promise<void>) => {
+  const mutate = async (
+    name: string,
+    action: (commitMutation: (commit: () => void) => boolean) => Promise<void>,
+  ) => {
     if (pending) return;
+    const ticket: ExecutionMutationTicket = {
+      authorityKey,
+      sequence: ++mutationSequence.current,
+    };
+    const commitMutation = (commit: () => void) => {
+      if (!executionMutationCanCommit(ticket, authorityKeyRef.current, mutationSequence.current)) return false;
+      commit();
+      return true;
+    };
     setPending(name);
     setError(null);
     setFeedback('');
     try {
-      await action();
+      await action(commitMutation);
     } catch (mutationError) {
-      setError(executionUserFacingError(mutationError));
+      commitMutation(() => setError(executionUserFacingError(mutationError)));
     } finally {
-      setPending(null);
+      commitMutation(() => setPending(null));
     }
   };
 
-  const resolveIdentity = () => mutate('identity', async () => {
+  const resolveIdentity = () => mutate('identity', async (commitMutation) => {
     if (!startCapabilityReady) throw new Error('当前店铺未获准执行，广告对象身份核验已阻断。');
     if (!api || !storeContext || !grantId.trim() || !adEntityId.trim()) {
       throw new Error('请选择当前运营任务的有效执行授权与已批准广告对象。');
@@ -654,53 +771,69 @@ export function ExecutionWorkspace({
         throw new Error('当前广告对象不属于所选执行授权的已批准完整批次。');
       }
     }
+    const requestedGrantId = grantId.trim();
+    browserReadyGrantIdRef.current = '';
     setBrowserSession('resolving');
-    await api.resolveIdentity({ context: storeContext, grantId: grantId.trim(), adEntityId: adEntityId.trim() });
-    const nextResolved = new Set(resolvedEntityIds).add(adEntityId.trim());
-    setResolvedEntityIds(nextResolved);
-    const nextEntity = selectableEntities.find((proposal) => proposal.adEntityId && !nextResolved.has(proposal.adEntityId));
-    if (nextEntity?.adEntityId) setAdEntityId(nextEntity.adEntityId);
-    setBrowserSession('ready');
-    setFeedback('当前对象的可见广告页面身份已核验；如授权包含多个动作，请逐一核验后再建队列。');
+    await api.resolveIdentity({ context: storeContext, grantId: requestedGrantId, adEntityId: adEntityId.trim() });
+    commitMutation(() => {
+      const nextResolved = new Set(resolvedEntityIds).add(adEntityId.trim());
+      setResolvedEntityIds(nextResolved);
+      const nextEntity = selectableEntities.find((proposal) => proposal.adEntityId && !nextResolved.has(proposal.adEntityId));
+      if (nextEntity?.adEntityId) setAdEntityId(nextEntity.adEntityId);
+      browserReadyGrantIdRef.current = requestedGrantId;
+      setBrowserSession('ready');
+      setFeedback('当前对象的可见广告页面身份已核验；如授权包含多个动作，请逐一核验后再建队列。');
+    });
   });
 
-  const createBatch = () => mutate('create', async () => {
+  const createBatch = () => mutate('create', async (commitMutation) => {
     if (!startCapabilityReady) throw new Error('当前店铺未获准执行，不会创建执行批次。');
     if (!api || !storeContext || !grantId.trim()) throw new Error('请选择已有执行授权。');
     if (!allSelectedEntitiesResolved) throw new Error('请先核验该授权完整批次中每个对象的当前广告页面身份。');
     const result = await api.createBatch({ context: storeContext, grantId: grantId.trim() });
-    replaceProjection(result.projection);
+    if (!commitMutation(() => replaceProjection(result.projection))) return;
     if (previewEnabled && grantId.includes('policy')) {
       const observed = await api.startBatch({ context: storeContext, batchId: result.projection.batch.id });
-      replaceProjection(observed);
-      setFeedback('仅开发预览：策略签发批次已在本机演示环境自动推进；仍可随时人工接管。');
+      commitMutation(() => {
+        replaceProjection(observed);
+        setFeedback('仅开发预览：策略签发批次已在本机演示环境自动推进；仍可随时人工接管。');
+      });
       return;
     }
-    setFeedback(result.created ? '已从有效执行授权创建完整串行批次。' : '已返回该执行授权的现有批次。');
+    commitMutation(() => setFeedback(
+      result.created ? '已从有效执行授权创建完整串行批次。' : '已返回该执行授权的现有批次。',
+    ));
   });
 
-  const inspectBrowser = () => mutate('takeover', async () => {
+  const inspectBrowser = () => mutate('takeover', async (commitMutation) => {
     if (!takeoverCapabilityReady) throw new Error('当前店铺未获准接管浏览器。');
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
     await api.takeOverVisibleBrowser({ context: storeContext, batchId: selected.batch.id });
-    setBrowserSession('ready');
-    setFeedback(previewEnabled ? '仅开发预览：已切换本机浏览器演示。' : '当前店铺的可见广告页面已置前并完成会话检查。');
+    commitMutation(() => {
+      browserReadyGrantIdRef.current = selected.batch.grantId;
+      setBrowserSession('ready');
+      setFeedback(previewEnabled ? '仅开发预览：已切换本机浏览器演示。' : '当前店铺的可见广告页面已置前并完成会话检查。');
+    });
   });
 
-  const startBatch = () => mutate('start', async () => {
+  const startBatch = () => mutate('start', async (commitMutation) => {
     if (!startCapabilityReady) throw new Error('当前店铺未获准执行，不会启动执行批次。');
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
-    if (!hasCanonicalIdentity(selected) || browserSession !== 'ready') {
+    if (!hasCanonicalIdentity(selected)
+      || browserSession !== 'ready'
+      || browserReadyGrantIdRef.current !== selected.batch.grantId) {
       throw new Error('稳定关键词身份与当前可见浏览器会话必须同时就绪。');
     }
     const projection = await api.startBatch({ context: storeContext, batchId: selected.batch.id });
-    replaceProjection(projection);
-    setFeedback(projection.batch.status === 'unknown'
-      ? '结果不确定：串行队列已停止，不会自动重试。'
-      : '串行执行已更新为最新状态。');
+    commitMutation(() => {
+      replaceProjection(projection);
+      setFeedback(projection.batch.status === 'unknown'
+        ? '结果不确定：串行队列已停止，不会自动重试。'
+        : '串行执行已更新为最新状态。');
+    });
   });
 
-  const cancelBatch = () => mutate('cancel', async () => {
+  const cancelBatch = () => mutate('cancel', async (commitMutation) => {
     if (!cancelCapabilityReady) throw new Error('当前店铺未获准取消执行批次。');
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
     if (!confirmStop()) return;
@@ -709,17 +842,19 @@ export function ExecutionWorkspace({
       batchId: selected.batch.id,
       reason: 'operator_confirmed_stop_before_intent',
     });
-    replaceProjection(projection);
-    setFeedback('未提交批次已在执行意图写入前整体取消；审计记录继续保留。');
+    commitMutation(() => {
+      replaceProjection(projection);
+      setFeedback('未提交批次已在执行意图写入前整体取消；审计记录继续保留。');
+    });
   });
 
-  const reconcileUnknown = () => mutate('reconcile-unknown', async () => {
+  const reconcileUnknown = () => mutate('reconcile-unknown', async (commitMutation) => {
     if (!reconcileCapabilityProjected) throw new Error('当前店铺未获准进行结果不确定对账。');
     if (!api || !storeContext || !selected || !selectedUnknown) {
       throw new Error('请先选择一个结果不确定的执行批次。');
     }
     const result = await api.reconcileUnknownBatch({ context: storeContext, batchId: selected.batch.id });
-    setFeedback(result.detail);
+    if (!commitMutation(() => setFeedback(result.detail))) return;
     await load(true);
   });
 
@@ -735,6 +870,7 @@ export function ExecutionWorkspace({
     && !selectedUnknown
     && hasCanonicalIdentity(selected!)
     && browserSession === 'ready'
+    && browserReadyGrantIdRef.current === selected!.batch.grantId
     && selected!.jobs.some((job) => ['queued', 'preflight'].includes(job.status));
 
   if (!viewCapabilityReady || (phase === 'blocked' && !previewEnabled)) {
@@ -764,8 +900,14 @@ export function ExecutionWorkspace({
     message: `${event.eventType} · ${event.detail ?? event.toStatus}`,
     status: event.toStatus,
   }))) ?? [];
+  const scopedProgressEvents = progressEvents.filter((event) => executionProgressBelongsToSelection(
+    event,
+    storeContext,
+    selected,
+    grantId,
+  ));
   const consoleRows = [
-    ...progressEvents.map((event, index) => ({
+    ...scopedProgressEvents.map((event, index) => ({
       id: `progress:${event.occurredAt}:${index}`,
       at: event.occurredAt,
       message: `${event.phase} · ${event.message}`,
@@ -773,11 +915,11 @@ export function ExecutionWorkspace({
     })),
     ...durableEvents,
   ].slice(0, 80);
-  const selectedJob = selected?.jobs[0] ?? null;
-  const missionTitle = selectedMission?.title
-    ?? (previewEnabled ? 'Prime Day 后 7 日利润守护' : '等待选择可执行运营任务');
+  const missionTitle = selected
+    ? selectedBatchMission?.title ?? '当前批次的运营任务记录不可用'
+    : selectedMission?.title ?? (previewEnabled ? 'Prime Day 后 7 日利润守护' : '等待选择可执行运营任务');
   const missionSubtitle = selectedJob
-    ? `关键词出价调整 · 已锁定第 ${selectedJob.ordinal} 个广告对象`
+    ? `关键词出价调整 · 当前查看第 ${selectedJob.ordinal} 个广告对象`
     : '关键词出价调整 · Amazon US / USD';
   const planCompleted = selected?.batch.status === 'succeeded' ? 7 : grantId ? 5 : 0;
   const keywordNeedle = keywordSearch.trim().toLowerCase();
@@ -834,9 +976,9 @@ export function ExecutionWorkspace({
       </header>
 
       <section className="execution-contract-strip" aria-label="执行合同">
-        <div><span>运营任务</span><strong>{selectedMission?.title ?? (selected ? '已选择当前任务' : '等待选择')}</strong></div>
+        <div><span>运营任务</span><strong>{selected ? selectedBatchMission?.title ?? '当前批次的运营任务记录不可用' : selectedMission?.title ?? '等待选择'}</strong></div>
         <div><span>执行模式</span><strong>{selectedIssuer ?? (grantId.includes('policy') ? '策略签发' : grantId ? '人工签发' : '等待授权')}</strong></div>
-        <div><span>风险等级</span><strong>低风险 · 降幅 ≤ 10%</strong></div>
+        <div><span>变更范围</span><strong>{selectedJob ? `${selectedJob.changePct.toFixed(1)}% · ${money(selectedJob.expectedBidCents)} → ${money(selectedJob.targetBidCents)}` : '等待选择真实执行对象'}</strong></div>
         <div><span>安全状态</span><strong data-tone={grantId ? 'safe' : 'waiting'}><ShieldWarning size={14} weight="fill" />{grantId ? '策略边界 已通过' : '等待执行授权'}</strong></div>
       </section>
 
@@ -844,7 +986,7 @@ export function ExecutionWorkspace({
 
       <div className="execution-boundary-alert" role="status">
         <Warning size={17} weight="fill" />
-        <strong>{previewEnabled ? '1 个对象超出策略内自动边界，已隔离转人工审批' : selectedUnknown ? '当前批次结果不确定，已停止且禁止自动重试' : '越界对象不会进入当前串行批次'}</strong>
+        <strong>{previewEnabled ? '仅开发预览不会提交广告调整，也不会展示伪造业务结果' : selectedUnknown ? '当前批次结果不确定，已停止且禁止自动重试' : '越界对象不会进入当前串行批次'}</strong>
         <button data-action-priority="primary" onClick={() => setAuthorityOpen(true)} type="button">查看执行来源与边界</button>
       </div>
 
@@ -859,7 +1001,7 @@ export function ExecutionWorkspace({
             <span>当前运营任务</span>
             {previewEnabled ? (
               <select aria-label="开发预览运营任务" disabled value={selectedMissionId}>
-                <option value="preview-mission:keyword-efficiency">Prime Day 后利润守护 · 仅开发预览</option>
+                <option value="preview-mission:keyword-efficiency">仅开发预览任务 · 无真实任务数据</option>
               </select>
             ) : (
               <select aria-label="当前运营任务" disabled={running || Boolean(pending) || selectionPhase === 'loading'} onChange={(event) => {
@@ -905,7 +1047,7 @@ export function ExecutionWorkspace({
                 setAdEntityId(event.target.value);
                 setResolvedEntityIds(new Set());
               }}>
-                <option value="preview-ad-entity-keyword-1">smart lock exact · US Exact Core · USD 1.20 → 1.08</option>
+                <option value="preview-ad-entity-keyword-1">仅开发预览对象 · 无真实广告数据</option>
               </select>
             ) : (
               <select aria-label="已决定广告对象" disabled={running || Boolean(pending) || !selectedGrantSelection} onChange={(event) => setAdEntityId(event.target.value)} value={adEntityId}>
@@ -919,7 +1061,7 @@ export function ExecutionWorkspace({
           <details>
             <summary>诊断详情</summary>
             <div className="execution-selection-ids" aria-label="Authority 只读标识">
-              <span>Mission <code>{selectedMissionId || '—'}</code></span>
+              <span>Mission <code>{(selected?.batch.missionId ?? selectedMissionId) || '—'}</code></span>
               <span>Grant <code>{grantId || '—'}</code></span>
               <span>Entity <code>{adEntityId || '—'}</code></span>
               <b>{previewEnabled ? '仅开发预览 mock' : `${resolvedEntityIds.size}/${selectableEntities.length} 个对象身份已解析`}</b>
@@ -982,8 +1124,11 @@ export function ExecutionWorkspace({
             <header><div><span>真实执行队列</span><strong>串行批次</strong></div><b>{batches.length}</b></header>
             <div className="execution-queue__list" role="listbox" aria-label="选择执行批次">
               {batches.map((projection, index) => (
-                <button aria-selected={projection.batch.id === selectedId} data-status={projection.batch.status} key={projection.batch.id} onClick={() => setSelectedId(projection.batch.id)} role="option" type="button">
-                  <span><b>串行批次 {index + 1}</b><em>{STATUS_LABELS[projection.batch.status]}</em></span>
+                <button aria-selected={projection.batch.id === selectedId} data-status={projection.batch.status} key={projection.batch.id} onClick={() => {
+                  setSelectedId(projection.batch.id);
+                  setSelectedJobId(preferredExecutionJobId(projection));
+                }} role="option" type="button">
+                  <span><b>{missionForExecutionBatch(missions, projection)?.title ?? `运营任务记录不可用 · 批次 ${index + 1}`}</b><em>{STATUS_LABELS[projection.batch.status]}</em></span>
                   <small>{projection.jobs.length} 个动作 · {grantIssuer(projection, issuerByGrantId[projection.batch.grantId])}</small>
                 </button>
               ))}
@@ -1014,28 +1159,27 @@ export function ExecutionWorkspace({
                 <div className="execution-browser-filters">
                   <label><span>队列筛选</span><select aria-label="队列筛选" onChange={(event) => setQueueFilter(event.target.value)} value={queueFilter}><option value="all">全部调整对象</option><option value="policy">策略内动作</option><option value="approval">需人工审批</option></select></label>
                   <label><span>搜索调整对象</span><input aria-label="搜索调整对象" onChange={(event) => setKeywordSearch(event.target.value)} placeholder="搜索关键词或广告对象" value={keywordSearch} /></label>
-                  <button className="execution-button execution-button--secondary" onClick={() => setFeedback(`已按当前条件筛选 ${visibleSelectedJobs.length || visibleSelectableEntities.length || (previewEnabled ? 2 : 0)} 个对象。`)} type="button"><Funnel size={15} />应用筛选</button>
-                  <span>更新时间 刚刚</span>
+                  <button className="execution-button execution-button--secondary" onClick={() => setFeedback(`已按当前条件筛选 ${visibleSelectedJobs.length || visibleSelectableEntities.length} 个对象。`)} type="button"><Funnel size={15} />应用筛选</button>
+                  <span>{selected ? `更新时间 ${formatTime(selected.batch.updatedAt)}` : '暂无批次更新时间'}</span>
                 </div>
                 <div className="execution-object-grid">
                   <table aria-label="选中批次广告动作" className="execution-keyword-table">
                     <thead><tr><th>当前对象</th><th>对象 / 搜索词</th><th>动作维度</th><th>状态</th><th>花费 (USD)</th><th>销售额 (USD)</th><th>ACOS</th><th>当前出价 (USD)</th><th>建议出价 (USD)</th><th>变更幅度</th><th>操作</th></tr></thead>
                     <tbody>
-                      {visibleSelectedJobs.map((job) => <tr data-status={job.status} key={job.id}><td><input aria-label="选择当前执行对象" checked={job.id === selectedJob?.id} readOnly type="radio" /></td><td><strong>已授权广告对象 {job.ordinal}</strong><small>当前运营任务范围</small><details><summary>诊断详情</summary><code>{job.adEntityId}</code><code>{job.identity.campaignId}</code></details></td><td>关键词竞价</td><td>{STATUS_LABELS[job.status]}</td><td>—</td><td>—</td><td>—</td><td><input aria-label="当前出价" readOnly value={(job.expectedBidCents / 100).toFixed(2)} /></td><td><input aria-label="建议出价" readOnly value={(job.targetBidCents / 100).toFixed(2)} /></td><td>{job.changePct.toFixed(1)}%</td><td><button disabled type="button">{STATUS_LABELS[job.status]}</button></td></tr>)}
+                      {visibleSelectedJobs.map((job) => <tr data-status={job.status} key={job.id}><td><input aria-label={`查看第 ${job.ordinal} 个执行对象`} checked={job.id === selectedJob?.id} name="selected-execution-job" onChange={() => setSelectedJobId(job.id)} type="radio" value={job.id} /></td><td><strong>已授权广告对象 {job.ordinal}</strong><small>{selectedBatchMission?.title ?? '当前批次的运营任务记录不可用'}</small><details><summary>诊断详情</summary><code>{job.adEntityId}</code><code>{job.identity.campaignId}</code></details></td><td>关键词竞价</td><td>{STATUS_LABELS[job.status]}</td><td>—</td><td>—</td><td>—</td><td><input aria-label="当前出价" readOnly value={(job.expectedBidCents / 100).toFixed(2)} /></td><td><input aria-label="建议出价" readOnly value={(job.targetBidCents / 100).toFixed(2)} /></td><td>{job.changePct.toFixed(1)}%</td><td><button disabled type="button">{STATUS_LABELS[job.status]}</button></td></tr>)}
                       {!selected && visibleSelectableEntities.map((proposal) => <tr key={proposal.id}><td><input aria-label={`选择 ${proposal.entityName}`} checked={proposal.id === selectedProposalId} readOnly type="radio" /></td><td><strong>{proposal.entityName}</strong><small>{proposal.campaignName}</small></td><td>关键词竞价</td><td>已授权</td><td>—</td><td>—</td><td>—</td><td><input aria-label="当前出价" readOnly value={(proposal.currentBidCents / 100).toFixed(2)} /></td><td><input aria-label="建议出价" readOnly value={(proposal.proposedBidCents / 100).toFixed(2)} /></td><td>{proposal.changePct.toFixed(1)}%</td><td><button onClick={() => setAdEntityId(proposal.adEntityId ?? '')} type="button">选择对象</button></td></tr>)}
-                      {previewEnabled && !selected && queueFilter !== 'approval' && (!keywordNeedle || 'smart lock exact'.includes(keywordNeedle)) && <tr><td><input aria-label="选择 smart lock exact" checked readOnly type="radio" /></td><td><strong>smart lock exact</strong><small>US Exact Core</small></td><td>精准匹配</td><td>已授权</td><td>86.40</td><td>492.00</td><td>17.6%</td><td><input aria-label="当前出价" readOnly value="1.20" /></td><td><input aria-label="建议出价" readOnly value="1.08" /></td><td>-10.0%</td><td><button disabled={!resolvedEntityIds.has(adEntityId)} onClick={createBatch} type="button">应用 $1.08</button></td></tr>}
-                      {previewEnabled && !selected && queueFilter !== 'policy' && (!keywordNeedle || 'fingerprint door lock'.includes(keywordNeedle)) && <tr data-status="approval"><td><input aria-label="选择需人工审批的示例对象" readOnly type="radio" /></td><td><strong>需人工审批的示例对象</strong><small>美国站广泛匹配组</small><details><summary>诊断详情</summary><code>fingerprint door lock</code></details></td><td>广泛匹配</td><td>越界隔离</td><td>61.20</td><td>144.00</td><td>42.5%</td><td><input aria-label="当前出价" readOnly value="1.10" /></td><td><input aria-label="建议出价" readOnly value="0.88" /></td><td>-20.0%</td><td><button disabled type="button">转人工审批</button></td></tr>}
+                      {!selected && visibleSelectableEntities.length === 0 && <tr><td colSpan={11}>当前没有可展示的真实执行对象。请先选择运营任务和有效执行授权。</td></tr>}
                     </tbody>
                   </table>
                 </div>
-                <footer>共 {visibleSelectedJobs.length || visibleSelectableEntities.length || (previewEnabled ? 2 : 0)} 条 <button disabled type="button">上一页</button><button aria-current="page" disabled type="button">1</button><button disabled type="button">下一页</button></footer>
+                <footer>共 {visibleSelectedJobs.length || visibleSelectableEntities.length} 条 <button disabled type="button">上一页</button><button aria-current="page" disabled type="button">1</button><button disabled type="button">下一页</button></footer>
               </div>
             </div> : <div className="execution-browser-empty" role="tabpanel"><Browser size={30} weight="duotone" /><strong>{browserTab === 'home' ? '领星首页' : '搜索词报告'}</strong><p>{previewEnabled ? '仅开发预览：此标签用于验证页面切换，不读取领星数据。' : '当前标签由本机安全进程管理的可见浏览器提供。'}</p></div>}
           </section>
 
           <section className="execution-serial-steps" aria-label="串行执行步骤">
             <header><div><span>串行执行状态</span><strong>排队 → 预检 → 写入意图 → 提交 → 保存后核验 → 刷新回读</strong></div>{running && <b><Circle size={11} weight="fill" />店铺写入动作已锁定</b>}<details><summary>诊断详情</summary><code>SERIAL STATE MACHINE</code><code>queue → preflight → intent → submit → after → reload</code></details></header>
-            <ol>{STEP_DEFINITIONS.map((step, index) => { const state = selected ? stepState(selected, index) : 'pending'; return <li data-state={state} key={step.id}><span>{state === 'done' ? <CheckCircle size={17} weight="fill" /> : state === 'error' ? <Warning size={17} weight="fill" /> : <b>{index + 1}</b>}</span><div><strong>{step.label}</strong><small>{step.detail}</small></div><em>{state === 'done' ? '完成' : state === 'active' ? '进行中' : state === 'error' ? '停止' : '等待'}</em></li>; })}</ol>
+            <ol>{STEP_DEFINITIONS.map((step, index) => { const state = selectedJob ? stepState(selected!, index, selectedJob.id) : 'pending'; return <li data-state={state} key={step.id}><span>{state === 'done' ? <CheckCircle size={17} weight="fill" /> : state === 'error' ? <Warning size={17} weight="fill" /> : <b>{index + 1}</b>}</span><div><strong>{step.label}</strong><small>{step.detail}</small></div><em>{state === 'done' ? '完成' : state === 'active' ? '进行中' : state === 'error' ? '停止' : '等待'}</em></li>; })}</ol>
           </section>
         </section>
       </div>
@@ -1047,22 +1191,22 @@ export function ExecutionWorkspace({
         <div className="execution-detail-panel" role="tabpanel">
           {detailTab === 'action' && <div className="execution-action-panel">
             <dl className="execution-action-facts">
-              <div><dt>目标对象</dt><dd>{selectedJob ? `已授权广告对象 ${selectedJob.ordinal}` : 'smart lock exact'}</dd></div>
-              <div><dt>所属广告组</dt><dd>{selectedJob ? '当前运营任务的广告组' : 'US Exact Core'}</dd></div>
+              <div><dt>目标对象</dt><dd>{selectedJob ? `已授权广告对象 ${selectedJob.ordinal}` : '尚未选择真实执行对象'}</dd></div>
+              <div><dt>所属运营任务</dt><dd>{selectedBatchMission?.title ?? '当前批次的运营任务记录不可用'}</dd></div>
               <div><dt>动作类型</dt><dd>关键词出价调整</dd></div>
               <div><dt>当前状态</dt><dd>{selectedJob ? STATUS_LABELS[selectedJob.status] : '等待建队列'}</dd></div>
-              <div><dt>当前出价</dt><dd>{selectedJob ? money(selectedJob.expectedBidCents) : 'USD 1.20'}</dd></div>
-              <div><dt>建议出价</dt><dd>{selectedJob ? money(selectedJob.targetBidCents) : 'USD 1.08'}</dd></div>
-              <div><dt>变更幅度</dt><dd>{selectedJob ? `${selectedJob.changePct.toFixed(1)}%` : '-10.0%'}</dd></div>
-              <div><dt>执行模式</dt><dd>{selectedIssuer ?? '人工签发'}</dd></div>
+              <div><dt>当前出价</dt><dd>{selectedJob ? money(selectedJob.expectedBidCents) : '—'}</dd></div>
+              <div><dt>建议出价</dt><dd>{selectedJob ? money(selectedJob.targetBidCents) : '—'}</dd></div>
+              <div><dt>变更幅度</dt><dd>{selectedJob ? `${selectedJob.changePct.toFixed(1)}%` : '—'}</dd></div>
+              <div><dt>执行模式</dt><dd>{selectedIssuer ?? '等待执行授权'}</dd></div>
             </dl>
-            <div className="execution-action-reason"><section><h3>调整原因</h3><p>近 7 日 CPC 上扬但转化率稳定，温和降价用于修复 ACOS，并避免破坏曝光。</p></section><section><h3>风险校验</h3><p>US / USD、当前会话、完整执行授权、只降价与 10% 上限必须同时通过。</p></section></div>
+            <div className="execution-action-reason"><section><h3>调整原因</h3><p>{selectedBatchMission?.objective || '当前批次未提供可核验的运营任务目标。'}</p></section><section><h3>停止与守护条件</h3><p>{selectedBatchMission?.guardrails.length ? selectedBatchMission.guardrails.join('；') : '当前批次未提供可核验的任务守护条件。'}</p></section></div>
             {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>结果不确定 · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。可人工接管当前可见浏览器，或执行两次只读核验并把结果追加到因果记录。</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由本机安全进程自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
           </div>}
-          {detailTab === 'compare' && <section className="execution-evidence"><h3>变更前 / 提交后 / 刷新后</h3>{(['before', 'after', 'reload'] as const).map((slot) => { const evidence = selected ? evidenceFor(selected, slot) : undefined; return <article data-state={evidence ? 'ready' : 'pending'} key={slot}><span>{evidence ? <CheckCircle size={17} weight="fill" /> : <Circle size={17} />}</span><div><strong>{EVIDENCE_SLOT_LABELS[slot]}</strong><small>{evidence ? `${money(evidence.observedBidCents)} · ${formatTime(evidence.capturedAt)}` : slot === 'before' ? '提交意图前捕获' : slot === 'after' ? '提交后捕获' : '刷新后同对象核验'}</small>{evidence && <details><summary>诊断详情</summary><code>{evidence.contentSha256.slice(0, 12)}…</code></details>}</div></article>; })}</section>}
+          {detailTab === 'compare' && <section className="execution-evidence"><h3>变更前 / 提交后 / 刷新后</h3>{(['before', 'after', 'reload'] as const).map((slot) => { const evidence = selected && selectedJob ? evidenceForExecutionJob(selected, selectedJob.id, slot) : undefined; return <article data-state={evidence ? 'ready' : 'pending'} key={slot}><span>{evidence ? <CheckCircle size={17} weight="fill" /> : <Circle size={17} />}</span><div><strong>{EVIDENCE_SLOT_LABELS[slot]}</strong><small>{evidence ? `${money(evidence.observedBidCents)} · ${formatTime(evidence.capturedAt)}` : slot === 'before' ? '提交意图前捕获' : slot === 'after' ? '提交后捕获' : '刷新后同对象核验'}</small>{evidence && <details><summary>诊断详情</summary><code>{evidence.contentSha256.slice(0, 12)}…</code></details>}</div></article>; })}</section>}
           {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? '结果不确定 · 可进行只读双次对账' : '等待真实执行后回读'}</strong><p>提交后与刷新后的证据必须独立证明同一标准化关键词和目标值；任何不确定性都停止队列且不自动重试。对账只读取当前值并追加证据，不会再次提交。</p><button className="execution-button execution-button--secondary" disabled={!selectedUnknown || !canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></div>}
           {detailTab === 'evidence' && <div className="execution-archive-panel"><h3>证据与归档</h3><p>串行批次、执行授权终态、因果事件以及变更前 / 提交后 / 刷新后截图和内容哈希均只允许追加。</p><dl><div><dt>批次</dt><dd>{selected ? '已生成' : '待生成'}</dd></div><div><dt>执行授权</dt><dd>{selected?.batch.grantId || grantId ? '已选择' : '待选择'}</dd></div><div><dt>事件数</dt><dd>{consoleRows.length}</dd></div><div><dt>归档状态</dt><dd>{selected?.batch.status === 'succeeded' ? '可归档' : '等待终态'}</dd></div></dl><details><summary>诊断详情</summary><code>{selected?.batch.id ?? '—'}</code><code>{(selected?.batch.grantId ?? grantId) || '—'}</code></details></div>}
-          {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联实验</span><strong>核心词竞价弹性 · 7 日</strong><dl><div><dt>假设</dt><dd>竞价下降不超过 10% 可降低 CPC，同时守住订单量。</dd></div><div><dt>观察窗口</dt><dd>7 个美国业务日</dd></div><div><dt>守护栏</dt><dd>转化率、订单量、目标 ACOS 与数据新鲜度</dd></div></dl><button className="execution-button execution-button--secondary" disabled type="button">实验详情（未接入）</button></div>}
+          {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联经营实验</span><strong>当前批次没有可核验的关联经营实验</strong><p>执行批次投影未提供经营实验关联，因此这里不会用示例名称、假设或观察窗口冒充真实数据。</p>{selectedBatchMission && <dl><div><dt>关联运营任务</dt><dd>{selectedBatchMission.title}</dd></div><div><dt>任务观察期</dt><dd>{selectedBatchMission.observationStartsAt.slice(0, 10)} 至 {selectedBatchMission.observationEndsAt.slice(0, 10)}</dd></div></dl>}</div>}
         </div>
         <p className="execution-safety-note"><Pause size={15} />取消仅在提交前开放；提交后必须完成回读或转入结果不确定的人工对账。</p>
       </section>
