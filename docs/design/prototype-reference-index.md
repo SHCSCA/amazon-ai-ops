@@ -1,5 +1,7 @@
 # 原型对照索引 — Amazon AI Ops 业务原型
 
+> 历史原型对照记录：仅用于设计参考，当前源码/包验收状态以 `PROGRESS.md`、`BLOCKED.md` 和 `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md` 为准。
+
 > 最后更新：2026-07-03
 > 原型项目路径：`amazon-ai-ops-business-prototype/`
 > 代码根目录：`apps/desktop/src/renderer/`

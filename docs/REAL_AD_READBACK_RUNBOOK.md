@@ -2,7 +2,23 @@
 
 历史 READY 阻断曾由一次低风险真实广告动作的前后回读证据关闭。2026-06-18 的执行记录现在只保留为操作示例，不能证明 2026-07-16 当前包体或当前 SQLite 状态已通过。2026-06-25 后的桌面包支持在 `结果核对` 页把审批、执行前、执行后和刷新回读截图直接拖入或 Ctrl+V 粘贴到回读工作包，由应用写入对应证据目录并回填路径/时间。本文是后续人工验收手册，不授权任何自动广告写入。
 
-## Current Delivery Authority — 2026-07-16
+## Current source handoff — 2026-08-26
+
+| Field | Current value |
+| --- | --- |
+| Source version | `1.5.1` |
+| Delivery status | `APP_NEEDS_WORK / INTERNAL NON_READY` |
+| Unit evidence | `285/285` files, `3529/3529` tests passed |
+| Last recorded safe candidate | `back massager / U07-1P-精准 / 精准 / $2.32 -> $2.09 / -9.9138%` |
+| Missing authority | Stable Ads authority/id/revision, current-bid readback, and product-local approval |
+| Ads write state | Approval and execution remain zero; do not write yet |
+| Package state | `1.5.1` has not been built or dynamically accepted; the verified `1.5.0` package is historical |
+
+When an execution is `UNKNOWN`, use `执行只读双次对账` before any other action. Main observes and screenshots the exact current-store object, reloads, observes and screenshots again, verifies that both observations identify the same object, and classifies the value as target/original/drift/still-unknown. This action must not click save, retry the original execution, or change the original batch/job from `unknown`; it appends separate `READBACK` evidence instead.
+
+For the current candidate, first use the read-only Ads object check to bind the exact object and current value. Show the operator the object path, current `$2.32`, target `$2.09`, `9.9138%` decrease, evidence date and revision. Only an explicit approval for that exact record may proceed to one real write plus reload readback. Any identity/value drift invalidates the candidate and requires regeneration.
+
+## Historical Delivery Authority — 2026-07-16
 
 | Field | Current value |
 | --- | --- |

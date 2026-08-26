@@ -4,31 +4,26 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 第一版固定 Amazon US / USD，正式桌面导航为 10 个运营工作区。连接链已在当前包完成正式 AppData 实测，但完整 8 类采集在领星 `product_targeting` 创建结果无法唯一回读时安全停止；正式库尚无 import run。策略、运营任务、经营实验、当前包 Package UI 与真实广告写入/回读仍未闭合，旧 `APP_READY`、`7/8`、旧 manifest 和旧 bundle 均不得复用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY SOURCE CANDIDATE.** 当前源码版本为 `1.5.1`，固定 Amazon US / USD、Windows 单机自用和逐店隔离。连接、8 类采集/导入、策略、运营任务与经营实验已有真实业务记录；本轮又补齐了 `UNKNOWN` 广告执行只读双次对账、因果记忆索引重建/JSON 导出和剩余能力映射。全量单元门为 `285/285` files、`3529/3529` tests passed。由于 `1.5.1` 尚未重新 typecheck、构建、运行业务 smoke、Package UI、ZIP 启动及真实 Ads 回读，当前仍不得声明 `APP_READY`。
 
 ## 当前交付
 
 | 项目 | 当前值 |
 |---|---|
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
-| 当前版本 | `1.5.0` |
-| 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；当前八门聚合尚未生成） |
-| 当前包源码 | `668ac75e`（恢复修复已推送并快进合并到 `master`；当前包仍需重新生成 Package UI 证据） |
-| 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
-| 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `857E59CF33FAEDC41726AE80A017D20D90C0EBD66A0EAF2DB68D18DDCC5F4807` |
-| 安装版 SHA-256 | `723225012B07FE7321A7242592936283183A92B27F473D26DC30CE4CB6EE82EE` |
-| win-unpacked EXE SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
-| app content SHA-256 | `2BCA88C048C889D971B58A37E3A2397D547779752A8048A88EB62FBAE9C99BDB` |
-| main bundle SHA-256 | `3AE00CE179A46765BAB398A149F87524DDD5B3E9625C65549D502E5995E82F6E` |
-| 内部交互 UI | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json`（20 个工作区捕获 + 3 个门禁/隔离/最小窗口场景，共 23 PNG；`NO_FINAL_READINESS_CREDIT`） |
-| 当前真实业务 | ERP/Ads 已连接；8 类采集在 `LINGXING_CREATE_CALL_INTERRUPTED` 安全停止，5 类 downloaded、1 类 create_unknown、1 类 failed、1 类 queued；imports=0 |
-| 当前包自动门 | 聚焦恢复测试 `9/9 + 75/75`、desktop typecheck、Windows 七步构建通过；最新构建尚未生成新的 Package UI manifest |
-| 历史 Package security evidence | `output\codex-evidence\package-security-boundaries-3f6fbec3.json`（旧包 11/11 PASS；不授予当前包信用） |
-| 历史 adversarial `NODE_ENV` | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json`（旧包 PASS；不授予当前包信用） |
-| Package UI evidence | schema v8 pending；当前包尚未完成 visible operator handoff 和正式 package manifest |
-| 当前 authority / 真实运行证据 | 正式库 jobs=5、batches=3、files=9、imports=0；五张广告执行表为 0。真实 8/8、策略/任务/实验和 Task 8B 均 pending / blocked |
-| 正式八门 / bundle | 当前候选尚未重新生成；旧 4/8、7/8 与旧 bundle 仅作历史记录 |
+| 当前版本 | `1.5.1` |
+| 当前状态 | `APP_NEEDS_WORK`（源码候选；不是已构建 Windows 发布包） |
+| 当前源码验证 | `285/285` test files、`3529/3529` unit tests passed；无 `.skip/.todo/skipIf/context.skip` |
+| 目标无安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1-portable.exe`（尚未构建） |
+| 目标安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe`（尚未构建） |
+| 目标文件夹 ZIP | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.zip`（尚未构建） |
+| 真实业务基线 | 最新已记录采集为 8/8、导入为 8 files / 1937 metrics / 8 reconciliations；存在 enabled 策略、active 运营任务和 draft 经营实验 |
+| 新增执行恢复 | `UNKNOWN` 只读双次对账会在刷新前后读取并截图，校验稳定对象，保持原执行 `unknown` 且另记 `READBACK`；不会重试写入 |
+| 新增因果记忆 | 当前店铺索引真实重建、索引搜索和 US/USD JSON 时间线导出 |
+| 当前 Ads 安全门 | 最近只读记录仍为对象 authority=0、approval=0、Ads execution=0；真实写入须先唯一回读当前对象并取得该候选专属批准 |
+| 最近已验证包 | `1.5.0` 的 Package UI `operator-core-20260826-91` 三档曾通过；这是历史基线，不授予 `1.5.1` 信用 |
+| `1.5.1` 动态门 | typecheck、Renderer/Windows build、7 类业务 smoke、Package UI、ZIP 启动和真实 Ads 写入/刷新回读均待运行 |
+| 正式八门 / bundle | `1.5.1` 尚未生成；旧 READY/NON_READY、旧哈希、旧 manifest 和旧 bundle 仅作历史记录 |
 | 详细状态 | `docs\OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`（当前）；`docs\MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` 仅为历史基线 |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
@@ -95,16 +90,16 @@
 
 ## 外部分发阻断与剩余工作
 
-当前包的内部 UI、业务 smoke、package launch、安全边界和 adversarial `NODE_ENV` 已验证，但还没有为该包生成新的正式八门聚合结果。除 package UI 外，真实 authority DB 升级、逐店采集、自然观察窗和两种执行 canary 都不能用历史数据或模拟证据替代：
+`1.5.1` 当前只完成源码与单元门，不能继承 `1.5.0` 包的运行态信用。投产前必须按同一源码、包、数据库和证据谱系完成：
 
 | 正式门 | 当前状态 | 完成条件 |
 |---|---|---|
-| Package UI | pending | 完成 schema v8 每轮 visible operator handoff，并通过 100%/125% 十工作区、overlay、canonical 子视图、宽屏/最小窗口和跨店隔离合同 |
-| 真实 authority DB | pending explicit approval | 对明确选定的 live DB 做可恢复升级，验证 stores、Store Capsule 与 execution authority；不得猜测或原地覆盖 |
-| 每店 8/8 / 两店连续运行 | blocked by time/real sessions | 每店完成真实 8 类下载、导入和对账；两家真实店铺自然经过连续 7 个美国业务日，形成 14/14 `SUCCESS_8_OF_8` |
-| 人工 canary | blocked by current authority/session | 当前低风险真实对象、当前人工 MissionGrant、可见 Ads 会话以及 before/after/reload 回读全部闭合 |
-| Policy-auto canary | blocked by current authority/session | 人工 canary 完成后，以当前启用策略、限额、kill switch、真实对象和独立授权完成策略自动 canary |
-| 八门聚合与 bundle | pending | 当前证据齐备后重新聚合，导出同一包/DB lineage 的严格 READY 或 NON_READY bundle 并通过 safety verifier |
+| 静态工程门 | pending | 运行 desktop typecheck 与 Renderer build，确认版本提升没有类型/打包合同漂移 |
+| 业务主链 | pending | 运行当前 7 类业务 smoke，逐项报告连接、采集、策略、运营任务、经营实验、弹窗和按钮 |
+| Windows 包 | pending | 构建 `1.5.1` installer、portable 与 folder ZIP，记录当前 SHA-256 |
+| Package UI | pending | 用 `1.5.1` 完成 100%/125%/wide 三档、中文失败/下一步、弹窗滚动和店铺隔离合同 |
+| Task 8B | blocked by authority/approval | 先唯一回读当前 Ads 对象和值，再让操作者批准具体 `lower_bid`；随后执行一次写入并刷新回读 |
+| 八门聚合与 bundle | pending | 绑定同一 `1.5.1` 源码、包、DB 与证据生成严格 READY 或 NON_READY 结果 |
 
 因此当前包只允许内部验证和受控交接；通过当前全部门禁、重新生成 Mission readiness，并生成匹配的严格 bundle 及安全校验前，不能作为 `APP_READY` 外部分发版本。
 
@@ -112,17 +107,16 @@
 
 | 验证门 | 状态 | 证据 |
 |---|---|---|
-| TypeScript / build | 通过 | 14 个 workspace / project typecheck 通过；当前 package 已生成 |
-| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1785830923177.json`；5/5 PASS |
-| 开发工作区 UI 证据 | 通过但无正式信用 | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json`；20 个 workspace captures + 3 个门禁/隔离/最小窗口场景，共 23 PNG，明确 `NO_FINAL_READINESS_CREDIT` |
-| 广告执行 fail-closed | 代码合同已通过 | 仅允许经授权的低风险 keyword bid 下调；执行前重检，任何 `UNKNOWN` 停止；真实人工/policy-auto canary 尚未完成 |
-| Windows 打包 | 通过 | installer `EDEC...B96A`、portable `58C6...DEDE4`、win-unpacked `67DC...5E89`、app content `FC17...E43`、main bundle `9B0C...32A` |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1785831535965.json` |
-| Package security boundaries | 11/11 通过 | `output\codex-evidence\package-security-boundaries-3f6fbec3.json` |
-| Adversarial `NODE_ENV` | 通过 | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json` |
-| Package UI | schema v8 pending | 项目 Chromium 已进入包体；正式 visible operator handoff 与通过 manifest 尚未形成 |
-| 真实数据 / DB / canary | pending / blocked | 真实 DB 升级、当前每店 8/8、两店连续七日、人工和 policy-auto canary 均未完成；历史批次和旧快照不授予当前信用 |
-| 正式 Mission readiness / bundle | 未生成 | 旧 7/8、4/8、旧 package UI 和旧 bundle 全部是历史；当前候选不得复用 |
+| 全量单元测试 | 通过 | `285/285` files、`3529/3529` tests；失败 0、跳过声明 0 |
+| 版本一致性 | 通过待提交 | root、desktop、Main IPC、ZIP 默认路径及 v1.5 验证器统一读取 `1.5.1` 权威 |
+| `UNKNOWN` 对账 | 单元通过 | Service/IPC/Preload/Renderer 已接通；刷新前后双次只读证据，不重试原写入 |
+| 因果记忆索引/导出 | 单元通过 | 当前店铺索引和 JSON 导出均有行为测试 |
+| TypeScript / build | 未运行 | 本轮按用户约束禁止 typecheck/build，不能沿用旧包结论 |
+| 当前业务 UI smoke | 未运行 | `1.5.1` 尚无业务 smoke 证据 |
+| Windows / ZIP | 未构建 | `1.5.1` 尚无 EXE、ZIP 或 SHA-256 |
+| Package UI | 未运行 | `1.5.0` 的历史通过 manifest 不授予 `1.5.1` 信用 |
+| Ads 写入回读 | 阻断 | authority/approval/execution 最近记录均为 0；缺具体对象唯一回读和专属批准 |
+| 正式 readiness / bundle | 未生成 | 当前有效状态保持 `APP_NEEDS_WORK / NON_READY` |
 
 ## 开发环境
 

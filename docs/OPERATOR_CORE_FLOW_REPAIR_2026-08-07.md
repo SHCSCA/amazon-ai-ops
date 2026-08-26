@@ -1,6 +1,23 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-26 最新状态：Package UI 三档正式通过，仅 Task 8B 安全阻断
+## 2026-08-26 v1.5.1 单元功能补齐：不再以文案掩盖“部分可用”
+
+- 版本权威已统一为 `1.5.1`：root/desktop package、Main 运行时、ZIP 默认路径和活跃 v1.5 证据门不再各自硬编码旧版本。
+- 工作区可用性继续按全部能力判定；任何保留动作处于 `BLOCKED` 时仍显示“部分可用”。只有全部动作均有原生实现或受控生产适配时才判定可用。
+- 广告执行 `UNKNOWN` 已接入 Main/IPC/Preload/Renderer 的真实只读双次对账：同店铺、同对象在刷新前后分别读取和截图，稳定校验后分类为目标值、原值、漂移或仍未知；不点击保存、不重试原执行、不改写原 `unknown` 状态，另追加 `READBACK` 因果事件与证据引用。
+- 因果记忆已实现当前店铺搜索索引重建及 JSON 下载。索引拒绝跨店记录，搜索和导出均使用真实当前店铺事件，不是界面占位反馈。
+- 与安全产品模型冲突的运营任务/经营实验硬删除、队列跳过和重复急停伪能力已移除；任务和实验继续使用归档/恢复，真实策略急停入口继续保留。
+- 全 provider ready 的投影中，22 个标准工作区视图及所有保留动作均无 `BLOCKED`。最终单元回归为 `285/285` files、`3529/3529` tests passed；无 `.skip/.todo/skipIf/context.skip`。
+- 用户本阶段禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动及真实 Ads 动态测试。因此这里证明的是实现及单元链完整，不作为当前 Windows 包或 `APP_READY` 的运行态证明。
+
+## 2026-08-26 当前结论：v1.5.1 源码单元门已闭合，动态交付与 Task 8B 待闭合
+
+- 正式库只读现场证据已替代旧快照：最新作业 `completed`，最新导入 `8 files / 1937 metrics / 8 reconciliations`；enabled 策略、active 运营任务和 draft 经营实验均存在。
+- v1.5.1 已实现 UNKNOWN 双次只读对账、当前店铺因果记忆索引/导出、可逆的任务/实验归档以及无跳过的串行执行门；单元回归为 `285/285` files、`3529/3529` tests passed，版本/交付脚本契约另为 `12/12 passed`，无 skip/todo 声明。
+- `1.5.0` Package UI `operator-core-20260826-91` 三档通过只作为历史基线。用户当前禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动及真实 Ads 动态测试，因此 `1.5.1` 还没有 EXE/ZIP/hash/manifest/readiness 证据，不得标记 `APP_READY`。
+- Task 8B 最新记录候选为 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138%`，但当前仍为 authority=0、approval=0、Ads execution=0。解除动态禁令后必须先唯一回读当前对象与竞价，再展示路径、当前/目标值、降幅、证据日期和版本，取得该单条专属批准后才可一次写入与刷新回读；任何漂移都使候选失效。
+
+## 历史：2026-08-26 v1.5.0 Package UI 三档验证轨迹
 
 - `operator-core-20260826-86` 的真实本次凭证提交被 runner 接受，状态从 preparation 进入 browser authorization；应用自动完成 ERP/Ads 与店铺识别并运行到 `experiments/ledger`。失败 manifest `.../operator-core-20260826-86/manifests/2026-08-26T02-21-08-457Z-...json` 的唯一业务缺口是两个变量 JSON `<pre>` 形成未标注嵌套纵向滚动区，不是 Ads 失败。
 - 新滚动回归先为 `1 failed / 10 skipped`，旧值 `overflow:auto / max-height:64px`；最小修复为 `overflow:visible / max-height:none` 后同命令 `1 passed / 10 skipped`，完整实验工作区 `11/11`、desktop typecheck、production Renderer 与 7 类 business UI smoke 全绿。

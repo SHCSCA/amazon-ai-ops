@@ -2,6 +2,8 @@
 
 > 产品信息架构以 `amazon-ai-ops-mission-control-prototype` 为准；当前八工作区和十六个 legacy route 作为能力来源与兼容入口。V1 固定 Amazon US / USD，但支持多个相互隔离的美国站店铺。
 
+> 2026-08-26 v1.5.1 更新：十工作区现展开为 22 个标准视图；全部保留能力在 provider ready 时都有原生或受控生产实现。Mission/实验仅归档恢复，不提供硬删除；串行执行遇 `UNKNOWN` 停止并提供只读双次对账，不提供 skip；唯一急停保留在策略运行页。因果记忆支持当前店铺索引重建和 JSON 导出。
+
 ## 1. 对接规则
 
 - 原型提供界面、交互和领域意图，`localStorage + reducer` 不进入生产权威链。
@@ -15,11 +17,11 @@
 | Mission Control 工作区 | 吸收的现有页面/能力 | 生产化开发项 | IPC / DB 主合同 | 阶段验收 |
 | --- | --- | --- | --- | --- |
 | **今日任务 `today`** | `dashboard`、业务数据管道、数据新鲜度、指标摘要、建议就绪、部分 `operation-events` | `TodayProjectionService`，按店铺聚合 Mission、采集、决策、执行和实验；下一动作必须定位到精确实体 | 新增 `today:get-projection`；复用指标、报表、建议、事件表并补 `store_id` | 切店不串数；刷新投影一致；下一动作进入正确店铺和实体 |
-| **任务中心 `missions`** | `ad-quant` 事实诊断、workflow-state、调度、action log | Mission 创建/编辑/启动/暂停/恢复/归档/恢复/受约束删除；检查点、产品、广告对象、决策、实验和执行关联 | 新增 `mission:*`；新增 `missions`、`mission_checkpoints`、`mission_links`、`mission_events` | 一条 Mission 从事实进入决策、实验、执行、回读，始终保持同店铺和 revision |
+| **任务中心 `missions`** | `ad-quant` 事实诊断、workflow-state、调度、action log | Mission 创建/编辑/启动/暂停/恢复/归档/恢复；检查点、产品、广告对象、决策、实验和执行关联 | 新增 `mission:*`；新增 `missions`、`mission_checkpoints`、`mission_links`、`mission_events` | 一条 Mission 从事实进入决策、实验、执行、回读，始终保持同店铺和 revision |
 | **决策与审批 `decisions`** | `recommendations`、`approval`、`decided`、AI Adapter、Rules Engine、RecommendationRepo、revision/CAS、目标绑定 | 升级为 Crux Decision；补 Mission、策略快照、备选方案、历史和 MissionGrant；批准不等于执行 | 扩展 `recommendations:*` 命令为 `storeId + expectedRevision + actor`；新增 decision event/alternative/approval batch | 旧 revision、跨店审批被阻断；整批授权一次；决定历史不可篡改 |
-| **经营实验 `experiments`** | 指标查询、广告诊断、运营事件、执行回读、AI 结果 | 实验创建/编辑/暂停/恢复/归档/恢复/受约束删除；假设、主指标、守护栏、观察窗和结论 | 新增 `experiment:*`；新增 `experiments`、`experiment_records`、`experiment_metric_snapshots`、`experiment_links` | 从执行前基线到结果窗口可复现；记录只追加；依赖删除受保护 |
-| **实时执行 `execution`** | `readback`、BrowserController、page models、action-executor、audit log、证据 verifier | `ExecutionCoordinator`、队列、对象锁、BrowserLease、幂等、sessionGeneration、before/apply/reload、崩溃恢复、UNKNOWN 人工接管 | 新增 `execution:prepare/start/pause/resume/takeover/skip/apply/verify/get`；新增 job/item/attempt/evidence/lock 表 | 错店、旧对象、重复键、UNKNOWN 均无二次写；取得真实 before/after/reload 权威证据 |
-| **因果记忆 `memory`** | operation events、action logs、推荐证据、AI diagnosis、报表批次、Listing 版本 | 统一追加式 CausalLedger；事实、决策、干预、回读、结果和复用边界 | 新增 `memory:query/get/rebuild-index`；新增 `causal_events`、`causal_links`、`evidence_refs` | 无悬空引用；证据可追溯；跨店查询隔离；重建索引结果一致 |
+| **经营实验 `experiments`** | 指标查询、广告诊断、运营事件、执行回读、AI 结果 | 实验创建/编辑/暂停/恢复/归档/恢复；假设、主指标、守护栏、观察窗和结论 | 新增 `experiment:*`；新增 `experiments`、`experiment_records`、`experiment_metric_snapshots`、`experiment_links` | 从执行前基线到结果窗口可复现；记录只追加；归档可恢复 |
+| **实时执行 `execution`** | `readback`、BrowserController、page models、action-executor、audit log、证据 verifier | `ExecutionCoordinator`、队列、对象锁、BrowserLease、幂等、sessionGeneration、before/apply/reload、崩溃恢复、UNKNOWN 只读双次对账 | `execution:prepare/start/cancel/takeover/reconcile-unknown/verify/get`；新增 job/item/attempt/evidence/lock 表 | 错店、旧对象、重复键、UNKNOWN 均无二次写；UNKNOWN 原状态不可改写，另记双次回读证据 |
+| **因果记忆 `memory`** | operation events、action logs、推荐证据、AI diagnosis、报表批次、Listing 版本 | 统一追加式 CausalLedger；事实、决策、干预、回读、结果、索引重建、JSON 导出和复用边界 | `memory:query/get/rebuild-index/export`；新增 `causal_events`、`causal_links`、`evidence_refs` | 无悬空引用；证据可追溯；跨店查询隔离；重建索引结果一致；导出仅含当前店铺 |
 | **店铺与广告对象 `objects`** | `product-management`、`product-config`、`keyword-opportunities`、`listing-optimization`、ProductRepo | 店铺完整 CRUD；产品归档/恢复/依赖删除；Campaign/Ad Group/Keyword/Target/Product Ad 主数据、父子关系、Amazon ID 和版本 | 新增 `store:*`、`ad-objects:*`；新增 `stores`、connections/profiles、ad objects/versions；旧表补 FK | 同 Amazon ID 唯一；对象树有效；跨店同 ASIN 隔离；本地主数据维护不触发 Ads 写入 |
 | **数据采集 `collection`** | `operation-scope`、`data-collection`、`data-import-validation`、Lingxing Collector、Parser、Browser Worker、八报表批次与诊断 | 原型简化报告改为真实八类合同；持久采集任务 CRUD、运行历史、店铺 Profile 调度和业务日 | 复用 `v1_5:reports:*` 并校验 `storeId`；新增 `collection-jobs:*`、jobs/runs 表；批次/文件/指标补 `store_id` | 每店独立 8/8；失败不伪造完成；America/Los_Angeles 业务日；验证码/漂移可接管 |
 | **策略与风控 `policy`** | Rules Engine、Risk Evaluator、RuleConfig、审批策略、设置页规则表单 | 店铺/产品/广告对象级版本化策略 CRUD；模式、作用域、优先级、快照、硬上限、熔断和 kill switch | 新增 `policy:*`、`store:set-mode`；新增 policies/versions/bindings/store modes | 策略优先级确定；已启用版本不可覆盖；越界和过期数据绝对阻断 |

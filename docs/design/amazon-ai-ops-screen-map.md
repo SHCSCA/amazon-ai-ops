@@ -1,5 +1,7 @@
 # Amazon AI Ops Screen Map
 
+> Historical design reference (2026-07-03 baseline). Current delivery status and acceptance authority live in `PROGRESS.md`, `BLOCKED.md`, and `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`; status wording below is not current release evidence.
+
 ## 仪表盘
 
 Purpose: Show current operational health, data readiness, KPI direction, and the next safe action for the selected Amazon ads scope.

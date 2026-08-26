@@ -1,6 +1,24 @@
 # BLOCKED — 2026-08-07
 
-## 当前：2026-08-26 Package UI 三档已正式通过，仅 Task 8B 无合格候选
+## 当前：2026-08-26 v1.5.1 投产门
+
+- 无单元测试阻断：`285/285` test files、`3529/3529` tests passed，版本/交付脚本契约另为 `12/12 passed`，源码测试中没有 `.skip/.todo/skipIf/context.skip`。此前 `SAFETY_STATE_UNKNOWN` 断言遗漏中文 `message` 的矛盾已通过补齐精确期望关闭，没有删除原因或放宽安全门。
+- 用户明确禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动和真实 Ads 动态测试，因此本轮没有当前包运行态证据；这是当前验收范围限制，不是源码单元功能阻断。在该限制解除并完成动态验收前，仍不得据此标记 `APP_READY`。
+- `1.5.1` 因此尚无当前 EXE、ZIP、SHA-256、Package UI manifest 或 readiness；最近通过的 `operator-core-20260826-91` 属于 `1.5.0` 历史包，不能提供新版本信用。
+- Task 8B 仍缺运行态事实：最新记录存在 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138%` 安全候选，但稳定 Ads authority/id/revision、单条人工批准和 Ads 写入/刷新回读仍为 0。恢复时先唯一回读当前对象和值，再展示完整路径、当前值、目标值、降幅、证据日期和版本取得专属批准；任何漂移都使候选失效。
+
+## 历史：2026-08-26 Ads 对象回读准备记录
+
+> 本节及其后的旧“当前”、“最新”只表示当时快照，均已被顶部 `2026-08-26 v1.5.1 投产门` 取代；保留它们仅为可追溯恢复记录。
+
+- 旧 `win-unpacked` 应用占用已连续三轮只读复核且均为同一 4 个 Electron 进程；用户尚未关闭该应用，也未在最近的暂停后重新授权执行者关闭。按恢复规则停止重复检查。解除方式：用户手动关闭 Amazon AI Ops，或明确回复“允许关闭应用”；随后只关闭该目标应用、重建最新包并继续对象核验。
+- 最新源码聚焦测试 `20/20` 与 desktop typecheck 已通过；`pnpm run build:win` 在进入编译前被旧 `win-unpacked` 应用实例占用目录阻断：`EPERM rename ...release\\win-unpacked`。现场只读确认同一 Amazon AI Ops 实例有 4 个 Electron 进程；未强制关闭。恢复时只关闭这一旧应用实例，重建后直接启动新包，不触碰其他应用。
+- 旧“没有不超过 10% 的候选”结论已失效。正式库当前已有 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138%` 的安全 `rule_ai / lower_bid` 建议；最新 8 类采集与导入为 `completed / 8 files / 1937 metrics / 8 reconciliations`，策略、运营任务和经营实验均已有真实记录。
+- 当前 blocker 不是登录测试或业务页：`verified_ad_entity_authority=0`，该建议尚未从当前 Ads 页面唯一回读关键词 ID、版本和 `$2.32` 当前竞价；因此 `approval_tasks=0` 且 Ads 执行三张主表仍全 0。
+- 前一测试启动管道退出导致目标浏览器关闭，正式连接现为 `lingxing=ready / amazon_ads=attention_required / VISIBLE_BROWSER_CLOSED`。恢复只需直接启动正式 EXE、恢复 Ads 会话，再在“建议与审批”对该安全建议点击一次 `核验 Ads 对象`；不得再由 Playwright 管道启动正式连接，也不得循环跑登录验收。
+- 对象核验成功后仍不能自动写入。必须先向操作者展示完整路径、当前 `$2.32`、目标 `$2.09`、降幅 `9.9138%`、证据日期与对象回读版本，并取得对这一条候选的明确批准；随后才允许一次真实写入与刷新回读。
+
+## 历史：2026-08-26 v1.5.0 Package UI 验证轨迹
 
 - `operator-core-20260826-86` 已由本次真实凭证提交进入 `browser authorization`，ERP/Ads 与店铺识别完成，runner 能继续到 `experiments/ledger`；因此 Ads 登录、侧栏导航、弹窗前置处理与店铺匹配不再是当前 blocker。
 - `-86` 的当前实包 blocker 是实验变量 JSON 两个 64px `<pre>` 嵌套滚动区；该缺口已形成 `1 RED → 1 GREEN`、完整实验工作区 `11/11`、typecheck、7 类业务 smoke 与 Windows 七步重建全绿，未放宽验收脚本或安全门。
@@ -14,20 +32,20 @@
 - 上述源码 blocker 已进入 app content `71DB2426...06C9`，Windows 七步和新 folder ZIP 真启动均通过；因此当前唯一 Package UI blocker 已收窄为“全新谱系尚未完成 100%/125%/wide manifest”。不再重复代码修改或旧 run group 重试。
 - `operator-core-20260826-90` 实际三档均 `phase=completed / failure=null / consoleErrors=0 / pageErrors=0`，正式库 unchanged；最终 manifest 失败仅因验收器把合法的 Ads 导航重试四段序列误判为坏诊断。该 runner 缺口已完成 `1 RED → 1 GREEN`，并以连续同相位/单段超时反向断言保持 fail-closed；完整 runner `210/210 passed`，对 `-90` 三档原始诊断反算均通过。runner 合同已变化，不能把旧 manifest 改名为通过；当前仅待全新 `-91` 生成与当前 runner 合同绑定的通过 manifest。
 - `operator-core-20260826-91` 已关闭 Package UI blocker：100%/125%/wide 全部 passed、diagnostics completed、console/page error=0、violations=0；protected DB 物理与逻辑快照均 unchanged，目标应用/runner 事后进程为 0。通过 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-91/manifests/2026-08-26T04-14-33-049Z-2026-08-26T04-14-33-049Z-59a17a8c-9ae5-4264-bd96-dc21a43b157c.json`。连接、采集、策略、运营任务、经营实验、弹窗与布局不再列为 blocker。
-- Task 8B 是当前唯一阻断：正式库最新 4 条 `rule_ai / lower_bid` 快照都缺稳定广告对象 authority/id/revision，变化 19.6507%–26.1044% 且超过启用策略 10% 上限；approval tasks=0，Ads 五张执行表全部为 0。恢复条件是重新取得当前稳定广告对象并形成变化不超过 10% 的新建议，再由操作者对具体对象、当前值、目标值单独批准；在此之前不得请求批准或写入。
+- 当时 Task 8B 的唯一阻断是：正式库 4 条 `rule_ai / lower_bid` 快照均缺稳定广告对象 authority/id/revision，且变化 19.6507%–26.1044% 超过策略 10% 上限。该结论已被顶部 `$2.32 → $2.09 / -9.9138%` 安全候选记录取代，不得再作为当前候选事实。
 
 - `operator-core-20260826-84` 已收到操作者本次手输并完成真实 ERP/Ads 连接；当前不再把登录、保存密码或 Ads 身份识别列为 blocker。
 - 首档正式包失败点已收窄到 `decisions/recommendations` 两项：不必要的详情列嵌套滚动，以及普通界面裸露 `rule-revision/model-revision`。两项源码均已形成独立 `1 RED → 1 GREEN`，安全门、证据原值与审批/回读逻辑未放宽。
 - 当前阻断是“修复尚未进入重建包并通过全新 Package UI 100%/125%/wide manifest”。`-84` 只能保留为失败证据，不得 resume 或改名为通过；重建前先完成完整决策页测试、typecheck、业务 smoke 与正式库零写入复核。
 - 该修复现已进入新 app content `A86E1AA2...B963`；Windows 七步、独立哈希、7 类 business smoke 与新 ZIP 真启动均通过。全新 `operator-core-20260826-85` Profile/authority 已准备，当前唯一 Package UI 动作是启动首档并由操作者完成本次手输，随后让 runner 自动检查 100%/125%/wide。
 - `-85` 本次已启动，但 60 秒 preparation 内没有提交，按规则 `runs=0` 安全关闭；这不是登录失败、ERP/Ads 回退或决策页修复失败。只读 inspector 已生成 `RESUME_SAFE` 单次 receipt `AF93F3B...4C6A3.json`，下次明确启动时只续跑同一 `-85`，由操作者在 60 秒内完成应用内提交；执行者不代填、不点击、不自动重复开窗。
-- Task 8B 仍独立阻断：现有四条 `lower_bid` 快照缺少稳定广告对象 authority/id/revision，且变化 19.6507%–26.1044% 超过启用策略 10% 上限；approval tasks 与 Ads 五表均为 0。没有具体合格候选时不得请求批准或写入。
+- 当时 Task 8B 仍独立阻断：四条 `lower_bid` 快照缺少稳定对象且超过 10%；此候选判定为历史记录，当前恢复条件以顶部 v1.5.1 投产门为准。
 - 自动续接只读审计证明新包内容、7 类 business smoke、ZIP 真启动和正式库业务闭环均保持当前；没有发现新的后台源码或打包缺口。`-85` receipt 完整、目标进程为 0，因此不空开窗口。当前外部恢复条件仅是操作者明确再次启动并在 60 秒内提交；本条是恢复审计第 1 次，不满足三次 blocked 门槛。
 - 第 2 次恢复审计仍为同一条件：`-85` receipt 未消费，应用/runner 为 0，包与正式库哈希未变；最新候选仍全部缺稳定对象且超过 10%，所有批准、authority、identity 与 Ads 写入表均为 0。当前尚未达到 3 次 blocked 门槛；下一轮若仍没有操作者明确启动并提交，将按规则正式标记 blocked，而不是继续重复审计。
 - 第 3 次恢复审计再次确认完全相同的阻断条件，现已达到正式 blocked 门槛。自动续接停止，不再重复哈希、数据库查询、构建或空开窗口。解除方式：用户明确回复“再次启动验证”，随后在目标应用出现后的 60 秒内本人完成提交；恢复后只消费现有 `-85` receipt 并继续 100%/125%/wide，不重建、不读取或代填密码。
 - Task 8B 同轮逐行复核仍为 human/policy eligibility=false；稳定 authority 与 keyword identity 计数均为 0，最新 4 条 `rule_ai` 变化最小也为 19.6507%。这不是可通过“批准”解除的待办，必须先刷新并形成稳定对象、≤10% 的新建议。
 
-## 当前：2026-08-25 最新真实 AI 已成功，Task 8B 因候选不合格继续阻断
+## 历史：2026-08-25 真实 AI 成功后的 Task 8B 阻断快照
 
 - 最新 `2026-08-10 至 2026-08-23` 已完成 8/8 下载与正式导入（8 files / 1961 metrics / 8 reconciliations），采集与导入不再是 blocker。
 - 正式应用已保存并只读回读 operation scope 为 `JF-US / US / USD / 2026-08-10 至 2026-08-23`；新运营任务也已在正式应用中保存并由正式库只读回读，精确绑定最新 completed 批次、已启用策略与产品 `B0GVRVD4PK`。范围切换、任务创建和真实 AI 调用均不再是 blocker。
@@ -37,7 +55,7 @@
 - 当前正式应用候选卡裸露阻断码的源码缺口已完成精确中文映射与红→绿，并进入最终 app content `AD87081C...9502`；底层安全码、审批门不变。尚待当前 Package UI 通过 manifest 提供新包实屏证据，确认前不得复用旧截图。
 - “范围已保存”重挂载反馈缺口已完成红→绿、该页 11/11、desktop typecheck 和最终 Windows 重建，不再列为 blocker；尚待同一次 Package UI 实屏证据闭合。
 
-## 当前：2026-08-25 Package UI runner 已修，仍待 `-83` 的可见手输提交
+## 历史：2026-08-25 Package UI runner 与 `-83` 手输提交快照
 
 - 当前最终包为 EXE `67DC2A...5E89` / app content `AD87081C...9502`，最终核心六文件 `148/148`、typecheck、Windows 七步、7 类业务 smoke 与 folder ZIP 真启动全部通过。
 - `-80` 因后续 Ads 多店铺切换 Main 修复而谱系失效，不得使用其 resume receipt。`-81` 已收到手输并最终形成 ERP/Ads ready，但 Ads ready 比 60 秒授权阶段截止晚约 3 秒，因此该 manifest 合法失败，不能晋升。
@@ -56,7 +74,7 @@
 - AI 余额恢复已由真实成功调用证明，不再是外部 blocker。Task 8B 仍必须形成带稳定对象、变化不超过 10%、human eligible 的 `lower_bid`，再对具体动作取得单独批准；本轮无稳定对象且超限的候选及此前 `$2.51`→当前 `$1.80` 的过期候选都继续禁止写入。
 - 历史 `-79` 两次稳定显示目标登录页但均未检测到提交；它及 `-80` 都不得用于最终包证据。
 
-## 当前：2026-08-24 Ads 身份发现已闭合，Task 8B 被当前证据与授权事实阻断
+## 历史：2026-08-24 Ads 身份发现与 Task 8B 阻断快照
 
 - 已排除登录、店铺、活动导航与活动 ID 问题：真实应用可用保存凭证恢复 ERP/Ads，且只读发现已唯一进入 JF-US 的 `U07-1P-精准` 关键词详情页；当前 profile 与活动 ID 均回读一致。
 - 真实关键词行身份已闭合：应用唯一回读 `U07-1P-精准 > 精准 > cupping` 的稳定广告组/关键词 ID，固定列镜像已按同一身份安全合并；登录、店铺、活动、身份 selector 均不再是 blocker。
@@ -66,7 +84,7 @@
 - Windows 新包、7 类业务 smoke 与 folder ZIP 启动现已通过；仍缺绑定新包哈希的 Package UI manifest。按“减少测试、不要重复登录”要求本轮未再启动强制 fresh typed-and-saved 的 Package UI 首档；旧 manifest 不得复用。恢复条件是操作者确认进行最后一次当前包可见登录验收。
 - Git 推送阻断已于 2026-08-25 关闭：`git push origin master` 成功把 `2a7e3674..993654ab` 推到远端，包含此前本地积压提交；不再列为当前 blocker。
 
-## 当前：2026-08-24 8/8、正式导入与下游业务实例已关闭，剩余为当前包验收和 Task 8B 授权事实门
+## 历史：2026-08-24 8/8、正式导入与下游业务快照
 
 - 真实 8/8 外部事实门已关闭：最新生产作业 `completed / import succeeded / downloaded 8`，唯一 completed import run 为 8 files / 1901 metrics / 8 reconciliations。旧 6/8、create_unknown、control-total missing 记录均为历史，不再是当前 blocker。
 - Task 8B 已形成当前正式批次的具体 `lower_bid` 候选，但 3 条全部不可授权：DeepSeek HTTP 402 `Insufficient Balance` 导致 `rule_fallback`，变化超过启用策略的 10% 上限；其中建议 2 的稳定 Ads 身份已找到，但页面竞价已从报表 `$2.51` 漂移到 `$1.80`。正式库 action recommendations=5、approval tasks=0，五张 `ad_execution_*` 表继续全部为 0；不得为验收虚构批准或广告写入。恢复条件是补足 AI 余额/可用模型，重新采集并分析形成当前、不超过 10% 且 human eligible 的候选，再由操作者明确批准。
@@ -109,7 +127,7 @@
 - 当前包的 Windows 构建、7 类业务 smoke 与文件夹 ZIP 真实启动均已通过；Package UI 尚无当前通过 manifest。runner 强制要求当前哈希、正式库 authority receipt、现存隔离 Profile 与可见操作者登录，不能用裸命令、旧 Profile 或保存密码伪造。当前哈希和 authority receipt 已准备好，恢复条件是创建/选择合规隔离 Profile并由操作者完成一次可见登录。
 - GitHub 推送仍因 `Recv failure: Connection was reset` 失败；不影响本地提交，但远端仍未包含本轮新提交。恢复条件是本机到 github.com:443 连通后执行一次 `git push origin master`。
 
-## 当前：2026-08-21 自动投放源码阻断已解除，商品投放仍需实包唯一回读
+## 历史：2026-08-21 自动投放与商品投放回读快照
 
 - “确认”兼容已被正式实包否定：`…044644` 仍未出现，提交事实为无二次确认、无可见错误。当前阻断只剩“前端表单未发请求”或“服务端请求拒绝”两类，必须通过脱敏请求/响应与表单就绪回读区分。
 - 当前 attempts 7、claims 0、events 61、imports 0、Ads 五表 0；在上述诊断进入包前不再续采。
@@ -140,7 +158,7 @@
 - effective 模型统一修复已进入 folder ZIP `B7878BF60E9633A554E774A8EACF0B2659E675FF93B90AD6245B8303DB9AA0C0`；当前只需实包证明 preflight→claim/runner，仍不重复 absence 核对。
 - 正式 Ads 执行五表仍为 0。8/8 入库、策略启用、运营任务、经营实验、Package UI 与 Task 8B 仍未完成，整体为 `APP_NEEDS_WORK / NON_READY`。
 
-## 当前：2026-08-20 原创建结果已核清，续跑在恢复 claim 前阻断
+## 历史：2026-08-20 创建结果与 claim 恢复快照
 
 - 主因源码已定位并完成聚焦红→绿：完整八报表恢复漏登记同店 `operator_full` runtime 的预期关闭，可能把采集接管浏览器误判成身份/liveness 失效。新增契约先红（找不到登记），修后 `1/1 passed`，typecheck 通过；尚待重建与一次正式应用续跑证明，因此当前仍不能宣称 8/8。
 - 第一版正式复验已否定“只保护 resumeJob”足够：核对阶段成功写入新 ready 诊断后 claim 仍为 0。第二个聚焦红测证明保护必须覆盖核对阶段的 ERP→Ads 导航；前移修复已绿并通过 typecheck，尚待新包单次复验。
@@ -202,7 +220,7 @@
 - 由于没有完成 8/8 入库，策略/运营任务/经营实验没有可用真实前置；没有具体、产品内已批准的 `lower_bid` 推荐前，Task 8B 与所有广告写入继续为 0。整体仍 `APP_NEEDS_WORK / NON_READY`。
 - neat-freak 盘点还发现 `AGENTS.md`、`README.md` 与 `docs/USER_GUIDE_v1_5.md` 保留更早候选包的“current/APP_READY”历史段；本轮原始文件边界只允许更新本文件、`PROGRESS.md` 与指定运营修复文档，因此不越界改写，以上三份置顶快照为当前事实来源。
 
-## 当前：2026-08-19 下载已成功，严格导入因真实报表第 193 行空日期阻断
+## 历史：2026-08-19 下载成功与第 193 行导入阻断快照
 
 - 最新目标应用已完成同店保存凭证恢复：应用内显式重置后无需再次输入密码，`ERP/Ads 已连接`；未读取或打印密码、Cookie、Profile。
 - 正式库真实下载任务 `batch_20260819041021809_613h3r` 为 `completed`，campaign 批次/文件均已落盘；随后导入返回 `LINGXING_COLLECTION_IMPORT_FAILED: 真实报表包含无效数据（第 193 行 date）`。仅该行“日期”为空，行仍含其他指标字段；`importState=failed`，`report_import_runs=0`，所以不能宣称生产入库或 8/8。
@@ -215,21 +233,21 @@
 - `pnpm run smoke:business-ui-current` 已单次通过 6/6 子脚本、7/7 flow coverage；它只证明隔离的 UI 合同，不解除真实报表导入、`create_unknown`、Package UI 或 Task 8B 阻断。
 - 只读终审仍确认：策略无启用版本、运营任务/经营实验/导入/推荐/审批均为 0；Package UI `operator-core-20260819-70` 有不可变失败 manifest，但没有通过 manifest。当前本地与远端同步；没有通过 manifest 不等于 Package UI 已通过。
 
-## 当前：2026-08-19 采集重试等待操作者；提示层阻断已修复
+## 历史：2026-08-19 采集重试与提示层快照
 
 - 真实失败原因已确认：领星下载中心的非模态成功提示层覆盖店铺 FilterSelect，导致首个 campaign 创建/下载点击超时；正式库当前为 1 个 failed job、1 个 failed batch、1 个 failed file，尚无 import run/8 类完成批次。
 - 修复已进入新 Windows 包：已知提示层只走关闭控件/Escape，无法关闭即阻断；SSO `35/35`、typecheck、build:win、package-launch smoke 均通过。未放宽 Ads 身份、店铺隔离或广告写入安全门。
 - **待用户动作**：请在目标应用的数据采集页对失败任务点击一次“重试/继续采集”。仅在应用内观察成功或中文可操作失败；不盲点第二次。执行者不代输凭证、不操控桌面。
 - 其他已发现问题（普通界面技术文案、scheduler title、任务/实验真实数据前置、Task 8B 推荐与审批）按用户要求只记录，等主流程确认后再决定是否扩修。当前仍 `APP_NEEDS_WORK / NON_READY`，Ads 写入 0。
 
-## 当前：2026-08-19 诊断前置已进入包，唯一主流程阻断是正式 8/8 复验
+## 历史：2026-08-19 诊断前置与 8/8 复验快照
 
 - 已按确认方案闭合：collection-only 在进入 scheduler 前按当前店铺业务窗持久化同页下载中心诊断，TDD 聚焦红→绿、typecheck、`build:win` 均通过。
 - 仍未有本包谱系的真实 collection job、8/8 完成批次或导入证据；不得用 build/smoke 代替正式业务结果。下一步只启动目标应用并点击一次完整 8 类采集，读取中文成功或失败原因后停止。
 - 其他发现继续保持记录状态，未经用户再次确认不扩修；Ads 身份/审批/回读门与广告写入 0 不变，整体仍 `APP_NEEDS_WORK / NON_READY`。
 - 版本状态：选择性提交 `02f47f46` 已成功；向 `origin/codex/preview-contract-production-p2` 的两次推送均因 GitHub 连接被远端重置（`Recv failure: Connection was reset`）失败，待网络恢复后再推送一次，不影响本地提交与回滚。
 
-## 当前：2026-08-17 下载中心诊断前置与后台周期形成循环阻断，等待用户确认再改
+## 历史：2026-08-17 下载中心诊断与后台周期阻断快照
 
 - **已闭合但不足以恢复主链的范围**：`scheduler_request_bound + exact not_found` 现在会保留不可变失败证据，但不再占用当前 fingerprint 的有效采集资格；聚焦正向/反向测试 `2/2 passed`、typecheck 通过，新 Windows 包已构建。它只解决“旧失败不永久占位”，不能阻止下一次后台周期再次进入同一失败。
 - **确定根因**：Main `start()` 会立即运行后台采集周期。生产 coordinator 在 collector 写入首条 durable progress 前调用下载中心预检；预检硬性要求同页面模型、日期窗、店铺/站点且 30 分钟内的成功诊断。正式库只读查询显示 `download_center_diagnostics=0`，所以预检必然抛错，而 transition 此时已是 `scheduler_request_bound`；编排器因此按未知 scheduler 结果 fail-closed，Main 再把整个运行时置为粘性 `SAFETY_STATE_UNKNOWN`。
@@ -241,7 +259,7 @@
 - **当前包身份**：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；installer `69ABB308056C6FA5D286F2ABBCFF8858ACE1075A38BF12780EB9C24ECA259759`；portable `C3D3C37816F3BC2AA6F28031DD6D8A9BDBCFDEE11B99664461155C3A2538404E`；folder ZIP `5191C8DFD3CDD289376E0658F5A208C2CADD19582772FB48AF144F6FD4B5B542`。
 - **总体状态**：仍为 `APP_NEEDS_WORK / NON_READY`。真实 8/8、启用策略、运营任务、经营实验、当前包 Package UI、Task 8B 回读和选择性提交均未完成；没有产品内批准的具体 `lower_bid` 前广告写入必须保持 0。
 
-## 当前：2026-08-17 原两项阻断已解除，等待最新包真实 8/8
+## 历史：2026-08-17 原两项阻断解除与 8/8 待验快照
 
 - **采集恢复已解除**：用户已授权原白名单外两个编排器文件；44 历史下界、50→51 合法恢复现已通过，同时 1→2 低于历史与 0→1 回退仍严格阻断。编排器完整 `119/119 passed`，typecheck 通过。
 - **业务 smoke 已解除**：共享导航 helper 不再把 `port: 0` 交给 Vite 5 回退到 5173，而是使用 Windows 分配的可绑定 loopback 端口；当前 `smoke:business-ui-current` 为 6/6 子脚本及 7/7 业务类别通过，summary `output/codex-evidence/current-business-ui-smoke-1786934114486.json`。
@@ -260,7 +278,7 @@
 - **不受影响门已复验**：任务书六文件当前为 `129/129 passed`、skipped=0，desktop typecheck 通过，静态 diff 门无错误；因此当前阻断已收窄到上述编排器恢复谓词及其白名单授权，不是通用编译或六条核心业务测试回归。
 - **业务 smoke 环境阻断**：本轮 summary `output/codex-evidence/current-business-ui-smoke-1786930530516.json` 中采集脚本通过，其余五项均在页面断言前因 `127.0.0.1:5173` 绑定 `EACCES` 失败。端口无占用，但当前 Windows TCP 排除范围 5131–5230 覆盖 5173。helper 的动态端口意图被 Vite config 固定端口覆盖；正确修复 seam 是白名单外 `scripts/business-ui-smoke-navigation.js` 或 `apps/desktop/vite.config.ts`，不得修改 Windows 排除范围、忽略失败或复用旧 smoke 结果。
 
-## 当前：2026-08-14 恢复按钮与最新包已绿，真实 8/8 待立即复验
+## 历史：2026-08-14 恢复按钮、当时包与 8/8 快照
 
 - **恢复入口源码阻断已解除**：新增 TDD 在修复前因目标恢复按钮判定函数缺失而红，最小实现后聚焦 `1/1 passed`，desktop typecheck exit 0；身份、精确店铺匹配与广告执行阻断均未放宽。
 - **最新机器门与包身份**：业务 UI smoke 通过，证据 `output/codex-evidence/current-business-ui-smoke-1786688600259.json`；Renderer 为 `assets/index-iTiEtT3C.js` / `assets/index-CsHVBxxp.css`。`pnpm run build:win` exit 0；EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、installer `1C908487291C047613DAE9F05EC5995790D2346236AABF81BB0E3493B82B09FD`、portable `8CD4BE2A7CBCAE351AC624D4D3C42CC4460394F6C114C0B7A7B180669310FB49`、folder ZIP `261B6D8E02DAEDB9A1F67332A5D51941F56095D181CB33E8B81C8CC24D4F1E66`、blockmap `A68AFCDA6F58842CB7E32BF7F2CD67E2FB2D23FE38CB3EC5799D5EE931BDC558`。
@@ -268,21 +286,21 @@
 - **当前即时业务门**：必须立即使用本包在正式应用复验完整 8 类采集；在取得 `8/8`、完成批次及导入证据前，测试、smoke、build 和 ZIP 启动都不能冒充业务完成。
 - **全局门仍未完成**：Task 8B 正式广告写入继续为 0；具体 `lower_bid` 推荐、产品内人工审批和 before/after/reload 回读尚未同时成立。策略、运营任务、经营实验及全新 Package UI 也仍待验证，总体保持 `APP_NEEDS_WORK / NON_READY`，未标记 `APP_READY`。
 
-## 当前：2026-08-14 采集修复与新包自动门已绿，待第二次真实 8/8
+## 历史：2026-08-14 采集修复、包门与第二次 8/8 快照
 
 - **源码/自动门已解除**：本轮采集身份稳定化修复已按 TDD 完成；Main `browser-login-staged-status` `44/44`、Ads SSO `34/34`、visible collection adapter `24/24`、data collection Renderer `56/56` 均通过，desktop typecheck exit 0。业务 UI smoke 同样通过，证据 `output/codex-evidence/current-business-ui-smoke-1786687653507.json`。
 - **最新构建已完成**：`pnpm run build:win` exit 0，Renderer 为 `assets/index-CC4xybyZ.js` / `assets/index-CsHVBxxp.css`；source native bindings 保持 `unchangedExact=true / sourceReadOnly=true`。当前 SHA-256 为 EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`、installer `00B8C4E3DE918D68221583A6CE69F79EE0733BBFAC2EF64E6F3277E5693CE1EE`、portable `295DBA4F002DF55CAACD02A98B1E75ABB0BAE1D009C70DDDB1F4FFE3B05AACBF`、folder ZIP `537F11DF173D170E7B3014D7C542B5156A88618574CF9ED429B384117857025F`、blockmap `39B222F9A436526F687092612DF40A55146C562E0570813E6F18E6C65041394E`。
 - **当前即时业务阻断**：第二次正式应用真实 8 类采集尚未执行，因而尚无本包谱系下 `8/8`、完成批次及导入证据；机器测试、smoke 和 build 不能替代该业务结果。下方旧包哈希与旧阻断均保留为历史记录。
 - **Task 8B 继续 fail-closed**：正式广告写入仍为 0；在具体 `lower_bid` 推荐、当前产品内人工审批及 before/after/reload 回读同时成立前不得执行。策略、运营任务、经营实验、全新 Package UI 也仍待后续真实闭环；总体保持 `APP_NEEDS_WORK / NON_READY`，未标记“开发完成”或 `APP_READY`。
 
-## 当前：2026-08-14 连接门已闭合，下一门为真实 8/8 采集
+## 历史：2026-08-14 连接门与真实 8/8 采集快照
 
 - **真实连接恢复已通过**：最新 win-unpacked 已在正式 AppData 启动。首次 saved reconnect 精确因“未经本次凭证验证”fail-closed，并显示专用 `data-login-action="reset-lingxing-session"`；点击该目标应用动作后只重置当前店铺会话，广告账户映射与本机安全区密码保留。
 - **免重输重连已通过**：随后点击 `data-login-action="reconnect-all"`，没有再次输入密码；最终 `.session-line[role=status]` 精确为 `ERP/Ads 已连接`，`alerts=[]`。因此 configured 店铺旧会话恢复不再是当前阻断。
 - **当前业务阻断**：真实 8 类采集尚未在本次 ready 会话下取得 `8/8` 完成、批次和导入证据；下一步只推进该门。策略版本、运营任务、经营实验和绑定当前包哈希的全新 Package UI 均仍待后续验证，不能提前宣称完成。
 - **Task 8B 不变**：尚无绑定正式 authority 的具体 `lower_bid` 推荐、产品内人工审批及 before/after/reload 回读；广告写入必须保持 0，总体仍为 `APP_NEEDS_WORK / NON_READY`。
 
-## 当前：2026-08-14 新包与 ZIP 启动已通过，等待真实业务复验
+## 历史：2026-08-14 当时包、ZIP 启动与真实业务快照
 
 - **构建阻断已解除**：configured 店铺安全重置与 Main-only 保存凭证恢复修复已进入最新 Windows 包；Renderer 为 `assets/index-w8-bAuxo.js` / `assets/index-CsHVBxxp.css`。`pnpm run build:win` exit 0，全部步骤 status 0，source native bindings 保持 `unchangedExact=true / sourceReadOnly=true`。
 - **本轮包身份**：EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；installer `601AF004D3ECAFFAC1E370EB60C3FEE8321C7403194503EF4E4862C084D6B0DD`；portable `2C638F6C82D5460BABF927CDD9EB8904187E947B9F6E1EE25625305020C1AA94`；folder ZIP `78297422CAAD69B5ECEB2C47E0EE694028FE50BD588BAED1504684E99F1927BF`；blockmap `2514B158DA57A9744CC2C81BB339B14A7E73EDEE181704FE199A6713148DE6FD`。
@@ -290,7 +308,7 @@
 - **当前仍未通过的门**：正式目标应用尚未用新包验证 saved 重置→ERP/Ads ready→8/8 采集；策略版本、运营任务与经营实验仍待真实闭环；全新 Package UI 仍须绑定上述当前包哈希重新生成。此前 13:19 的源码阻断已转为历史，不能用绿测、build 或 ZIP 启动代替这些运行时证据。
 - **全局安全门不变**：Task 8B 仍缺绑定正式 authority 的具体 `lower_bid` 推荐、产品内人工审批及 before/after/reload 回读，广告写入必须保持 0；在 ZIP、真实业务、Package UI 与 Task 8B 闭合前仍为 `APP_NEEDS_WORK / NON_READY`。
 
-## 当前：2026-08-14 13:19 真实采集被旧会话恢复缺口阻断
+## 历史：2026-08-14 13:19 旧会话恢复缺口快照
 
 - **不是仍在测试登录**：操作者已在最新正常应用完成一次提交，目标应用真实达到 `ERP/Ads 已连接`。随后执行者仅在目标应用内进入报表采集并点击完整 8 类主动作；请求出现 busy/监控启动，但没有生成任务，页面仍为 `0/8`，顶部会话随即降级。
 - **当前产品阻断**：Main 安全区已保存凭证可被页面识别，但完整重连遇到稳定身份的旧 ERP 会话时会报“当前领星会话身份未经本次凭证验证”；Renderer/Main 都只把重置授权限定在首次身份登记，已配置店铺反而没有安全恢复入口。这是确定性产品逻辑缺口，不是操作者未输入、Ads 店铺未匹配或继续等待能解决的问题。
@@ -359,7 +377,7 @@
 - 下一步只修改白名单内 `scripts/package-ui-evidence*`：新增修前必红合同，让采集器忽略隐藏副本，并核验所有可见的顶部/生产适配范围表示都一致为精确 `US`、`USD`；原 StoreContext、storeId、Main 回执、只读及零写入 validator 保留。总体仍为 `APP_NEEDS_WORK / NON_READY`，直到全新 run group 的 schema v8 manifest 通过。
 - 上述采集器缺口已取得 `2 failed → 2 passed` 的聚焦红→绿；尚待完整 190 条 runner 回归及全新不可变 run group 实机 manifest，因此此处暂不移除阻断。
 
-## 置顶：2026-08-12 14:08 当前交付状态（覆盖下方历史状态）
+## 历史：2026-08-12 14:08 交付状态快照
 
 - Ads 连接本身已在全新 `operator-core-20260812-38` 再次真实闭环：本轮可见提交、ERP ready、首次 Ads 中断后的单独重试、动态唯一美国站候选、人工确认、Ads ready 全部成立；页面已显示“ERP/Ads 已连接”。当前不再把 Ads 识别列为阻断。
 - Windows 新包、受保护历史的 Package UI 只读 fail-closed 投影及 20 秒 Electron 关闭边界均已进入产物；`-38` 没有卡死，418.8 秒内明确失败并写出 manifest。
@@ -383,7 +401,7 @@
 - 只读 inspector 对旧 `-33` 返回 `LINEAGE_CHANGED / RUNNER_LINEAGE_DRIFT`，没有签发 resume receipt，故不得续跑或覆盖。当前唯一待办是用全新 `-34` Profile/run group 重新生成 100%/125%/wide 证据；schema v8 的首档仍需操作者再做一次本轮手输，不能用旧证明冒充。
 - `-34` 已再次完成本轮手输与 Ads 连接，且授权后严格视口恢复已生效；下一 fail-closed 红点是紧凑高度下左侧导航确实滚动但未声明为显式 scroll owner。已在允许的 Mission Control shell 给真实 DOM 补可访问滚动区语义，聚焦测试通过；仍需 Renderer/Windows 重建与全新 Package UI 才能关闭，当前不能声明最终 manifest 通过。
 
-## 置顶：2026-08-12 10:00 当前交付阻断（覆盖下方历史状态）
+## 历史：2026-08-12 10:00 交付阻断快照
 
 - `operator-core-20260812-32` 的 Ads 主连接已真实成功，不再被列为连接阻断；该轮未完成 Package UI 的原因是 Ads-only 重试错误覆写 ERP 原始凭据证据，造成产品状态与 schema v8 handoff 投影自相矛盾。已用新增红→绿测试修复源码并停止旧包归属进程；需要重建后的全新 Profile 验证，因此当前仍不能声明 Package UI 通过。
 
@@ -423,7 +441,7 @@
 - 全新 `operator-core-20260811-24` 已在 900 秒等待后严格结束：整段期间 Windows 前台持续为“Windows 默认锁屏界面”，非敏感 UI 状态始终为“记住密码”已勾、“重置旧会话”未勾、启动按钮 disabled；runner 从 900 秒倒数到 7 秒均为 operator preparation，未发生提交或 authorization。manifest `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260811-24/manifests/2026-08-11T04-08-11-268Z-2026-08-11T04-08-11-267Z-18eaba08-ce7b-403b-9091-30a847ae5c14.json` 为 passed=false、runs=0、唯一 violation=`RUN_FAILED / preparation timeout`；interaction/process/profile-lock/file-isolation/freshness 全部通过，目标进程已清理为 0。
 - 当前恢复条件：操作者先解锁 Windows，并明确能在新窗口出现后立即输入密码、保留“记住密码”、点击“启动当前店铺连接”；届时创建全新 `operator-core-20260811-25`，不得 resume/重命名 `-23/-24`。执行者不得读取、代填或打印密码/Cookie。在真实提交完成前，总体结论保持 `APP_NEEDS_WORK / NON_READY`。
 
-## 置顶：2026-08-10 当前交付阻断（覆盖下方历史状态）
+## 历史：2026-08-10 交付阻断快照
 
 - 最新允许范围源码与新 Windows 包已完成：受影响面 34 files / 353 tests、Package UI runner/currentness 2 files / 186 tests 均全绿且 skipped=0；desktop typecheck、production renderer build、7 条业务 smoke、`build:win` 和文件夹 ZIP 启动均通过，`s is not defined` 为 0。
 - 用户现场暴露的连接问题已形成红→绿修复并进入当前包：`main_managed` 凭证允许安全的 Ads-only 重试；登录开始后误点解绑显示中文原因与下一步；领星 Ads 公告按实际页数有界关闭；下载中心 FilterSelect 最多等待 10 秒，并按运行时 `collectionStoreName` 对任意美国站店铺做唯一精确匹配和回读，不写死 `JF-US`。

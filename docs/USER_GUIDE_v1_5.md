@@ -28,8 +28,8 @@ The app remains local-first and Windows-only. The first release supports Amazon 
    - `任务中心`: create and maintain Missions, facts, plans, checkpoints, pause/resume state, and linked evidence.
    - `决策与审批`: review AI/rule proposals, alternatives, manual approval, policy authorization source, rejected/decided history, and MissionGrants.
    - `经营实验`: create hypotheses, metric/guardrail definitions, observation windows, conclusions, and evidence links.
-   - `实时执行`: inspect the exact store/object/action, preflight result, grant and kill-switch state; start only an authorized action and verify before / after / reload.
-   - `因果记忆`: search the append-only causal timeline for the current store and follow references back to facts, decisions, experiments, executions, and outcomes.
+   - `实时执行`: inspect the exact store/object/action, preflight result, grant and kill-switch state; start only an authorized action and verify before / after / reload. If an execution is `UNKNOWN`, use the read-only double reconciliation action: it observes and screenshots the same object before and after reload, never retries the write, and keeps the original execution immutable.
+   - `因果记忆`: search the append-only causal timeline for the current store, rebuild the current-store search index, download a JSON timeline, and follow references back to facts, decisions, experiments, executions, and outcomes.
    - `店铺与广告对象`: maintain products, targets/costs, advertising objects, keywords, Listing versions, and operation events with standard create/read/update/archive or restore actions.
    - `数据采集`: confirm scope, create/edit/archive collection jobs, use the visible Lingxing download center, and verify all 8 per-type downloads, imports, identities, and reconciliations.
    - `策略与风控`: version store/object policies, choose manual or policy-auto mode, maintain budgets/limits, inspect risk blocks, and operate the kill switch.
@@ -39,9 +39,13 @@ The app remains local-first and Windows-only. The first release supports Amazon 
 
 ## Current Mission Control candidate
 
-The 2026-08-20 Windows package remains `APP_NEEDS_WORK`, not `APP_READY`. Its current AppData connection reaches `ERP/Ads 已连接` with Main-only saved credentials, and startup recovery no longer blocks the main window. The latest single full-8 collection attempt stopped safely because the `product_targeting` create request could not be uniquely read back from Lingxing Download Center within 30 seconds. Five report types were downloaded; one is `create_unknown`, one failed, one remained queued, and no immutable import run was created.
+The current source version is `1.5.1` and remains `APP_NEEDS_WORK`, not `APP_READY`. The latest recorded formal business state has completed 8/8 collection/import (`8 files / 1937 metrics / 8 reconciliations`), an enabled policy version, an active Mission, and a draft experiment. The prior `5 downloaded / create_unknown / imports=0` state is a historical recovery checkpoint, not the current business baseline.
 
-Do not press the full-8 action again while a checkpoint is `create_unknown`. First inspect Lingxing Download Center and determine whether that exact report exists; take over the existing row only when it is uniquely identified, or issue a new create request only after confirming it does not exist. Formal package UI schema v8, real 8/8 import, policy/mission/experiment closure, current eight-gate aggregation and Task 8B are incomplete. Old 7/8 or 4/8 results, manifests, snapshots and bundles do not authorize the current package.
+The remaining “部分可用” source gaps were closed with real behavior. UNKNOWN execution reconciliation is Main-owned and read-only: it acquires the current store browser lease, observes and screenshots the object, reloads, observes and screenshots again, verifies stable identity, and reports target/original/drift/still-unknown without clicking save or retrying the original execution. Causal memory can rebuild its current-store search index and download the current timeline as JSON. Mission and experiment deletion are intentionally archive/restore operations; queue skip is not offered because UNKNOWN stops serial execution, and the real kill switch remains in policy runtime.
+
+Current source verification is `285/285` test files and `3529/3529` unit tests passed with no committed skip/todo declarations. This source revision has not yet run typecheck, build, business smoke, Package UI, folder-ZIP launch, or a real Ads write/readback. The last verified `1.5.0` package and `operator-core-20260826-91` manifest are historical after the version change and do not authorize `1.5.1`.
+
+Task 8B remains fail-closed. The latest recorded safe candidate is `back massager / U07-1P-精准 / 精准 / $2.32 -> $2.09 / -9.9138%`, but stable Ads authority/id/revision, approval, and execution are still absent. First perform the read-only object check. Then show the operator the exact path, current value, target value, change percentage, evidence date, and object revision; only that specific approval may authorize one real write and reload readback.
 
 ### Store isolation and execution modes
 

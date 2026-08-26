@@ -1,5 +1,7 @@
 # Amazon AI Ops Business UI Brief
 
+> Historical design reference (2026-07-03 baseline). Current delivery status and acceptance authority live in `PROGRESS.md`, `BLOCKED.md`, and `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`; status wording below is not current release evidence.
+
 ## User
 
 The primary user is an Amazon cross-border ads operator or operations lead who manages US marketplace advertising through Lingxing ERP, Amazon Ads evidence, keyword opportunities, and Listing optimization. The user needs to understand daily performance quickly, trust the source data, decide what actions are safe, and produce evidence that another operator, manager, or delivery reviewer can audit later.

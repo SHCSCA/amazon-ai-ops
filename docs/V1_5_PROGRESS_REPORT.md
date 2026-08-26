@@ -1,8 +1,18 @@
 # Amazon AI Ops Agent v1.5 Progress Report
 
-Date: 2026-08-04
+Date: 2026-08-26
 
-## Current Mission Control candidate
+## Current v1.5.1 source checkpoint
+
+- Version is `1.5.1`; delivery remains `APP_NEEDS_WORK / INTERNAL NON_READY` until a fresh Windows package and evidence lineage pass.
+- Latest recorded formal business state is 8/8 collection/import (`8 files / 1937 metrics / 8 reconciliations`) with an enabled policy, active Mission and draft experiment. The old `5 downloaded / imports=0` checkpoint is historical.
+- UNKNOWN execution has a real Main-owned, read-only double reconciliation path with two observations/screenshots, stable identity validation and separate `READBACK` evidence; it never retries the original write or mutates the original `unknown` result.
+- Causal memory now rebuilds and searches a current-store index and downloads the current US/USD timeline as JSON. Mission/experiment hard delete and execution skip were removed from the product contract; archive/restore, serial UNKNOWN stop and the policy runtime kill switch remain.
+- Full source unit verification passed `285/285` files and `3529/3529` tests with zero committed skip/todo declarations.
+- `1.5.1` has not yet run typecheck, build, business smoke, Package UI, folder-ZIP launch or real Ads write/readback. The passing `1.5.0` `operator-core-20260826-91` manifest is a historical package baseline only.
+- Task 8B still requires a unique current-object readback and exact human approval for the recorded `$2.32 -> $2.09 / -9.9138%` candidate before one real write and reload readback.
+
+## Historical 2026-08-04 Mission Control candidate
 
 - 当前状态保持 `APP_NEEDS_WORK` / internal NON_READY。第一版固定 Amazon US / USD；应用直接进入 Mission Control，左侧 `店铺与站点` 是店铺新增、编辑、归档/恢复和显式 `切换店铺` 的唯一入口，新建店铺不会自动选中。外部连接在选中店铺的工作台内单独配置和启动。
 - 生产代码已包含 10 个 Mission Control 工作区、Store Capsule 隔离、店铺/产品/目标与成本/广告对象/关键词/Listing/运营事件 CRUD、真实领星 8 类任务底座、人工审批与 policy-auto 双模式授权、低风险 `set_keyword_bid` 下调、执行前复核以及 before / after / reload 回读。DB 范围、领星连接、Main 自动识别并经用户确认的 Ads 身份、独立浏览器 Profile、会话代次、任务、配置、授权、执行和证据均绑定 `storeId`；错店、旧 revision、歧义或 `UNKNOWN` 失败关闭。

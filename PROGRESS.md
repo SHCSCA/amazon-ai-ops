@@ -1,6 +1,28 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 当前：2026-08-26 Package UI 三档正式通过，仅 Task 8B 因无合格候选继续安全阻断
+## 当前：2026-08-26 v1.5.1 “部分可用”真实功能补齐与全量单元门通过
+
+- 产品版本已从 `1.5.0` 提升为 `1.5.1`：根包、桌面包、Main `APP_VERSION` / `app:get-version`、folder ZIP 默认文件名及四个 v1.5 证据验证器统一读取同一版本权威；历史 `1.5.0` 包名、哈希与测试 fixture 保持不可变。
+- 已撤销仅靠隐藏阻断动作消除“部分可用”的错误做法。工作区状态继续汇总全部能力；只要仍有一项真实 `BLOCKED` 就保持 `MIXED/部分可用`。只有全部能力均为 `PRODUCTION_NATIVE` 或受控生产适配时才显示可用，相关 Shell 契约 `8/8 passed`。
+- `UNKNOWN` 广告执行现在有真实只读双次对账链：Main 在当前店铺独占浏览器租约下读取并截图，刷新后再次读取并截图，校验两次稳定对象身份及竞价，分类为目标值、原值、漂移或仍未知；全程不点击保存、不重试原执行，原 batch/job 继续保持 `unknown`，另写独立 `READBACK` 因果事件和两份证据引用。Service/IPC/Preload/Renderer 均已接通。
+- 因果记忆的“重建搜索索引”和“导出时间线”已实现真实行为：索引只接受当前店铺事件并覆盖标题、对象、运营任务、信号、干预、预期/观察效果和状态；搜索使用该索引；导出生成当前店铺 US/USD、业务日期、记录及检索词的 JSON 文件，不再是占位按钮。
+- 运营任务/经营实验的不可恢复硬删除能力已从产品合同移除，继续以归档/恢复作为真实可逆操作；无安全语义的执行队列“跳过”和重复急停入口也已移除，策略运行页的真实急停门保持不变。这些不是把未实现动作标绿，而是删除与产品安全模型冲突的伪能力。
+- 全 provider ready 的能力投影现在对所有工作区、所有保留动作均无 `BLOCKED`，22 个标准工作区视图全部可进入；UNKNOWN 对账、因果记忆导出/索引和只读交付核验均有真实实现映射。`mission-control-legacy-adapter.test.ts` 为 `10/10 passed`。
+- 采集正式编排已与退役旧调度器解耦；Main 调度 IPC 真实转发正式 read model，并在未初始化时中文失败关闭。Ads 重试先通过 shutdown-aware admission，只有登录成功且 Ads verified 才恢复派发，保留 ERP 只读阶段事实。此前聚焦回归已全部转绿。
+- 最后一条采集恢复单测原来漏断言生产错误已返回的中文原因。现已把 `SAFETY_STATE_UNKNOWN` 的“编排器安全状态未知；必须由 Main 完成人工恢复后才能继续。”纳入精确期望，没有删除错误说明或降低安全门；目标用例修后 `1/1 passed`。
+- 最终仅单元测试全量命令：`pnpm exec vitest run apps packages --reporter=basic --exclude "**/*{integration,e2e,playwright,smoke,launch,build-windows-package,package-ui}*.test.*"`；结果 `285/285` files、`3529/3529` tests passed，失败 0。版本/交付脚本契约 `scripts/package-scripts.test.mjs` 另为 `12/12 passed`；源码测试中 `.skip/.todo/skipIf/context.skip` 检索为 0。
+- 本阶段按用户硬约束未运行 typecheck、build、smoke、Package UI、ZIP 启动、应用/浏览器控制或真实 Ads。上述结论是“真实代码路径已实现且全量单元链通过”，不是文字改名；但在动态测试被禁止期间仍不得声明当前 Windows 包 `APP_READY`。
+- 正式库以 `readonly=true / PRAGMA query_only=ON` 现场复核：最新采集作业 `completed`，最新导入为 `8 files / 1937 metrics / 8 reconciliations`；另有 1 个 enabled 策略、active 运营任务和 draft 经营实验。连接、8 类采集、策略、运营任务与经营实验不再是“部分可用”。
+- 本轮修复了真实安全候选被 AI 绝对值覆盖的问题：`lower_bid` 的 AI 对齐值只有在降幅不超过 10% 时才可覆盖规则值；已写入正式库的新不可变建议为 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138% / rule_ai`。旧 `$2.32 → $1.85` 仅保留为历史证据，不再是当前建议。
+- 重复建议刷新只允许把“未绑定、未审批、待处理、同当前值”的超限降幅纠正为更保守且不超过 10% 的完整可追溯值；已有对象绑定或人工决议仍不可覆盖。repository 与 AI 对齐定点回归为 `18/18 passed`。
+- 正式“建议与审批”不再无条件显示“对象版本已校验”：authority/id/revision 缺一即显示 `Ads 对象待核验` 和可点击 `核验 Ads 对象`。该动作只读发现当前关键词与竞价、CAS 绑定本地证据，再重新分析形成带 authority 的新建议；不会批准或执行广告。
+- 为减少无效等待，当前建议已经是关键词、降价且降幅不超过 10% 时，核验流程直接进入 Ads 对象发现，不再先额外调用一次 AI；只有候选不安全时才刷新分析。决策工作区聚焦测试 `20/20 passed`。
+- 最新正式库安全计数仍为 `verified_ad_entity_authority=0 / approval_tasks=0 / ad_execution_batches=0 / ad_execution_jobs=0 / ad_execution_evidence=0`。当用户解除动态测试禁令后，恢复顺序是：直接启动正式应用、恢复 Ads 连接、点击一次 `核验 Ads 对象` 并取得唯一回读；随后才可向操作者展示具体对象、当前值、目标值并请求该条专属批准。
+- 前一次 Playwright 启动把应用 stdout 绑定到测试管道，管道退出后触发 `EPIPE` 并把 Ads 状态降为 `attention_required / VISIBLE_BROWSER_CLOSED`；这不是 8/8 或业务页回退。后续只允许直接启动正式 EXE，不再用 Playwright 启动正式连接，也不重复跑登录验收。
+
+## 历史：2026-08-26 v1.5.0 Package UI 三档验证轨迹
+
+> 以下为按时间追加的快照；其中“当前”、“最新”均是当时语义，已被顶部 v1.5.1 记录取代。
 
 - `operator-core-20260826-86` 由执行者仅在 Amazon AI Ops 目标窗口内完成本次凭证输入、记住密码和连接提交；runner 明确从 `operator preparation` 进入 `browser authorization`，应用自动完成 ERP/Ads 登录与店铺识别，并继续跑到 `experiments/ledger`。这次真实失败不在 Ads：manifest `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-86/manifests/2026-08-26T02-21-08-457Z-2026-08-26T02-21-08-456Z-8ca7fbc4-393f-43d7-82d0-d0842e0a0fba.json` 精确报两个变量 JSON `<pre>` 为 `UNLABELLED_SCROLL_OWNER`（64/105px、64/147px）。
 - 实验台账滚动回归先红：同一聚焦命令为 `1 failed / 10 skipped`，旧 CSS 为 `overflow:auto / max-height:64px`；最小修复改为 `overflow:visible / max-height:none`，由页面承担纵向滚动，修后同命令 `1 passed / 10 skipped`。完整 `experiments-workspace.test.tsx` 为 `11/11 passed`，desktop typecheck 为 `$ tsc --noEmit`、exit 0。

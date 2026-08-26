@@ -1,5 +1,7 @@
 # Amazon AI Ops Prototype Parity Checklist
 
+> Historical prototype-parity record. It remains a design reference only; current source/package readiness is governed by `PROGRESS.md`, `BLOCKED.md`, and `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`.
+
 > Updated: 2026-07-03
 > Prototype source: `amazon-ai-ops-business-prototype/pages/*.html`
 > Production renderer: `apps/desktop/src/renderer/`

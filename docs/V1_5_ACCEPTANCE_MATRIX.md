@@ -1,5 +1,24 @@
 # v1.5 Acceptance Matrix
 
+## Current v1.5.1 checkpoint — 2026-08-26
+
+| Requirement | Current Evidence | Status |
+|---|---|---|
+| Source version and status | Root, desktop, Main IPC, ZIP default and active v1.5 evidence gates are aligned to `1.5.1`. | `APP_NEEDS_WORK`; source candidate only |
+| Formal business baseline | Latest recorded run is 8/8 with 8 files / 1937 metrics / 8 reconciliations; enabled policy, active Mission and draft experiment exist. | Closed for the recorded business day |
+| Capability completeness | All retained actions map to native or controlled production implementations when their providers are ready. Mission/experiment use archive/restore, not hard delete; UNKNOWN stops serial execution; duplicate skip/kill-switch surfaces are absent. | Unit contract passed |
+| UNKNOWN reconciliation | Main/IPC/Preload/Renderer perform two read-only observations and screenshots around reload, verify stable identity, preserve the original `unknown` state and append separate `READBACK` evidence. | Unit contract passed; package runtime pending |
+| Causal memory index/export | Current-store events rebuild the real search index and export a US/USD JSON timeline; cross-store events fail closed. | Unit contract passed; package runtime pending |
+| Full source unit gate | `285/285` files, `3529/3529` tests; no `.skip/.todo/skipIf/context.skip`. | Passed |
+| Typecheck/build/business smoke | Not run for `1.5.1` under the operator's temporary no-dynamic-test constraint. | Pending |
+| Package UI and folder ZIP | Last verified Package UI (`operator-core-20260826-91`) belongs to `1.5.0`; it cannot credit `1.5.1`. | Pending fresh package lineage |
+| Task 8B | Recorded safe candidate is `$2.32 -> $2.09 / -9.9138%`, but stable object authority, approval and execution are zero. | Blocked until unique readback + exact approval + write/reload proof |
+| Production decision | No current `1.5.1` readiness aggregate or bundle exists. | `APP_NEEDS_WORK / NON_READY` |
+
+## Historical acceptance rows
+
+The rows below are dated implementation and package baselines. Any row that says “current” or `APP_READY` applies only to its own recorded package lineage and does not override the v1.5.1 checkpoint above.
+
 | Requirement | Current Evidence | Status |
 |---|---|---|
 | Current delivery status | The Windows package built from `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` implements Amazon US / USD multistore Mission Control, but no current eight-gate aggregate or matching delivery bundle has been generated. | `APP_NEEDS_WORK`; internal NON_READY only |

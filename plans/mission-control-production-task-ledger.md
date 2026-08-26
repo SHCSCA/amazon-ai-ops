@@ -10,7 +10,15 @@
 - `DONE`：阶段验证通过且 commit 已推送。
 - `BLOCKED`：外部条件阻断且没有安全替代路径。
 
-## 2026-08-04 当前集成检查点
+## 2026-08-26 v1.5.1 当前集成检查点
+
+- 当前源码版本为 `1.5.1`，状态保持 `APP_NEEDS_WORK / INTERNAL NON_READY`。最新记录业务事实为 8/8、8 files / 1937 metrics / 8 reconciliations、enabled 策略、active Mission 和 draft 经营实验。
+- UNKNOWN 只读双次对账、因果记忆索引/导出、调度正式 read model、Ads 对象只读核验及全部保留能力映射已经实现；Mission/实验硬删除、队列 skip 和重复急停不再是产品合同。
+- 全量单元门 `285/285` files、`3529/3529` tests passed；本轮没有跳过声明。
+- `1.5.1` 的 typecheck、build、业务 smoke、Package UI、folder ZIP 和真实 Ads 写入/回读尚未运行；旧 `1.5.0` 包与 `operator-core-20260826-91` 仅作历史基线。
+- Task 8B 等待对 `$2.32 -> $2.09 / -9.9138%` 候选完成唯一对象回读、展示完整对象/数值/版本并取得单条人工批准，然后才能执行一次写入与刷新回读。
+
+## 历史：2026-08-04 集成检查点
 
 - 当前包对应源码提交 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda`，状态仍是 `APP_NEEDS_WORK` / internal NON_READY。installer `EDEC273C...B96A`、portable `58C6D501...DEDE4`、win-unpacked `67DC2A70...5E89`、app content `FC173A2E...E43`、main bundle `9B0C43D5...32A`。
 - 当前内部证据：`mission-control-ui-3f6fbec3\manifest.json` 完成 20 个 workspace captures + Store Gate + SHC001→SHC002 隔离 + 1200×900 执行布局，共 23 PNG，明确 `NO_FINAL_READINESS_CREDIT`；当前业务 UI smoke 5/5、package launch、package security 11/11、adversarial `NODE_ENV` 和 14 个 workspace/project typecheck 均通过。
