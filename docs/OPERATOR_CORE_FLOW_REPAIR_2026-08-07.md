@@ -15,6 +15,7 @@
 - 自动续接只做后台只读核验：`master=origin/master=2920b18c`，新 ZIP/EXE/app content 仍为 `5A072731...4F82` / `67DC2A70...5E89` / `A86E1AA2...B963`；包内 JS/CSS 与当前构建哈希一致，决策详情列规则已是 `max-height:none / overflow:visible`，中文证据摘要已进入包。
 - 正式库当前仍为 ERP/Ads ready、8/8 downloaded、8 files / 1961 metrics / 8 reconciliations、enabled 策略、active/fact 运营任务与 draft 经营实验；readonly/query_only 前后主文件 SHA-256 均为 `A12AC801...D3B4`。最新 4 条 `rule_ai` 建议仍缺稳定广告对象且降幅 19.6507%–26.1044%，human/policy 均不可授权，approval/authority/identity/Ads execution 全为 0。
 - 因此后台门已收敛，仍不能标记 APP_READY：`-85` 恢复 receipt 完整但新包 Package UI 三档未实际通过；Task 8B 也没有具体、稳定、≤10% 且经操作者批准的候选。未收到明确再次启动指令前不空开窗口。
+- 第 2 次自动续接审计再次得到完全相同的包、正式库、候选与零写入结果；`-85` receipt 未消费，应用/runner 为 0。本轮没有重复测试、构建或开窗；若下一轮外部状态仍不变，将依阻断规则停止自动续接。
 
 ## 2026-08-25 最新状态：新业务日 8/8 与真实 AI 已闭合，Task 8B 安全阻断
 
