@@ -15,6 +15,11 @@
 - `-85` 已按用户“启动验证”实际打开新包并稳定进入 `100-compact` operator preparation；60 秒内 runner 未检测到本次提交，故按既定时限安全停止为 `runs=0 / RUN_FAILED`，没有进入 ERP/Ads 连接，也没有重新执行决策页合同。失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-85/manifests/2026-08-26T01-33-07-545Z-2026-08-26T01-33-07-545Z-965cfb32-d26c-4713-ab89-6861a8403e92.json`，protected DB unchanged、目标进程已清理为 0。
 - 官方只读 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，一次性 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260826-85/AF93F3B794C6A6B8038BBCA725311CD7309E7814B5DB2A2FD19B29F9DE24C6A3.json`。正式库再以 readonly/query_only 回读：approval tasks 与 Ads 五表仍全 0；主文件 SHA/大小/mtime 前后不变，SHA-256 仍为 `A12AC801...D3B4`。
 - 本轮决策页修复、两条新增断言与三份状态文档已选择性提交为 `3420e00a` 并推送成功：`029bcbc2..3420e00a master -> master`；`output/`、隔离 Profile、正式库、报表、EXE/ZIP 与既有未跟踪目录均未提交。
+- 自动续接的当前性审计未启动应用：`master=origin/master=2920b18c`，受控文件 clean；新 ZIP 与 EXE 现场 SHA-256 仍为 `5A072731...4F82` / `67DC2A70...5E89`，Package UI hash preflight 仍绑定 app content `A86E1AA2...B963`（5118 files / 544,651,332 bytes）。
+- 新包 Renderer 与当前构建产物逐字一致：JS source/package 均为 `8656FFCB...548D`，CSS source/package 均为 `BAA30CC7...5B77`；包内 `.decision-domain-detail` 精确规则为 `max-height:none / overflow:visible`，且中文“规则与模型版本已校验”已进入包。这只能证明修复进入包，不能替代尚未完成的 Package UI 实屏三档。
+- 正式库再次 readonly/query_only 审计：ERP/Ads 均 ready；最新作业 `completed` 且 8/8 checkpoint 全为 downloaded；最新导入 `completed / 8 files / 1961 metrics / 8 reconciliations` 且 8/8 tolerance 通过；1 个 enabled 策略版本、1 个 active/fact 运营任务、1 个 draft 经营实验。主库 SHA-256 前后均为 `A12AC801...D3B4`。
+- Task 8B 当前资格没有改善：最新 4 条 `rule_ai` 快照虽为受控关键词竞价调整，但 `ad_entity_authority_id/ad_entity_id/ad_entity_revision` 全为空，降幅为 19.6507%–26.1044%；human/policy eligibility 均为 false，approval tasks=0、verified authority=0、identity versions=0、Ads 五表=0。未出现具体、稳定、≤10% 且经人工批准的 `lower_bid`，因此不允许真实写入。
+- `-85` 单次恢复 receipt 仍存在且 SHA-256 为 `5A41459A...8BE2D`，目标应用进程为 0；本轮不自动再次开窗。唯一剩余 Package UI 动作仍是操作者明确启动后在 60 秒内完成应用内提交，再让 runner 自动检查 100%/125%/wide。
 
 ## 当前：2026-08-25 最新业务日 8/8 已真实采集并导入
 
