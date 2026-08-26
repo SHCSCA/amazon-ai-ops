@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY SOURCE CANDIDATE.** 当前源码版本为 `1.5.1`，固定 Amazon US / USD、Windows 单机自用和逐店隔离。连接、8 类采集/导入、策略、运营任务与经营实验已有真实业务记录；本轮又补齐了 `UNKNOWN` 广告执行只读双次对账、因果记忆索引重建/JSON 导出和剩余能力映射。全量单元门为 `285/285` files、`3529/3529` tests passed。由于 `1.5.1` 尚未重新 typecheck、构建、运行业务 smoke、Package UI、ZIP 启动及真实 Ads 回读，当前仍不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY STATIC WINDOWS CANDIDATE.** 当前版本为 `1.5.1`，固定 Amazon US / USD、Windows 单机自用和逐店隔离。本轮把策略范围、关键词证据、Grant 签发和执行工作台收紧到同一条当前店铺真实权限链，并完成 `285/285` files、`3584/3584` 单元测试及静态 Windows 七步构建。当前包尚未在禁令允许范围内完成业务 smoke、Package UI、ZIP 真启动或真实 Ads 写入/回读，因此仍不得声明 `APP_READY`。
 
 ## 当前交付
 
@@ -12,18 +12,19 @@
 |---|---|
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
 | 当前版本 | `1.5.1` |
-| 当前状态 | `APP_NEEDS_WORK`（源码候选；不是已构建 Windows 发布包） |
-| 当前源码验证 | `285/285` test files、`3529/3529` unit tests passed；无 `.skip/.todo/skipIf/context.skip` |
-| 目标无安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1-portable.exe`（尚未构建） |
-| 目标安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe`（尚未构建） |
-| 目标文件夹 ZIP | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.zip`（尚未构建） |
+| 当前状态 | `APP_NEEDS_WORK / INTERNAL NON_READY`（静态 Windows 候选；尚无当前包运行态签收） |
+| 当前源码验证 | 聚焦权限链 `157/157`；全量单元 `285/285` files、`3584/3584` tests；脚本契约 `12/12`；无 `.skip/.todo/skipIf/context.skip` |
+| 无安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1-portable.exe`；SHA-256 `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D` |
+| 安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe`；SHA-256 `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956` |
+| 文件夹 ZIP | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.zip`；SHA-256 `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534` |
 | 真实业务基线 | 最新已记录采集为 8/8、导入为 8 files / 1937 metrics / 8 reconciliations；存在 enabled 策略、active 运营任务和 draft 经营实验 |
 | 新增执行恢复 | `UNKNOWN` 只读双次对账会在刷新前后读取并截图，校验稳定对象，保持原执行 `unknown` 且另记 `READBACK`；不会重试写入 |
 | 新增因果记忆 | 当前店铺索引真实重建、索引搜索和 US/USD JSON 时间线导出 |
 | 当前 Ads 安全门 | 最近只读记录仍为对象 authority=0、approval=0、Ads execution=0；真实写入须先唯一回读当前对象并取得该候选专属批准 |
-| 最近已验证包 | `1.5.0` 的 Package UI `operator-core-20260826-91` 三档曾通过；这是历史基线，不授予 `1.5.1` 信用 |
-| `1.5.1` 动态门 | typecheck、Renderer/Windows build、7 类业务 smoke、Package UI、ZIP 启动和真实 Ads 写入/刷新回读均待运行 |
-| 正式八门 / bundle | `1.5.1` 尚未生成；旧 READY/NON_READY、旧哈希、旧 manifest 和旧 bundle 仅作历史记录 |
+| 当前静态构建 | `pnpm run build:win` 七步通过，`freshCurrentRun=true`；Main bundle `1FAF882D...8FAB4`；源码与包内 `s is not defined` 均为 0 |
+| 最近运行态基线 | `1.5.0` 的 Package UI `operator-core-20260826-91` 三档曾通过；这是历史基线，不授予 `1.5.1` 信用 |
+| `1.5.1` 动态门 | typecheck、7 类业务 smoke、Package UI、ZIP 真启动、正式库前后只读零写入复核及真实 Ads 写入/刷新回读待运行；用户当前禁止这些动作 |
+| 正式八门 / bundle | `1.5.1` 尚未生成当前 readiness/bundle；旧 READY/NON_READY、旧哈希、旧 manifest 和旧 bundle 仅作历史记录 |
 | 详细状态 | `docs\OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`（当前）；`docs\MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` 仅为历史基线 |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
@@ -96,7 +97,7 @@
 |---|---|---|
 | 静态工程门 | pending | 运行 desktop typecheck 与 Renderer build，确认版本提升没有类型/打包合同漂移 |
 | 业务主链 | pending | 运行当前 7 类业务 smoke，逐项报告连接、采集、策略、运营任务、经营实验、弹窗和按钮 |
-| Windows 包 | pending | 构建 `1.5.1` installer、portable 与 folder ZIP，记录当前 SHA-256 |
+| Windows 包 | 静态构建通过 | `1.5.1` installer、portable 与 folder ZIP 已生成并记录当前 SHA-256；尚待动态启动验收 |
 | Package UI | pending | 用 `1.5.1` 完成 100%/125%/wide 三档、中文失败/下一步、弹窗滚动和店铺隔离合同 |
 | Task 8B | blocked by authority/approval | 先唯一回读当前 Ads 对象和值，再让操作者批准具体 `lower_bid`；随后执行一次写入并刷新回读 |
 | 八门聚合与 bundle | pending | 绑定同一 `1.5.1` 源码、包、DB 与证据生成严格 READY 或 NON_READY 结果 |
@@ -107,13 +108,14 @@
 
 | 验证门 | 状态 | 证据 |
 |---|---|---|
-| 全量单元测试 | 通过 | `285/285` files、`3529/3529` tests；失败 0、跳过声明 0 |
+| 全量单元测试 | 通过 | `285/285` files、`3584/3584` tests；失败 0、跳过声明 0 |
 | 版本一致性 | 通过待提交 | root、desktop、Main IPC、ZIP 默认路径及 v1.5 验证器统一读取 `1.5.1` 权威 |
 | `UNKNOWN` 对账 | 单元通过 | Service/IPC/Preload/Renderer 已接通；刷新前后双次只读证据，不重试原写入 |
 | 因果记忆索引/导出 | 单元通过 | 当前店铺索引和 JSON 导出均有行为测试 |
-| TypeScript / build | 未运行 | 本轮按用户约束禁止 typecheck/build，不能沿用旧包结论 |
+| TypeScript | 未运行 | 本轮按用户约束禁止 typecheck；不能沿用旧结论 |
+| 静态 Windows build | 通过 | 七步通过、`freshCurrentRun=true`，Main/Renderer 源码与包内容哈希一致 |
 | 当前业务 UI smoke | 未运行 | `1.5.1` 尚无业务 smoke 证据 |
-| Windows / ZIP | 未构建 | `1.5.1` 尚无 EXE、ZIP 或 SHA-256 |
+| Windows / ZIP 运行态 | 未运行 | `1.5.1` 已有 EXE、ZIP 和 SHA-256，但用户禁令下未做 ZIP 真启动 |
 | Package UI | 未运行 | `1.5.0` 的历史通过 manifest 不授予 `1.5.1` 信用 |
 | Ads 写入回读 | 阻断 | authority/approval/execution 最近记录均为 0；缺具体对象唯一回读和专属批准 |
 | 正式 readiness / bundle | 未生成 | 当前有效状态保持 `APP_NEEDS_WORK / NON_READY` |

@@ -4,16 +4,16 @@
 
 | Requirement | Current Evidence | Status |
 |---|---|---|
-| Source version and status | Root, desktop, Main IPC, ZIP default and active v1.5 evidence gates are aligned to `1.5.1`. | `APP_NEEDS_WORK`; source candidate only |
+| Source version and status | Root, desktop, Main IPC, ZIP default and active v1.5 evidence gates are aligned to `1.5.1`; source authority hardening is committed. | `APP_NEEDS_WORK`; static Windows candidate |
 | Formal business baseline | Latest recorded run is 8/8 with 8 files / 1937 metrics / 8 reconciliations; enabled policy, active Mission and draft experiment exist. | Closed for the recorded business day |
-| Capability completeness | All retained actions map to native or controlled production implementations when their providers are ready. Mission/experiment use archive/restore, not hard delete; UNKNOWN stops serial execution; duplicate skip/kill-switch surfaces are absent. | Unit contract passed |
-| UNKNOWN reconciliation | Main/IPC/Preload/Renderer perform two read-only observations and screenshots around reload, verify stable identity, preserve the original `unknown` state and append separate `READBACK` evidence. | Unit contract passed; package runtime pending |
-| Causal memory index/export | Current-store events rebuild the real search index and export a US/USD JSON timeline; cross-store events fail closed. | Unit contract passed; package runtime pending |
-| Full source unit gate | `285/285` files, `3529/3529` tests; no `.skip/.todo/skipIf/context.skip`. | Passed |
-| Typecheck/build/business smoke | Not run for `1.5.1` under the operator's temporary no-dynamic-test constraint. | Pending |
-| Package UI and folder ZIP | Last verified Package UI (`operator-core-20260826-91`) belongs to `1.5.0`; it cannot credit `1.5.1`. | Pending fresh package lineage |
-| Task 8B | Recorded safe candidate is `$2.32 -> $2.09 / -9.9138%`, but stable object authority, approval and execution are zero. | Blocked until unique readback + exact approval + write/reload proof |
-| Production decision | No current `1.5.1` readiness aggregate or bundle exists. | `APP_NEEDS_WORK / NON_READY` |
+| Policy and Grant authority | Create/update/enable and Grant issuance revalidate exact current import/report evidence, latest Stage5, and required current Stage6 identity/session in an `IMMEDIATE` transaction. | `157/157` focused authority tests passed |
+| Keyword/canonical scope | `match_type`, exact source-row cardinality and proof/revision/session are required; campaign/ad-group use canonical IDs without exposing them in ordinary UI. | Fail-closed unit contract passed |
+| Execution context | Selected batch/job/slot, three-stage evidence and progress events share exact store/batch/job/grant context; stale async results are discarded. | A→B→A regression passed |
+| Full source unit gate | `285/285` files, `3584/3584` tests; scripts `12/12`; no `.skip/.todo/skipIf/context.skip`. | Passed |
+| Static Windows build | Seven steps passed with `freshCurrentRun=true`; installer `444802A1...FEB956`, portable `637E7CC1...355A1D`, ZIP `CF1A80BC...7C534`; `s is not defined` is 0. | Static candidate built |
+| Dynamic package gates | Typecheck, 7-flow business smoke, Package UI 100%/125%/wide, folder-ZIP launch and formal-DB pre/post verification are prohibited for this round. Historical `operator-core-20260826-91` cannot credit `1.5.1`. | Blocked by operator test boundary |
+| Task 8B | Requires unique current object/bid, current `lower_bid` within 10%, exact approval, one write and reload proof; no Ads write occurred this round. | Blocked pending dynamic authority and approval |
+| Production decision | No current `1.5.1` readiness aggregate or bundle exists. | `APP_NEEDS_WORK / INTERNAL NON_READY` |
 
 ## Historical acceptance rows
 

@@ -1,24 +1,19 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 当前：2026-08-26 v1.5.1 “部分可用”真实功能补齐与全量单元门通过
+## 当前：2026-08-26 v1.5.1 权限链修复与静态 Windows 候选完成
 
-- 产品版本已从 `1.5.0` 提升为 `1.5.1`：根包、桌面包、Main `APP_VERSION` / `app:get-version`、folder ZIP 默认文件名及四个 v1.5 证据验证器统一读取同一版本权威；历史 `1.5.0` 包名、哈希与测试 fixture 保持不可变。
-- 已撤销仅靠隐藏阻断动作消除“部分可用”的错误做法。工作区状态继续汇总全部能力；只要仍有一项真实 `BLOCKED` 就保持 `MIXED/部分可用`。只有全部能力均为 `PRODUCTION_NATIVE` 或受控生产适配时才显示可用，相关 Shell 契约 `8/8 passed`。
-- `UNKNOWN` 广告执行现在有真实只读双次对账链：Main 在当前店铺独占浏览器租约下读取并截图，刷新后再次读取并截图，校验两次稳定对象身份及竞价，分类为目标值、原值、漂移或仍未知；全程不点击保存、不重试原执行，原 batch/job 继续保持 `unknown`，另写独立 `READBACK` 因果事件和两份证据引用。Service/IPC/Preload/Renderer 均已接通。
-- 因果记忆的“重建搜索索引”和“导出时间线”已实现真实行为：索引只接受当前店铺事件并覆盖标题、对象、运营任务、信号、干预、预期/观察效果和状态；搜索使用该索引；导出生成当前店铺 US/USD、业务日期、记录及检索词的 JSON 文件，不再是占位按钮。
-- 运营任务/经营实验的不可恢复硬删除能力已从产品合同移除，继续以归档/恢复作为真实可逆操作；无安全语义的执行队列“跳过”和重复急停入口也已移除，策略运行页的真实急停门保持不变。这些不是把未实现动作标绿，而是删除与产品安全模型冲突的伪能力。
-- 全 provider ready 的能力投影现在对所有工作区、所有保留动作均无 `BLOCKED`，22 个标准工作区视图全部可进入；UNKNOWN 对账、因果记忆导出/索引和只读交付核验均有真实实现映射。`mission-control-legacy-adapter.test.ts` 为 `10/10 passed`。
-- 采集正式编排已与退役旧调度器解耦；Main 调度 IPC 真实转发正式 read model，并在未初始化时中文失败关闭。Ads 重试先通过 shutdown-aware admission，只有登录成功且 Ads verified 才恢复派发，保留 ERP 只读阶段事实。此前聚焦回归已全部转绿。
-- 最后一条采集恢复单测原来漏断言生产错误已返回的中文原因。现已把 `SAFETY_STATE_UNKNOWN` 的“编排器安全状态未知；必须由 Main 完成人工恢复后才能继续。”纳入精确期望，没有删除错误说明或降低安全门；目标用例修后 `1/1 passed`。
-- 最终仅单元测试全量命令：`pnpm exec vitest run apps packages --reporter=basic --exclude "**/*{integration,e2e,playwright,smoke,launch,build-windows-package,package-ui}*.test.*"`；结果 `285/285` files、`3529/3529` tests passed，失败 0。版本/交付脚本契约 `scripts/package-scripts.test.mjs` 另为 `12/12 passed`；源码测试中 `.skip/.todo/skipIf/context.skip` 检索为 0。
-- 本阶段按用户硬约束未运行 typecheck、build、smoke、Package UI、ZIP 启动、应用/浏览器控制或真实 Ads。上述结论是“真实代码路径已实现且全量单元链通过”，不是文字改名；但在动态测试被禁止期间仍不得声明当前 Windows 包 `APP_READY`。
-- 正式库以 `readonly=true / PRAGMA query_only=ON` 现场复核：最新采集作业 `completed`，最新导入为 `8 files / 1937 metrics / 8 reconciliations`；另有 1 个 enabled 策略、active 运营任务和 draft 经营实验。连接、8 类采集、策略、运营任务与经营实验不再是“部分可用”。
-- 本轮修复了真实安全候选被 AI 绝对值覆盖的问题：`lower_bid` 的 AI 对齐值只有在降幅不超过 10% 时才可覆盖规则值；已写入正式库的新不可变建议为 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138% / rule_ai`。旧 `$2.32 → $1.85` 仅保留为历史证据，不再是当前建议。
-- 重复建议刷新只允许把“未绑定、未审批、待处理、同当前值”的超限降幅纠正为更保守且不超过 10% 的完整可追溯值；已有对象绑定或人工决议仍不可覆盖。repository 与 AI 对齐定点回归为 `18/18 passed`。
-- 正式“建议与审批”不再无条件显示“对象版本已校验”：authority/id/revision 缺一即显示 `Ads 对象待核验` 和可点击 `核验 Ads 对象`。该动作只读发现当前关键词与竞价、CAS 绑定本地证据，再重新分析形成带 authority 的新建议；不会批准或执行广告。
-- 为减少无效等待，当前建议已经是关键词、降价且降幅不超过 10% 时，核验流程直接进入 Ads 对象发现，不再先额外调用一次 AI；只有候选不安全时才刷新分析。决策工作区聚焦测试 `20/20 passed`。
-- 最新正式库安全计数仍为 `verified_ad_entity_authority=0 / approval_tasks=0 / ad_execution_batches=0 / ad_execution_jobs=0 / ad_execution_evidence=0`。当用户解除动态测试禁令后，恢复顺序是：直接启动正式应用、恢复 Ads 连接、点击一次 `核验 Ads 对象` 并取得唯一回读；随后才可向操作者展示具体对象、当前值、目标值并请求该条专属批准。
-- 前一次 Playwright 启动把应用 stdout 绑定到测试管道，管道退出后触发 `EPIPE` 并把 Ads 状态降为 `attention_required / VISIBLE_BROWSER_CLOSED`；这不是 8/8 或业务页回退。后续只允许直接启动正式 EXE，不再用 Playwright 启动正式连接，也不重复跑登录验收。
+- 本轮不是文案性改名：策略范围、关键词证据、Grant 签发与执行工作台都改为依赖同一条当前店铺真实权限链。策略创建、更新、启用和 Grant 签发均在 `IMMEDIATE` 事务中重新校验当前 completed import、绑定报表快照、最新 Stage5 修订及需要时的当前 Stage6 Ads 身份；旧名称 token、过期会话或缺失证据一律失败关闭。
+- 广告对象范围不再靠名称授权：活动和广告组使用 `adsAccountId/campaignId/adGroupId` 的规范 token；同名不同 ID 保持为不同选项，普通界面只显示中文序号和 `活动 > 广告组` 路径。缺少当前规范身份时仍可保留店铺/产品/关键词只读范围，但不会投影活动或广告组权限。
+- 关键词稳定对象现在把 `match_type` 纳入聚合键、对象键和稳定路径，精确/广泛匹配不再串线；缺少匹配方式、来源行数不等于 1、隔离行、旧导入、旧 Stage5、旧证明或旧会话均不能成为执行证据。最新完成导入以 `completed_at/created_at/run_id` 确定性排序。
+- 执行工作台固定使用操作者选择的 batch/job/slot，任务标题来自真实运营任务；before/after/reload 证据及进度事件均按同一 store/batch/job/grant 过滤。A→B→A 异步竞态通过 authority key 与单调序号阻断，任何待处理结果在权限变化后都不能写回新上下文。
+- 策略编辑器保持四步路径并显示范围权威状态；首个版本创建后冻结策略范围，最大变更继续硬限制为 10%。分析测试夹具补齐真实 report file、bootstrap policy、evidence seal 和关键词 authority，不通过放宽生产校验换绿。
+- 红→绿事实：执行竞态从 `1 failed / 23 passed` 到 `24/24`；匹配类型首轮从 `2 failed / 17 passed` 到 `19/19`；会话/证明/标签分支从 `3 failed` 到全绿；最新导入三个排序分支从 `3 failed / 25 passed` 到 `28/28`；Grant 会话漂移用例从 `1 failed` 到 `1/1 passed` 且 Grant 表保持 0。
+- 聚焦权限链命令最终为 `10/10` files、`157/157` tests passed。允许范围内的全量单元命令 `pnpm exec vitest run apps packages --reporter=basic --exclude "**/*{integration,e2e,playwright,smoke,launch,build-windows-package,package-ui}*.test.*"` 为 `285/285` files、`3584/3584` tests passed；`scripts/package-scripts.test.mjs` 为 `12/12`，`.skip/.todo/skipIf/context.skip` 命中 0。相对上一轮 3529 条单元基线净增 55 条。
+- 独立只读终审结论为 `NO BLOCKER`：Listing 权威、策略事务门、Grant 重验及 Execution 上下文绑定未发现源码阻断；独立覆盖 `126/126` tests passed，`git diff --check` 通过。
+- 静态 `pnpm run build:win` 七步全部通过，`freshCurrentRun=true`，source native bindings `unchangedExact=true`。Installer SHA-256 `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`；portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`；folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`；Main bundle `1FAF882DA41047EA994B15EF73492BCFEE574A70AEFDBCD0CA8848527038FAB4`。源码与包内 Renderer 精确文本 `s is not defined` 命中均为 0。
+- 构建仍报告 ASAR 未启用和 Electron 默认图标，已作为静态包装风险保留；本轮不为消除警告扩展打包范围。
+- 严格遵守用户禁令：未启动或操控应用、浏览器、桌面，未运行 typecheck、业务 smoke、Package UI、ZIP 真启动或真实 Ads；也没有执行广告写入。静态构建不等于运行态验收，当前状态继续是 `APP_NEEDS_WORK / INTERNAL NON_READY`，不能标记 `APP_READY`。
+- 禁令下尚未闭合的是：typecheck、当前包 Package UI 100%/125%/wide、folder ZIP 真启动、7 类业务 smoke、正式库前后只读零写入复核，以及 Task 8B 对唯一、当前、≤10% 且经单条人工批准的 `lower_bid` 做一次写入和刷新回读。这些不是本轮源码阻断，恢复条件记录于 `BLOCKED.md`。
 
 ## 历史：2026-08-26 v1.5.0 Package UI 三档验证轨迹
 

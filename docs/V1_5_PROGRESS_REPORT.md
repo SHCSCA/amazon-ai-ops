@@ -2,15 +2,15 @@
 
 Date: 2026-08-26
 
-## Current v1.5.1 source checkpoint
+## Current v1.5.1 static Windows checkpoint
 
-- Version is `1.5.1`; delivery remains `APP_NEEDS_WORK / INTERNAL NON_READY` until a fresh Windows package and evidence lineage pass.
-- Latest recorded formal business state is 8/8 collection/import (`8 files / 1937 metrics / 8 reconciliations`) with an enabled policy, active Mission and draft experiment. The old `5 downloaded / imports=0` checkpoint is historical.
-- UNKNOWN execution has a real Main-owned, read-only double reconciliation path with two observations/screenshots, stable identity validation and separate `READBACK` evidence; it never retries the original write or mutates the original `unknown` result.
-- Causal memory now rebuilds and searches a current-store index and downloads the current US/USD timeline as JSON. Mission/experiment hard delete and execution skip were removed from the product contract; archive/restore, serial UNKNOWN stop and the policy runtime kill switch remain.
-- Full source unit verification passed `285/285` files and `3529/3529` tests with zero committed skip/todo declarations.
-- `1.5.1` has not yet run typecheck, build, business smoke, Package UI, folder-ZIP launch or real Ads write/readback. The passing `1.5.0` `operator-core-20260826-91` manifest is a historical package baseline only.
-- Task 8B still requires a unique current-object readback and exact human approval for the recorded `$2.32 -> $2.09 / -9.9138%` candidate before one real write and reload readback.
+- Version is `1.5.1`; delivery remains `APP_NEEDS_WORK / INTERNAL NON_READY` until current-package runtime evidence passes.
+- Policy create/update/enable and MissionGrant issuance now revalidate exact current completed-import evidence, the latest Stage5 revision, and required current Stage6 identity/session in one transaction. Keyword identity includes `match_type`; canonical campaign/ad-group scope uses IDs internally and hides them in ordinary UI.
+- Execution batch/job/slot, before/after/reload evidence and progress events are exact-context bound; authority changes discard stale async returns, including A→B→A races.
+- Focused authority verification passed `157/157`; the allowed full unit gate passed `285/285` files and `3584/3584` tests; package script contracts passed `12/12`; no committed skip/todo declarations exist. Independent review found `NO BLOCKER` and passed `126/126` tests.
+- Static `pnpm run build:win` passed seven steps with current installer `444802A1...FEB956`, portable `637E7CC1...355A1D`, folder ZIP `CF1A80BC...7C534`, and Main bundle `1FAF882D...8FAB4`. Source and packaged Renderer have zero exact `s is not defined` matches.
+- The user prohibited typecheck, business smoke, Package UI, folder-ZIP launch, current-package formal-DB pre/post verification, app/browser/desktop control and real Ads validation. The passing `1.5.0` `operator-core-20260826-91` manifest is historical and cannot credit this package.
+- Task 8B still requires a unique current-object/bid readback, a current `lower_bid` within 10%, exact human approval, one write and reload readback. No Ads write was performed in this round.
 
 ## Historical 2026-08-04 Mission Control candidate
 

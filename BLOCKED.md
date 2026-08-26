@@ -2,10 +2,12 @@
 
 ## 当前：2026-08-26 v1.5.1 投产门
 
-- 无单元测试阻断：`285/285` test files、`3529/3529` tests passed，版本/交付脚本契约另为 `12/12 passed`，源码测试中没有 `.skip/.todo/skipIf/context.skip`。此前 `SAFETY_STATE_UNKNOWN` 断言遗漏中文 `message` 的矛盾已通过补齐精确期望关闭，没有删除原因或放宽安全门。
-- 用户明确禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动和真实 Ads 动态测试，因此本轮没有当前包运行态证据；这是当前验收范围限制，不是源码单元功能阻断。在该限制解除并完成动态验收前，仍不得据此标记 `APP_READY`。
-- `1.5.1` 因此尚无当前 EXE、ZIP、SHA-256、Package UI manifest 或 readiness；最近通过的 `operator-core-20260826-91` 属于 `1.5.0` 历史包，不能提供新版本信用。
-- Task 8B 仍缺运行态事实：最新记录存在 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138%` 安全候选，但稳定 Ads authority/id/revision、单条人工批准和 Ads 写入/刷新回读仍为 0。恢复时先唯一回读当前对象和值，再展示完整路径、当前值、目标值、降幅、证据日期和版本取得专属批准；任何漂移都使候选失效。
+- 源码与单元链无已知阻断：聚焦权限链 `157/157`、允许范围内全量单元 `285/285` files 与 `3584/3584` tests、交付脚本 `12/12` 均通过；源码测试没有 `.skip/.todo/skipIf/context.skip`。独立终审为 `NO BLOCKER`。
+- `1.5.1` 静态 Windows 候选已生成：installer `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`、portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`、folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`。`build:win` 七步通过，包内与源码 `s is not defined` 均为 0。旧中间哈希 `60304ED...`、`B4E50C...`、`C0FD11...` 已被本候选取代，不得引用。
+- 用户禁令仍禁止启动或操控应用、浏览器、桌面，以及动态 smoke、Package UI、ZIP 真启动和真实 Ads；本轮也未运行 typecheck。因此当前候选没有与这些新哈希绑定的运行态 manifest，状态必须保持 `APP_NEEDS_WORK / INTERNAL NON_READY`，不能标记 `APP_READY`。这是验收边界阻断，不是源码缺陷。
+- 待解除禁令后才可执行的运行态门：Package UI 100%/125%/wide、folder ZIP 真启动、连接/采集/策略/运营任务/经营实验/弹窗/按钮 7 类业务 smoke，以及正式库前后只读零写入复核。不得用静态构建或历史 `1.5.0` 的 `operator-core-20260826-91` 代替。
+- Task 8B 仍缺当前运行态事实：必须先唯一回读当前 Ads 对象、身份修订和竞价，确认建议仍为不超过 10% 的 `lower_bid`，向操作者展示完整路径、当前/目标值、降幅、证据日期和版本并取得该条专属批准，才允许一次写入与刷新回读。任何对象、会话、导入或竞价漂移都使候选失效；本轮广告写入为 0。
+- 静态包装风险：构建警告 ASAR 未启用且使用 Electron 默认图标。它们未阻断本轮编译，但在最终生产签收前应单独决定是否纳入包装加固；本轮未越界修改。
 
 ## 历史：2026-08-26 Ads 对象回读准备记录
 

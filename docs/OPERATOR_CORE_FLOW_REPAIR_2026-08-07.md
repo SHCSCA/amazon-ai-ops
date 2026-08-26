@@ -1,21 +1,16 @@
 # Operator Core Flow Repair — 2026-08-07
 
-## 2026-08-26 v1.5.1 单元功能补齐：不再以文案掩盖“部分可用”
+## 2026-08-26 v1.5.1 权限链修复与静态 Windows 候选
 
-- 版本权威已统一为 `1.5.1`：root/desktop package、Main 运行时、ZIP 默认路径和活跃 v1.5 证据门不再各自硬编码旧版本。
-- 工作区可用性继续按全部能力判定；任何保留动作处于 `BLOCKED` 时仍显示“部分可用”。只有全部动作均有原生实现或受控生产适配时才判定可用。
-- 广告执行 `UNKNOWN` 已接入 Main/IPC/Preload/Renderer 的真实只读双次对账：同店铺、同对象在刷新前后分别读取和截图，稳定校验后分类为目标值、原值、漂移或仍未知；不点击保存、不重试原执行、不改写原 `unknown` 状态，另追加 `READBACK` 因果事件与证据引用。
-- 因果记忆已实现当前店铺搜索索引重建及 JSON 下载。索引拒绝跨店记录，搜索和导出均使用真实当前店铺事件，不是界面占位反馈。
-- 与安全产品模型冲突的运营任务/经营实验硬删除、队列跳过和重复急停伪能力已移除；任务和实验继续使用归档/恢复，真实策略急停入口继续保留。
-- 全 provider ready 的投影中，22 个标准工作区视图及所有保留动作均无 `BLOCKED`。最终单元回归为 `285/285` files、`3529/3529` tests passed；无 `.skip/.todo/skipIf/context.skip`。
-- 用户本阶段禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动及真实 Ads 动态测试。因此这里证明的是实现及单元链完整，不作为当前 Windows 包或 `APP_READY` 的运行态证明。
-
-## 2026-08-26 当前结论：v1.5.1 源码单元门已闭合，动态交付与 Task 8B 待闭合
-
-- 正式库只读现场证据已替代旧快照：最新作业 `completed`，最新导入 `8 files / 1937 metrics / 8 reconciliations`；enabled 策略、active 运营任务和 draft 经营实验均存在。
-- v1.5.1 已实现 UNKNOWN 双次只读对账、当前店铺因果记忆索引/导出、可逆的任务/实验归档以及无跳过的串行执行门；单元回归为 `285/285` files、`3529/3529` tests passed，版本/交付脚本契约另为 `12/12 passed`，无 skip/todo 声明。
-- `1.5.0` Package UI `operator-core-20260826-91` 三档通过只作为历史基线。用户当前禁止应用、浏览器、smoke、typecheck、build、Package UI、ZIP 启动及真实 Ads 动态测试，因此 `1.5.1` 还没有 EXE/ZIP/hash/manifest/readiness 证据，不得标记 `APP_READY`。
-- Task 8B 最新记录候选为 `back massager / U07-1P-精准 / 精准 / $2.32 → $2.09 / -9.9138%`，但当前仍为 authority=0、approval=0、Ads execution=0。解除动态禁令后必须先唯一回读当前对象与竞价，再展示路径、当前/目标值、降幅、证据日期和版本，取得该单条专属批准后才可一次写入与刷新回读；任何漂移都使候选失效。
+- 策略创建、更新、启用及 Grant 签发现在共享同一套生产权限校验：当前店铺、最新完成导入、精确绑定的非隔离报表快照、最新 Stage5 修订，以及活动/广告组范围所需的当前 Stage6 身份与会话代次。每次签发 Grant 都在同一 `IMMEDIATE` 事务内重验，旧 token、旧导入、旧证明或会话漂移不能沿用。
+- 策略对象范围由真实规范身份驱动：活动 token 绑定 `adsAccountId/campaignId`，广告组 token 再绑定 `adGroupId`；同名不同 ID 不合并，普通界面隐藏内部 ID。缺少当前规范身份时不提供活动或广告组授权范围。
+- 关键词 Listing 权威把 `match_type` 纳入 SQL 聚合、稳定对象键和路径，且要求来源行数精确为 1。精确/广泛匹配、不同 completed run、Stage5/Stage6 修订、证明哈希和当前会话均失败关闭，不再以名称或任意历史行替代真实证据。
+- 执行工作台把选择的 batch/job/slot 与 before/after/reload 三段证据、进度事件和 Grant 精确绑定；A→B→A 的异步返回用 authority key 和单调序号丢弃，权限切换后旧结果不能写入新上下文。
+- 红→绿关键证据包括：执行竞态 `1 failed / 23 passed → 24/24`；匹配类型 `2 failed / 17 passed → 19/19`；会话/证明/标签 3 个红测转绿；最新导入排序 `3 failed / 25 passed → 28/28`；Grant 会话漂移 `1 failed → 1/1 passed` 且没有落 Grant。
+- 最终聚焦权限链为 `10/10` files、`157/157` tests；允许范围内全量单元为 `285/285` files、`3584/3584` tests；交付脚本为 `12/12`，没有 `.skip/.todo/skipIf/context.skip`。独立只读终审为 `NO BLOCKER`，另跑 `126/126` tests 并通过 `git diff --check`。
+- 静态 `pnpm run build:win` 七步通过且 `freshCurrentRun=true`。Installer SHA-256 `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`；portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`；folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`；Main bundle `1FAF882DA41047EA994B15EF73492BCFEE574A70AEFDBCD0CA8848527038FAB4`。源码与包内 Renderer 的 `s is not defined` 精确命中均为 0。
+- 本轮没有启动或操控应用、浏览器、桌面，没有运行 typecheck、业务 smoke、Package UI、ZIP 真启动或真实 Ads，也没有发生广告写入。ASAR 未启用与 Electron 默认图标作为静态包装风险保留。
+- 因用户动态验收禁令，当前结论是“源码权限链和静态 Windows 候选完成”，不是 `APP_READY`。状态保持 `APP_NEEDS_WORK / INTERNAL NON_READY`；剩余门为 typecheck、当前哈希绑定的 Package UI 100%/125%/wide、folder ZIP 真启动、7 类业务 smoke、正式库前后只读零写入复核，以及 Task 8B 对当前稳定且经单条人工批准的 `lower_bid` 做一次写入和刷新回读。
 
 ## 历史：2026-08-26 v1.5.0 Package UI 三档验证轨迹
 

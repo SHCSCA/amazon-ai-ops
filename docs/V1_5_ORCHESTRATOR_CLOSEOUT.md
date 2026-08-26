@@ -1,6 +1,6 @@
 # v1.5 Orchestrator Closeout
 
-Date: 2026-06-10
+Date: 2026-08-26
 
 ## Objective
 
@@ -17,7 +17,15 @@ This closeout followed the repository's `.codex/agents/agents-orchestrator.toml`
 
 Earlier delivery work also used orchestrator/product/UX/QA roles to reject premature READY claims until live Lingxing full-8 collection, Listing read, DeepSeek, Listing AI, ad AI explanation, and real ad readback evidence existed.
 
-## Current 2026-07-17 Status
+## Current 2026-08-26 Status
+
+The v1.5.1 source and static Windows candidate now bind policy scope, keyword evidence, MissionGrant issuance and execution context to the same current-store authority chain. Exact completed-import evidence, latest Stage5 revision, canonical Stage6 identity/session where required, keyword `match_type`, proof hash and source-row cardinality all fail closed when stale or ambiguous. Execution evidence and progress remain bound to the selected store/batch/job/grant, and authority changes discard stale async results.
+
+Focused authority verification passed 157/157; the allowed full unit gate passed 285/285 files and 3584/3584 tests; package script contracts passed 12/12. An independent read-only reviewer found no source blocker and passed 126/126 additional tests. Static `pnpm run build:win` passed all seven steps. Current SHA-256 values are installer `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`, portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`, folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`, and Main bundle `1FAF882DA41047EA994B15EF73492BCFEE574A70AEFDBCD0CA8848527038FAB4`.
+
+This is not an `APP_READY` closeout. The user prohibits typecheck, business smoke, Package UI, ZIP launch, current-package formal-DB pre/post verification, app/browser/desktop control and real Ads testing. Current-package runtime evidence and Task 8B write/reload proof therefore remain blocked; no Ads write occurred. ASAR-disabled and default-Electron-icon warnings remain recorded static packaging risks.
+
+## Historical 2026-07-17 Status
 
 The current external-security P1 candidate closes the three previous out-of-gate P1 findings. Main-window `will-navigate` and `will-redirect` accept only the exact development or packaged renderer document; development behavior also requires `!app.isPackaged`. Child-window requests are denied inside the app and only userinfo-free `http(s)` targets may be handed to `shell.openExternal`. Saved Lingxing passwords are resolved only in Electron Main; the Renderer receives non-secret status/username availability and keeps its password input empty. Legacy plaintext settings migrate transactionally into `safeStorage`, while unavailable, corrupt, and failed migration paths require safe re-entry without returning the secret to the UI. Login status distinguishes ready/warning/blocked/typed/pending paths and duplicate Enter/button submission is locked.
 
