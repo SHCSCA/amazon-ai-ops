@@ -11,6 +11,7 @@
 - 修复已进入新 Windows 包：七步构建 generatedAt `2026-08-26T01:28:30.288Z`、全部 status 0；installer `8DE17BB7...C10D`、portable `C8B33E6...3063`、folder ZIP `5A072731...4F82`、app content `A86E1AA2...B963`。新 ZIP 真解压启动通过，证据 `output/codex-evidence/folder-zip-launch-smoke-1787707736463.json`。
 - 全新 `operator-core-20260826-85` 只含正式库 readonly online backup（1874/1874 pages、logical SHA `16642C58...EBF2`），integrity/query_only/ACL/authority 均通过。当前仍为 `APP_NEEDS_WORK / NON_READY`，直到该新谱系 Package UI 三档通过；Task 8B 仍需稳定对象、≤10% 且经具体批准的候选。
 - `-85` 已真实启动并稳定显示首档连接工作台，但 60 秒内未检测到操作者提交，故严格以 `runs=0 / RUN_FAILED` 关闭；manifest `.../operator-core-20260826-85/manifests/2026-08-26T01-33-07-545Z-...json` 证明 protected DB unchanged。官方 inspector 返回 `RESUME_SAFE / violations=[]` 并生成单次 receipt `AF93F3B...4C6A3.json`；下次只续跑同一谱系，不重建或空开新窗口。
+- 决策页修复、回归断言和状态文档已选择性提交 `3420e00a` 并推送到 `origin/master`；本地产物、证据输出、Profile 与正式库没有进入 Git。
 
 ## 2026-08-25 最新状态：新业务日 8/8 与真实 AI 已闭合，Task 8B 安全阻断
 

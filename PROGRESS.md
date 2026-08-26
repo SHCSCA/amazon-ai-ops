@@ -14,6 +14,7 @@
 - 全新 `operator-core-20260826-85` 已准备：Profile 仅含正式库 readonly online backup（1874/1874 pages、raw/logical SHA-256 `16642C58384461A0AFAB3D11A5A39FA52DF9918CD89CCC7F2B5343517A34EBF2`），integrity=ok、query_only=1、三主体精确 ACL；authority receipt 为 `SELECTED_SCHEMA_READY / authorityDatabaseMutated=false / adsExecutionInvoked=false`。下一步只启动该新谱系首档验证。
 - `-85` 已按用户“启动验证”实际打开新包并稳定进入 `100-compact` operator preparation；60 秒内 runner 未检测到本次提交，故按既定时限安全停止为 `runs=0 / RUN_FAILED`，没有进入 ERP/Ads 连接，也没有重新执行决策页合同。失败 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-85/manifests/2026-08-26T01-33-07-545Z-2026-08-26T01-33-07-545Z-965cfb32-d26c-4713-ab89-6861a8403e92.json`，protected DB unchanged、目标进程已清理为 0。
 - 官方只读 inspector 随后返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact`，一次性 receipt 为 `output/codex-evidence/package-ui-evidence/resume-intents/operator-core-20260826-85/AF93F3B794C6A6B8038BBCA725311CD7309E7814B5DB2A2FD19B29F9DE24C6A3.json`。正式库再以 readonly/query_only 回读：approval tasks 与 Ads 五表仍全 0；主文件 SHA/大小/mtime 前后不变，SHA-256 仍为 `A12AC801...D3B4`。
+- 本轮决策页修复、两条新增断言与三份状态文档已选择性提交为 `3420e00a` 并推送成功：`029bcbc2..3420e00a master -> master`；`output/`、隔离 Profile、正式库、报表、EXE/ZIP 与既有未跟踪目录均未提交。
 
 ## 当前：2026-08-25 最新业务日 8/8 已真实采集并导入
 
