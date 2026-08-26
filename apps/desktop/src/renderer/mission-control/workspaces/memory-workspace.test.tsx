@@ -79,6 +79,26 @@ describe('MemoryWorkspace', () => {
     expect(copy).not.toMatch(/Renderer|Main(?:-only)?|UNKNOWN|Before|After|Reload|CAUSAL-|\bMission\b/);
   });
 
+  it('translates stored policy runtime authority values before they reach ordinary copy', () => {
+    const manual = memoryOperatorCopy('Policy runtime authority manual_approval:closed');
+    const automatic = memoryOperatorCopy('Policy runtime authority policy_auto:closed');
+
+    expect(manual).toContain('策略运行状态：人工审批 · 安全门正常');
+    expect(automatic).toContain('策略运行状态：策略内自动 · 安全门正常');
+    expect(`${manual} ${automatic}`).not.toMatch(/Policy runtime authority|manual_approval|policy_auto|\bclosed\b/i);
+  });
+
+  it('translates database-split policy runtime title and signal fields before rendering', () => {
+    const title = memoryOperatorCopy('Policy runtime authority');
+    const manualSignal = memoryOperatorCopy('manual_approval:closed');
+    const automaticSignal = memoryOperatorCopy('policy_auto:closed');
+
+    expect(title).toBe('策略运行状态');
+    expect(manualSignal).toBe('人工审批 · 安全门正常');
+    expect(automaticSignal).toBe('策略内自动 · 安全门正常');
+    expect(`${title} ${manualSignal} ${automaticSignal}`).not.toMatch(/Policy runtime authority|manual_approval|policy_auto|\bclosed\b/i);
+  });
+
   it('renders the full six-stage append-only memory surface', () => {
     const suite = createPreviewExperimentMemoryDomainSuite();
     const markup = renderToStaticMarkup(<MemoryWorkspace

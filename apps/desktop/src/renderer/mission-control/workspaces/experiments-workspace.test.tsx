@@ -68,6 +68,18 @@ describe('ExperimentsWorkspace', () => {
     expect(css).toMatch(/\.experiment-complete-dialog\s*>\s*label\s*\{[^}]*overflow-y:\s*auto;/s);
   });
 
+  it('leaves long diagnostic variable JSON to the page scroll owner', () => {
+    const css = readFileSync(new URL('./experiments-workspace.css', import.meta.url), 'utf8');
+    const rules = [...css.matchAll(/\.experiment-variables pre\s*\{([^}]*)\}/g)]
+      .map((match) => match[1]);
+
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.join('\n')).toContain('overflow: visible');
+    expect(rules.join('\n')).toContain('max-height: none');
+    expect(rules.join('\n')).not.toMatch(/overflow:\s*auto/);
+    expect(rules.join('\n')).not.toMatch(/max-height:\s*64px/);
+  });
+
   it('renders the complete US/USD experiment control surface', () => {
     const suite = createPreviewExperimentMemoryDomainSuite();
     const markup = renderToStaticMarkup(<ExperimentsWorkspace

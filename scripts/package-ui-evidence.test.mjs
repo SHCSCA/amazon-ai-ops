@@ -1902,6 +1902,31 @@ describe('saved-login navigation retry contract', () => {
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
   });
 
+  it('accepts a bounded retry handoff only when preparation and authorization phases strictly alternate', () => {
+    const run = validRun(EXPECTED_PACKAGE_UI_SCALES[0]);
+    applyInteractiveOperatorHandoff(run);
+    const retryTransitions = [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-17T06:00:00.210Z' },
+      { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-17T06:00:00.300Z' },
+      { elapsedMs: 120, phase: 'preparation', startedAt: '2026-07-17T06:00:00.330Z' },
+      { elapsedMs: 150, phase: 'authorization', startedAt: '2026-07-17T06:00:00.360Z' },
+    ];
+    run.session.operatorHandoff.phaseTransitions = structuredClone(retryTransitions);
+    run.diagnostics.login.operatorHandoff.phaseTransitions = structuredClone(retryTransitions);
+
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(true);
+
+    const repeatedPhase = structuredClone(run);
+    repeatedPhase.session.operatorHandoff.phaseTransitions[2].phase = 'authorization';
+    repeatedPhase.diagnostics.login.operatorHandoff.phaseTransitions[2].phase = 'authorization';
+    expect(validRunDiagnostics(repeatedPhase.diagnostics, repeatedPhase)).toBe(false);
+
+    const overlongRetryPhase = structuredClone(run);
+    overlongRetryPhase.session.operatorHandoff.phaseTransitions[2].elapsedMs = 600_091;
+    overlongRetryPhase.diagnostics.login.operatorHandoff.phaseTransitions[2].elapsedMs = 600_091;
+    expect(validRunDiagnostics(overlongRetryPhase.diagnostics, overlongRetryPhase)).toBe(false);
+  });
+
   it('requires typed-and-saved identity proof for the first handoff and a bounded saved-session continuation afterwards', () => {
     expect(INTERACTIVE_LOGIN_CONTRACT).toEqual(expect.objectContaining({
       authorizationStartSignal: 'durable-login-attempt-sequence-or-visible-login-submit-aria-busy-or-authenticated-workspace',

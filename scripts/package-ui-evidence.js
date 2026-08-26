@@ -1460,42 +1460,37 @@ function validRunDiagnostics(diagnostics, run = {}) {
   const operatorHandoffPhaseTransitions = Array.isArray(operatorHandoff?.phaseTransitions)
     ? operatorHandoff.phaseTransitions
     : [];
-  const operatorPreparationStartedAt = Date.parse(
-    operatorHandoffPhaseTransitions[0]?.startedAt,
-  );
-  const browserAuthorizationStartedAt = Date.parse(
-    operatorHandoffPhaseTransitions[1]?.startedAt,
-  );
-  const operatorPreparationElapsedMs = Number(
-    operatorHandoffPhaseTransitions[0]?.elapsedMs,
-  );
-  const browserAuthorizationElapsedMs = Number(
-    operatorHandoffPhaseTransitions[1]?.elapsedMs,
-  );
   const operatorHandoffElapsedMs = Number(operatorHandoff?.elapsedMs);
+  const alternatingHandoffPhasesValid = operatorHandoffPhaseTransitions.length >= 2
+    && operatorHandoffPhaseTransitions.length % 2 === 0
+    && operatorHandoffPhaseTransitions.every((transition, index) => {
+      const elapsedMs = Number(transition?.elapsedMs);
+      const previousElapsedMs = index === 0
+        ? 0
+        : Number(operatorHandoffPhaseTransitions[index - 1]?.elapsedMs);
+      const nextElapsedMs = index === operatorHandoffPhaseTransitions.length - 1
+        ? operatorHandoffElapsedMs
+        : Number(operatorHandoffPhaseTransitions[index + 1]?.elapsedMs);
+      const expectedPhase = index % 2 === 0 ? 'preparation' : 'authorization';
+      return transition?.phase === expectedPhase
+        && Number.isFinite(Date.parse(transition?.startedAt))
+        && Number.isFinite(elapsedMs)
+        && elapsedMs >= previousElapsedMs
+        && nextElapsedMs >= elapsedMs
+        && nextElapsedMs - elapsedMs <= operatorHandoff?.phaseTimeoutMs;
+    });
   const operatorHandoffPhasesValid = Number.isInteger(operatorHandoff?.phaseTimeoutMs)
     && operatorHandoff.phaseTimeoutMs >= 60_000
     && operatorHandoff.phaseTimeoutMs <= 900_000
     && operatorHandoff?.maximumTotalTimeoutMs === operatorHandoff.phaseTimeoutMs * 2
     && operatorHandoff?.finalPhase === 'authorization'
-    && operatorHandoffPhaseTransitions.length === 2
-    && operatorHandoffPhaseTransitions[0]?.phase === 'preparation'
-    && operatorHandoffPhaseTransitions[1]?.phase === 'authorization'
     && operatorHandoff?.durationClock === 'performance.now'
-    && typeof operatorHandoffPhaseTransitions[0]?.elapsedMs === 'number'
-    && typeof operatorHandoffPhaseTransitions[1]?.elapsedMs === 'number'
     && typeof operatorHandoff?.elapsedMs === 'number'
-    && operatorPreparationElapsedMs === 0
-    && Number.isFinite(browserAuthorizationElapsedMs)
-    && browserAuthorizationElapsedMs >= 0
-    && browserAuthorizationElapsedMs <= operatorHandoff.phaseTimeoutMs
     && Number.isFinite(operatorHandoffElapsedMs)
-    && operatorHandoffElapsedMs >= browserAuthorizationElapsedMs
-    && operatorHandoffElapsedMs - browserAuthorizationElapsedMs
-      <= operatorHandoff.phaseTimeoutMs
+    && Number(operatorHandoffPhaseTransitions[0]?.elapsedMs) === 0
+    && alternatingHandoffPhasesValid
     && operatorHandoffElapsedMs <= operatorHandoff.maximumTotalTimeoutMs
-    && Number.isFinite(operatorPreparationStartedAt)
-    && Number.isFinite(browserAuthorizationStartedAt);
+    && operatorHandoffElapsedMs >= 0;
   const operatorHandoffValid = session?.mode === 'interactive-operator-login'
     ? (
       operatorHandoff?.kind === 'visible-user-handoff'

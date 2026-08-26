@@ -1,6 +1,20 @@
 # BLOCKED — 2026-08-07
 
-## 当前：2026-08-26 登录与连接已通过，Package UI 等待决策页修复进入新包
+## 当前：2026-08-26 Package UI 三档已正式通过，仅 Task 8B 无合格候选
+
+- `operator-core-20260826-86` 已由本次真实凭证提交进入 `browser authorization`，ERP/Ads 与店铺识别完成，runner 能继续到 `experiments/ledger`；因此 Ads 登录、侧栏导航、弹窗前置处理与店铺匹配不再是当前 blocker。
+- `-86` 的当前实包 blocker 是实验变量 JSON 两个 64px `<pre>` 嵌套滚动区；该缺口已形成 `1 RED → 1 GREEN`、完整实验工作区 `11/11`、typecheck、7 类业务 smoke 与 Windows 七步重建全绿，未放宽验收脚本或安全门。
+- 修复现已进入 app content `9B293852...D786` 与 folder ZIP `14195C36...7AB9`。`-87` 因 Windows 锁屏被主动安全停止，未尝试穿过锁屏；强停记录不可续跑，已废弃而不伪造 manifest。
+- 全新 `operator-core-20260826-88` Profile/authority 已准备且尚未启动。当前唯一外部恢复条件是操作者解锁 Windows 并回复“已解锁”；随后只启动 `-88`，不重建、不复用 `-87`。
+- 第 3 次连续恢复审计仍确认 `LockApp` 与 `LogonUI` 位于当前会话，目标应用、runner 与 `-88` Profile Chrome 均为 0；因此没有空开 `-88`。不依赖解锁的 folder ZIP 真启动、正式库零写入与包内 CSS 谱系均已补齐，同一锁屏条件已达到三次 blocked 门槛，目标现正式暂停。解除方式：操作者解锁 Windows 后回复“已解锁”；随后只启动尚未消费的 `-88`，不重建、不复用 `-87`。
+- 锁屏阻断已解除，`-88` 已真实提交并越过 ERP/Ads 授权；当前失败已收窄为 `memory/timeline` 普通界面裸露策略运行技术值。该文案缺口已完成 `1 RED → 1 GREEN`，但尚未进入重建 Windows 包及新的 Package UI 三档 manifest，因此总体仍为 `APP_NEEDS_WORK / NON_READY`。
+- 文案修复后的直接门已通过：记忆工作区 `8/8`、desktop typecheck、production Renderer 与 7 类 business UI smoke 均为绿。当前只剩把该修复重建进 Windows 包并用全新谱系完成 Package UI 100%/125%/wide；旧 `-88` 只保留为失败证据，不得 resume 成新包通过。
+- `operator-core-20260826-89` 已再次以本次可见提交越过 ERP/Ads 授权，并在应用内一次“重试 Ads”后于 runner 中完成 `operator-established-lingxing-connection-and-session`；因此登录与 Ads 识别不是当前 blocker。该谱系仍在 `memory/timeline` 失败，是因为正式数据把技术标题与状态拆为两列，旧转换只覆盖拼接句子。
+- 分列结构已完成真实形态 `1 RED → 1 GREEN`，完整记忆工作区 `9/9`、desktop typecheck 均通过；当前 Package UI blocker 只剩“源码修复尚未进入重建 Windows 包和全新 100%/125%/wide manifest”。`-89` 仅作为失败证据，不得续跑或改写为通过。
+- 上述源码 blocker 已进入 app content `71DB2426...06C9`，Windows 七步和新 folder ZIP 真启动均通过；因此当前唯一 Package UI blocker 已收窄为“全新谱系尚未完成 100%/125%/wide manifest”。不再重复代码修改或旧 run group 重试。
+- `operator-core-20260826-90` 实际三档均 `phase=completed / failure=null / consoleErrors=0 / pageErrors=0`，正式库 unchanged；最终 manifest 失败仅因验收器把合法的 Ads 导航重试四段序列误判为坏诊断。该 runner 缺口已完成 `1 RED → 1 GREEN`，并以连续同相位/单段超时反向断言保持 fail-closed；完整 runner `210/210 passed`，对 `-90` 三档原始诊断反算均通过。runner 合同已变化，不能把旧 manifest 改名为通过；当前仅待全新 `-91` 生成与当前 runner 合同绑定的通过 manifest。
+- `operator-core-20260826-91` 已关闭 Package UI blocker：100%/125%/wide 全部 passed、diagnostics completed、console/page error=0、violations=0；protected DB 物理与逻辑快照均 unchanged，目标应用/runner 事后进程为 0。通过 manifest 为 `output/codex-evidence/package-ui-evidence/run-groups/operator-core-20260826-91/manifests/2026-08-26T04-14-33-049Z-2026-08-26T04-14-33-049Z-59a17a8c-9ae5-4264-bd96-dc21a43b157c.json`。连接、采集、策略、运营任务、经营实验、弹窗与布局不再列为 blocker。
+- Task 8B 是当前唯一阻断：正式库最新 4 条 `rule_ai / lower_bid` 快照都缺稳定广告对象 authority/id/revision，变化 19.6507%–26.1044% 且超过启用策略 10% 上限；approval tasks=0，Ads 五张执行表全部为 0。恢复条件是重新取得当前稳定广告对象并形成变化不超过 10% 的新建议，再由操作者对具体对象、当前值、目标值单独批准；在此之前不得请求批准或写入。
 
 - `operator-core-20260826-84` 已收到操作者本次手输并完成真实 ERP/Ads 连接；当前不再把登录、保存密码或 Ads 身份识别列为 blocker。
 - 首档正式包失败点已收窄到 `decisions/recommendations` 两项：不必要的详情列嵌套滚动，以及普通界面裸露 `rule-revision/model-revision`。两项源码均已形成独立 `1 RED → 1 GREEN`，安全门、证据原值与审批/回读逻辑未放宽。

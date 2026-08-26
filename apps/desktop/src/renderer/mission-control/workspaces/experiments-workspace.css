@@ -384,7 +384,7 @@
   color: #334155;
   font-size: 11px;
   margin: 8px 0 0;
-  overflow: auto;
+  overflow: visible;
   white-space: pre-wrap;
 }
 
@@ -1023,7 +1023,7 @@
 }
 
 .experiment-variables pre {
-  max-height: 64px;
+  max-height: none;
   margin-top: 4px;
   font-size: 9px;
 }

@@ -84,6 +84,17 @@ export function memoryOperatorCopy(value: string | null | undefined, fallback = 
   const copy = String(value ?? '').trim();
   if (!copy) return fallback;
   return copy
+    .replace(/\bPolicy runtime authority\s+(manual_approval|policy_auto):(closed|open|half_open)\b/gi, (_match, mode: string, state: string) => {
+      const modeLabel = mode.toLowerCase() === 'policy_auto' ? '策略内自动' : '人工审批';
+      const stateLabel = state.toLowerCase() === 'closed' ? '安全门正常' : state.toLowerCase() === 'open' ? '安全门已阻断' : '安全门待复核';
+      return `策略运行状态：${modeLabel} · ${stateLabel}`;
+    })
+    .replace(/\bPolicy runtime authority\b/gi, '策略运行状态')
+    .replace(/\b(manual_approval|policy_auto):(closed|open|half_open)\b/gi, (_match, mode: string, state: string) => {
+      const modeLabel = mode.toLowerCase() === 'policy_auto' ? '策略内自动' : '人工审批';
+      const stateLabel = state.toLowerCase() === 'closed' ? '安全门正常' : state.toLowerCase() === 'open' ? '安全门已阻断' : '安全门待复核';
+      return `${modeLabel} · ${stateLabel}`;
+    })
     .replace(/\b(?:CAUSAL|MISSION|EXPERIMENT|DECISION|ACTION|READBACK|EFFECT|BATCH|EXEC|OBS|METRIC|KW)(?::|-)[A-Z0-9:_-]+\b/gi, '内部标识已隐藏')
     .replace(/Before\s*\/\s*After\s*\/\s*Reload/gi, '操作前 / 操作后 / 刷新后')
     .replace(/Crux Decision/gi, '关键经营决策')
