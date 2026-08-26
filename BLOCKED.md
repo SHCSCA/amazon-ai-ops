@@ -22,6 +22,7 @@
 - 恢复后的同一外部前置现已连续三次复核且未变化：第三次 `-83` receipt 仍存在、无 lease/目标进程，正式库哈希未变，Git 已同步；不存在新的后台代码、测试或文档项可替代首档可见手输。目标再次正式 blocked。解除方式只有用户明确说“启动 Amazon AI Ops 验收”，届时仅启动目标应用并由用户本人输入，执行者不操控其他窗口。
 - 用户已明确触发一次恢复，但 `100-compact` 窗口出现后的 60 秒内仍未检测到提交，执行者按约定立即停止，manifest 为 `runs=0 / RUN_FAILED`；这次没有运行连接链，不能判成 ERP/Ads 失败。正式库与 Ads 零写入门保持不变。官方 inspector 已生成新的 `RESUME_SAFE` 单次 receipt `F037AB10...4CED5.json`；下一次用户需在明确启动后于 60 秒内本人完成输入并点击提交，才能进入 authorization 和后续 125%/wide。
 - 本次未提交后的 fresh blocked 审计已达 3/3：第三次仍是 receipt 完整、目标进程 0、Git 已同步，无法在不读取/代填凭证或操控用户窗口的情况下形成 Package UI 首档证据。目标再次正式 blocked；恢复口令仍为“启动验证”，但用户需已在屏幕前并能在窗口出现后 60 秒内手动提交。
+- 2026-08-26 的新启动暴露 runner identity 导航竞态，现已通过 `1 RED → 1 GREEN`、完整 runner `209/209` 和语法检查修复；因此该代码缺口不再列为 blocker。但 runner 合同变化使 `-83` 谱系失效，必须先建立全新 `-84` Profile/run group，再由用户完成首档手输；在 `-84` 真实通过前 Package UI 仍为唯一未闭合产品门。
 - 历史 `-80` 曾绑定 app content `08390336...4F3A` 并因 60 秒内没有操作者提交而 runs=0 安全关闭；后续 Main 修复已使其 resume receipt 失效。
 - `operator-core-20260825-78` 未进入登录判定即因 runner 启动导航竞态失败，runs=0；这不是账号、ERP 或 Ads 失败。竞态已完成定点红→绿，失败 run group 不复用。
 - 恢复动作：官方只读 inspector 确认 `-83` 为 `RESUME_SAFE` 后，仅续跑该 run group；目标应用窗口稳定后由操作者手输一次。执行者不读取、不代填密码，不操控其他应用。

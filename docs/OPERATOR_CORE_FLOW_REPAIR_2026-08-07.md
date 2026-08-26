@@ -19,6 +19,7 @@
 - 用户要求继续使用电脑后，再次只在后台完成无窗口复核：Git 起始为 `master=c67b01b4=origin/master`，最终 installer/portable/folder ZIP/win-unpacked EXE 的现场哈希保持一致，7 类 business smoke 与 ZIP 真启动证据仍为 passed。正式库以 readonly + `query_only=1` 打开后，approval tasks 与五张 `ad_execution_*` 表仍全为 0，主文件 SHA-256、大小及 mtime 前后不变；`-83` 的单次 resume receipt 未消费。没有启动、点击或操控 Amazon AI Ops、Chrome 或其他桌面应用。
 - 同一无窗口审计直接从正式库完成业务对象矩阵：ERP/Ads provider 均为 ready；最新业务日作业为 completed、8/8 downloaded；最新导入为 completed、8 files、1961 metrics、8 reconciliations；当前店铺存在 enabled 策略版本、active/fact 运营任务和 draft 经营实验。该矩阵证明连接、采集、导入、策略、运营任务、经营实验已经真实落库；剩余唯一产品验收门仍是与当前包绑定的 Package UI 三档通过 manifest。
 - 用户明确“启动验证”后，runner 只启动目标包并进入 `100-compact` preparation；60 秒内没有本次手输提交，故按既定时限主动停止为 `runs=0 / RUN_FAILED`，没有运行连接链，也没有操控其他窗口。正式库 query-only 复核仍为 approval tasks=0、Ads 五表=0、SHA-256 未变。官方只读 inspector 已返回 `RESUME_SAFE / violations=[] / nextProfileId=100-compact` 并生成新的单次 receipt；下一次继续同一 `-83`，不得把此次未提交冒充 Package UI 或登录失败。
+- 2026-08-26 再次启动时，`-83` 在登录 handoff 前复现 identity 阶段导航上下文失效，`runs=0`、protected DB unchanged；不是账号或 ERP/Ads 结果。新增回归先 RED（旧默认三次均遇导航，第四次本可成功）再 GREEN；实现仅把精确导航错误的默认有界重试扩到 20 次，未知错误与显式尝试上限继续 fail-closed。完整 Package UI runner 为 `209/209 passed`、语法检查通过。runner 合同变化后必须使用全新 `operator-core-20260826-84`，旧 `-83` 只保留历史失败证据。
 
 ## 2026-08-24 最新交付状态：五条主业务闭环，Task 8B 因过期建议与授权事实阻断
 

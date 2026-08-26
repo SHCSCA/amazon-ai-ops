@@ -758,6 +758,39 @@ describe('collectElectronIdentity', () => {
     });
   });
 
+  it('keeps the identity read alive when startup navigation outlasts the legacy three-attempt window', async () => {
+    let evaluateCalls = 0;
+    const electronApp = {
+      evaluate: async () => {
+        evaluateCalls += 1;
+        if (evaluateCalls <= 3) {
+          throw new Error('Execution context was destroyed, most likely because of a navigation.');
+        }
+        return {
+          actualExecutablePath: 'D:\\app\\AmazonAIOpsAgent.exe',
+          actualUserDataDir: USER_DATA_DIR,
+          appName: 'Amazon AI Ops Agent',
+          appPath: 'D:\\app\\resources\\app',
+          appVersion: '1.5.0',
+          evidenceMode: 'package-ui',
+          isPackaged: true,
+          requestedUserDataDir: USER_DATA_DIR,
+          resourcesPath: 'D:\\app\\resources',
+        };
+      },
+    };
+
+    const identity = await collectElectronIdentity(electronApp, {
+      title: async () => 'Amazon AI Ops Agent',
+      url: () => 'file:///D:/app/resources/app/dist/renderer/index.html',
+    }, {
+      retryIntervalMs: 0,
+    });
+
+    expect(evaluateCalls).toBe(4);
+    expect(identity.actualUserDataDir).toBe(USER_DATA_DIR);
+  });
+
   it('fails immediately for a non-navigation Electron identity error', async () => {
     let evaluateCalls = 0;
     const electronApp = {

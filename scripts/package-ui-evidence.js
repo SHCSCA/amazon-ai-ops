@@ -10168,7 +10168,7 @@ async function runOverlayChecks(page, runOptions) {
 }
 
 async function collectElectronIdentity(electronApp, page, options = {}) {
-  const maxAttempts = Math.max(1, Number(options.maxAttempts || 3));
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || 20));
   const retryIntervalMs = Math.max(0, Number(options.retryIntervalMs ?? 150));
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
