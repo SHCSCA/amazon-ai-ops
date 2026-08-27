@@ -1463,6 +1463,33 @@ function adsSessionResultFromPageState(pageState: { url: string; title?: string 
   };
 }
 
+function persistClosedBrowserLoginFailure(expectedStoreId: string): void {
+  if (!state.db || !state.storeCoordinator || !state.storeRepo) return;
+  const activeContext = state.storeCoordinator.getActiveStoreContext();
+  if (!activeContext || String(activeContext.storeId) !== expectedStoreId) return;
+  const observedAt = new Date().toISOString();
+  state.db.transaction(() => {
+    state.storeRepo!.saveSessionMetadata({
+      storeId: activeContext.storeId,
+      browserProfileId: activeContext.browserProfileId,
+      provider: 'lingxing',
+      status: 'blocked',
+      sessionGeneration: activeContext.sessionGeneration,
+      observedAt,
+      failureCode: 'LOGIN_FAILED',
+    });
+    state.storeRepo!.saveSessionMetadata({
+      storeId: activeContext.storeId,
+      browserProfileId: activeContext.browserProfileId,
+      provider: 'amazon_ads',
+      status: 'blocked',
+      sessionGeneration: activeContext.sessionGeneration,
+      observedAt,
+      failureCode: 'LOGIN_FAILED',
+    });
+  })();
+}
+
 function clearBrowserLoginState(): void {
   pendingAmazonAdsIdentityConfirmation = null;
   pendingAmazonAdsIdentityRetry = null;
@@ -2646,6 +2673,11 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason);
         clearBrowserLoginState();
+        try {
+          persistClosedBrowserLoginFailure(String(preflightContext.storeId));
+        } catch (sessionError) {
+          cleanupFailures.push(sessionError);
+        }
         try {
           rereadAndPublishActiveStoreAuthority(String(preflightContext.storeId));
         } catch (authorityError) {

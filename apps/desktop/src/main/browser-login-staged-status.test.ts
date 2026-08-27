@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   configuredSessionResetActionVisible,
   configuredSessionResetRequiredFromError,
+  connectionAttemptOperatorCopy,
   connectionOperatorCopy,
+  currentConnectionSessionState,
   loginStatusMessage,
   selectFreshBrowserLoginStoreContext,
 } from '../renderer/App';
@@ -72,6 +74,42 @@ describe('browser login staged ERP and Ads status contract', () => {
       loading: false,
       rememberPassword: true,
     })).toBe('凭证状态异常，请重新输入密码后重试。');
+  });
+
+  it('does not present persisted provider history as a current visible-browser session', () => {
+    expect(currentConnectionSessionState(null)).toEqual({
+      adsSessionConnected: false,
+      erpSessionConnected: false,
+    });
+    expect(currentConnectionSessionState({
+      adsSessionReady: false,
+      erpSessionReady: true,
+    })).toEqual({
+      adsSessionConnected: false,
+      erpSessionConnected: true,
+    });
+    expect(currentConnectionSessionState({
+      adsSessionReady: true,
+      erpSessionReady: true,
+    })).toEqual({
+      adsSessionConnected: true,
+      erpSessionConnected: true,
+    });
+  });
+
+  it('gives a concrete recovery action when an internal connection error cannot be shown', () => {
+    expect(connectionAttemptOperatorCopy(
+      'OPERATOR_VISIBLE_BROWSER_FINAL_IDENTITY_UNPROVEN',
+      { adsSessionConnected: false, erpSessionConnected: false },
+    )).toBe(
+      '本次可见浏览器会话没有建立或已经结束；账户与店铺映射仍保留。请点击“启动当前店铺连接”重新建立 ERP 与 Ads 会话，真实广告执行继续阻断。',
+    );
+    expect(connectionAttemptOperatorCopy(
+      'Main StoreContext Authority mismatch',
+      { adsSessionConnected: false, erpSessionConnected: true },
+    )).toBe(
+      'ERP 当前会话仍可用于只读采集，但 Ads 会话没有建立。请点击“重试 Ads”；若按钮不可用，请重新连接 ERP 与 Ads，真实广告执行继续阻断。',
+    );
   });
 
   it('explains a refreshed store mismatch without naming the internal process', () => {
@@ -328,6 +366,31 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(login).toContain("provider: 'amazon_ads'");
     expect(login).toContain('erpStageCommitted');
     expect(login).toContain("if (!erpStageCommitted)");
+  });
+
+  it('downgrades both persisted provider sessions after a fatal reconnect closes every visible browser', () => {
+    const handler = mainSource.slice(
+      mainSource.indexOf('async function handleBrowserLogin('),
+      mainSource.indexOf('async function performBrowserLoginInUserLane('),
+    );
+    const cleanup = handler.indexOf('const cleanup = await Promise.allSettled([');
+    const clear = handler.indexOf('clearBrowserLoginState();', cleanup);
+    const downgrade = handler.indexOf('persistClosedBrowserLoginFailure(', clear);
+    const republish = handler.indexOf('rereadAndPublishActiveStoreAuthority(', clear);
+
+    expect(cleanup).toBeGreaterThan(-1);
+    expect(clear).toBeGreaterThan(cleanup);
+    expect(downgrade).toBeGreaterThan(clear);
+    expect(republish).toBeGreaterThan(downgrade);
+
+    const persistence = mainSource.slice(
+      mainSource.indexOf('function persistClosedBrowserLoginFailure('),
+      mainSource.indexOf('function clearBrowserLoginState()'),
+    );
+    expect(persistence).toContain("provider: 'lingxing'");
+    expect(persistence).toContain("provider: 'amazon_ads'");
+    expect(persistence.match(/status: 'blocked'/g)).toHaveLength(2);
+    expect(persistence.match(/failureCode: 'LOGIN_FAILED'/g)).toHaveLength(2);
   });
 
   it('restores the verified ERP tab when Ads or download-center recognition fails after the ERP stage', () => {

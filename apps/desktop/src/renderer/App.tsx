@@ -69,6 +69,21 @@ interface LoginSessionInfo {
   credentialPersistence?: BrowserLoginCredentialPersistence;
 }
 
+export function currentConnectionSessionState(
+  loginSession: Readonly<{
+    adsSessionReady?: boolean;
+    erpSessionReady?: boolean;
+  }> | null | undefined,
+): Readonly<{
+  adsSessionConnected: boolean;
+  erpSessionConnected: boolean;
+}> {
+  return Object.freeze({
+    adsSessionConnected: loginSession?.adsSessionReady === true,
+    erpSessionConnected: loginSession?.erpSessionReady === true,
+  });
+}
+
 interface AppState {
   isLoggedIn: boolean;
   currentStore: string;
@@ -511,12 +526,25 @@ const loginStyles: Record<string, React.CSSProperties> = {
   },
 };
 
-const CONNECTION_INTERNAL_OPERATOR_COPY = /\b(?:Mission|Experiment|UNKNOWN|revision|draft|Main|StoreContext|Authority|Profile|manifest|fingerprint|Renderer|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|correction|DECISION|ACTION|READBACK|EFFECT)\b|\bset_keyword_bid\b|\bdry-run\b|\bappend-only\b/i;
+const CONNECTION_INTERNAL_OPERATOR_COPY = /\b(?:Mission|Experiment|UNKNOWN|revision|draft|Main|StoreContext|Authority|Profile|manifest|fingerprint|Renderer|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|correction|DECISION|ACTION|READBACK|EFFECT)\b|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b|\bset_keyword_bid\b|\bdry-run\b|\bappend-only\b/i;
 
 export function connectionOperatorCopy(value: unknown, fallback: string): string {
   const message = typeof value === 'string' ? value.trim() : '';
   if (!message || CONNECTION_INTERNAL_OPERATOR_COPY.test(message)) return fallback;
   return message;
+}
+
+export function connectionAttemptOperatorCopy(
+  value: unknown,
+  session: Readonly<{
+    adsSessionConnected: boolean;
+    erpSessionConnected: boolean;
+  }>,
+): string {
+  const fallback = session.erpSessionConnected
+    ? 'ERP 当前会话仍可用于只读采集，但 Ads 会话没有建立。请点击“重试 Ads”；若按钮不可用，请重新连接 ERP 与 Ads，真实广告执行继续阻断。'
+    : '本次可见浏览器会话没有建立或已经结束；账户与店铺映射仍保留。请点击“启动当前店铺连接”重新建立 ERP 与 Ads 会话，真实广告执行继续阻断。';
+  return connectionOperatorCopy(value, fallback);
 }
 
 export function configuredSessionResetRequiredFromError(error: unknown): boolean {
@@ -910,10 +938,7 @@ function StoreConnectionWorkbench({
     amazonAdsConnection?.externalAccountId
     && amazonAdsConnection.normalizedExternalAccountId,
   );
-  const erpSessionConnected = loginSession?.erpSessionReady === true
-    || lingxingConnection?.session?.status === 'ready';
-  const adsSessionConnected = loginSession?.adsSessionReady === true
-    || amazonAdsConnection?.session?.status === 'ready';
+  const { adsSessionConnected, erpSessionConnected } = currentConnectionSessionState(loginSession);
   const adsIdentityCandidate = loginSession?.adsIdentityCandidate;
   const adsPageVisible = Boolean(loginSession?.adsUrl || loginSession?.adsTitle);
   const adsConfirmationStoreLabel = adsIdentityCandidate?.detectedAccountLabel?.trim()
@@ -1394,7 +1419,10 @@ function StoreConnectionWorkbench({
   );
   const visibleConnectionError = connectionOperatorCopy(
     error,
-    '连接状态异常，请刷新当前店铺后重试；真实广告执行继续阻断。',
+    connectionAttemptOperatorCopy('', {
+      adsSessionConnected,
+      erpSessionConnected,
+    }),
   );
   const visibleSyncWarning = connectionOperatorCopy(
     store.postCommitSyncWarning,

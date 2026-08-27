@@ -1,5 +1,19 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 当前：2026-08-27 Ads 当前会话真值修复（已入新包并由操作者确认）
+
+- 操作者实屏显示“ERP 已连接，Ads 尚未连接 / Ads 已识别 JF-US”，但目标进程下没有项目独立 Chromium。根因是 Renderer 把仓储中的历史 `session.status=ready` 当成当前可见浏览器仍存活，导致旧 ERP 状态冒充实时连接并错误进入 Ads 单独重试路径。
+- Renderer 现只接受 Main 内存返回的 `erpSessionReady/adsSessionReady` 作为“当前已连接”；历史连接映射和已识别 Ads 账户继续保留，但应用重启或致命连接失败后会显示当前会话未启动，并走一次完整的 ERP→Ads 重建动作。
+- Main 在致命重连失败、全部可见浏览器已关闭的收尾路径中，现把 Lingxing 与 Amazon Ads 两端会话元数据同时降级为 `blocked / LOGIN_FAILED`；Ads 阶段失败但 ERP 可见运行时仍存活的既有分阶段成功路径不进入该收尾，继续保留 ERP 只读采集能力。
+- 技术异常被隐藏时不再只显示“连接状态异常”：无实时 ERP 时明确说明本次可见会话未建立/已结束并指向“启动当前店铺连接”；ERP 仍实时可用时指向“重试 Ads”或完整重连。普通界面同时拦截大写下划线技术错误码。
+- 红→绿 1：`does not present persisted provider history...` 先为 `currentConnectionSessionState is not a function`，修后 `1 passed / 51 skipped`。红→绿 2：可操作失败文案先为 `connectionAttemptOperatorCopy is not a function`，中间暴露原始 `OPERATOR_VISIBLE_BROWSER_FINAL_IDENTITY_UNPROVEN`，修后通过。红→绿 3：致命清理双端降级先因 `persistClosedBrowserLoginFailure` 缺失失败，修后通过。
+- 连接相关最终单元命令：`pnpm exec vitest run apps/desktop/src/main/browser-login-staged-status.test.ts apps/desktop/src/main/lingxing-ads-sso.test.ts apps/desktop/src/renderer/app-readiness-status.test.ts apps/desktop/src/renderer/user-facing-error.test.ts --reporter=basic`，结果 `4/4 files、134/134 tests passed`。
+- 操作者明确授权“仅关闭 Amazon AI Ops、重建并重新启动”。经绝对路径核对只关闭旧包 4 个 Electron 进程，未处理其他应用；`pnpm run build:win` 七步均 `status=0`、`freshCurrentRun=true`、native source bindings `unchangedExact=true`。
+- 新产物：installer SHA-256 `DE7D9A8F552CF2FB4D26F61701D4785FB2D45036854BFFBC5D016EC59E85EBF0`；portable `C12F369A00F4998281E218E6E0DCFDB508028A1A2D6B189BF40A5FF5D03757B5`；folder ZIP `83E07CB145EB4DB344D9C50B3843395BC7AC25D2EECB5151AF779032E9A804A7`；Main `ADE379BF62553CD5169C9E311228AF4DB7DCD2AB639012F210AE5FEA537C4418`；Renderer `AABDD610D588B9334471E8B63358B22B31E6D16CF0F9E9B2BD04AFD529C400B8`。
+- 包内核对：Main 含 `persistClosedBrowserLoginFailure`；Renderer 含新的“本次可见浏览器会话没有建立或已经结束”恢复提示，旧“连接状态异常，请刷新当前店铺后重试”精确文本为 0。新 `win-unpacked` 已启动，主 PID `7832`、目标进程 4、窗口标题 `Amazon AI Ops Agent`。
+- 本轮仅启动目标应用并确认窗口存在，没有点击应用、浏览器或其他桌面窗口，没有读取正式库、密码或 Cookie。随后操作者提供的新包实屏截图显示顶部“ERP/Ads 已连接”，当前会话真值显示修复获得人工确认；这不构成真实广告写入或 Task 8B 回读证据，状态仍保持 `APP_NEEDS_WORK / INTERNAL NON_READY`。
+- 对截图反馈的只读代码核查另确认两项后续产品缺口：经营决策核验把任务批次日期与顶栏当前日期混用且隐藏原始失败原因；任务分析只有临时按钮/页底反馈，不自动推进阶段或生成完整飞行计划。已记入 `BLOCKED.md`，本次 Git 推送不夹带未经授权的功能改造。
+
 ## 当前：2026-08-26 v1.5.1 权限链修复与静态 Windows 候选完成
 
 - 本轮不是文案性改名：策略范围、关键词证据、Grant 签发与执行工作台都改为依赖同一条当前店铺真实权限链。策略创建、更新、启用和 Grant 签发均在 `IMMEDIATE` 事务中重新校验当前 completed import、绑定报表快照、最新 Stage5 修订及需要时的当前 Stage6 Ads 身份；旧名称 token、过期会话或缺失证据一律失败关闭。
