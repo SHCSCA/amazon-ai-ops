@@ -1,0 +1,137 @@
+.mission-control-shell .operator-module-sidebar .app-sidebar-scroll {
+  padding: 10px 8px 8px;
+}
+
+.operator-module-list,
+.operator-module-entries {
+  display: grid;
+  gap: 3px;
+}
+
+.operator-module {
+  display: grid;
+  gap: 3px;
+}
+
+.operator-module-button,
+.operator-module-entry {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.operator-module-button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.operator-module-button:hover,
+.operator-module-button:focus-visible {
+  background: #f2f6fc;
+  color: #1f5bc9;
+}
+
+.operator-module-button:focus-visible,
+.operator-module-entry:focus-visible {
+  outline: 2px solid var(--workspace-focus, #2563eb);
+  outline-offset: 1px;
+}
+
+.operator-module[data-active='true'] > .operator-module-button {
+  background: #eaf2ff;
+  color: #175bd3;
+}
+
+.operator-module-button small,
+.operator-module-entry small {
+  grid-column: 2 / 4;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.operator-module-button b,
+.operator-module-entry b {
+  justify-self: end;
+  border-radius: 999px;
+  background: #fff4dc;
+  padding: 2px 6px;
+  color: #95600d;
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.operator-module-button b {
+  grid-column: 3;
+}
+
+.operator-module-button b[data-attention='blocked'],
+.operator-module-entry b[data-attention='blocked'] {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.operator-module-entries {
+  margin: 0 0 5px 31px;
+  padding-left: 8px;
+  border-left: 1px solid #d8e2f0;
+}
+
+.operator-module-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.operator-module-entry:hover,
+.operator-module-entry:focus-visible {
+  background: #f4f7fb;
+  color: #1f5bc9;
+}
+
+.operator-module-entry[aria-current='page'] {
+  background: #f1f6ff;
+  color: #1459cf;
+  font-weight: 760;
+}
+
+.operator-module-button:disabled,
+.operator-module-entry:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.mission-control-sidebar-collapsed .operator-module-button {
+  display: flex;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.mission-control-sidebar-collapsed .operator-module-button > span,
+.mission-control-sidebar-collapsed .operator-module-button > b,
+.mission-control-sidebar-collapsed .operator-module-button > small {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operator-module-button,
+  .operator-module-entry {
+    transition: none;
+  }
+}
