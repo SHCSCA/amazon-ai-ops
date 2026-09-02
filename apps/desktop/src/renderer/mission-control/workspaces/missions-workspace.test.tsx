@@ -10,12 +10,18 @@ import type {
 import { createPreviewMissionDomainApi } from './mission-domain-window-api';
 import {
   MissionsWorkspace,
+  boundAdsObjectsForMission,
   buildCreateMissionInput,
   buildUpdateMissionInput,
   buildMissionProductOptions,
+  extractKnownAnalysisFailureCodes,
+  latestEvidencePackageForMission,
   missionAnalysisBlockerLabel,
   missionGuardrailLabel,
+  missionPathFailureText,
   missionTransitionActionLabel,
+  previousStepEvidenceLabel,
+  projectMissionAnalysisRun,
   responseMatchesMissionAuthority,
 } from './missions-workspace';
 
@@ -181,8 +187,146 @@ describe('MissionsWorkspace contracts', () => {
     expect(label).toContain('重试');
     expect(label).not.toMatch(/Main|StoreContext|Authority|revision|POLICY_/i);
     expect(missionAnalysisBlockerLabel('证据尚未满足自动授权条件')).toBe('证据尚未满足自动授权条件');
-    expect(missionAnalysisBlockerLabel('MISSING_STABLE_AD_ENTITY')).toBe('缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试');
-    expect(missionAnalysisBlockerLabel('CHANGE_LIMIT_EXCEEDED')).toBe('建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试');
+    expect(missionAnalysisBlockerLabel('MISSING_STABLE_AD_ENTITY')).toBe('MISSING_STABLE_AD_ENTITY · 缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试');
+    expect(missionAnalysisBlockerLabel('CHANGE_LIMIT_EXCEEDED')).toBe('CHANGE_LIMIT_EXCEEDED · 建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试');
+    expect(extractKnownAnalysisFailureCodes('blocked CHANGE_LIMIT_EXCEEDED for bid')).toEqual(['CHANGE_LIMIT_EXCEEDED']);
+    expect(missionPathFailureText(new Error('Mission analysis blocked: CHANGE_LIMIT_EXCEEDED'))).toContain('CHANGE_LIMIT_EXCEEDED');
+    expect(missionPathFailureText(new Error('失败'))).not.toBe('失败');
+  });
+
+  it('projects this Mission analysis run and keeps bound Ads objects pending verification', () => {
+    const mission = {
+      id: 'MISSION-001',
+      storeId: context.storeId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      businessDate: '2026-01-01',
+      createdSessionGeneration: 1,
+      dataBatchId: 'BATCH-001',
+      policyVersionId: 'POLICY-V3',
+      title: '核心词降价验证',
+      objective: '7 天内改善 ACOS',
+      priority: 'P1' as const,
+      status: 'active' as const,
+      phase: 'analysis' as const,
+      revision: 1,
+      productId: 'B0GTTJFQTM',
+      observationStartsAt: '2026-07-01T00:00:00.000Z',
+      observationEndsAt: '2026-07-08T00:00:00.000Z',
+      successCriteria: ['ACOS 改善'],
+      guardrails: ['停止'],
+      createdAt: '2026-07-22T00:00:00.000Z',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    };
+    const evidence = {
+      id: 'ev-1',
+      storeId: context.storeId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      missionId: mission.id,
+      dataBatchId: 'BATCH-001',
+      importRunId: 'import-run-9',
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-21',
+      reportTypes: ['campaign', 'ad_group', 'placement', 'advertised_product', 'auto_targeting', 'keyword', 'product_targeting', 'user_search_term'] as const,
+      sources: [],
+      metricRowCount: 12,
+      reconciliationHash: 'b'.repeat(64),
+      ruleRevision: 'c'.repeat(64),
+      modelRevision: 'model',
+      packageHash: 'd'.repeat(64),
+      importedAt: '2026-07-22T15:10:00.000Z',
+      freshUntil: '2026-07-24T15:10:00.000Z',
+      sealedAt: '2026-07-22T15:12:00.000Z',
+      createdSessionGeneration: 1,
+    };
+    const proposal = {
+      id: 'p-1',
+      storeId: context.storeId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      missionId: mission.id,
+      missionRevision: 1,
+      evidencePackageId: evidence.id,
+      evidencePackageHash: evidence.packageHash,
+      dataBatchId: evidence.dataBatchId,
+      policyVersionId: 'POLICY-V3',
+      policyRevision: 1,
+      ruleRevision: evidence.ruleRevision,
+      modelRevision: evidence.modelRevision,
+      actionBatchId: 'ab-1',
+      actionRevision: 1,
+      legacyRecommendationId: 1,
+      actionType: 'set_keyword_bid' as const,
+      entityType: 'keyword' as const,
+      entityName: 'door lock',
+      campaignName: 'US Exact Core',
+      adGroupName: 'Core terms',
+      adEntityId: 'opaque-keyword-1',
+      currentBidCents: 232,
+      proposedBidCents: 209,
+      changePct: -9.9,
+      confidence: 0.9,
+      source: 'rule_ai' as const,
+      explanation: 'waste',
+      authorization: {
+        human: { eligible: false, blockers: ['CHANGE_LIMIT_EXCEEDED'] as const },
+        policy: { eligible: false, blockers: ['CHANGE_LIMIT_EXCEEDED'] as const },
+      },
+      validUntil: evidence.freshUntil,
+      createdAt: evidence.sealedAt,
+      createdSessionGeneration: 1,
+    };
+    expect(latestEvidencePackageForMission([evidence], mission.id, String(context.storeId))?.id).toBe('ev-1');
+    expect(latestEvidencePackageForMission([evidence], mission.id, String(context.storeId))?.dateTo).toBe('2026-07-21');
+    expect(latestEvidencePackageForMission([evidence], mission.id, String(context.storeId))?.dateTo).not.toBe(context.businessDate);
+    const bound = boundAdsObjectsForMission(mission.id, String(context.storeId), evidence, [proposal]);
+    expect(bound).toHaveLength(1);
+    expect(bound[0]?.status).toBe('待核验');
+    expect(bound[0]?.importRunId).toBe('import-run-9');
+    expect(boundAdsObjectsForMission(mission.id, String(context.storeId), null, [proposal])).toEqual([]);
+    expect(projectMissionAnalysisRun({
+      mission,
+      storeId: String(context.storeId),
+      pendingAnalysis: true,
+      analysisError: null,
+      evidence,
+      proposals: [proposal],
+    }).status).toBe('running');
+    const completed = projectMissionAnalysisRun({
+      mission,
+      storeId: String(context.storeId),
+      pendingAnalysis: false,
+      analysisError: null,
+      evidence,
+      proposals: [proposal],
+    });
+    expect(completed.status).toBe('completed');
+    expect(completed.failureCodes).toContain('CHANGE_LIMIT_EXCEEDED');
+    expect(completed.dateFrom).toBe('2026-07-01');
+    expect(projectMissionAnalysisRun({
+      mission,
+      storeId: String(context.storeId),
+      pendingAnalysis: false,
+      analysisError: 'CHANGE_LIMIT_EXCEEDED',
+      evidence: null,
+      proposals: [],
+    }).status).toBe('retryable');
+    expect(previousStepEvidenceLabel(mission, null, evidence)).toBe('尚无上一步证据');
+  });
+
+  it('pins verify/analyze chrome to this Mission importRunId instead of ScopeBar date', () => {
+    const source = readFileSync(new URL('./missions-workspace.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('核验 Ads 对象');
+    expect(source).toContain('待核验');
+    expect(source).toContain('data-import-run-id');
+    expect(source).toContain('data-analysis-run-status');
+    expect(source).toContain('latestEvidencePackageForMission');
+    expect(source).toContain('boundAdsObjectsForMission');
+    expect(source).toContain('projectMissionAnalysisRun');
+    expect(source).toContain('上一步证据');
+    expect(source).not.toContain('analysis?.evidencePackages[0]');
+    expect(source).toContain('不使用顶部范围日期');
   });
 
   it('builds immutable authority on create and revision CAS on update', () => {

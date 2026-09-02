@@ -18,6 +18,8 @@ import {
 } from '@phosphor-icons/react';
 import {
   missionControlContextKey,
+  type AnalysisEvidencePackageRecord,
+  type AnalysisProposalSnapshotRecord,
   type MissionAnalysisProjection,
   type AppendMissionCheckpointInput,
   type CreateMissionInput,
@@ -162,15 +164,193 @@ function operatorFacingBlocker(reason: string | null | undefined, subject: strin
   return value;
 }
 
+const ANALYSIS_BLOCKER_TRANSLATIONS: Record<string, string> = {
+  UNSUPPORTED_ACTION: '当前动作类型不受支持',
+  MISSING_STABLE_AD_ENTITY: '缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试',
+  STALE_AD_ENTITY_REVISION: '广告对象身份版本已变化，请重新核验后重试',
+  EVIDENCE_STALE: '分析证据已过期，请重新运行分析',
+  EVIDENCE_BATCH_MISMATCH: '证据包与本任务数据批次不一致',
+  RULE_REVISION_MISMATCH: '规则版本已变化，请重新运行分析',
+  POLICY_REVISION_MISMATCH: '策略版本已变化，请重新运行分析',
+  AI_RULE_CONFLICT: '规则与 AI 结论不一致，需人工复核',
+  REVIEW_REQUIRED: '需要人工复核后才能授权',
+  RULE_FALLBACK_NOT_AUTHORIZABLE: 'AI 降级结果不可授权',
+  AI_ONLY_NOT_POLICY_AUTHORIZABLE: '仅 AI 建议不可由策略自动授权',
+  POLICY_REQUIRES_RULE_AI_ALIGNMENT: '策略要求规则与 AI 一致',
+  CHANGE_LIMIT_EXCEEDED: '建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试',
+  POLICY_ENTITY_NOT_ALLOWED: '策略不允许该广告对象',
+  POLICY_ACTION_NOT_ALLOWED: '策略不允许该动作',
+  POLICY_RUNTIME_BLOCKED: '策略运行时已阻断自动授权',
+};
+
+const KNOWN_ANALYSIS_BLOCKER_CODES = Object.keys(ANALYSIS_BLOCKER_TRANSLATIONS);
+const MISSION_PHASE_ORDER: readonly MissionPhase[] = ['fact', 'analysis', 'decision', 'action', 'readback', 'effect'];
+
+export function extractKnownAnalysisFailureCodes(value: string): string[] {
+  const text = String(value || '');
+  const found: string[] = [];
+  for (const code of KNOWN_ANALYSIS_BLOCKER_CODES) {
+    if (text === code || text.includes(code)) {
+      if (!found.includes(code)) found.push(code);
+    }
+  }
+  return found;
+}
+
 export function missionAnalysisBlockerLabel(value: string): string {
-  const normalized = String(value || '').trim().toUpperCase();
-  if (normalized === 'MISSING_STABLE_AD_ENTITY') {
-    return '缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试';
+  const original = String(value || '').trim();
+  if (!original) return '';
+  const codes = extractKnownAnalysisFailureCodes(original);
+  const code = codes[0] ?? '';
+  if (code) {
+    const translation = ANALYSIS_BLOCKER_TRANSLATIONS[code];
+    return translation ? `${code} · ${translation}` : code;
   }
-  if (normalized === 'CHANGE_LIMIT_EXCEEDED') {
-    return '建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试';
+  return operatorFacingBlocker(original, '策略自动授权');
+}
+
+export function missionPathFailureText(error: unknown, fallbackSubject = '运营任务'): string {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const firstLine = raw.split(/\r?\n/)[0]?.trim() ?? '';
+  const codes = extractKnownAnalysisFailureCodes(firstLine);
+  if (codes.length) return codes.map((code) => missionAnalysisBlockerLabel(code)).join('；');
+  if (/analysis blocked|evidence package|importRunId|Ads 对象|CHANGE_|MISSING_STABLE|核验/i.test(firstLine)) {
+    return firstLine;
   }
-  return operatorFacingBlocker(value, '策略自动授权');
+  if (!firstLine || /^(失败[。.]?)$/.test(firstLine)) {
+    return `${fallbackSubject}未完成；请查看原始失败代码后重试。`;
+  }
+  return operatorFacingBlocker(firstLine, fallbackSubject);
+}
+
+export function latestEvidencePackageForMission(
+  packages: readonly AnalysisEvidencePackageRecord[] | undefined,
+  missionId: string,
+  storeId: string,
+): AnalysisEvidencePackageRecord | null {
+  const rows = (packages ?? []).filter((row) => row.missionId === missionId && String(row.storeId) === String(storeId));
+  if (!rows.length) return null;
+  return [...rows].sort((left, right) => right.sealedAt.localeCompare(left.sealedAt))[0] ?? null;
+}
+
+export type BoundMissionAdsObject = {
+  key: string;
+  entityName: string;
+  campaignName: string;
+  adGroupName: string;
+  importRunId: string;
+  evidencePackageId: string;
+  status: '待核验';
+};
+
+export function boundAdsObjectsForMission(
+  missionId: string,
+  storeId: string,
+  evidence: AnalysisEvidencePackageRecord | null,
+  proposals: readonly AnalysisProposalSnapshotRecord[],
+): BoundMissionAdsObject[] {
+  if (!evidence
+    || evidence.missionId !== missionId
+    || String(evidence.storeId) !== String(storeId)
+    || !evidence.importRunId.trim()) {
+    return [];
+  }
+  return proposals
+    .filter((proposal) => (
+      proposal.missionId === missionId
+      && String(proposal.storeId) === String(storeId)
+      && proposal.evidencePackageId === evidence.id
+      && Boolean(proposal.entityName.trim() || proposal.adEntityId)
+    ))
+    .map((proposal) => ({
+      key: proposal.adEntityId || proposal.id,
+      entityName: proposal.entityName,
+      campaignName: proposal.campaignName,
+      adGroupName: proposal.adGroupName,
+      importRunId: evidence.importRunId,
+      evidencePackageId: evidence.id,
+      status: '待核验',
+    }));
+}
+
+export type MissionAnalysisRunStatus = 'idle' | 'running' | 'completed' | 'retryable';
+
+export type MissionAnalysisRunView = {
+  status: MissionAnalysisRunStatus;
+  statusLabel: string;
+  phase: MissionPhase;
+  phaseLabel: string;
+  dataBatchId: string;
+  dateFrom: string;
+  dateTo: string;
+  importRunId: string;
+  evidencePackageId: string;
+  proposalCount: number;
+  failureCodes: string[];
+  failureText: string;
+};
+
+export function projectMissionAnalysisRun(input: {
+  mission: MissionRecord;
+  storeId: string;
+  pendingAnalysis: boolean;
+  analysisError: string | null;
+  evidence: AnalysisEvidencePackageRecord | null;
+  proposals: readonly AnalysisProposalSnapshotRecord[];
+}): MissionAnalysisRunView {
+  const evidence = input.evidence
+    && input.evidence.missionId === input.mission.id
+    && String(input.evidence.storeId) === String(input.storeId)
+    ? input.evidence
+    : null;
+  const proposals = input.proposals.filter((row) => (
+    row.missionId === input.mission.id
+    && String(row.storeId) === String(input.storeId)
+    && (!evidence || row.evidencePackageId === evidence.id)
+  ));
+  const failureCodes = [...new Set([
+    ...extractKnownAnalysisFailureCodes(input.analysisError ?? ''),
+    ...proposals.flatMap((row) => [...row.authorization.human.blockers, ...row.authorization.policy.blockers]),
+  ].filter(Boolean))];
+  let status: MissionAnalysisRunStatus = 'idle';
+  if (input.pendingAnalysis) status = 'running';
+  else if (input.analysisError) status = 'retryable';
+  else if (evidence) status = 'completed';
+  const statusLabel = status === 'running'
+    ? '运行中'
+    : status === 'completed'
+      ? '已完成'
+      : status === 'retryable'
+        ? '可重试'
+        : '未运行';
+  return {
+    status,
+    statusLabel,
+    phase: input.mission.phase,
+    phaseLabel: PHASE_LABELS[input.mission.phase],
+    dataBatchId: evidence?.dataBatchId || input.mission.dataBatchId,
+    dateFrom: evidence?.dateFrom ?? '',
+    dateTo: evidence?.dateTo ?? '',
+    importRunId: evidence?.importRunId ?? '',
+    evidencePackageId: evidence?.id ?? '',
+    proposalCount: proposals.length,
+    failureCodes,
+    failureText: failureCodes.map((code) => missionAnalysisBlockerLabel(code)).join('；'),
+  };
+}
+
+export function previousStepEvidenceLabel(
+  mission: MissionRecord,
+  lineage: MissionLineageProjection | null,
+  evidence: AnalysisEvidencePackageRecord | null,
+): string {
+  const factCount = lineage?.checkpoints.filter((item) => item.stage === 'FACT' && item.missionId === mission.id).length ?? 0;
+  if (mission.phase === 'analysis') return factCount ? `事实检查点 ${factCount} 条` : '尚无上一步证据';
+  if (MISSION_PHASE_ORDER.indexOf(mission.phase) > MISSION_PHASE_ORDER.indexOf('analysis') && evidence
+    && evidence.missionId === mission.id) {
+    return `分析证据 ${evidence.dateFrom} → ${evidence.dateTo}`;
+  }
+  return factCount ? `事实检查点 ${factCount} 条` : '尚无上一步证据';
 }
 
 export function missionGuardrailLabel(value: string): string {
@@ -405,6 +585,7 @@ export function MissionsWorkspace({
   const [phase, setPhase] = useState<'idle' | 'loading' | 'ready' | 'blocked' | 'error'>('idle');
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
   const [editor, setEditor] = useState<MissionEditorState | null>(null);
   const [checkpointEditor, setCheckpointEditor] = useState<CheckpointDraft | null>(null);
@@ -535,6 +716,7 @@ export function MissionsWorkspace({
     setArchiveConfirm(null);
     setFeedback('');
     setError(null);
+    setAnalysisError(null);
     setPending(null);
     if (!storeContext || !authorityKey) {
       setPhase('blocked');
@@ -579,10 +761,12 @@ export function MissionsWorkspace({
       if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
       assertAnalysisProjectionBelongsToContext(storeContext, selected.id, projection);
       setAnalysis(projection);
-    }).catch((analysisError) => {
+    }).catch((loadAnalysisError) => {
       if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
       setAnalysis(null);
-      setError(errorMessage(analysisError));
+      const text = missionPathFailureText(loadAnalysisError);
+      setAnalysisError(text);
+      setError(text);
     });
   }, [analysisApi, authorityKey, selected?.id, storeContext, viewReady]);
 
@@ -705,32 +889,50 @@ export function MissionsWorkspace({
 
   const runAnalysis = async () => {
     if (!analysisApi || !storeContext || !selected || pending) {
-      setError('真实分析 Authority 不可用，操作已阻断。');
+      const blocked = '真实分析 Authority 不可用，操作已阻断。';
+      setAnalysisError(blocked);
+      setError(blocked);
       return;
     }
+    const capturedContext = storeContext;
     const capturedKey = authorityKey;
     const capturedSequence = ++analysisSequence.current;
+    const capturedMissionId = selected.id;
     setPending('analysis');
     setError(null);
+    setAnalysisError(null);
     setFeedback('');
     try {
       const result = await analysisApi.runMissionAnalysis({
-        context: storeContext,
-        missionId: selected.id,
+        context: capturedContext,
+        missionId: capturedMissionId,
       });
-      const projection = await analysisApi.getMissionProjection(storeContext, selected.id);
+      const projection = await analysisApi.getMissionProjection(capturedContext, capturedMissionId);
       if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
-      assertAnalysisProjectionBelongsToContext(storeContext, selected.id, projection);
+      assertAnalysisProjectionBelongsToContext(capturedContext, capturedMissionId, projection);
       setAnalysis(projection);
+      if (api) {
+        try {
+          const refreshed = await api.getMission(capturedContext, capturedMissionId);
+          if (refreshed && responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) {
+            assertMissionBelongsToContext(refreshed, capturedContext);
+            setMissions((current) => current.map((item) => item.id === refreshed.id ? refreshed : item));
+          }
+        } catch {
+          /* AnalysisEvidencePackage remains the run record even if Mission.phase refresh lags. */
+        }
+      }
       const automatic = result.automaticAuthorization;
       setFeedback(automatic
         ? automatic.authorized
           ? `分析完成：8/8 领星证据已封存，策略自动已整批签发 ${automatic.proposalIds.length} 条建议；尚未执行 Ads。`
           : `分析完成：形成 ${result.proposals.length} 条不可变建议，但策略自动授权被阻断：${[...new Set(automatic.blockers.map(missionAnalysisBlockerLabel))].join('；')}`
         : `分析完成：8/8 领星证据已封存，形成 ${result.proposals.length} 条不可变建议快照，等待一次人工整批授权。`);
-    } catch (analysisError) {
+    } catch (caught) {
       if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
-      setError(errorMessage(analysisError));
+      const text = missionPathFailureText(caught);
+      setAnalysisError(text);
+      setError(text);
     } finally {
       if (responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) {
         setPending(null);
@@ -739,24 +941,50 @@ export function MissionsWorkspace({
   };
 
   const activeCheckpoints = lineage?.checkpoints ?? [];
-  const completedCount = activeCheckpoints.filter((checkpoint) => ['completed', 'done', 'verified', 'success'].includes(checkpoint.status)).length;
   const currentPhaseIndex = selected ? ['fact', 'analysis', 'decision', 'action', 'readback', 'effect'].indexOf(selected.phase) : -1;
   const blocked = phase === 'blocked' || phase === 'error';
   const busy = pending !== null;
-  const latestEvidence = analysis?.evidencePackages[0] ?? null;
-  const latestActionBatchId = analysis?.actionBatches[0]?.id;
+  const latestEvidence = selected && storeContext
+    ? latestEvidencePackageForMission(analysis?.evidencePackages, selected.id, String(storeContext.storeId))
+    : null;
+  const latestActionBatchId = latestEvidence
+    ? (analysis?.actionBatches ?? [])
+      .filter((batch) => batch.missionId === selected?.id && batch.evidencePackageId === latestEvidence.id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]?.id
+    : undefined;
   const latestProposals = latestActionBatchId
-    ? analysis?.proposals.filter((proposal) => proposal.actionBatchId === latestActionBatchId) ?? []
+    ? (analysis?.proposals ?? []).filter((proposal) => (
+      proposal.actionBatchId === latestActionBatchId
+      && proposal.missionId === selected?.id
+      && (!latestEvidence || proposal.evidencePackageId === latestEvidence.id)
+    ))
     : [];
+  const boundAdsObjects = selected && storeContext
+    ? boundAdsObjectsForMission(selected.id, String(storeContext.storeId), latestEvidence, latestProposals)
+    : [];
+  const analysisRun = selected && storeContext
+    ? projectMissionAnalysisRun({
+      mission: selected,
+      storeId: String(storeContext.storeId),
+      pendingAnalysis: pending === 'analysis',
+      analysisError,
+      evidence: latestEvidence,
+      proposals: latestProposals,
+    })
+    : null;
+  const batchRangeLabel = analysisRun?.dateFrom && analysisRun.dateTo
+    ? `${analysisRun.dateFrom} → ${analysisRun.dateTo}`
+    : '';
   const dependencyLabel = (rows: readonly MissionChoice[], value: string | undefined, fallback: string) => (
     rows.find((row) => row.value === value)?.label ?? fallback
   );
   const selectedBatchLabel = dependencyLabel(dependencies.batches, selected?.dataBatchId, '关联批次不可用');
   const selectedPolicyLabel = dependencyLabel(dependencies.policyVersions, selected?.policyVersionId, '关联策略不可用');
-  const visibleBlockedReason = operatorFacingBlocker(error ?? blockedReason, '运营任务');
+  const visibleBlockedReason = missionPathFailureText(error ?? blockedReason, '运营任务');
+  const previousEvidence = selected ? previousStepEvidenceLabel(selected, lineage, latestEvidence) : '尚无上一步证据';
 
   return (
-    <div className={`mission-control-workspace-root mission-domain-workspace${factsView ? ' mission-domain-workspace--facts' : ''}`} data-canonical-surface="missions" data-capability-state={viewReady ? expectedCapability : 'BLOCKED'} data-default-focus={factsView ? 'evidence-lineage' : 'mission-flight-plan'} data-preview-mode={previewMode || undefined} data-view={view}>
+    <div className={`mission-control-workspace-root mission-domain-workspace${factsView ? ' mission-domain-workspace--facts' : ''}`} data-canonical-surface="missions" data-capability-state={viewReady ? expectedCapability : 'BLOCKED'} data-default-focus={factsView ? 'evidence-lineage' : 'mission-flight-plan'} data-preview-mode={previewMode || undefined} data-view={view} data-mission-id={selected?.id} data-data-batch-id={selected?.dataBatchId} data-import-run-id={latestEvidence?.importRunId} data-analysis-run-status={analysisRun?.status}>
       {previewMode && <i data-legacy-test-copy="MISSION CONTROL · 显式内存 adapter · Amazon US · USD · 新建 Mission · Mission 队列 · 验证店铺级 Mission 飞行计划 · Mission 事实链 · Mission 事实范围" hidden />}
       <p className="sr-only" id="mission-domain-authority-boundary">
         {!viewReady ? visibleBlockedReason : !api ? '运营任务服务未接入；界面不会回退到示例数据。' : '运营任务服务已接入。'}
@@ -791,7 +1019,12 @@ export function MissionsWorkspace({
         summary={(
           <SummaryStrip
             ariaLabel="运营任务当前权威上下文"
-            items={[
+            items={selected ? [
+              { id: 'mission', label: '当前运营任务', value: selected.title },
+              { id: 'phase', label: '当前阶段', value: PHASE_LABELS[selected.phase] },
+              { id: 'batch', label: '数据批次区间', value: batchRangeLabel || selectedBatchLabel, tone: batchRangeLabel || selected?.dataBatchId ? 'neutral' : 'blocked' },
+              { id: 'previous', label: '上一步证据', value: previousEvidence },
+            ] : [
               { id: 'store', label: '当前店铺', value: storeContext ? '已选择' : '等待选择' },
               { id: 'market', label: '站点 / 币种', value: storeContext ? '美国站 / USD' : '等待店铺' },
               { id: 'count', label: factsView ? '事实检查点' : '运营任务', value: phase === 'loading' ? '读取中' : factsView ? `${lineage?.checkpoints.filter((item) => ['FACT', 'ANALYSIS'].includes(item.stage)).length ?? 0} 条` : `${missions.length} 条` },
@@ -843,7 +1076,7 @@ export function MissionsWorkspace({
                   <div><span>当前运营任务</span><h2>{selected.title}</h2><p>{selected.objective}</p></div>
                   <MissionStatus status={selected.status} />
                   {!factsView && <div className="mission-domain-actions" role="group" aria-label="运营任务增删改查">
-                    <button className="workspace-button workspace-button--primary" disabled={!analysisApi || busy || selected.status !== 'active'} onClick={() => void runAnalysis()} title={selected.status !== 'active' ? '只有运行中的运营任务可以形成正式分析批次。' : undefined} type="button"><FlagBanner size={15} />{pending === 'analysis' ? '分析中…' : '运行分析'}</button>
+                    <button className="workspace-button workspace-button--primary" disabled={!analysisApi || busy || selected.status !== 'active'} onClick={() => void runAnalysis()} title={selected.status !== 'active' ? '只有运行中的运营任务可以形成正式分析批次。' : analysisRun?.status === 'retryable' ? '可重试当前运营任务分析。' : undefined} type="button"><FlagBanner size={15} />{pending === 'analysis' ? '运行中…' : analysisRun?.status === 'retryable' ? '重试分析' : '运行分析'}</button>
                     <button className="workspace-button workspace-button--primary" disabled={!actionReady('update') || busy || ['archived', 'completed'].includes(selected.status)} onClick={() => storeContext && setEditor({ mission: selected, draft: missionDraft(storeContext, selected) })} type="button"><PencilSimple size={15} />编辑</button>
                     {selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady(selected.status === 'active' ? 'pause' : 'resume') || busy || selected.status === 'completed'} onClick={() => void transitionMission()} type="button">{selected.status === 'active' ? <Pause size={15} /> : <Play size={15} />}{missionTransitionActionLabel(selected.status)}</button>}
                     {selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('archive') || busy} onClick={() => setArchiveConfirm(selected)} type="button"><Archive size={15} />归档</button>}
@@ -853,19 +1086,28 @@ export function MissionsWorkspace({
                 </section>
 
                 <dl className="mission-domain-contract" aria-label="运营任务执行合同">
-                  <div><dt>观察窗口</dt><dd>{datePart(selected.observationStartsAt)} → {datePart(selected.observationEndsAt)}</dd></div>
-                  <div><dt>数据批次</dt><dd>{selectedBatchLabel}</dd></div>
+                  <div><dt>当前阶段</dt><dd>{PHASE_LABELS[selected.phase]}</dd></div>
+                  <div><dt>数据批次区间</dt><dd>{batchRangeLabel || selectedBatchLabel}</dd></div>
                   <div><dt>策略版本</dt><dd>{selectedPolicyLabel}</dd></div>
-                  <div><dt>检查点进度</dt><dd>{completedCount} / {activeCheckpoints.length}</dd></div>
+                  <div><dt>上一步证据</dt><dd>{previousEvidence}</dd></div>
                 </dl>
 
-                <section className="mission-domain-analysis-authority" aria-label="运营任务分析权威">
-                  <header><div><span>真实分析 · 美国站 / USD</span><h3>真实分析与不可变建议批次</h3><p>范围由系统从已完成数据批次推导；界面不能提交路径、规则版本或授权限额。</p></div><b data-ready={latestEvidence ? 'true' : 'false'}>{latestEvidence ? '已封存' : '等待分析'}</b></header>
+                <section className="mission-domain-ads-verify" aria-label="核验 Ads 对象">
+                  <header><div><span>绑定来自本任务已封存证据包</span><h3>核验 Ads 对象</h3><p>对象是否绑定只看本任务证据包与导入批次，不使用顶部范围日期。</p></div><b data-state={boundAdsObjects.length ? 'pending' : 'empty'}>{boundAdsObjects.length ? '待核验' : '未绑定'}</b></header>
+                  {boundAdsObjects.length ? (
+                    <ul className="mission-domain-ads-verify-list">{boundAdsObjects.map((item) => <li key={item.key} data-status={item.status}><div><strong>{item.entityName}</strong><small>{item.campaignName} / {item.adGroupName}</small></div><em>待核验</em></li>)}</ul>
+                  ) : <WorkspaceState kind="empty" title="尚未绑定本任务 Ads 对象" description="绑定以本任务证据包与导入批次为准；顶部范围日期不会把对象标成已核验。" />}
+                  <footer><details className="mission-domain-diagnostics"><summary>诊断详情</summary><code>missionId={selected.id}</code><code>importRunId={latestEvidence?.importRunId ?? 'none'}</code><code>evidencePackageId={latestEvidence?.id ?? 'none'}</code></details></footer>
+                </section>
+
+                <section className="mission-domain-analysis-authority" aria-label="运行分析记录" data-run-status={analysisRun?.status ?? 'idle'}>
+                  <header><div><span>真实分析 · 美国站 / USD</span><h3>运行分析</h3><p>分析回看窗口来自本任务数据批次与证据包；界面不能改用顶部范围日期。</p></div><b data-ready={analysisRun?.status === 'completed' ? 'true' : 'false'} data-status={analysisRun?.status ?? 'idle'}>{analysisRun?.statusLabel ?? '未运行'}</b></header>
                   {latestEvidence ? <>
-                    <dl><div><dt>领星报告</dt><dd>{latestEvidence.reportTypes.length}/8</dd></div><div><dt>指标行</dt><dd>{latestEvidence.metricRowCount}</dd></div><div><dt>数据区间</dt><dd>{latestEvidence.dateFrom} → {latestEvidence.dateTo}</dd></div><div><dt>有效至</dt><dd>{latestEvidence.freshUntil.slice(0, 16).replace('T', ' ')}</dd></div></dl>
+                    <dl><div><dt>运行状态</dt><dd>{analysisRun?.statusLabel}</dd></div><div><dt>当前阶段</dt><dd>{PHASE_LABELS[selected.phase]}</dd></div><div><dt>数据批次区间</dt><dd>{latestEvidence.dateFrom} → {latestEvidence.dateTo}</dd></div><div><dt>领星报告</dt><dd>{latestEvidence.reportTypes.length}/8</dd></div></dl>
+                    {analysisRun?.failureCodes.length ? <p className="mission-domain-failure-codes" role="status">{analysisRun.failureCodes.map((code) => <code key={code}>{code}</code>)}<span>{analysisRun.failureText}</span></p> : null}
                     <div className="mission-domain-proposal-strip" role="list">{latestProposals.map((proposal) => <article key={proposal.id} role="listitem" data-authorizable={proposal.authorization.human.eligible || undefined}><div><strong>{proposal.entityName}</strong><small>{proposal.campaignName} / {proposal.adGroupName}</small></div><b>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</b><span>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : proposal.source === 'ai' ? '仅 AI / 人工审批' : proposal.source === 'rule_fallback' ? 'AI 降级 / 不可授权' : '规则建议'}</span><em>{proposal.authorization.human.eligible ? '可进入人工审批' : [...new Set(proposal.authorization.human.blockers.map(missionAnalysisBlockerLabel))].join(' · ')}</em></article>)}</div>
-                    <footer><details className="mission-domain-diagnostics"><summary>诊断详情</summary><code>packageHash={latestEvidence.packageHash.slice(0, 12)}</code><code>ruleRevision={latestEvidence.ruleRevision.slice(0, 8)}</code><code>modelRevision={latestEvidence.modelRevision}</code></details></footer>
-                  </> : <WorkspaceState kind="empty" title="尚未形成真实分析批次" description="运行中的运营任务会封存当前店铺 8 类领星报表、规则与模型版本，然后创建可追溯决定。" />}
+                    <footer><details className="mission-domain-diagnostics"><summary>诊断详情</summary><code>packageHash={latestEvidence.packageHash.slice(0, 12)}</code><code>importRunId={latestEvidence.importRunId}</code><code>dataBatchId={latestEvidence.dataBatchId}</code><code>ruleRevision={latestEvidence.ruleRevision.slice(0, 8)}</code><code>modelRevision={latestEvidence.modelRevision}</code></details></footer>
+                  </> : <WorkspaceState kind={pending === 'analysis' ? 'loading' : analysisRun?.status === 'retryable' ? 'blocked' : 'empty'} title={pending === 'analysis' ? '分析运行中' : analysisRun?.status === 'retryable' ? '分析可重试' : '尚未形成真实分析批次'} description={pending === 'analysis' ? '正在封存本任务数据批次对应的 8 类领星证据，请等待运行记录。' : analysisError || '运行中的运营任务会封存本任务数据批次的 8 类领星报表，然后留下可读取的分析运行记录。'} />}
                 </section>
 
                 <div className="mission-domain-flight-layout">
@@ -897,7 +1139,7 @@ export function MissionsWorkspace({
             ) : phase === 'ready' ? <WorkspaceState description="从左侧选择运营任务，或新建当前店铺的第一个任务。" kind="empty" title="等待选择运营任务" /> : null}
           </div>
         </div>
-        {(error || feedback) && <p aria-live="polite" className="mission-domain-feedback" data-tone={error ? 'error' : 'success'}>{error ? operatorFacingBlocker(error, '运营任务') : feedback}</p>}
+        {(error || feedback) && <p aria-live="polite" className="mission-domain-feedback" data-tone={error ? 'error' : 'success'}>{error ? missionPathFailureText(error, '运营任务') : feedback}</p>}
         {!previewMode && (!viewReady || error) && <details className="mission-domain-diagnostics"><summary>诊断详情</summary><code>{error ?? blockedReason}</code></details>}
       </PageFrame>
 

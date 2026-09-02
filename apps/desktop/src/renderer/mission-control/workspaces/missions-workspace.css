@@ -613,7 +613,8 @@
   gap: 8px;
 }
 
-.mission-domain-analysis-authority {
+.mission-domain-analysis-authority,
+.mission-domain-ads-verify {
   display: grid;
   gap: 9px;
   border: 1px solid #dbe4f0;
@@ -623,14 +624,17 @@
 }
 
 .mission-domain-analysis-authority > header,
-.mission-domain-analysis-authority > footer {
+.mission-domain-analysis-authority > footer,
+.mission-domain-ads-verify > header,
+.mission-domain-ads-verify > footer {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.mission-domain-analysis-authority > header span {
+.mission-domain-analysis-authority > header span,
+.mission-domain-ads-verify > header span {
   color: #59708f;
   font-size: 10px;
   font-weight: 750;
@@ -638,14 +642,19 @@
 }
 
 .mission-domain-analysis-authority > header h3,
-.mission-domain-analysis-authority > header p {
+.mission-domain-analysis-authority > header p,
+.mission-domain-ads-verify > header h3,
+.mission-domain-ads-verify > header p {
   margin: 2px 0 0;
 }
 
-.mission-domain-analysis-authority > header h3 { font-size: 14px; }
-.mission-domain-analysis-authority > header p { color: #65738a; font-size: 11px; }
+.mission-domain-analysis-authority > header h3,
+.mission-domain-ads-verify > header h3 { font-size: 14px; }
+.mission-domain-analysis-authority > header p,
+.mission-domain-ads-verify > header p { color: #65738a; font-size: 11px; }
 
-.mission-domain-analysis-authority > header > b {
+.mission-domain-analysis-authority > header > b,
+.mission-domain-ads-verify > header > b {
   flex: 0 0 auto;
   border-radius: 999px;
   background: #f1f4f8;
@@ -654,9 +663,21 @@
   font-size: 11px;
 }
 
-.mission-domain-analysis-authority > header > b[data-ready="true"] {
+.mission-domain-analysis-authority > header > b[data-ready="true"],
+.mission-domain-analysis-authority > header > b[data-status="completed"] {
   background: #e7f7f0;
   color: #087956;
+}
+
+.mission-domain-analysis-authority > header > b[data-status="running"] {
+  background: #e8f1ff;
+  color: #1f5bc9;
+}
+
+.mission-domain-analysis-authority > header > b[data-status="retryable"],
+.mission-domain-ads-verify > header > b[data-state="pending"] {
+  background: #fff4e5;
+  color: #9a6700;
 }
 
 .mission-domain-analysis-authority > dl {
@@ -714,6 +735,56 @@
 
 .mission-domain-analysis-authority > footer code {
   color: #1f5bc9;
+}
+
+
+.mission-domain-ads-verify-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-domain-ads-verify-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #d39b00;
+  border-radius: 7px;
+  background: #fffdf8;
+  padding: 8px;
+}
+
+.mission-domain-ads-verify-list strong,
+.mission-domain-ads-verify-list small { display: block; }
+.mission-domain-ads-verify-list small,
+.mission-domain-ads-verify-list em { color: #9a6700; font-size: 10px; font-style: normal; }
+
+.mission-domain-failure-codes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  border: 1px solid #efcaca;
+  border-radius: 7px;
+  background: #fff7f7;
+  padding: 7px 9px;
+  color: #8a2f2f;
+  font-size: 11px;
+}
+
+.mission-domain-failure-codes code {
+  border-radius: 4px;
+  background: #fdecec;
+  padding: 2px 6px;
+  color: #bc3434;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .mission-domain-lineage article {
