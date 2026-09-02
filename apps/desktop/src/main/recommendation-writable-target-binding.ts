@@ -189,7 +189,7 @@ export function bindRecommendationWritableTarget(
   return {
     ok: true,
     recommendationId: request.recommendationId,
-    status: 'pending',
+    status: 'bound',
     revision: boundRevision,
     boundAt: normalizedBoundAt,
   };

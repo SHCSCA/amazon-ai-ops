@@ -241,6 +241,11 @@ export interface MissionAnalysisProjection {
   actionBatches: AnalysisActionBatchRecord[];
   proposals: AnalysisProposalSnapshotRecord[];
   decisionLinks: AnalysisProposalDecisionLinkRecord[];
+  analysisRun?: {
+    status: 'running' | 'done' | 'retryable';
+    startedAt: string;
+    completedAt?: string;
+  };
 }
 
 export interface AuthorizeAnalysisProposalBatchRequest {
@@ -256,6 +261,7 @@ export interface AuthorizeAnalysisProposalBatchResult {
   proposalIds: readonly string[];
   authorized: boolean;
   blockers: readonly string[];
+  blockerCodes: readonly string[];
 }
 
 export function validateAnalysisEvidencePackage(

@@ -168,7 +168,7 @@ export interface BindRecommendationWritableTargetRequest {
 export interface BindRecommendationWritableTargetResult {
   ok: true;
   recommendationId: number;
-  status: 'pending';
+  status: 'bound';
   revision: number;
   boundAt: string;
 }

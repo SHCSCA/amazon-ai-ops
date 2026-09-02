@@ -127,10 +127,11 @@ describe('pending recommendation writable target binding', () => {
     expect(result).toEqual({
       ok: true,
       recommendationId: 81,
-      status: 'pending',
+      status: 'bound',
       revision: 5,
       boundAt: '2026-07-16T04:30:00.000Z',
     });
+    expect(result.status).not.toBe('pending');
     expect(persist).toHaveBeenCalledWith({
       writableTarget: canonicalTarget,
       writableTargetBinding: {

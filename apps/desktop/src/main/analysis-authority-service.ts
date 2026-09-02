@@ -10,10 +10,12 @@ import {
 } from '@amazon-ai-ops/local-db';
 import {
   type ActionRecommendation,
+  type AnalysisActionBatchRecord,
   type AnalysisEvidencePackageRecord,
   type AnalysisProposalSnapshotRecord,
   type AuthorizeAnalysisProposalBatchRequest,
   type AuthorizeAnalysisProposalBatchResult,
+  type MissionCheckpointRecord,
   type MissionGrantRecord,
   type MissionAnalysisProjection,
   type PolicyVersionRules,
@@ -137,7 +139,7 @@ export class AnalysisAuthorityService {
 
   async runMissionAnalysis(request: RunMissionAnalysisRequest): Promise<RunMissionAnalysisResult> {
     const context = this.assertContext(request.context);
-    const mission = this.missionRepository.getMission(context, requiredId(request.missionId, 'missionId'));
+    let mission = this.missionRepository.getMission(context, requiredId(request.missionId, 'missionId'));
     if (!mission) throw new Error('Mission analysis blocked: Mission was not found in the active store.');
     if (mission.status !== 'active') throw new Error('Mission analysis blocked: Mission must be active.');
     const batch = this.db.prepare(`
@@ -181,6 +183,19 @@ export class AnalysisAuthorityService {
       generateRecommendations: capturedAuthority.generateRecommendations,
     });
     const { ruleRevision, modelRevision } = generationAuthority;
+    if (mission.phase !== 'analysis') {
+      this.missionRepository.transitionMission(context, {
+        id: mission.id,
+        expectedRevision: mission.revision,
+        status: 'active',
+        phase: 'analysis',
+        reason: 'Mission analysis started',
+        actorId: 'analysis-engine',
+      });
+      const reloaded = this.missionRepository.getMission(context, mission.id);
+      if (!reloaded) throw new Error('Mission analysis blocked: Mission was not found in the active store.');
+      mission = reloaded;
+    }
     const evidencePackage = this.repository.sealEvidencePackage(context, {
       missionId: mission.id,
       dateFrom,
@@ -191,14 +206,21 @@ export class AnalysisAuthorityService {
       modelRevision,
     });
 
-    const generation = await generationAuthority.generateRecommendations({
-      dateFrom,
-      dateTo,
-      storeName: store.displayName,
-      marketplaceCode: 'US',
-      asin,
-      batchId: mission.dataBatchId,
-    });
+    this.persistAnalysisRunCheckpoint(context, mission.id, evidencePackage, 'running');
+    let generation: RecommendationGenerationResultForAnalysis;
+    try {
+      generation = await generationAuthority.generateRecommendations({
+        dateFrom,
+        dateTo,
+        storeName: store.displayName,
+        marketplaceCode: 'US',
+        asin,
+        batchId: mission.dataBatchId,
+      });
+    } catch (error) {
+      this.persistAnalysisRunCheckpoint(context, mission.id, evidencePackage, 'retryable');
+      throw error;
+    }
     this.assertContext(context);
     if (generation.scope.storeId !== context.storeId
       || generation.scope.batchId !== mission.dataBatchId
@@ -259,6 +281,7 @@ export class AnalysisAuthorityService {
       }
     }
     this.assertContext(context);
+    this.persistAnalysisRunCheckpoint(context, mission.id, evidencePackage, 'done');
     const result: RunMissionAnalysisResult = {
       evidencePackage,
       proposals,
@@ -294,12 +317,19 @@ export class AnalysisAuthorityService {
   ): MissionAnalysisProjection {
     const context = this.assertContext(contextInput);
     const missionId = requiredId(missionIdInput, 'missionId');
-    const projection = {
-      evidencePackages: this.repository.listEvidencePackages(context, missionId),
-      actionBatches: this.repository.listActionBatches(context, missionId),
-      proposals: this.repository.listProposalSnapshots(context, missionId),
-      decisionLinks: this.repository.listProposalDecisionLinks(context, missionId),
+    const evidencePackages = this.repository.listEvidencePackages(context, missionId);
+    const actionBatches = this.repository.listActionBatches(context, missionId);
+    const proposals = this.repository.listProposalSnapshots(context, missionId);
+    const decisionLinks = this.repository.listProposalDecisionLinks(context, missionId);
+    const checkpoints = this.missionRepository.listMissionCheckpoints(context, missionId);
+    const projection: MissionAnalysisProjection = {
+      evidencePackages,
+      actionBatches,
+      proposals,
+      decisionLinks,
     };
+    const analysisRun = deriveAnalysisRun(checkpoints, evidencePackages, actionBatches);
+    if (analysisRun) projection.analysisRun = analysisRun;
     this.assertContext(context);
     return projection;
   }
@@ -468,6 +498,7 @@ export class AnalysisAuthorityService {
           proposalIds: selectedIds,
           authorized: true,
           blockers: [],
+          blockerCodes: [],
         };
       }
 
@@ -586,6 +617,7 @@ export class AnalysisAuthorityService {
         proposalIds: selectedIds,
         authorized: true,
         blockers: [],
+        blockerCodes: [],
       };
     });
     return authorize.immediate();
@@ -727,6 +759,24 @@ export class AnalysisAuthorityService {
     });
   }
 
+  private persistAnalysisRunCheckpoint(
+    context: StoreContextEnvelope,
+    missionId: string,
+    evidencePackage: AnalysisEvidencePackageRecord,
+    status: 'running' | 'done' | 'retryable',
+  ): void {
+    const existing = this.missionRepository.listMissionCheckpoints(context, missionId);
+    this.missionRepository.appendMissionCheckpoint(context, {
+      id: `ar:${context.storeId}:${missionId}:${String(existing.length).padStart(6, '0')}:${status}`,
+      missionId,
+      stage: 'ANALYSIS',
+      title: 'analysis_run',
+      status,
+      evidenceCount: evidencePackage.metricRowCount,
+      actorId: 'analysis-engine',
+    });
+  }
+
   private assertContext(contextInput: StoreContextEnvelope): StoreContextEnvelope {
     return this.storeCoordinator.assertActiveStoreContext(contextInput);
   }
@@ -738,13 +788,119 @@ function blockedResult(
   decisionIds: readonly string[],
   ...blockers: string[]
 ): AuthorizeAnalysisProposalBatchResult {
+  const uniqueMessages = [...new Set(blockers.filter(Boolean))];
+  const alignedMessages: string[] = [];
+  const alignedCodes: string[] = [];
+  const seen = new Set<string>();
+  for (const message of uniqueMessages) {
+    for (const code of inferBlockerCodes(message)) {
+      const key = `${message}\0${code}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      alignedMessages.push(message);
+      alignedCodes.push(code);
+    }
+  }
   return {
     mode,
     proposalIds,
     decisionIds,
     authorized: false,
-    blockers: [...new Set(blockers.filter(Boolean))],
+    blockers: alignedMessages,
+    blockerCodes: alignedCodes,
   };
+}
+
+const EXACT_BLOCKER_CODES: Record<string, string> = {
+  '动作批次超过当前不可变策略的变化或影响预算。': 'CHANGE_LIMIT_EXCEEDED',
+  '当前规则 revision 已变化；必须重新分析。': 'RULE_REVISION_MISMATCH',
+  '当前 AI 模型 revision 已变化；必须重新分析。': 'MODEL_REVISION_MISMATCH',
+  'Mission 已修订；旧分析建议必须重新运行后才能授权。': 'MISSION_REVISED',
+  '只能授权当前 Mission 的最新分析动作批次。': 'STALE_ACTION_BATCH',
+  '策略运行模式已变化；自动授权未降级为人工授权。': 'POLICY_RUNTIME_BLOCKED',
+  '策略自动模式被 kill switch、熔断器或活动策略版本阻断。': 'POLICY_RUNTIME_BLOCKED',
+  'Mission 不存在或不属于当前店铺。': 'MISSION_NOT_FOUND',
+  'Mission 必须处于 active 才能签发执行授权。': 'MISSION_NOT_ACTIVE',
+  '选择中包含不存在或跨店铺的建议快照。': 'PROPOSAL_NOT_FOUND',
+  '一次授权必须来自同一个 Mission 动作批次。': 'MIXED_ACTION_BATCH',
+  '必须整批授权，不能只批准动作批次的一部分。': 'PARTIAL_BATCH_NOT_ALLOWED',
+  '至少一个建议缺少不可变 Decision 关联。': 'MISSING_DECISION_LINK',
+  'Mission 策略版本或 revision 已变化。': 'POLICY_REVISION_MISMATCH',
+  '同一动作批次包含重复 Ads 实体，必须重新分析去重。': 'DUPLICATE_AD_ENTITY',
+  'Decision 已被删除或不属于当前店铺。': 'DECISION_NOT_FOUND',
+  '当前策略版本缺少有效的每日动作数、冷却期或执行窗口；请新建并启用完整策略版本。': 'POLICY_RUNTIME_BLOCKED',
+  '策略执行窗口时区与当前店铺业务时区不一致；请新建并启用正确的店铺策略版本。': 'POLICY_RUNTIME_BLOCKED',
+  '该动作批次授权已经过期。': 'GRANT_EXPIRED',
+};
+
+function inferBlockerCodes(message: string): string[] {
+  const exact = EXACT_BLOCKER_CODES[message];
+  if (exact) return [exact];
+  if (
+    message.includes('未降级为人工授权')
+    || message.includes('kill switch')
+    || message.includes('执行窗口')
+    || message.includes('单日动作数')
+    || message.includes('冷却期')
+  ) {
+    return ['POLICY_RUNTIME_BLOCKED'];
+  }
+  if (message.includes('终态')) return ['GRANT_TERMINAL'];
+  if (message.includes('V1 仅允许关键词竞价动作')) return ['UNSUPPORTED_ACTION'];
+  if (message.includes('建议已过期')) return ['PROPOSAL_EXPIRED'];
+  if (message.includes('证据包不存在、已变化或已过期')) return ['EVIDENCE_STALE'];
+  if (message.includes('缺少稳定 Ads 实体')) return ['MISSING_STABLE_AD_ENTITY'];
+  if (message.includes('Ads 实体身份 revision 或类型已变化')) return ['STALE_AD_ENTITY_REVISION'];
+  if (message.includes('不可整批授权')) return ['DECISION_NOT_AUTHORIZABLE'];
+  const machineCodes = [...message.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)].map((match) => match[1]);
+  if (machineCodes.length > 0) return [...new Set(machineCodes)];
+  return [slugBlockerCode(message)];
+}
+
+function slugBlockerCode(message: string): string {
+  const ascii = message.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase();
+  if (ascii.length >= 4) return ascii.slice(0, 48);
+  return `BLOCKER_${createHash('sha256').update(message).digest('hex').slice(0, 8).toUpperCase()}`;
+}
+
+function deriveAnalysisRun(
+  checkpoints: MissionCheckpointRecord[],
+  evidencePackages: AnalysisEvidencePackageRecord[],
+  actionBatches: AnalysisActionBatchRecord[],
+): MissionAnalysisProjection['analysisRun'] {
+  const runs = checkpoints.filter((row) => row.stage === 'ANALYSIS' && row.title === 'analysis_run');
+  const latest = runs[runs.length - 1];
+  const startedAt = runs.find((row) => row.status === 'running')?.createdAt
+    ?? latest?.createdAt
+    ?? evidencePackages[0]?.sealedAt;
+  if (latest?.status === 'retryable') {
+    return {
+      status: 'retryable',
+      startedAt: startedAt ?? latest.createdAt,
+      completedAt: latest.createdAt,
+    };
+  }
+  if (latest?.status === 'running') {
+    return { status: 'running', startedAt: startedAt ?? latest.createdAt };
+  }
+  if (latest?.status === 'done') {
+    return {
+      status: 'done',
+      startedAt: startedAt ?? latest.createdAt,
+      completedAt: latest.createdAt,
+    };
+  }
+  if (actionBatches.length > 0) {
+    return {
+      status: 'done',
+      startedAt: startedAt ?? evidencePackages[0]?.sealedAt ?? actionBatches[0].createdAt,
+      completedAt: actionBatches[0].createdAt,
+    };
+  }
+  if (evidencePackages[0]) {
+    return { status: 'running', startedAt: startedAt ?? evidencePackages[0].sealedAt };
+  }
+  return undefined;
 }
 
 function proposalValidUntil(now: Date, evidenceFreshUntil: string, missionObservationEnd: string): string {

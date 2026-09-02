@@ -61,6 +61,8 @@ function createHarness(options: {
   proofAllowed?: boolean;
   maxDailyActionCount?: number;
   cooldownMinutes?: number;
+  maxChangePct?: number;
+  missionPhase?: 'fact' | 'analysis' | 'decision' | 'action' | 'readback' | 'effect';
   executionWindow?: PolicyVersionRules['executionWindow'];
   mutateMissionDuringGeneration?: boolean;
   generationAuthorityFactory?: (
@@ -128,7 +130,7 @@ function createHarness(options: {
   const rules: PolicyVersionRules = {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: ['opaque-keyword-1', 'opaque-keyword-2'],
-    maxChangePct: 10,
+    maxChangePct: options.maxChangePct ?? 10,
     totalImpactBudget: 100,
     maxDailyActionCount: options.maxDailyActionCount ?? 100,
     cooldownMinutes: options.cooldownMinutes ?? 0,
@@ -201,7 +203,7 @@ function createHarness(options: {
     id: draftMission.id,
     expectedRevision: draftMission.revision,
     status: 'active',
-    phase: 'analysis',
+    phase: options.missionPhase ?? 'analysis',
     actorId: 'operator',
   });
   if (options.autonomyMode === 'policy_auto') {
@@ -1033,4 +1035,54 @@ describe('AnalysisAuthorityService', () => {
       projection.decisionLinks[0].decisionId,
     )?.status).toBe('needs_approval');
   });
+
+  it('records a running analysis checkpoint and pushes Mission.phase to analysis before generation', async () => {
+    let signalStarted!: () => void;
+    let releaseGeneration!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
+    const harness = createHarness({
+      missionPhase: 'fact',
+      generationAuthorityFactory: (captured) => Object.freeze({
+        ...captured,
+        generateRecommendations: async (
+          scope: Parameters<CapturedAnalysisGenerationAuthority['generateRecommendations']>[0],
+        ) => {
+          signalStarted();
+          await generationGate;
+          return captured.generateRecommendations(scope);
+        },
+      }),
+    });
+    expect(harness.missionRepository.getMission(harness.context, harness.missionId)?.phase).toBe('fact');
+
+    const pending = runRequest(harness);
+    await started;
+    const midProjection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
+    const midMission = harness.missionRepository.getMission(harness.context, harness.missionId);
+    expect(midProjection.analysisRun?.status).toBe('running');
+    expect(midMission?.phase).toBe('analysis');
+    releaseGeneration();
+
+    await pending;
+    const doneProjection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
+    expect(doneProjection.analysisRun?.status).toBe('done');
+    expect(harness.missionRepository.getMission(harness.context, harness.missionId)?.phase).toBe('analysis');
+  });
+
+  it('returns machine blockerCodes alongside Chinese CHANGE_LIMIT summaries', async () => {
+    const harness = createHarness({ maxChangePct: 1 });
+    const result = await runRequest(harness);
+    const authorized = harness.service.authorizeProposalBatch({
+      context: harness.context,
+      missionId: harness.missionId,
+      proposalIds: result.proposals.map((proposal) => proposal.id),
+    });
+    expect(authorized.authorized).toBe(false);
+    expect(authorized.blockerCodes).toContain('CHANGE_LIMIT_EXCEEDED');
+    expect(authorized.blockers).toContain('动作批次超过当前不可变策略的变化或影响预算。');
+    expect(authorized.blockerCodes.length).toBe(authorized.blockers.length);
+    expect(authorized.blockerCodes.length).toBeGreaterThan(0);
+  });
 });
+
