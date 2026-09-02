@@ -23,13 +23,26 @@ export type MissionLifecycleStatus =
   | 'completed'
   | 'archived';
 
-export type MissionPhase =
-  | 'fact'
-  | 'analysis'
-  | 'decision'
-  | 'action'
-  | 'readback'
-  | 'effect';
+export const MISSION_PHASES = [
+  'fact',
+  'analysis',
+  'decision',
+  'action',
+  'readback',
+  'effect',
+] as const;
+
+export type MissionPhase = (typeof MISSION_PHASES)[number];
+
+/** Operator stages on the Mission spine. fact/effect remain causal bookends. */
+export const MISSION_OPERATOR_PHASES = [
+  'analysis',
+  'decision',
+  'action',
+  'readback',
+] as const;
+
+export type MissionOperatorPhase = (typeof MISSION_OPERATOR_PHASES)[number];
 
 export type MissionPriority = 'P0' | 'P1' | 'P2' | 'P3';
 

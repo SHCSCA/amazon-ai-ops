@@ -77,6 +77,11 @@ export function createPreviewAnalysisAuthorityApi(): AnalysisAuthorityRendererAp
         proposals: projection.proposals,
         generatedRecommendations: projection.proposals.length,
         skippedUnsupportedRecommendations: 0,
+        analysisRun: {
+          status: 'done',
+          missionId: input.missionId,
+          evidencePackageId: projection.evidencePackages[0]?.id,
+        },
         ai: {
           configured: true,
           invoked: true,
@@ -98,7 +103,7 @@ export function createPreviewAnalysisAuthorityApi(): AnalysisAuthorityRendererAp
           proposalIds: [...input.proposalIds],
           decisionIds: projection.decisionLinks.map((link) => link.decisionId),
           authorized: false,
-          blockers: ['开发预览也要求整批授权，不能只选一部分建议。'],
+          blockers: [{ code: 'INCOMPLETE_BATCH', message: '开发预览也要求整批授权，不能只选一部分建议。' }],
         };
       }
       const issuedAt = new Date().toISOString();
@@ -248,5 +253,10 @@ function seedProjection(
       decisionId: `DEC-${String(context.storeId)}-${index + 1}`,
       createdAt: evidence.sealedAt,
     })),
+    analysisRun: {
+      status: 'done',
+      missionId,
+      evidencePackageId: evidence.id,
+    },
   };
 }

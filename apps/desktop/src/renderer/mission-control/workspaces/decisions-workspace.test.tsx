@@ -252,7 +252,7 @@ describe('DecisionsWorkspace', () => {
     expect(request).toEqual({ context, missionId: 'MISSION-1', proposalIds: expect.any(Array) });
     expect(Object.keys(request).sort()).toEqual(['context', 'missionId', 'proposalIds']);
     expect(await analysisApi.authorizeProposalBatch({ ...request, proposalIds: request.proposalIds.slice(0, 1) }))
-      .toMatchObject({ authorized: false, blockers: [expect.stringMatching(/整批授权/)] });
+      .toMatchObject({ authorized: false, blockers: [expect.objectContaining({ code: 'INCOMPLETE_BATCH' })] });
   });
 
   it('chooses an authorization Mission and action batch independently from the decided detail selection', async () => {

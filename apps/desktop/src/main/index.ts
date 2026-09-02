@@ -1166,6 +1166,14 @@ async function initApp(): Promise<void> {
         ? artifactAllowedRootsForStore(store, 'diagnostic-file')
         : [];
     },
+    onAnalysisRunCompleted: (run) => {
+      try {
+        assertRendererPayloadIsPathFree(run);
+        mainWindow?.webContents.send('analysis-authority:analysis-completed', run);
+      } catch (error) {
+        console.error('[Analysis] completion payload rejected before renderer emit', error);
+      }
+    },
     onAutomaticGrantIssued: (context, grant) => {
       const service = state.executionAuthorityService;
       if (!service) {
@@ -13234,6 +13242,60 @@ function assertRecommendationCurrentDataGate(recommendationId: number): {
   };
 }
 
+
+function resolveLockedRecommendationBatchScope(
+  recommendation: ActionRecommendation,
+  rendererScope: { dateFrom?: string; dateTo?: string; batchId?: string } | undefined,
+): {
+  dateFrom: string;
+  dateTo: string;
+  storeName: string;
+  marketplaceCode: string;
+  asin: string;
+  batchId: string;
+} {
+  if (!state.db) {
+    throw new Error('BATCH_UNAVAILABLE: Ads 对象核验被阻断：本地权威数据库尚未初始化。');
+  }
+  const { context } = resolveBusinessStoreAuthority();
+  const batchId = String(recommendation.evidence?.batchId ?? '').trim();
+  if (!batchId) {
+    throw new Error('SCOPE_BATCH_MISMATCH: Ads 对象核验被阻断：建议缺少锁定报表批次。');
+  }
+  const batch = state.db.prepare(`
+    SELECT id AS batchId, date_start AS dateFrom, date_end AS dateTo
+    FROM lingxing_report_batches
+    WHERE store_id = ? AND id = ? AND status = 'completed'
+  `).get(context.storeId, batchId) as {
+    batchId: string;
+    dateFrom: string;
+    dateTo: string;
+  } | undefined;
+  if (!batch || !String(batch.dateFrom || '').trim() || !String(batch.dateTo || '').trim()) {
+    throw new Error('BATCH_UNAVAILABLE: Ads 对象核验被阻断：建议锁定批次不可用。');
+  }
+  const dateFrom = String(rendererScope?.dateFrom ?? '').trim();
+  const dateTo = String(rendererScope?.dateTo ?? '').trim();
+  const requestedBatch = String(rendererScope?.batchId ?? '').trim();
+  if (dateFrom && dateFrom !== batch.dateFrom) {
+    throw new Error('SCOPE_DATE_MISMATCH: Ads 对象核验被阻断：请求日期必须等于锁定批次日期，不能使用顶栏范围。');
+  }
+  if (dateTo && dateTo !== batch.dateTo) {
+    throw new Error('SCOPE_DATE_MISMATCH: Ads 对象核验被阻断：请求日期必须等于锁定批次日期，不能使用顶栏范围。');
+  }
+  if (requestedBatch && requestedBatch !== batch.batchId) {
+    throw new Error('SCOPE_BATCH_MISMATCH: Ads 对象核验被阻断：建议与当前锁定范围或批次不一致，请刷新后重试。');
+  }
+  return {
+    dateFrom: batch.dateFrom,
+    dateTo: batch.dateTo,
+    storeName: recommendation.storeName,
+    marketplaceCode: recommendation.marketplaceCode,
+    asin: recommendation.asin || '',
+    batchId: batch.batchId,
+  };
+}
+
 function handleBindRecommendationWritableTarget(
   input: BindRecommendationWritableTargetRequest,
 ): BindRecommendationWritableTargetResult {
@@ -13249,14 +13311,23 @@ function handleBindRecommendationWritableTarget(
   if (!recommendation) {
     throw new Error('Ads 对象核验被阻断：建议不存在，请刷新后重试。');
   }
-  const gate = getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval');
+  const lockedScope = resolveLockedRecommendationBatchScope(recommendation, request.scope);
+  const gate = getBusinessRecommendationGate({
+    dateFrom: lockedScope.dateFrom,
+    dateTo: lockedScope.dateTo,
+    storeName: lockedScope.storeName,
+    marketplaceCode: lockedScope.marketplaceCode,
+    asin: lockedScope.asin,
+    batchId: lockedScope.batchId,
+    storeContext: context,
+  }, 'approval');
   const resolvedScope = {
-    dateFrom: gate.scope.dateFrom,
-    dateTo: gate.scope.dateTo,
-    storeName: gate.scope.storeName,
-    marketplaceCode: gate.scope.marketplaceCode,
-    asin: gate.scope.asin || '',
-    batchId: gate.scope.batchId || '',
+    dateFrom: lockedScope.dateFrom,
+    dateTo: lockedScope.dateTo,
+    storeName: lockedScope.storeName,
+    marketplaceCode: lockedScope.marketplaceCode,
+    asin: lockedScope.asin,
+    batchId: lockedScope.batchId,
   };
   const scopedRequest = { ...request, scope: resolvedScope };
   const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
@@ -13269,6 +13340,11 @@ function handleBindRecommendationWritableTarget(
   const result = bindRecommendationWritableTarget({
     recommendation,
     request: scopedRequest,
+    lockedBatch: {
+      dateFrom: lockedScope.dateFrom,
+      dateTo: lockedScope.dateTo,
+      batchId: lockedScope.batchId,
+    },
     allowedSourceFiles: gate.metricSource.sourceFiles,
     sourceAuthority,
     boundAt,
@@ -13305,14 +13381,23 @@ function handleResolveRecommendationReview(input: ResolveRecommendationReviewReq
   if (!recommendation) {
     throw new Error('复核被阻断：建议不存在，请刷新后重试。');
   }
-  const gate = getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval');
+  const lockedScope = resolveLockedRecommendationBatchScope(recommendation, request.scope);
+  const gate = getBusinessRecommendationGate({
+    dateFrom: lockedScope.dateFrom,
+    dateTo: lockedScope.dateTo,
+    storeName: lockedScope.storeName,
+    marketplaceCode: lockedScope.marketplaceCode,
+    asin: lockedScope.asin,
+    batchId: lockedScope.batchId,
+    storeContext: context,
+  }, 'approval');
   const resolvedScope = {
-    dateFrom: gate.scope.dateFrom,
-    dateTo: gate.scope.dateTo,
-    storeName: gate.scope.storeName,
-    marketplaceCode: gate.scope.marketplaceCode,
-    asin: gate.scope.asin || '',
-    batchId: gate.scope.batchId || '',
+    dateFrom: lockedScope.dateFrom,
+    dateTo: lockedScope.dateTo,
+    storeName: lockedScope.storeName,
+    marketplaceCode: lockedScope.marketplaceCode,
+    asin: lockedScope.asin,
+    batchId: lockedScope.batchId,
   };
   const scopedRequest = { ...request, scope: resolvedScope };
   const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {

@@ -14,12 +14,14 @@ type AnalysisAuthorityChannel =
 
 export interface AnalysisAuthorityIpcInvoker {
   invoke(channel: AnalysisAuthorityChannel, input: unknown): Promise<unknown>;
+  on?(channel: 'analysis-authority:analysis-completed', listener: (...args: unknown[]) => void): void;
 }
 
 export interface AnalysisAuthorityPreloadApi {
   runMissionAnalysis(input: RunMissionAnalysisRequest): Promise<RunMissionAnalysisResult>;
   getMissionProjection(context: StoreContextEnvelope, missionId: string): Promise<MissionAnalysisProjection>;
   authorizeProposalBatch(input: AuthorizeAnalysisProposalBatchRequest): Promise<AuthorizeAnalysisProposalBatchResult>;
+  onAnalysisCompleted(listener: (payload: unknown) => void): void;
 }
 
 /** Closed bridge; Renderer callers cannot choose a channel or provide grant fields. */
@@ -39,5 +41,10 @@ export function createAnalysisAuthorityPreloadApi(
       'analysis-authority:authorize-proposal-batch',
       input,
     ) as Promise<AuthorizeAnalysisProposalBatchResult>,
+    onAnalysisCompleted: (listener) => {
+      ipc.on?.('analysis-authority:analysis-completed', (...args: unknown[]) => {
+        listener(args.length > 1 ? args[1] : args[0]);
+      });
+    },
   });
 }

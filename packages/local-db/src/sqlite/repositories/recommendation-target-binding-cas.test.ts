@@ -82,7 +82,7 @@ describe('recommendation writable target binding CAS', () => {
     }
   });
 
-  it('keeps pending status, increments revision once, and never overwrites an existing binding audit', () => {
+  it('sets verified status, increments revision once, and never overwrites an existing binding audit', () => {
     const { db, repo } = createRepository();
     try {
       const id = repo.insert({
@@ -120,7 +120,7 @@ describe('recommendation writable target binding CAS', () => {
 
       expect(repo.bindWritableTargetIfCurrent(id, 0, firstPatch)).toBe(true);
       expect(repo.findById(id)).toMatchObject({
-        status: 'pending',
+        status: 'verified',
         revision: 1,
         evidence: firstPatch,
       });
@@ -133,7 +133,7 @@ describe('recommendation writable target binding CAS', () => {
         writableTargetBinding: { schemaVersion: 1, fromRevision: 1, boundRevision: 2 },
       })).toBe(false);
       expect(repo.findById(id)).toMatchObject({
-        status: 'pending',
+        status: 'verified',
         revision: 1,
         evidence: firstPatch,
       });

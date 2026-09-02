@@ -132,6 +132,48 @@ export type AnalysisProposalBlockerCode =
   | 'POLICY_ACTION_NOT_ALLOWED'
   | 'POLICY_RUNTIME_BLOCKED';
 
+/** Authorization-time codes. Proposal eligibility codes are reused; extras are grant/batch gates. */
+export type AnalysisAuthorizationBlockerCode =
+  | AnalysisProposalBlockerCode
+  | 'AUTONOMY_MODE_CHANGED'
+  | 'MISSION_NOT_FOUND'
+  | 'MISSION_NOT_ACTIVE'
+  | 'PROPOSAL_NOT_FOUND'
+  | 'BATCH_MISMATCH'
+  | 'STALE_ACTION_BATCH'
+  | 'STALE_MISSION_REVISION'
+  | 'MODEL_REVISION_MISMATCH'
+  | 'INCOMPLETE_BATCH'
+  | 'MISSING_DECISION_LINK'
+  | 'PROPOSAL_EXPIRED'
+  | 'DUPLICATE_AD_ENTITY'
+  | 'DECISION_NOT_FOUND'
+  | 'DECISION_NOT_AUTHORIZABLE'
+  | 'GRANT_TERMINAL'
+  | 'GRANT_EXPIRED'
+  | 'POLICY_RATE_LIMITS_INVALID'
+  | 'POLICY_TIMEZONE_MISMATCH'
+  | 'OUTSIDE_EXECUTION_WINDOW'
+  | 'DAILY_ACTION_LIMIT_EXCEEDED'
+  | 'COOLDOWN_ACTIVE'
+  | 'ANALYSIS_INTERRUPTED';
+
+export interface AnalysisAuthorizationBlocker {
+  code: AnalysisAuthorizationBlockerCode;
+  /** Chinese translation only. Machine code in `code` is the authority. */
+  message: string;
+}
+
+export const ANALYSIS_RUN_STATUSES = ['running', 'done', 'retryable'] as const;
+export type AnalysisRunStatus = (typeof ANALYSIS_RUN_STATUSES)[number];
+
+export interface MissionAnalysisRunProjection {
+  status: AnalysisRunStatus;
+  missionId: string;
+  evidencePackageId?: string;
+  blockerCodes?: readonly AnalysisAuthorizationBlockerCode[];
+}
+
 export interface AnalysisAuthorizationEligibility {
   eligible: boolean;
   blockers: readonly AnalysisProposalBlockerCode[];
@@ -227,6 +269,7 @@ export interface RunMissionAnalysisResult {
   skippedUnsupportedRecommendations: number;
   /** Present only when policy-auto attempted the exact latest batch immediately. */
   automaticAuthorization?: AuthorizeAnalysisProposalBatchResult;
+  analysisRun: MissionAnalysisRunProjection;
   ai: {
     configured: boolean;
     invoked: boolean;
@@ -241,6 +284,7 @@ export interface MissionAnalysisProjection {
   actionBatches: AnalysisActionBatchRecord[];
   proposals: AnalysisProposalSnapshotRecord[];
   decisionLinks: AnalysisProposalDecisionLinkRecord[];
+  analysisRun?: MissionAnalysisRunProjection;
 }
 
 export interface AuthorizeAnalysisProposalBatchRequest {
@@ -255,7 +299,7 @@ export interface AuthorizeAnalysisProposalBatchResult {
   decisionIds: readonly string[];
   proposalIds: readonly string[];
   authorized: boolean;
-  blockers: readonly string[];
+  blockers: readonly AnalysisAuthorizationBlocker[];
 }
 
 export function validateAnalysisEvidencePackage(

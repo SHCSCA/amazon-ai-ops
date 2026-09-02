@@ -23,6 +23,11 @@ import {
 } from './analysis-authority-service';
 
 const NOW = '2026-07-22T12:00:00.000Z';
+
+function blockerCodes(result: { blockers: ReadonlyArray<{ code: string } | string> }): string[] {
+  return result.blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.code);
+}
+
 const RULE_REVISION = 'a'.repeat(64);
 const tempDirs: string[] = [];
 const databases: Database.Database[] = [];
@@ -67,6 +72,7 @@ function createHarness(options: {
     captured: CapturedAnalysisGenerationAuthority,
   ) => CapturedAnalysisGenerationAuthority;
   onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
+  onAnalysisRunCompleted?: AnalysisAuthorityServiceOptions['onAnalysisRunCompleted'];
   batchStoreName?: string;
   recommendationEvidencePatch?: Partial<ActionRecommendation['evidence']>;
 } = {}): Harness {
@@ -248,6 +254,7 @@ function createHarness(options: {
     },
     allowedProofRoots: () => [options.proofAllowed === false ? deniedProofRoot : directory],
     onAutomaticGrantIssued: options.onAutomaticGrantIssued,
+    onAnalysisRunCompleted: options.onAnalysisRunCompleted,
     now: () => new Date(NOW),
     generateRecommendations: generationDelegate = async (scope) => {
       expect(scope).toMatchObject({
@@ -695,7 +702,7 @@ describe('AnalysisAuthorityService', () => {
       context: harness.context,
       missionId: harness.missionId,
       proposalIds: [result.proposals[0].id],
-    }).blockers).toContain('必须整批授权，不能只批准动作批次的一部分。');
+    }).blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.code)).toContain('INCOMPLETE_BATCH');
     expect(harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
@@ -796,7 +803,7 @@ describe('AnalysisAuthorityService', () => {
     expect(result.automaticAuthorization).toMatchObject({
       authorized: false,
       mode: 'policy_auto',
-      blockers: [expect.stringMatching(/未降级为人工授权/)],
+      blockers: [expect.objectContaining({ code: 'AUTONOMY_MODE_CHANGED' })],
     });
     expect(harness.missionRepository.listMissionGrants(harness.context, harness.missionId)).toEqual([]);
     const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
@@ -882,8 +889,8 @@ describe('AnalysisAuthorityService', () => {
       missionId: harness.missionId,
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
-    expect(authorization.blockers).not.toContain('当前规则 revision 已变化；必须重新分析。');
-    expect(authorization.blockers).not.toContain('当前 AI 模型 revision 已变化；必须重新分析。');
+    expect(blockerCodes(authorization)).not.toContain('RULE_REVISION_MISMATCH');
+    expect(blockerCodes(authorization)).not.toContain('MODEL_REVISION_MISMATCH');
   });
 
   it('blocks stale Mission, rule, AI runtime and non-latest action revisions before changing Decisions', async () => {
@@ -901,7 +908,7 @@ describe('AnalysisAuthorityService', () => {
       missionId: missionHarness.missionId,
       proposalIds: missionResult.proposals.map((proposal) => proposal.id),
     });
-    expect(missionBlocked.blockers).toContain('Mission 已修订；旧分析建议必须重新运行后才能授权。');
+    expect(blockerCodes(missionBlocked)).toContain('STALE_MISSION_REVISION');
 
     const ruleHarness = createHarness();
     const ruleResult = await runRequest(ruleHarness);
@@ -910,7 +917,7 @@ describe('AnalysisAuthorityService', () => {
       context: ruleHarness.context,
       missionId: ruleHarness.missionId,
       proposalIds: ruleResult.proposals.map((proposal) => proposal.id),
-    }).blockers).toContain('当前规则 revision 已变化；必须重新分析。');
+    }).blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.code)).toContain('RULE_REVISION_MISMATCH');
 
     const modelHarness = createHarness();
     const modelResult = await runRequest(modelHarness);
@@ -919,7 +926,7 @@ describe('AnalysisAuthorityService', () => {
       context: modelHarness.context,
       missionId: modelHarness.missionId,
       proposalIds: modelResult.proposals.map((proposal) => proposal.id),
-    }).blockers).toContain('当前 AI 模型 revision 已变化；必须重新分析。');
+    }).blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.code)).toContain('MODEL_REVISION_MISMATCH');
 
     const latestHarness = createHarness();
     const latestResult = await runRequest(latestHarness);
@@ -936,7 +943,7 @@ describe('AnalysisAuthorityService', () => {
       context: latestHarness.context,
       missionId: latestHarness.missionId,
       proposalIds: latestResult.proposals.map((proposal) => proposal.id),
-    }).blockers).toContain('只能授权当前 Mission 的最新分析动作批次。');
+    }).blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.code)).toContain('STALE_ACTION_BATCH');
   });
 
   it('rolls back batch Decision approvals when immutable grant issuance fails', async () => {
@@ -978,7 +985,8 @@ describe('AnalysisAuthorityService', () => {
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
     expect(repeated).toMatchObject({ authorized: false, mode: 'manual_approval' });
-    expect(repeated.blockers.join(' ')).toMatch(/revoked/);
+    expect(blockerCodes(repeated)).toContain('GRANT_TERMINAL');
+    expect(repeated.blockers.map((blocker) => typeof blocker === 'string' ? blocker : blocker.message).join(' ')).toMatch(/revoked/);
   });
 
   it('fails closed outside the immutable policy execution window', async () => {
@@ -997,7 +1005,7 @@ describe('AnalysisAuthorityService', () => {
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
     expect(blocked).toMatchObject({ authorized: false });
-    expect(blocked.blockers.join(' ')).toMatch(/执行窗口/);
+    expect(blockerCodes(blocked)).toContain('OUTSIDE_EXECUTION_WINDOW');
   });
 
   it('enforces the per-business-day action limit before approving the batch', async () => {
@@ -1010,7 +1018,7 @@ describe('AnalysisAuthorityService', () => {
       missionId: harness.missionId,
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
-    expect(blocked.blockers.join(' ')).toMatch(/单日动作数/);
+    expect(blockerCodes(blocked)).toContain('DAILY_ACTION_LIMIT_EXCEEDED');
     expect(harness.missionRepository.getDecision(
       harness.context,
       projection.decisionLinks[0].decisionId,
@@ -1027,10 +1035,67 @@ describe('AnalysisAuthorityService', () => {
       missionId: harness.missionId,
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
-    expect(blocked.blockers.join(' ')).toMatch(/冷却期/);
+    expect(blockerCodes(blocked)).toContain('COOLDOWN_ACTIVE');
     expect(harness.missionRepository.getDecision(
       harness.context,
       projection.decisionLinks[0].decisionId,
     )?.status).toBe('needs_approval');
   });
+
+  it('returns CHANGE_LIMIT_EXCEEDED as a machine code instead of a Chinese-only string', async () => {
+    const harness = createHarness();
+    const result = await runRequest(harness);
+    const originalGet = harness.missionRepository.getPolicyVersion.bind(harness.missionRepository);
+    vi.spyOn(harness.missionRepository, 'getPolicyVersion').mockImplementation((context, id) => {
+      const policy = originalGet(context, id);
+      if (!policy) return policy;
+      return { ...policy, rules: { ...policy.rules, maxChangePct: 0.01 } };
+    });
+    const blocked = harness.service.authorizeProposalBatch({
+      context: harness.context,
+      missionId: harness.missionId,
+      proposalIds: result.proposals.map((proposal) => proposal.id),
+    });
+    expect(blockerCodes(blocked)).toContain('CHANGE_LIMIT_EXCEEDED');
+    expect(blocked.blockers.every((blocker) => typeof blocker !== 'string' && typeof blocker.code === 'string')).toBe(true);
+    expect(blocked.blockers.some((blocker) => typeof blocker !== 'string' && blocker.message.includes('动作批次超过'))).toBe(true);
+  });
+
+  it('persists a replayable analysis run, emits completion, and auto-advances Mission.phase to decision', async () => {
+    const completed: Array<{ status: string; missionId: string }> = [];
+    const harness = createHarness({
+      onAnalysisRunCompleted: (run) => { completed.push(run); },
+    });
+    const result = await runRequest(harness);
+    expect(result.analysisRun).toMatchObject({
+      status: 'done',
+      missionId: harness.missionId,
+      evidencePackageId: result.evidencePackage.id,
+    });
+    expect(completed).toEqual([expect.objectContaining({ status: 'done', missionId: harness.missionId })]);
+    expect(harness.missionRepository.getMission(harness.context, harness.missionId)?.phase).toBe('decision');
+    const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
+    expect(projection.analysisRun).toMatchObject({
+      status: 'done',
+      missionId: harness.missionId,
+      evidencePackageId: result.evidencePackage.id,
+    });
+  });
+
+  it('marks a failed analysis run retryable without advancing Mission.phase', async () => {
+    const harness = createHarness({
+      generationAuthorityFactory: (captured) => Object.freeze({
+        ...captured,
+        generateRecommendations: async () => {
+          throw new Error('simulated analysis failure');
+        },
+      }),
+    });
+    await expect(runRequest(harness)).rejects.toThrow(/simulated analysis failure/);
+    expect(harness.missionRepository.getMission(harness.context, harness.missionId)?.phase).toBe('analysis');
+    const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
+    expect(projection.analysisRun?.status).toBe('retryable');
+    expect(projection.analysisRun?.blockerCodes).toEqual(['ANALYSIS_INTERRUPTED']);
+  });
+
 });

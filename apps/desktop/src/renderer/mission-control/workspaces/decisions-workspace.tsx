@@ -895,7 +895,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       const result = await analysisApi.authorizeProposalBatch(request);
       if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       if (!result.authorized || !result.grant) {
-        setError(result.blockers.join('；') || '整批授权未通过 Main 权威校验。');
+        setError(result.blockers.map((blocker) => blocker.code).join('；') || '整批授权未通过 Main 权威校验。');
         return;
       }
       if (selectedMissionRef.current === authorizationMissionId) {

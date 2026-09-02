@@ -8,13 +8,18 @@ import type {
 import { bindRecommendationWritableTarget } from './recommendation-writable-target-binding';
 
 const sourceFile = 'D:/reports/keyword.xlsx';
-const scope = {
+const lockedBatch = {
   dateFrom: '2026-05-21',
   dateTo: '2026-06-23',
+  batchId: 'batch_current',
+};
+const scope = {
+  dateFrom: lockedBatch.dateFrom,
+  dateTo: lockedBatch.dateTo,
   storeName: 'FT-US-US',
   marketplaceCode: 'US',
   asin: 'B0TESTASIN',
-  batchId: 'batch_current',
+  batchId: lockedBatch.batchId,
 };
 
 function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRecommendation {
@@ -46,7 +51,7 @@ function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRe
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       targeting: 'door lock',
-      batchId: scope.batchId,
+      batchId: lockedBatch.batchId,
       reportType: 'keyword',
       sourceFile,
       sourceFiles: [sourceFile],
@@ -63,11 +68,11 @@ function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRe
   };
 }
 
-function request(): BindRecommendationWritableTargetRequest {
+function request(scopeOverrides: Partial<typeof scope> = {}): BindRecommendationWritableTargetRequest {
   return {
     recommendationId: 81,
     expectedRevision: 4,
-    scope,
+    scope: { ...scope, ...scopeOverrides },
     binding: {
       boundBy: 'Alice',
       note: 'Matched campaign, ad group, and keyword ID in authenticated Ads UI.',
@@ -110,27 +115,34 @@ const sourceAuthority = {
   sourceRow: 611,
 };
 
-describe('pending recommendation writable target binding', () => {
-  it('atomically binds one verified Ads target while keeping the recommendation pending', () => {
-    const persist = vi.fn(() => true);
+function bind(overrides: Record<string, unknown> = {}) {
+  const persist = vi.fn(() => true);
+  const result = bindRecommendationWritableTarget({
+    recommendation: recommendation(),
+    request: request(),
+    lockedBatch,
+    allowedSourceFiles: [sourceFile],
+    sourceAuthority,
+    boundAt: '2026-07-16T04:30:00.000Z',
+    resolveWritableTarget: () => canonicalTarget,
+    persist,
+    ...overrides,
+  } as never);
+  return { result, persist };
+}
 
-    const result = bindRecommendationWritableTarget({
-      recommendation: recommendation(),
-      request: request(),
-      allowedSourceFiles: [sourceFile],
-      sourceAuthority,
-      boundAt: '2026-07-16T04:30:00.000Z',
-      resolveWritableTarget: () => canonicalTarget,
-      persist,
-    });
+describe('pending recommendation writable target binding', () => {
+  it('atomically binds one verified Ads target and leaves 待核验 / pending-verify', () => {
+    const { result, persist } = bind();
 
     expect(result).toEqual({
       ok: true,
       recommendationId: 81,
-      status: 'pending',
+      status: 'verified',
       revision: 5,
       boundAt: '2026-07-16T04:30:00.000Z',
     });
+    expect(result.status).not.toBe('pending');
     expect(persist).toHaveBeenCalledWith({
       writableTarget: canonicalTarget,
       writableTargetBinding: {
@@ -151,7 +163,38 @@ describe('pending recommendation writable target binding', () => {
     });
   });
 
-  it('wires the production IPC through current scope authority and the dedicated pending CAS', () => {
+  it('persists Mission/evidence batch dates instead of a disagreeing renderer ScopeBar', () => {
+    const persist = vi.fn(() => true);
+    const result = bindRecommendationWritableTarget({
+      recommendation: recommendation(),
+      request: request({ dateFrom: '', dateTo: '' }),
+      lockedBatch,
+      allowedSourceFiles: [sourceFile],
+      sourceAuthority,
+      boundAt: '2026-07-16T04:30:00.000Z',
+      resolveWritableTarget: () => canonicalTarget,
+      persist,
+    });
+    expect(result.status).toBe('verified');
+    expect(persist.mock.calls[0][0].writableTargetBinding.scope).toMatchObject(lockedBatch);
+  });
+
+  it('fails closed when renderer dates disagree with the locked evidence batch', () => {
+    const persist = vi.fn(() => true);
+    expect(() => bindRecommendationWritableTarget({
+      recommendation: recommendation(),
+      request: request({ dateFrom: '2026-01-01', dateTo: '2026-01-31' }),
+      lockedBatch,
+      allowedSourceFiles: [sourceFile],
+      sourceAuthority,
+      boundAt: '2026-07-16T04:30:00.000Z',
+      resolveWritableTarget: () => canonicalTarget,
+      persist,
+    })).toThrow(/SCOPE_DATE_MISMATCH/);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('wires the production IPC through locked batch dates and the dedicated pending CAS', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const start = source.indexOf('function handleBindRecommendationWritableTarget');
     const end = source.indexOf('function handleResolveRecommendationReview');
@@ -159,34 +202,36 @@ describe('pending recommendation writable target binding', () => {
 
     expect(start).toBeGreaterThan(-1);
     expect(handler).toContain('bindRecommendationWritableTarget({');
-    expect(handler).toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
+    expect(handler).toContain('lockedBatch');
+    expect(handler).toContain('resolveLockedRecommendationBatchScope');
     expect(handler).toContain('findByIdForStore(context.storeId, request.recommendationId)');
     expect(handler).toContain('storeId: context.storeId');
     expect(handler).toContain('assertRecommendationMetricSourceAuthority(state.db');
     expect(handler).toContain('resolveWritableAdTargetAuthority(state.db!');
     expect(handler).toContain('bindWritableTargetIfCurrentForStore(');
     expect(handler).not.toContain('.bindWritableTargetIfCurrent(');
+    expect(handler).not.toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
     expect(source).toContain("registerTrackedIpcHandler('recommendations:bind-writable-target'");
   });
 
   it('never overwrites an existing writable target even when its binding audit is absent', () => {
     const persist = vi.fn(() => true);
-    const existingTarget = { ...canonicalTarget, entityId: 'existing-opaque-id' };
 
     expect(() => bindRecommendationWritableTarget({
       recommendation: recommendation({
         evidence: {
           ...recommendation().evidence,
-          writableTarget: existingTarget,
+          writableTarget: { ...canonicalTarget, entityId: 'existing-opaque-id' },
         },
       }),
       request: request(),
+      lockedBatch,
       allowedSourceFiles: [sourceFile],
       sourceAuthority,
       boundAt: '2026-07-16T04:30:00.000Z',
       resolveWritableTarget: () => canonicalTarget,
       persist,
-    })).toThrow(/已经存在 Ads 可写对象|不能覆盖/);
+    })).toThrow(/已经存在 Ads 可写对象|不能覆盖|ALREADY_BOUND/);
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -196,6 +241,7 @@ describe('pending recommendation writable target binding', () => {
     expect(() => bindRecommendationWritableTarget({
       recommendation: recommendation(),
       request: request(),
+      lockedBatch,
       allowedSourceFiles: [sourceFile],
       sourceAuthority,
       boundAt: '2026-07-16T04:30:00.000Z',

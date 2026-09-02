@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   authorizeMissionGrant,
+  MISSION_OPERATOR_PHASES,
+  MISSION_PHASES,
   normalizeOpaqueEvidenceRef,
   normalizeStoreContextEnvelope,
   type MissionGrantRecord,
@@ -184,5 +186,12 @@ describe('opaque evidence references', () => {
     ]) {
       expect(() => normalizeOpaqueEvidenceRef(path)).toThrow(/opaque logical id/);
     }
+  });
+});
+
+describe('Mission.phase operator stages', () => {
+  it('keeps analysis, decision, action, and readback as operator stages', () => {
+    expect(MISSION_OPERATOR_PHASES).toEqual(['analysis', 'decision', 'action', 'readback']);
+    expect(MISSION_PHASES).toEqual(expect.arrayContaining([...MISSION_OPERATOR_PHASES, 'fact', 'effect']));
   });
 });

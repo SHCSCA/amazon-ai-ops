@@ -10,12 +10,16 @@ import {
 } from '@amazon-ai-ops/local-db';
 import {
   type ActionRecommendation,
+  type AnalysisAuthorizationBlocker,
+  type AnalysisAuthorizationBlockerCode,
   type AnalysisEvidencePackageRecord,
   type AnalysisProposalSnapshotRecord,
   type AuthorizeAnalysisProposalBatchRequest,
   type AuthorizeAnalysisProposalBatchResult,
   type MissionGrantRecord,
   type MissionAnalysisProjection,
+  type MissionAnalysisRunProjection,
+  type MissionRecord,
   type PolicyVersionRules,
   type RunMissionAnalysisRequest,
   type RunMissionAnalysisResult,
@@ -25,6 +29,12 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import type { StoreCoordinator } from './store-coordinator';
 import { assertCurrentWritableAdTargetAuthority } from './writable-ad-target-resolution';
+import {
+  analysisBlocker,
+  analysisError,
+  analysisErrorCode,
+  uniqueAnalysisBlockers,
+} from './analysis-authority-blockers';
 
 export interface RecommendationGenerationResultForAnalysis {
   generated: number;
@@ -95,6 +105,7 @@ export interface AnalysisAuthorityServiceOptions {
     context: StoreContextEnvelope,
     grant: MissionGrantRecord,
   ) => void;
+  onAnalysisRunCompleted?: (run: MissionAnalysisRunProjection) => void;
   now?: () => Date;
 }
 
@@ -114,6 +125,7 @@ export class AnalysisAuthorityService {
   private readonly currentModelRevision: AnalysisAuthorityServiceOptions['currentModelRevision'];
   private readonly allowedProofRoots: AnalysisAuthorityServiceOptions['allowedProofRoots'];
   private readonly onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
+  private readonly onAnalysisRunCompleted?: AnalysisAuthorityServiceOptions['onAnalysisRunCompleted'];
   private readonly now: () => Date;
 
   constructor(options: AnalysisAuthorityServiceOptions) {
@@ -132,14 +144,15 @@ export class AnalysisAuthorityService {
     this.currentModelRevision = options.currentModelRevision;
     this.allowedProofRoots = options.allowedProofRoots;
     this.onAutomaticGrantIssued = options.onAutomaticGrantIssued;
+    this.onAnalysisRunCompleted = options.onAnalysisRunCompleted;
     this.now = options.now ?? (() => new Date());
   }
 
   async runMissionAnalysis(request: RunMissionAnalysisRequest): Promise<RunMissionAnalysisResult> {
     const context = this.assertContext(request.context);
     const mission = this.missionRepository.getMission(context, requiredId(request.missionId, 'missionId'));
-    if (!mission) throw new Error('Mission analysis blocked: Mission was not found in the active store.');
-    if (mission.status !== 'active') throw new Error('Mission analysis blocked: Mission must be active.');
+    if (!mission) throw analysisError('MISSION_NOT_FOUND', 'Mission analysis blocked: Mission was not found in the active store.');
+    if (mission.status !== 'active') throw analysisError('MISSION_NOT_ACTIVE', 'Mission analysis blocked: Mission must be active.');
     const batch = this.db.prepare(`
       SELECT marketplace_code AS marketplaceCode,
              date_start AS dateFrom, date_end AS dateTo
@@ -150,11 +163,11 @@ export class AnalysisAuthorityService {
       dateTo: string;
     } | undefined;
     if (!batch || batch.marketplaceCode !== 'US') {
-      throw new Error('Mission analysis blocked: completed US Lingxing data batch is unavailable.');
+      throw analysisError('EVIDENCE_BATCH_MISMATCH', 'Mission analysis blocked: completed US Lingxing data batch is unavailable.');
     }
     if ((request.dateFrom && request.dateFrom !== batch.dateFrom)
       || (request.dateTo && request.dateTo !== batch.dateTo)) {
-      throw new Error('Mission analysis blocked: scope must equal the Mission data-batch date range.');
+      throw analysisError('EVIDENCE_BATCH_MISMATCH', 'Mission analysis blocked: scope must equal the Mission data-batch date range.');
     }
     const dateFrom = batch.dateFrom;
     const dateTo = batch.dateTo;
@@ -168,8 +181,10 @@ export class AnalysisAuthorityService {
       status: string;
     } | undefined;
     if (!store || store.status !== 'active' || store.marketplace !== 'US' || !store.displayName.trim()) {
-      throw new Error('Mission analysis blocked: active logical US store authority is unavailable.');
+      throw analysisError('MISSION_NOT_FOUND', 'Mission analysis blocked: active logical US store authority is unavailable.');
     }
+    this.persistAnalysisRun(context, mission.id, 'running');
+    try {
     const asin = mission.productId?.toUpperCase();
     const capturedAuthority = this.captureGenerationAuthority();
     if (!capturedAuthority || typeof capturedAuthority.generateRecommendations !== 'function') {
@@ -213,9 +228,20 @@ export class AnalysisAuthorityService {
     const recommendations = generation.recommendationIds
       .map((id) => this.recommendationRepository.findByIdForStore(context.storeId, id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    const currentMission = this.missionRepository.getMission(context, mission.id);
+    if (!currentMission || currentMission.revision !== mission.revision) {
+      throw new Error('Mission changed while its analysis was running.');
+    }
+    // Pin the action batch to the post-analysis operator phase. Transitioning
+    // after the batch would bump Mission.revision and stale the grant spine.
+    const missionForBatch = this.advanceMissionPhaseToDecision(context, mission.id)
+      ?? this.missionRepository.getMission(context, mission.id);
+    if (!missionForBatch) {
+      throw analysisError('MISSION_NOT_FOUND', 'Mission analysis blocked: Mission was not found in the active store.');
+    }
     const actionBatchId = compactId('analysis-action-batch', {
       evidencePackageHash: evidencePackage.packageHash,
-      missionRevision: mission.revision,
+      missionRevision: missionForBatch.revision,
       recommendations: recommendations.map((row) => ({
         id: row.id,
         revision: row.revision ?? 0,
@@ -225,9 +251,9 @@ export class AnalysisAuthorityService {
     });
     const actionBatch = this.repository.createActionBatch(context, {
       id: actionBatchId,
-      missionId: mission.id,
+      missionId: missionForBatch.id,
       evidencePackageId: evidencePackage.id,
-      expectedMissionRevision: mission.revision,
+      expectedMissionRevision: missionForBatch.revision,
     });
 
     const proposals: AnalysisProposalSnapshotRecord[] = [];
@@ -285,7 +311,25 @@ export class AnalysisAuthorityService {
         this.onAutomaticGrantIssued?.(context, result.automaticAuthorization.grant);
       }
     }
-    return result;
+    const analysisRun: MissionAnalysisRunProjection = {
+      status: 'done',
+      missionId: mission.id,
+      evidencePackageId: evidencePackage.id,
+    };
+    this.persistAnalysisRun(context, mission.id, 'done', evidencePackage.id);
+    this.onAnalysisRunCompleted?.(analysisRun);
+    return { ...result, analysisRun };
+    } catch (error) {
+      const code = analysisErrorCode(error);
+      const analysisRun: MissionAnalysisRunProjection = {
+        status: 'retryable',
+        missionId: mission.id,
+        blockerCodes: [code],
+      };
+      this.persistAnalysisRun(context, mission.id, 'retryable', undefined, [code]);
+      this.onAnalysisRunCompleted?.(analysisRun);
+      throw error;
+    }
   }
 
   getMissionAnalysisProjection(
@@ -294,12 +338,13 @@ export class AnalysisAuthorityService {
   ): MissionAnalysisProjection {
     const context = this.assertContext(contextInput);
     const missionId = requiredId(missionIdInput, 'missionId');
-    const projection = {
+    const projection: MissionAnalysisProjection = {
       evidencePackages: this.repository.listEvidencePackages(context, missionId),
       actionBatches: this.repository.listActionBatches(context, missionId),
       proposals: this.repository.listProposalSnapshots(context, missionId),
       decisionLinks: this.repository.listProposalDecisionLinks(context, missionId),
     };
+    projection.analysisRun = this.deriveAnalysisRun(context, missionId, projection.evidencePackages);
     this.assertContext(context);
     return projection;
   }
@@ -323,48 +368,48 @@ export class AnalysisAuthorityService {
           requiredMode,
           selectedIds,
           [],
-          '策略运行模式已变化；自动授权未降级为人工授权。',
+          analysisBlocker('AUTONOMY_MODE_CHANGED', '策略运行模式已变化；自动授权未降级为人工授权。'),
         );
       }
       const mission = this.missionRepository.getMission(context, missionId);
-      if (!mission) return blockedResult(mode, selectedIds, [], 'Mission 不存在或不属于当前店铺。');
+      if (!mission) return blockedResult(mode, selectedIds, [], analysisBlocker('MISSION_NOT_FOUND', 'Mission 不存在或不属于当前店铺。'));
       if (mission.status !== 'active') {
-        return blockedResult(mode, selectedIds, [], 'Mission 必须处于 active 才能签发执行授权。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('MISSION_NOT_ACTIVE', 'Mission 必须处于 active 才能签发执行授权。'));
       }
 
       const selected = selectedIds.map((id) => this.repository.getProposalSnapshot(context, id));
       if (selected.some((row) => !row)) {
-        return blockedResult(mode, selectedIds, [], '选择中包含不存在或跨店铺的建议快照。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('PROPOSAL_NOT_FOUND', '选择中包含不存在或跨店铺的建议快照。'));
       }
       const proposals = selected as AnalysisProposalSnapshotRecord[];
       const actionBatchIds = new Set(proposals.map((row) => row.actionBatchId));
       if (actionBatchIds.size !== 1 || proposals.some((row) => row.missionId !== mission.id)) {
-        return blockedResult(mode, selectedIds, [], '一次授权必须来自同一个 Mission 动作批次。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('BATCH_MISMATCH', '一次授权必须来自同一个 Mission 动作批次。'));
       }
       const actionBatchId = proposals[0].actionBatchId;
       const latestBatch = this.repository.getLatestActionBatch(context, mission.id);
       if (!latestBatch || latestBatch.id !== actionBatchId
         || latestBatch.actionRevision !== proposals[0].actionRevision) {
-        return blockedResult(mode, selectedIds, [], '只能授权当前 Mission 的最新分析动作批次。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('STALE_ACTION_BATCH', '只能授权当前 Mission 的最新分析动作批次。'));
       }
       if (latestBatch.missionRevision !== mission.revision
         || proposals.some((proposal) => proposal.missionRevision !== mission.revision)) {
-        return blockedResult(mode, selectedIds, [], 'Mission 已修订；旧分析建议必须重新运行后才能授权。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('STALE_MISSION_REVISION', 'Mission 已修订；旧分析建议必须重新运行后才能授权。'));
       }
       const currentRuleRevision = sha256Text(this.currentRuleRevision(), 'ruleRevision');
       const currentModelRevision = requiredText(this.currentModelRevision(), 'modelRevision');
       if (latestBatch.ruleRevision !== currentRuleRevision
         || proposals.some((proposal) => proposal.ruleRevision !== currentRuleRevision)) {
-        return blockedResult(mode, selectedIds, [], '当前规则 revision 已变化；必须重新分析。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('RULE_REVISION_MISMATCH', '当前规则 revision 已变化；必须重新分析。'));
       }
       if (latestBatch.modelRevision !== currentModelRevision
         || proposals.some((proposal) => proposal.modelRevision !== currentModelRevision)) {
-        return blockedResult(mode, selectedIds, [], '当前 AI 模型 revision 已变化；必须重新分析。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('MODEL_REVISION_MISMATCH', '当前 AI 模型 revision 已变化；必须重新分析。'));
       }
       const completeBatch = this.repository.listProposalSnapshots(context, mission.id)
         .filter((row) => row.actionBatchId === actionBatchId);
       if (!sameSet(selectedIds, completeBatch.map((row) => row.id))) {
-        return blockedResult(mode, selectedIds, [], '必须整批授权，不能只批准动作批次的一部分。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('INCOMPLETE_BATCH', '必须整批授权，不能只批准动作批次的一部分。'));
       }
 
       const links = this.repository.listProposalDecisionLinks(context, mission.id)
@@ -373,33 +418,44 @@ export class AnalysisAuthorityService {
       const decisionIds = proposals
         .map((proposal) => decisionByProposal.get(proposal.id))
         .filter(Boolean) as string[];
-      const blockers: string[] = [];
-      if (decisionIds.length !== proposals.length) blockers.push('至少一个建议缺少不可变 Decision 关联。');
+      const blockers: AnalysisAuthorizationBlocker[] = [];
+      if (decisionIds.length !== proposals.length) {
+        blockers.push(analysisBlocker('MISSING_DECISION_LINK', '至少一个建议缺少不可变 Decision 关联。'));
+      }
       const now = this.now().getTime();
       const evidenceById = new Map<string, AnalysisEvidencePackageRecord>();
       for (const proposal of proposals) {
         const eligibility = mode === 'policy_auto' ? proposal.authorization.policy : proposal.authorization.human;
-        if (!eligibility.eligible) blockers.push(`${proposal.entityName}: ${eligibility.blockers.join(', ')}`);
-        if (proposal.entityType !== 'keyword' || proposal.actionType !== 'set_keyword_bid') {
-          blockers.push(`${proposal.entityName}: V1 仅允许关键词竞价动作。`);
+        if (!eligibility.eligible) {
+          for (const code of eligibility.blockers) {
+            blockers.push(analysisBlocker(code, `${proposal.entityName}: ${code}`));
+          }
         }
-        if (Date.parse(proposal.validUntil) <= now) blockers.push(`${proposal.entityName}: 建议已过期。`);
+        if (proposal.entityType !== 'keyword' || proposal.actionType !== 'set_keyword_bid') {
+          blockers.push(analysisBlocker('UNSUPPORTED_ACTION', `${proposal.entityName}: V1 仅允许关键词竞价动作。`));
+        }
+        if (Date.parse(proposal.validUntil) <= now) {
+          blockers.push(analysisBlocker('PROPOSAL_EXPIRED', `${proposal.entityName}: 建议已过期。`));
+        }
         const evidence = this.repository.getEvidencePackage(context, proposal.evidencePackageId);
         if (!evidence
           || evidence.packageHash !== proposal.evidencePackageHash
           || evidence.dataBatchId !== mission.dataBatchId
           || Date.parse(evidence.freshUntil) <= now) {
-          blockers.push(`${proposal.entityName}: 证据包不存在、已变化或已过期。`);
+          const code: AnalysisAuthorizationBlockerCode = evidence && evidence.dataBatchId !== mission.dataBatchId
+            ? 'EVIDENCE_BATCH_MISMATCH'
+            : 'EVIDENCE_STALE';
+          blockers.push(analysisBlocker(code, `${proposal.entityName}: 证据包不存在、已变化或已过期。`));
         } else {
           evidenceById.set(evidence.id, evidence);
         }
         if (!proposal.adEntityId || !proposal.adEntityRevision) {
-          blockers.push(`${proposal.entityName}: 缺少稳定 Ads 实体。`);
+          blockers.push(analysisBlocker('MISSING_STABLE_AD_ENTITY', `${proposal.entityName}: 缺少稳定 Ads 实体。`));
         } else {
           const latest = this.repository.getLatestVerifiedAdEntityById(context, proposal.adEntityId);
           if (!latest || latest.entityRevision !== proposal.adEntityRevision
             || latest.entityType !== 'keyword') {
-            blockers.push(`${proposal.entityName}: Ads 实体身份 revision 或类型已变化。`);
+            blockers.push(analysisBlocker('STALE_AD_ENTITY_REVISION', `${proposal.entityName}: Ads 实体身份 revision 或类型已变化。`));
           }
         }
       }
@@ -408,18 +464,18 @@ export class AnalysisAuthorityService {
       if (!policyVersion || policyVersion.revision !== proposals[0].policyRevision
         || proposals.some((proposal) => proposal.policyVersionId !== policyVersion.id
           || proposal.policyRevision !== policyVersion.revision)) {
-        blockers.push('Mission 策略版本或 revision 已变化。');
+        blockers.push(analysisBlocker('POLICY_REVISION_MISMATCH', 'Mission 策略版本或 revision 已变化。'));
       }
       if (mode === 'policy_auto' && (
         runtime.killSwitch
         || runtime.circuitBreakerState !== 'closed'
         || runtime.activePolicyVersionId !== policyVersion?.id
       )) {
-        blockers.push('策略自动模式被 kill switch、熔断器或活动策略版本阻断。');
+        blockers.push(analysisBlocker('POLICY_RUNTIME_BLOCKED', '策略自动模式被 kill switch、熔断器或活动策略版本阻断。'));
       }
       const allowedAdEntityIds = proposals.map((proposal) => proposal.adEntityId!).filter(Boolean);
       if (new Set(allowedAdEntityIds).size !== allowedAdEntityIds.length) {
-        blockers.push('同一动作批次包含重复 Ads 实体，必须重新分析去重。');
+        blockers.push(analysisBlocker('DUPLICATE_AD_ENTITY', '同一动作批次包含重复 Ads 实体，必须重新分析去重。'));
       }
       const maxChangePct = Math.max(...proposals.map((proposal) => Math.abs(proposal.changePct)));
       const totalImpactBudget = proposals.reduce(
@@ -429,16 +485,16 @@ export class AnalysisAuthorityService {
       const rules = policyVersion?.rules as PolicyVersionRules | undefined;
       if (!rules || maxChangePct > Number(rules.maxChangePct)
         || totalImpactBudget > Number(rules.totalImpactBudget)) {
-        blockers.push('动作批次超过当前不可变策略的变化或影响预算。');
+        blockers.push(analysisBlocker('CHANGE_LIMIT_EXCEEDED', '动作批次超过当前不可变策略的变化或影响预算。'));
       }
 
       const decisions = decisionIds.map((id) => this.missionRepository.getDecision(context, id));
       if (decisions.some((row) => !row)) {
-        blockers.push('Decision 已被删除或不属于当前店铺。');
+        blockers.push(analysisBlocker('DECISION_NOT_FOUND', 'Decision 已被删除或不属于当前店铺。'));
       } else {
         for (const decision of decisions) {
           if (decision && !['proposed', 'needs_approval', 'approved'].includes(decision.status)) {
-            blockers.push(`Decision ${decision.id} 当前状态 ${decision.status} 不可整批授权。`);
+            blockers.push(analysisBlocker('DECISION_NOT_AUTHORIZABLE', `Decision ${decision.id} 当前状态 ${decision.status} 不可整批授权。`));
           }
         }
       }
@@ -457,8 +513,8 @@ export class AnalysisAuthorityService {
             selectedIds,
             decisionIds,
             terminal
-              ? `该动作批次授权已进入终态：${terminal.eventType}。`
-              : '该动作批次授权已经过期。',
+              ? analysisBlocker('GRANT_TERMINAL', `该动作批次授权已进入终态：${terminal.eventType}。`)
+              : analysisBlocker('GRANT_EXPIRED', '该动作批次授权已经过期。'),
           );
         }
         return {
@@ -477,7 +533,7 @@ export class AnalysisAuthorityService {
           mode,
           selectedIds,
           decisionIds,
-          '当前策略版本缺少有效的每日动作数、冷却期或执行窗口；请新建并启用完整策略版本。',
+          analysisBlocker('POLICY_RATE_LIMITS_INVALID', '当前策略版本缺少有效的每日动作数、冷却期或执行窗口；请新建并启用完整策略版本。'),
         );
       }
       if (rateLimits.executionWindow.timeZone !== context.businessTimezone) {
@@ -485,7 +541,7 @@ export class AnalysisAuthorityService {
           mode,
           selectedIds,
           decisionIds,
-          '策略执行窗口时区与当前店铺业务时区不一致；请新建并启用正确的店铺策略版本。',
+          analysisBlocker('POLICY_TIMEZONE_MISMATCH', '策略执行窗口时区与当前店铺业务时区不一致；请新建并启用正确的店铺策略版本。'),
         );
       }
       const localNow = localPolicyClock(new Date(now), rateLimits.executionWindow.timeZone);
@@ -498,7 +554,10 @@ export class AnalysisAuthorityService {
           mode,
           selectedIds,
           decisionIds,
-          `当前不在策略执行窗口内（${rateLimits.executionWindow.timeZone} ${rateLimits.executionWindow.start}-${rateLimits.executionWindow.end}）。`,
+          analysisBlocker(
+            'OUTSIDE_EXECUTION_WINDOW',
+            `当前不在策略执行窗口内（${rateLimits.executionWindow.timeZone} ${rateLimits.executionWindow.start}-${rateLimits.executionWindow.end}）。`,
+          ),
         );
       }
       const priorGrantRows = this.db.prepare(`
@@ -522,7 +581,10 @@ export class AnalysisAuthorityService {
           mode,
           selectedIds,
           decisionIds,
-          `策略单日动作数将超限：已授权 ${authorizedToday}，本批 ${proposals.length}，上限 ${rateLimits.maxDailyActionCount}。`,
+          analysisBlocker(
+            'DAILY_ACTION_LIMIT_EXCEEDED',
+            `策略单日动作数将超限：已授权 ${authorizedToday}，本批 ${proposals.length}，上限 ${rateLimits.maxDailyActionCount}。`,
+          ),
         );
       }
       if (rateLimits.cooldownMinutes > 0) {
@@ -537,7 +599,10 @@ export class AnalysisAuthorityService {
             mode,
             selectedIds,
             decisionIds,
-            `至少一个关键词仍在 ${rateLimits.cooldownMinutes} 分钟冷却期内；最近授权 ${cooling.id}。`,
+            analysisBlocker(
+              'COOLDOWN_ACTIVE',
+              `至少一个关键词仍在 ${rateLimits.cooldownMinutes} 分钟冷却期内；最近授权 ${cooling.id}。`,
+            ),
           );
         }
       }
@@ -727,23 +792,125 @@ export class AnalysisAuthorityService {
     });
   }
 
+  private persistAnalysisRun(
+    context: StoreContextEnvelope,
+    missionId: string,
+    status: MissionAnalysisRunProjection['status'],
+    evidencePackageId?: string,
+    blockerCodes?: readonly AnalysisAuthorizationBlockerCode[],
+  ): void {
+    const existing = this.missionRepository.listMissionCheckpoints(context, missionId)
+      .filter((row) => row.stage === 'ANALYSIS');
+    this.missionRepository.appendMissionCheckpoint(context, {
+      id: compactId('analysis-run', {
+        storeId: context.storeId,
+        missionId,
+        status,
+        evidencePackageId: evidencePackageId ?? '',
+        n: existing.length,
+        at: this.now().toISOString(),
+      }),
+      missionId,
+      stage: 'ANALYSIS',
+      title: analysisRunTitle(status, evidencePackageId, blockerCodes),
+      status,
+      evidenceCount: evidencePackageId ? 1 : 0,
+      actorId: 'analysis-engine',
+    });
+  }
+
+  private deriveAnalysisRun(
+    context: StoreContextEnvelope,
+    missionId: string,
+    evidencePackages: readonly AnalysisEvidencePackageRecord[],
+  ): MissionAnalysisRunProjection | undefined {
+    const checkpoints = this.missionRepository.listMissionCheckpoints(context, missionId)
+      .filter((row) => row.stage === 'ANALYSIS' && ['running', 'done', 'retryable'].includes(row.status));
+    const latest = checkpoints[checkpoints.length - 1];
+    if (latest) {
+      const parsed = parseAnalysisRunTitle(latest.title);
+      const status = latest.status === 'running' || latest.status === 'retryable' || latest.status === 'done'
+        ? latest.status
+        : 'retryable';
+      return {
+        status,
+        missionId,
+        ...(parsed.evidencePackageId ? { evidencePackageId: parsed.evidencePackageId } : {}),
+        ...(status === 'retryable' ? { blockerCodes: parsed.blockerCodes ?? ['ANALYSIS_INTERRUPTED'] } : {}),
+      };
+    }
+    if (evidencePackages.length > 0) {
+      return {
+        status: 'done',
+        missionId,
+        evidencePackageId: evidencePackages[evidencePackages.length - 1].id,
+      };
+    }
+    return undefined;
+  }
+
+  private advanceMissionPhaseToDecision(
+    context: StoreContextEnvelope,
+    missionId: string,
+  ): MissionRecord | undefined {
+    const mission = this.missionRepository.getMission(context, missionId);
+    if (!mission || mission.status === 'archived') return mission;
+    if (mission.phase !== 'fact' && mission.phase !== 'analysis') return mission;
+    return this.missionRepository.transitionMission(context, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: mission.status,
+      phase: 'decision',
+      reason: 'analysis_run_completed',
+      actorId: 'analysis-engine',
+    });
+  }
+
   private assertContext(contextInput: StoreContextEnvelope): StoreContextEnvelope {
     return this.storeCoordinator.assertActiveStoreContext(contextInput);
   }
+}
+
+
+function analysisRunTitle(
+  status: MissionAnalysisRunProjection['status'],
+  evidencePackageId?: string,
+  blockerCodes?: readonly AnalysisAuthorizationBlockerCode[],
+): string {
+  if (status === 'done' && evidencePackageId) return `analysis-run:done:${evidencePackageId}`;
+  if (status === 'retryable') return `analysis-run:retryable:${blockerCodes?.[0] ?? 'ANALYSIS_INTERRUPTED'}`;
+  return `analysis-run:${status}`;
+}
+
+function parseAnalysisRunTitle(title: string): {
+  evidencePackageId?: string;
+  blockerCodes?: AnalysisAuthorizationBlockerCode[];
+} {
+  const prefix = 'analysis-run:';
+  if (!title.startsWith(prefix)) return {};
+  const rest = title.slice(prefix.length);
+  const sep = rest.indexOf(':');
+  const status = sep < 0 ? rest : rest.slice(0, sep);
+  const payload = sep < 0 ? '' : rest.slice(sep + 1);
+  if (status === 'done' && payload) return { evidencePackageId: payload };
+  if (status === 'retryable' && payload) {
+    return { blockerCodes: [payload as AnalysisAuthorizationBlockerCode] };
+  }
+  return {};
 }
 
 function blockedResult(
   mode: AuthorizeAnalysisProposalBatchResult['mode'],
   proposalIds: readonly string[],
   decisionIds: readonly string[],
-  ...blockers: string[]
+  ...blockers: AnalysisAuthorizationBlocker[]
 ): AuthorizeAnalysisProposalBatchResult {
   return {
     mode,
     proposalIds,
     decisionIds,
     authorized: false,
-    blockers: [...new Set(blockers.filter(Boolean))],
+    blockers: uniqueAnalysisBlockers(blockers),
   };
 }
 
