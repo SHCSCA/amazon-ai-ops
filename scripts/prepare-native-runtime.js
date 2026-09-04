@@ -1,8 +1,12 @@
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const { createRequire } = require('module');
-const { spawnSync } = require('child_process');
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { createRequire } from 'module';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ROOT = path.resolve(__dirname, '..');
 const DESKTOP_ROOT = path.join(ROOT, 'apps', 'desktop');
@@ -830,7 +834,7 @@ function main() {
   }
 }
 
-module.exports = {
+export {
   EXPECTED_ELECTRON_MODULES_ABI,
   LOCK_BASENAME,
   NATIVE_STATE_ROOT,
@@ -838,6 +842,7 @@ module.exports = {
   acquireNativeRuntimeLock,
   buildElectronPrebuildCommand,
   executeNativeCommand,
+  main,
   nativeProbeScript,
   parseNativeRuntimeArgs,
   prepareNativeRuntime,
@@ -855,4 +860,4 @@ module.exports = {
   withPreparedIsolatedElectronRuntime,
 };
 
-if (require.main === module) main();
+if (import.meta.url === `file://${process.argv[1]}`) main();

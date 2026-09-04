@@ -47,6 +47,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
     messages: ChatMessage[],
     options?: ChatOptions
   ): Promise<AIResponse> {
+    options?.signal?.throwIfAborted();
     const url = this.buildUrl('/chat/completions');
     const model = options?.model || this.defaultModel;
     const temperature = options?.temperature ?? this.config.temperature ?? 0.7;
@@ -57,7 +58,9 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
         method: 'POST',
         headers: this.buildHeaders(),
         body: JSON.stringify(buildChatCompletionBody(this.config, model, messages, temperature, maxTokens, options?.responseFormat)),
+        signal: options?.signal,
       });
+      options?.signal?.throwIfAborted();
 
       if (!response.ok) {
         const error = await response.text();
@@ -75,6 +78,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
           total_tokens?: number;
         };
       };
+      options?.signal?.throwIfAborted();
       
       return {
         success: true,
@@ -86,6 +90,9 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
         },
       };
     } catch (error) {
+      if (options?.signal?.aborted) {
+        throw options.signal.reason ?? error;
+      }
       return {
         success: false,
         error: `Network error: ${error instanceof Error ? error.message : String(error)}`,

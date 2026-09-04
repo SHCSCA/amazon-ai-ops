@@ -7,15 +7,34 @@ export type FormalBusinessWorkflow =
   | 'readback';
 
 export interface FormalBusinessReportFile {
+  batchId?: string;
   reportType: string;
   importedRows: number;
   status?: string;
+}
+
+export interface FormalBusinessCollectionJobProof {
+  jobId: string;
+  state: string;
+  importState?: string;
+  request: {
+    requestId: string;
+    reportTypes: readonly string[];
+  };
+  lineage?: {
+    lineageId: string;
+    rootJobId: string;
+    parentJobId?: string;
+    expectedReportTypes: readonly string[];
+    purpose: string;
+  };
 }
 
 export interface FormalBusinessWorkflowReadinessInput {
   workflow: FormalBusinessWorkflow;
   requiredReportTypes: readonly string[];
   realReportFiles: readonly FormalBusinessReportFile[];
+  collectionJob?: FormalBusinessCollectionJobProof;
 }
 
 export interface FormalBusinessWorkflowReadiness {
@@ -47,13 +66,41 @@ export function assertFormalBusinessWorkflowReady(
     );
   }
   const requiredReportTypeSet = new Set(requiredReportTypes);
+  const relevantReportFiles = input.realReportFiles.filter((file) => (
+    requiredReportTypeSet.has(String(file.reportType || '').trim())
+  ));
+  const hasBatchLineage = relevantReportFiles.some((file) => String(file.batchId || '').trim().length > 0);
+  if (hasBatchLineage) {
+    const batchIds = new Set(relevantReportFiles
+      .map((file) => String(file.batchId || '').trim())
+      .filter(Boolean));
+    const missingBatchLineage = relevantReportFiles.some((file) => !String(file.batchId || '').trim());
+    if (missingBatchLineage || batchIds.size !== 1) {
+      throw new Error(
+        `${WORKFLOW_LABELS[input.workflow]}被阻断：8 类真实报表不属于同一个完整采集批次；请继续原完整任务或重新获取完整 8 类。`,
+      );
+    }
+    const batchId = [...batchIds][0]!;
+    if (!hasExactProductionRootIdentity(input.collectionJob, batchId, requiredReportTypes)) {
+      throw new Error(
+        `${WORKFLOW_LABELS[input.workflow]}被阻断：当前 8 类批次缺少已成功入库的正式完整采集任务或 production_full 根血缘；`
+        + '本地导入不能替代正式采集。请启动“重新获取完整 8 类报表”，等待采集与导入完成后重试。',
+      );
+    }
+    if (input.collectionJob.state !== 'completed' || input.collectionJob.importState !== 'succeeded') {
+      throw new Error(
+        `${WORKFLOW_LABELS[input.workflow]}被阻断：当前完整 8 类采集尚未完成生产入库；`
+        + '请等待当前任务显示“采集完成、入库成功”，或重新获取完整 8 类后重试。',
+      );
+    }
+  }
   const realReportTypes = new Set(
-    input.realReportFiles
+    relevantReportFiles
       .map((file) => String(file.reportType || '').trim())
       .filter((reportType) => requiredReportTypeSet.has(reportType)),
   );
   const importedReportTypes = new Set(
-    input.realReportFiles
+    relevantReportFiles
       .filter((file) => file.status === 'imported'
         || (Number.isFinite(Number(file.importedRows)) && Number(file.importedRows) > 0))
       .map((file) => String(file.reportType || '').trim())
@@ -81,4 +128,29 @@ export function assertFormalBusinessWorkflowReady(
     realReportTypeCount: realReportTypes.size,
     importedReportTypeCount: importedReportTypes.size,
   };
+}
+
+function hasExactProductionRootIdentity(
+  job: FormalBusinessCollectionJobProof | undefined,
+  batchId: string,
+  requiredReportTypes: readonly string[],
+): job is FormalBusinessCollectionJobProof {
+  if (!job || !job.lineage) return false;
+  const exactReportSet = (values: readonly string[]) => {
+    const normalized = values.map((value) => String(value || '').trim()).filter(Boolean);
+    const set = new Set(normalized);
+    return normalized.length === requiredReportTypes.length
+      && set.size === requiredReportTypes.length
+      && requiredReportTypes.every((reportType) => set.has(reportType));
+  };
+  return job.jobId === batchId
+    && Boolean(job.request.requestId.trim())
+    && !job.request.requestId.startsWith('local-import:')
+    && !job.request.requestId.startsWith('canary:')
+    && job.lineage.purpose === 'production_full'
+    && job.lineage.lineageId === batchId
+    && job.lineage.rootJobId === batchId
+    && job.lineage.parentJobId === undefined
+    && exactReportSet(job.request.reportTypes)
+    && exactReportSet(job.lineage.expectedReportTypes);
 }

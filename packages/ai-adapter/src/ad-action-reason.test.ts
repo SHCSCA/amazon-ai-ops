@@ -23,6 +23,43 @@ class FakeProvider implements AIProvider {
 }
 
 describe('AdActionReasonExplainer', () => {
+  it('propagates analysis cancellation to the AI explanation call', async () => {
+    const cancellation = new Error('analysis generation cancelled');
+    let observedSignal: AbortSignal | undefined;
+    const provider: AIProvider = {
+      async chat(_messages, options) {
+        observedSignal = options?.signal;
+        throw cancellation;
+      },
+      async complete() {
+        throw cancellation;
+      },
+      async healthCheck() {
+        return true;
+      },
+    };
+    const controller = new AbortController();
+    const explainer = new AdActionReasonExplainer(provider);
+
+    const pending = explainer.explain({
+      actionType: 'lower_bid',
+      entityName: 'smart lock outdoor',
+      currentMetrics: {
+        impressions: 100,
+        clicks: 10,
+        cost: 12,
+        orders: 0,
+        sales: 0,
+        acos: 0,
+      },
+      recommendedAction: 'lower bid',
+    }, { signal: controller.signal });
+    controller.abort(cancellation);
+
+    await expect(pending).rejects.toBe(cancellation);
+    expect(observedSignal).toBe(controller.signal);
+  });
+
   it('uses USD in prompts and never asks AI to explain US ads in yuan', async () => {
     const provider = new FakeProvider({
       success: true,

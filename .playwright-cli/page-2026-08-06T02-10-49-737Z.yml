@@ -1,0 +1,971 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - banner [ref=f3e3]:
+      - link [ref=f3e4] [cursor=pointer]:
+        - /url: /ad_report/index/index/index
+      - navigation [ref=f3e9]:
+        - generic [ref=f3e10]:
+          - link "体验新版 " [ref=f3e13] [cursor=pointer]:
+            - /url: /amazon/store-dashboard
+            - generic [ref=f3e14]:
+              - text: 体验新版
+              - generic [ref=f3e15]: 
+          - generic [ref=f3e16]: 美西时间：2026-08-05 19:10
+          - list [ref=f3e17]:
+            - listitem [ref=f3e18]:
+              - link "孙虎城" [ref=f3e19] [cursor=pointer]:
+                - /url: https://erp.lingxing.com/
+                - text: 孙虎城 
+            - listitem [ref=f3e20]:
+              - link "" [ref=f3e21] [cursor=pointer]:
+                - /url: javascript:;
+            - listitem [ref=f3e22]:
+              - link "" [ref=f3e23] [cursor=pointer]:
+                - /url: /ak_download/download_center/download_report_log/index
+            - listitem [ref=f3e24]:
+              - link "" [ref=f3e25] [cursor=pointer]:
+                - /url: javascript:;
+            - listitem [ref=f3e26]:
+              - link "" [ref=f3e27] [cursor=pointer]:
+                - /url: /data_governance/sync/sync_policy/index
+            - listitem [ref=f3e28]:
+              - link "" [ref=f3e29] [cursor=pointer]:
+                - /url: https://www.lingxing.com/CN-manual/article/Dashboard
+            - listitem [ref=f3e30]:
+              - link "返回ERP" [ref=f3e32] [cursor=pointer]:
+                - /url: https://erp.lingxing.com/
+    - complementary [ref=f3e33]:
+      - list [ref=f3e35]:
+        - listitem [ref=f3e36]:
+          - link " 店铺" [ref=f3e72] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e38]:
+              - text: 
+              - generic [ref=f3e73]: 店铺
+            - text: 
+        - listitem [ref=f3e39]:
+          - link " 广告" [ref=f3e74] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e41]:
+              - text: 
+              - generic [ref=f3e75]: 广告
+            - text: 
+        - listitem [ref=f3e42]:
+          - link " 词" [ref=f3e76] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e44]:
+              - text: 
+              - generic [ref=f3e77]: 词
+            - text: 
+        - listitem [ref=f3e45]:
+          - link " 工具" [ref=f3e78] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e47]:
+              - text: 
+              - generic [ref=f3e79]: 工具
+            - text: 
+        - listitem [ref=f3e48]:
+          - link " 分析" [ref=f3e80] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e50]:
+              - text: 
+              - generic [ref=f3e81]: 分析
+            - text: 
+        - listitem [ref=f3e51]:
+          - link " DSP" [ref=f3e82] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e53]:
+              - text: 
+              - generic [ref=f3e83]: DSP
+            - text: 
+        - listitem [ref=f3e54]:
+          - link " 结构" [ref=f3e84] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e56]:
+              - text: 
+              - generic [ref=f3e85]: 结构
+            - text: 
+        - listitem [ref=f3e57]:
+          - generic [ref=f3e58]: Beta
+          - link " 实时" [ref=f3e86] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e60]:
+              - text: 
+              - generic [ref=f3e87]: 实时
+            - text: 
+        - listitem [ref=f3e61]:
+          - link " 商机" [ref=f3e88] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e63]:
+              - text: 
+              - generic [ref=f3e89]: 商机
+            - text: 
+        - listitem [ref=f3e64]:
+          - link " AMC" [ref=f3e90] [cursor=pointer]:
+            - /url: javascript:;
+            - generic [ref=f3e66]:
+              - text: 
+              - generic [ref=f3e91]: AMC
+            - text: 
+    - generic [ref=f3e92]:
+      - generic [ref=f3e93]:
+        - generic [ref=f3e94]:
+          - generic [ref=f3e95]:
+            - generic [ref=f3e97] [cursor=pointer]:
+              - textbox "全部国家" [ref=f3e98]
+              - generic: 
+            - generic [ref=f3e102]:
+              - generic [ref=f3e103]:
+                - generic [ref=f3e104]: FT-CA
+                - generic [ref=f3e106]: "+1"
+              - generic [ref=f3e108]:
+                - textbox [ref=f3e109] [cursor=pointer]
+                - generic: 
+              - text: 
+            - generic [ref=f3e112]:
+              - generic [ref=f3e113]:
+                - textbox [ref=f3e114] [cursor=pointer]
+                - generic [ref=f3e115]: ASIN
+                - generic [ref=f3e118] [cursor=pointer]
+              - text: 
+            - generic [ref=f3e119] [cursor=pointer]: 
+            - generic [ref=f3e120]:
+              - generic [ref=f3e121]:
+                - textbox [ref=f3e122] [cursor=pointer]
+                - generic [ref=f3e123]: 广告组合
+                - generic [ref=f3e126] [cursor=pointer]
+              - text: 
+            - generic [ref=f3e127]:
+              - generic [ref=f3e128]:
+                - textbox [ref=f3e129] [cursor=pointer]
+                - generic [ref=f3e130]: 广告活动
+                - generic [ref=f3e133] [cursor=pointer]
+              - text: 
+            - generic [ref=f3e134]:
+              - generic [ref=f3e135] [cursor=pointer]: 
+              - textbox "开始日期" [ref=f3e136]: 2026-07-29
+              - generic [ref=f3e137]: 
+              - textbox "结束日期" [ref=f3e139]: 2026-08-05
+            - generic [ref=f3e142]:
+              - textbox [ref=f3e143] [cursor=pointer]: USD
+              - generic: USD
+              - generic: 
+          - link "" [ref=f3e147] [cursor=pointer]:
+            - /url: https://www.lingxing.com/CN-manual/article/Dashboard
+        - generic [ref=f3e149]:
+          - generic [ref=f3e150]:
+            - link "广告效果" [ref=f3e151] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+            - generic [ref=f3e152]:
+              - generic [ref=f3e153]:
+                - generic [ref=f3e154]:
+                  - generic [ref=f3e155]: 广告花费
+                  - generic [ref=f3e156] [cursor=pointer]: 
+                - generic [ref=f3e157]: $78.80
+                - generic [ref=f3e158]:
+                  - generic [ref=f3e159]: $ 55.78
+                  - text: 41.27%
+                  - generic [ref=f3e161] [cursor=pointer]: 
+              - generic [ref=f3e162]:
+                - generic [ref=f3e163]:
+                  - generic [ref=f3e164]: 广告销售额
+                  - generic [ref=f3e165] [cursor=pointer]: 
+                - generic [ref=f3e166]: $59.99
+                - generic [ref=f3e167]:
+                  - generic [ref=f3e168]: $ 92.98
+                  - text: "-35.48%"
+                  - generic [ref=f3e170] [cursor=pointer]: 
+              - generic [ref=f3e171]:
+                - generic [ref=f3e172]:
+                  - generic [ref=f3e173]: ACOS
+                  - generic [ref=f3e174] [cursor=pointer]: 
+                  - generic [ref=f3e175] [cursor=pointer]: 
+                - generic [ref=f3e176]: 131.36%
+                - generic [ref=f3e177]:
+                  - generic [ref=f3e178]: 59.99 %
+                  - text: 118.97%
+                  - generic [ref=f3e180] [cursor=pointer]: 
+              - text:   
+            - generic [ref=f3e185]:
+              - button "天" [ref=f3e186] [cursor=pointer]
+              - button "周" [ref=f3e188] [cursor=pointer]
+              - button "月" [ref=f3e190] [cursor=pointer]
+          - generic [ref=f3e192]:
+            - link "曝光点击" [ref=f3e193] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+            - generic [ref=f3e194]:
+              - generic [ref=f3e195]:
+                - generic [ref=f3e196]:
+                  - generic [ref=f3e197]: 曝光
+                  - generic [ref=f3e198] [cursor=pointer]: 
+                - generic [ref=f3e199]: "18589"
+                - generic [ref=f3e200]:
+                  - generic [ref=f3e201]: "15076"
+                  - text: 23.30%
+                  - generic [ref=f3e203] [cursor=pointer]: 
+              - generic [ref=f3e204]:
+                - generic [ref=f3e205]:
+                  - generic [ref=f3e206]: 点击
+                  - generic [ref=f3e207] [cursor=pointer]: 
+                - generic [ref=f3e208]: "73"
+                - generic [ref=f3e209]:
+                  - generic [ref=f3e210]: "62"
+                  - text: 17.74%
+                  - generic [ref=f3e212] [cursor=pointer]: 
+              - generic [ref=f3e213]:
+                - generic [ref=f3e214]:
+                  - generic [ref=f3e215]: CTR
+                  - generic [ref=f3e216] [cursor=pointer]: 
+                - generic [ref=f3e217]: 0.39%
+                - generic [ref=f3e218]:
+                  - generic [ref=f3e219]: 0.41 %
+                  - text: "-4.88%"
+                  - generic [ref=f3e221] [cursor=pointer]: 
+            - generic [ref=f3e226]:
+              - button "天" [ref=f3e227] [cursor=pointer]
+              - button "周" [ref=f3e229] [cursor=pointer]
+              - button "月" [ref=f3e231] [cursor=pointer]
+          - generic [ref=f3e233]:
+            - link "广告转化" [ref=f3e234] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+            - generic [ref=f3e235]:
+              - generic [ref=f3e236]:
+                - generic [ref=f3e237]:
+                  - generic [ref=f3e238]: CPC
+                  - generic [ref=f3e239] [cursor=pointer]: 
+                - generic [ref=f3e240]: $1.08
+                - generic [ref=f3e241]:
+                  - generic [ref=f3e242]: $ 0.90
+                  - text: 20.00%
+                  - generic [ref=f3e244] [cursor=pointer]: 
+              - generic [ref=f3e245]:
+                - generic [ref=f3e246]:
+                  - generic [ref=f3e247]: CVR
+                  - generic [ref=f3e248] [cursor=pointer]: 
+                - generic [ref=f3e249]: 1.37%
+                - generic [ref=f3e250]:
+                  - generic [ref=f3e251]: 3.23 %
+                  - text: "-57.59%"
+                  - generic [ref=f3e253] [cursor=pointer]: 
+              - text:   
+              - generic [ref=f3e254]:
+                - generic [ref=f3e255]:
+                  - generic [ref=f3e256]: SPC
+                  - generic [ref=f3e257] [cursor=pointer]: 
+                  - generic [ref=f3e258] [cursor=pointer]: 
+                - generic [ref=f3e259]: $0.82
+                - generic [ref=f3e260]:
+                  - generic [ref=f3e261]: $ 1.50
+                  - text: "-45.33%"
+                  - generic [ref=f3e263] [cursor=pointer]: 
+            - generic [ref=f3e268]:
+              - button "天" [ref=f3e269] [cursor=pointer]
+              - button "周" [ref=f3e271] [cursor=pointer]
+              - button "月" [ref=f3e273] [cursor=pointer]
+          - generic [ref=f3e275]:
+            - link "ACoAS" [ref=f3e276] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+            - generic [ref=f3e277]:
+              - generic [ref=f3e278]:
+                - generic [ref=f3e279]:
+                  - generic [ref=f3e280]: 店铺销售额
+                  - generic [ref=f3e281] [cursor=pointer]: 
+                - generic [ref=f3e282]: $92.98
+                - generic [ref=f3e283]:
+                  - generic [ref=f3e284]: $ 152.97
+                  - text: "-39.22%"
+                  - generic [ref=f3e286] [cursor=pointer]: 
+              - generic [ref=f3e287]:
+                - generic [ref=f3e288]:
+                  - generic [ref=f3e289]: ASoAS
+                  - generic [ref=f3e290] [cursor=pointer]: 
+                - generic [ref=f3e291]: 64.52%
+                - generic [ref=f3e292]:
+                  - generic [ref=f3e293]: 60.78 %
+                  - text: 6.15%
+                  - generic [ref=f3e295] [cursor=pointer]: 
+              - generic [ref=f3e296]:
+                - generic [ref=f3e297]:
+                  - generic [ref=f3e298]: ACoAS
+                  - generic [ref=f3e299] [cursor=pointer]: 
+                - generic [ref=f3e300]: 84.75%
+                - generic [ref=f3e301]:
+                  - generic [ref=f3e302]: 36.46 %
+                  - text: 132.45%
+                  - generic [ref=f3e304] [cursor=pointer]: 
+            - generic [ref=f3e309]:
+              - button "天" [ref=f3e310] [cursor=pointer]
+              - button "周" [ref=f3e312] [cursor=pointer]
+              - button "月" [ref=f3e314] [cursor=pointer]
+          - generic [ref=f3e316]:
+            - link "广告订单占比" [ref=f3e317] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+            - generic [ref=f3e318]:
+              - generic [ref=f3e319]:
+                - generic [ref=f3e320]:
+                  - generic [ref=f3e321]: 广告订单
+                  - generic [ref=f3e322] [cursor=pointer]: 
+                - generic [ref=f3e323]: "1"
+                - generic [ref=f3e324]:
+                  - generic [ref=f3e325]: "2"
+                  - text: "-50.00%"
+                  - generic [ref=f3e327] [cursor=pointer]: 
+              - generic [ref=f3e328]:
+                - generic [ref=f3e329]:
+                  - generic [ref=f3e330]: 自然订单
+                  - generic [ref=f3e331] [cursor=pointer]: 
+                - generic [ref=f3e332]: "1"
+                - generic [ref=f3e333]:
+                  - generic [ref=f3e334]: "1"
+                  - text: 0.00%
+              - generic [ref=f3e336]:
+                - generic [ref=f3e337]:
+                  - generic [ref=f3e338]: 广告订单占比
+                  - generic [ref=f3e339] [cursor=pointer]: 
+                - generic [ref=f3e340]: 50.00%
+                - generic [ref=f3e341]:
+                  - generic [ref=f3e342]: 66.67 %
+                  - text: "-25.00%"
+                  - generic [ref=f3e344] [cursor=pointer]: 
+            - generic [ref=f3e349]:
+              - button "天" [ref=f3e350] [cursor=pointer]
+              - button "周" [ref=f3e352] [cursor=pointer]
+              - button "月" [ref=f3e354] [cursor=pointer]
+          - generic [ref=f3e356]:
+            - link "SP/SB/SD/ST广告销量 " [ref=f3e357] [cursor=pointer]:
+              - /url: /ad_report/profile/campaign/index
+              - text: SP/SB/SD/ST广告销量
+              - generic [ref=f3e358]: 
+            - generic [ref=f3e359]:
+              - generic [ref=f3e360]:
+                - generic [ref=f3e361]:
+                  - generic [ref=f3e362]: 广告销量
+                  - generic [ref=f3e363] [cursor=pointer]: 
+                - generic [ref=f3e364]: "1"
+                - generic [ref=f3e365]:
+                  - generic [ref=f3e366]: "2"
+                  - text: "-50.00%"
+                  - generic [ref=f3e368] [cursor=pointer]: 
+              - generic [ref=f3e369]:
+                - generic [ref=f3e370]:
+                  - generic [ref=f3e371]: 自然销量
+                  - generic [ref=f3e372] [cursor=pointer]: 
+                - generic [ref=f3e373]: "1"
+                - generic [ref=f3e374]:
+                  - generic [ref=f3e375]: "1"
+                  - text: 0.00%
+              - generic [ref=f3e377]:
+                - generic [ref=f3e378]:
+                  - generic [ref=f3e379]: 广告销量占比
+                  - generic [ref=f3e380] [cursor=pointer]: 
+                - generic [ref=f3e381]: 50.00%
+                - generic [ref=f3e382]:
+                  - generic [ref=f3e383]: 66.67 %
+                  - text: "-25.00%"
+                  - generic [ref=f3e385] [cursor=pointer]: 
+            - generic [ref=f3e390]:
+              - button "天" [ref=f3e391] [cursor=pointer]
+              - button "周" [ref=f3e393] [cursor=pointer]
+              - button "月" [ref=f3e395] [cursor=pointer]
+        - generic [ref=f3e397]:
+          - generic [ref=f3e399]:
+            - generic [ref=f3e400]: 广告类型
+            - generic [ref=f3e401]:
+              - generic [ref=f3e402] [cursor=pointer]:
+                - generic [ref=f3e403]:
+                  - checkbox "细分"
+                - generic [ref=f3e405]: 细分
+              - generic [ref=f3e406] [cursor=pointer]:
+                - generic [ref=f3e407]:
+                  - checkbox "区分SB和SBV"
+                - generic [ref=f3e409]: 区分SB和SBV
+              - generic [ref=f3e411]:
+                - textbox [ref=f3e412] [cursor=pointer]: 花费
+                - generic: 花费
+                - generic: 
+              - generic [ref=f3e415]:
+                - button "" [ref=f3e416] [cursor=pointer]
+                - button "" [ref=f3e418] [cursor=pointer]
+                - button "" [ref=f3e420] [cursor=pointer]
+          - generic [ref=f3e426]:
+            - generic [ref=f3e427]: 广告位
+            - generic [ref=f3e428]:
+              - generic [ref=f3e430]:
+                - textbox [ref=f3e431] [cursor=pointer]: 花费
+                - generic: 花费
+                - generic: 
+              - generic [ref=f3e434]:
+                - button "" [ref=f3e435] [cursor=pointer]
+                - button "" [ref=f3e437] [cursor=pointer]
+                - button "" [ref=f3e439] [cursor=pointer]
+        - generic [ref=f3e446]:
+          - generic [ref=f3e447]:
+            - text: 投放表现-花费分析
+            - generic [ref=f3e448] [cursor=pointer]: 
+            - text: 暂不支持SD vCPM成本类型的广告活动
+          - generic [ref=f3e449]:
+            - button "" [ref=f3e453] [cursor=pointer]
+            - generic [ref=f3e455]:
+              - generic [ref=f3e456]: 点击分界点
+              - textbox [ref=f3e457]
+            - generic [ref=f3e458]:
+              - generic [ref=f3e459]: ACoS分界点
+              - textbox [ref=f3e460]
+              - generic [ref=f3e461]: "%"
+            - generic [ref=f3e462]:
+              - button "概览" [ref=f3e463] [cursor=pointer]
+              - button "分类统计" [ref=f3e465] [cursor=pointer]
+        - generic [ref=f3e474]:
+          - generic [ref=f3e475]:
+            - generic [ref=f3e476]:
+              - text: 投放表现-透视分析
+              - generic [ref=f3e477] [cursor=pointer]: 
+              - text: 最多展示花费从高到低的前1000个投放。
+            - generic [ref=f3e478]: 投放
+          - generic [ref=f3e482]:
+            - generic [ref=f3e483]:
+              - button "" [ref=f3e487] [cursor=pointer]
+              - generic [ref=f3e490]:
+                - textbox [ref=f3e491] [cursor=pointer]: 花费TOP20
+                - generic: 花费TOP20
+                - generic: 
+              - generic [ref=f3e495]:
+                - textbox [ref=f3e496] [cursor=pointer]: 花费 VS ACOS
+                - generic: 花费 VS ACOS
+                - generic: 
+              - generic [ref=f3e500]:
+                - textbox [ref=f3e501] [cursor=pointer]: 面积：曝光
+                - generic: 面积：曝光
+                - generic: 
+              - button "自定义" [ref=f3e504] [cursor=pointer]
+            - generic [ref=f3e506]: 搜索词
+        - generic [ref=f3e508]:
+          - generic [ref=f3e509]:
+            - generic [ref=f3e510]:
+              - generic [ref=f3e511]: 广告活动 Top50
+              - generic [ref=f3e512]:
+                - button "" [ref=f3e517] [cursor=pointer]
+                - generic [ref=f3e519] [cursor=pointer]:
+                  - generic [ref=f3e520]:
+                    - checkbox "只显示有广告销售额的" [checked]
+                  - generic [ref=f3e522]: 只显示有广告销售额的
+                - button "" [ref=f3e523] [cursor=pointer]
+            - generic [ref=f3e526]:
+              - generic [ref=f3e528]:
+                - table [ref=f3e531]:
+                  - rowgroup [ref=f3e545]:
+                    - row [ref=f3e546]:
+                      - columnheader "广告活动" [ref=f3e547]
+                      - columnheader "曝光" [ref=f3e551] [cursor=pointer]:
+                        - generic [ref=f3e552]:
+                          - generic [ref=f3e553]: 曝光
+                          - generic [ref=f3e554]:
+                            - generic "升序：最低到最高" [ref=f3e555]
+                            - generic "降序：最高到最低" [ref=f3e556]
+                      - columnheader "点击" [ref=f3e558] [cursor=pointer]:
+                        - generic [ref=f3e559]:
+                          - generic [ref=f3e560]: 点击
+                          - generic [ref=f3e561]:
+                            - generic "升序：最低到最高" [ref=f3e562]
+                            - generic "降序：最高到最低" [ref=f3e563]
+                      - columnheader "CTR" [ref=f3e565] [cursor=pointer]:
+                        - generic [ref=f3e566]:
+                          - generic [ref=f3e567]: CTR
+                          - generic [ref=f3e568]:
+                            - generic "升序：最低到最高" [ref=f3e569]
+                            - generic "降序：最高到最低" [ref=f3e570]
+                      - columnheader "CPC" [ref=f3e572] [cursor=pointer]:
+                        - generic [ref=f3e573]:
+                          - generic [ref=f3e574]: CPC
+                          - generic [ref=f3e575]:
+                            - generic "升序：最低到最高" [ref=f3e576]
+                            - generic "降序：最高到最低" [ref=f3e577]
+                      - columnheader "ACOS" [ref=f3e579] [cursor=pointer]:
+                        - generic [ref=f3e580]:
+                          - generic [ref=f3e581]: ACOS
+                          - generic [ref=f3e582]:
+                            - generic "升序：最低到最高" [ref=f3e583]
+                            - generic "降序：最高到最低" [ref=f3e584]
+                      - columnheader "花费($)" [ref=f3e586] [cursor=pointer]:
+                        - generic [ref=f3e587]:
+                          - generic [ref=f3e588]: 花费($)
+                          - generic [ref=f3e589]:
+                            - generic "升序：最低到最高" [ref=f3e590]
+                            - generic "降序：最高到最低" [ref=f3e591]
+                      - columnheader "广告销售额($)" [ref=f3e593] [cursor=pointer]:
+                        - generic [ref=f3e594]:
+                          - generic [ref=f3e595]: 广告销售额($)
+                          - generic [ref=f3e596]:
+                            - generic "升序：最低到最高" [ref=f3e597]
+                            - generic "降序：最高到最低" [ref=f3e598]
+                      - columnheader "广告订单" [ref=f3e600] [cursor=pointer]:
+                        - generic [ref=f3e601]:
+                          - generic [ref=f3e602]: 广告订单
+                          - generic [ref=f3e603]:
+                            - generic "升序：最低到最高" [ref=f3e604]
+                            - generic "降序：最高到最低" [ref=f3e605]
+                      - columnheader "CPA" [ref=f3e607] [cursor=pointer]:
+                        - generic [ref=f3e608]:
+                          - generic [ref=f3e609]: CPA
+                          - generic [ref=f3e610]:
+                            - generic "升序：最低到最高" [ref=f3e611]
+                            - generic "降序：最高到最低" [ref=f3e612]
+                      - columnheader "CVR" [ref=f3e614] [cursor=pointer]:
+                        - generic [ref=f3e615]:
+                          - generic [ref=f3e616]: CVR
+                          - generic [ref=f3e617]:
+                            - generic "升序：最低到最高" [ref=f3e618]
+                            - generic "降序：最高到最低" [ref=f3e619]
+                      - columnheader "ROAS" [ref=f3e621] [cursor=pointer]:
+                        - generic [ref=f3e622]:
+                          - generic [ref=f3e623]: ROAS
+                          - generic [ref=f3e624]:
+                            - generic "升序：最低到最高" [ref=f3e625]
+                            - generic "降序：最高到最低" [ref=f3e626]
+                - generic [ref=f3e629]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e632]:
+            - generic [ref=f3e633]:
+              - generic [ref=f3e634]: 长尾词分析
+              - generic [ref=f3e635]:
+                - button "" [ref=f3e640] [cursor=pointer]
+                - generic [ref=f3e642] [cursor=pointer]:
+                  - generic [ref=f3e643]:
+                    - checkbox "只显示有广告销售额的"
+                  - generic [ref=f3e645]: 只显示有广告销售额的
+                - button "" [ref=f3e646] [cursor=pointer]
+            - generic [ref=f3e649]:
+              - generic [ref=f3e651]:
+                - table [ref=f3e654]:
+                  - rowgroup [ref=f3e668]:
+                    - row [ref=f3e669]:
+                      - columnheader "单词数" [ref=f3e670]
+                      - columnheader "曝光" [ref=f3e674] [cursor=pointer]:
+                        - generic [ref=f3e675]:
+                          - generic [ref=f3e676]: 曝光
+                          - generic [ref=f3e677]:
+                            - generic "升序：最低到最高" [ref=f3e678]
+                            - generic "降序：最高到最低" [ref=f3e679]
+                      - columnheader "点击" [ref=f3e681] [cursor=pointer]:
+                        - generic [ref=f3e682]:
+                          - generic [ref=f3e683]: 点击
+                          - generic [ref=f3e684]:
+                            - generic "升序：最低到最高" [ref=f3e685]
+                            - generic "降序：最高到最低" [ref=f3e686]
+                      - columnheader "CTR" [ref=f3e688] [cursor=pointer]:
+                        - generic [ref=f3e689]:
+                          - generic [ref=f3e690]: CTR
+                          - generic [ref=f3e691]:
+                            - generic "升序：最低到最高" [ref=f3e692]
+                            - generic "降序：最高到最低" [ref=f3e693]
+                      - columnheader "CPC" [ref=f3e695] [cursor=pointer]:
+                        - generic [ref=f3e696]:
+                          - generic [ref=f3e697]: CPC
+                          - generic [ref=f3e698]:
+                            - generic "升序：最低到最高" [ref=f3e699]
+                            - generic "降序：最高到最低" [ref=f3e700]
+                      - columnheader "ACOS" [ref=f3e702] [cursor=pointer]:
+                        - generic [ref=f3e703]:
+                          - generic [ref=f3e704]: ACOS
+                          - generic [ref=f3e705]:
+                            - generic "升序：最低到最高" [ref=f3e706]
+                            - generic "降序：最高到最低" [ref=f3e707]
+                      - columnheader "花费($)" [ref=f3e709] [cursor=pointer]:
+                        - generic [ref=f3e710]:
+                          - generic [ref=f3e711]: 花费($)
+                          - generic [ref=f3e712]:
+                            - generic "升序：最低到最高" [ref=f3e713]
+                            - generic "降序：最高到最低" [ref=f3e714]
+                      - columnheader "广告销售额($)" [ref=f3e716] [cursor=pointer]:
+                        - generic [ref=f3e717]:
+                          - generic [ref=f3e718]: 广告销售额($)
+                          - generic [ref=f3e719]:
+                            - generic "升序：最低到最高" [ref=f3e720]
+                            - generic "降序：最高到最低" [ref=f3e721]
+                      - columnheader "广告订单" [ref=f3e723] [cursor=pointer]:
+                        - generic [ref=f3e724]:
+                          - generic [ref=f3e725]: 广告订单
+                          - generic [ref=f3e726]:
+                            - generic "升序：最低到最高" [ref=f3e727]
+                            - generic "降序：最高到最低" [ref=f3e728]
+                      - columnheader "CPA" [ref=f3e730] [cursor=pointer]:
+                        - generic [ref=f3e731]:
+                          - generic [ref=f3e732]: CPA
+                          - generic [ref=f3e733]:
+                            - generic "升序：最低到最高" [ref=f3e734]
+                            - generic "降序：最高到最低" [ref=f3e735]
+                      - columnheader "CVR" [ref=f3e737] [cursor=pointer]:
+                        - generic [ref=f3e738]:
+                          - generic [ref=f3e739]: CVR
+                          - generic [ref=f3e740]:
+                            - generic "升序：最低到最高" [ref=f3e741]
+                            - generic "降序：最高到最低" [ref=f3e742]
+                      - columnheader "ROAS" [ref=f3e744] [cursor=pointer]:
+                        - generic [ref=f3e745]:
+                          - generic [ref=f3e746]: ROAS
+                          - generic [ref=f3e747]:
+                            - generic "升序：最低到最高" [ref=f3e748]
+                            - generic "降序：最高到最低" [ref=f3e749]
+                - generic [ref=f3e752]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e755]:
+            - generic [ref=f3e756]:
+              - generic [ref=f3e757]: 关键词 Top200
+              - generic [ref=f3e758]:
+                - button "" [ref=f3e763] [cursor=pointer]
+                - generic [ref=f3e765] [cursor=pointer]:
+                  - generic [ref=f3e766]:
+                    - checkbox "只显示有广告销售额的"
+                  - generic [ref=f3e768]: 只显示有广告销售额的
+                - generic [ref=f3e769]:
+                  - button "" [ref=f3e770] [cursor=pointer]
+                  - button "" [ref=f3e772] [cursor=pointer]
+                - button "" [ref=f3e774] [cursor=pointer]
+            - generic [ref=f3e777]:
+              - generic [ref=f3e779]:
+                - table [ref=f3e782]:
+                  - rowgroup [ref=f3e796]:
+                    - row [ref=f3e797]:
+                      - columnheader "关键词" [ref=f3e798]
+                      - columnheader "曝光" [ref=f3e802] [cursor=pointer]:
+                        - generic [ref=f3e803]:
+                          - generic [ref=f3e804]: 曝光
+                          - generic [ref=f3e805]:
+                            - generic "升序：最低到最高" [ref=f3e806]
+                            - generic "降序：最高到最低" [ref=f3e807]
+                      - columnheader "点击" [ref=f3e809] [cursor=pointer]:
+                        - generic [ref=f3e810]:
+                          - generic [ref=f3e811]: 点击
+                          - generic [ref=f3e812]:
+                            - generic "升序：最低到最高" [ref=f3e813]
+                            - generic "降序：最高到最低" [ref=f3e814]
+                      - columnheader "CTR" [ref=f3e816] [cursor=pointer]:
+                        - generic [ref=f3e817]:
+                          - generic [ref=f3e818]: CTR
+                          - generic [ref=f3e819]:
+                            - generic "升序：最低到最高" [ref=f3e820]
+                            - generic "降序：最高到最低" [ref=f3e821]
+                      - columnheader "CPC" [ref=f3e823] [cursor=pointer]:
+                        - generic [ref=f3e824]:
+                          - generic [ref=f3e825]: CPC
+                          - generic [ref=f3e826]:
+                            - generic "升序：最低到最高" [ref=f3e827]
+                            - generic "降序：最高到最低" [ref=f3e828]
+                      - columnheader "ACOS" [ref=f3e830] [cursor=pointer]:
+                        - generic [ref=f3e831]:
+                          - generic [ref=f3e832]: ACOS
+                          - generic [ref=f3e833]:
+                            - generic "升序：最低到最高" [ref=f3e834]
+                            - generic "降序：最高到最低" [ref=f3e835]
+                      - columnheader "花费($)" [ref=f3e837] [cursor=pointer]:
+                        - generic [ref=f3e838]:
+                          - generic [ref=f3e839]: 花费($)
+                          - generic [ref=f3e840]:
+                            - generic "升序：最低到最高" [ref=f3e841]
+                            - generic "降序：最高到最低" [ref=f3e842]
+                      - columnheader "广告销售额($)" [ref=f3e844] [cursor=pointer]:
+                        - generic [ref=f3e845]:
+                          - generic [ref=f3e846]: 广告销售额($)
+                          - generic [ref=f3e847]:
+                            - generic "升序：最低到最高" [ref=f3e848]
+                            - generic "降序：最高到最低" [ref=f3e849]
+                      - columnheader "广告订单" [ref=f3e851] [cursor=pointer]:
+                        - generic [ref=f3e852]:
+                          - generic [ref=f3e853]: 广告订单
+                          - generic [ref=f3e854]:
+                            - generic "升序：最低到最高" [ref=f3e855]
+                            - generic "降序：最高到最低" [ref=f3e856]
+                      - columnheader "CPA" [ref=f3e858] [cursor=pointer]:
+                        - generic [ref=f3e859]:
+                          - generic [ref=f3e860]: CPA
+                          - generic [ref=f3e861]:
+                            - generic "升序：最低到最高" [ref=f3e862]
+                            - generic "降序：最高到最低" [ref=f3e863]
+                      - columnheader "CVR" [ref=f3e865] [cursor=pointer]:
+                        - generic [ref=f3e866]:
+                          - generic [ref=f3e867]: CVR
+                          - generic [ref=f3e868]:
+                            - generic "升序：最低到最高" [ref=f3e869]
+                            - generic "降序：最高到最低" [ref=f3e870]
+                      - columnheader "ROAS" [ref=f3e872] [cursor=pointer]:
+                        - generic [ref=f3e873]:
+                          - generic [ref=f3e874]: ROAS
+                          - generic [ref=f3e875]:
+                            - generic "升序：最低到最高" [ref=f3e876]
+                            - generic "降序：最高到最低" [ref=f3e877]
+                - generic [ref=f3e880]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e883]:
+            - generic [ref=f3e884]:
+              - generic [ref=f3e885]: 用户搜索词 Top200
+              - generic [ref=f3e886]:
+                - button "" [ref=f3e891] [cursor=pointer]
+                - generic [ref=f3e893] [cursor=pointer]:
+                  - generic [ref=f3e894]:
+                    - checkbox "只显示有广告销售额的"
+                  - generic [ref=f3e896]: 只显示有广告销售额的
+                - generic [ref=f3e897]:
+                  - button "" [ref=f3e898] [cursor=pointer]
+                  - button "" [ref=f3e900] [cursor=pointer]
+                - button "" [ref=f3e902] [cursor=pointer]
+            - generic [ref=f3e905]:
+              - generic [ref=f3e907]:
+                - table [ref=f3e910]:
+                  - rowgroup [ref=f3e924]:
+                    - row [ref=f3e925]:
+                      - columnheader "用户搜索词" [ref=f3e926]
+                      - columnheader "曝光" [ref=f3e930] [cursor=pointer]:
+                        - generic [ref=f3e931]:
+                          - generic [ref=f3e932]: 曝光
+                          - generic [ref=f3e933]:
+                            - generic "升序：最低到最高" [ref=f3e934]
+                            - generic "降序：最高到最低" [ref=f3e935]
+                      - columnheader "点击" [ref=f3e937] [cursor=pointer]:
+                        - generic [ref=f3e938]:
+                          - generic [ref=f3e939]: 点击
+                          - generic [ref=f3e940]:
+                            - generic "升序：最低到最高" [ref=f3e941]
+                            - generic "降序：最高到最低" [ref=f3e942]
+                      - columnheader "CTR" [ref=f3e944] [cursor=pointer]:
+                        - generic [ref=f3e945]:
+                          - generic [ref=f3e946]: CTR
+                          - generic [ref=f3e947]:
+                            - generic "升序：最低到最高" [ref=f3e948]
+                            - generic "降序：最高到最低" [ref=f3e949]
+                      - columnheader "CPC" [ref=f3e951] [cursor=pointer]:
+                        - generic [ref=f3e952]:
+                          - generic [ref=f3e953]: CPC
+                          - generic [ref=f3e954]:
+                            - generic "升序：最低到最高" [ref=f3e955]
+                            - generic "降序：最高到最低" [ref=f3e956]
+                      - columnheader "ACOS" [ref=f3e958] [cursor=pointer]:
+                        - generic [ref=f3e959]:
+                          - generic [ref=f3e960]: ACOS
+                          - generic [ref=f3e961]:
+                            - generic "升序：最低到最高" [ref=f3e962]
+                            - generic "降序：最高到最低" [ref=f3e963]
+                      - columnheader "花费($)" [ref=f3e965] [cursor=pointer]:
+                        - generic [ref=f3e966]:
+                          - generic [ref=f3e967]: 花费($)
+                          - generic [ref=f3e968]:
+                            - generic "升序：最低到最高" [ref=f3e969]
+                            - generic "降序：最高到最低" [ref=f3e970]
+                      - columnheader "广告销售额($)" [ref=f3e972] [cursor=pointer]:
+                        - generic [ref=f3e973]:
+                          - generic [ref=f3e974]: 广告销售额($)
+                          - generic [ref=f3e975]:
+                            - generic "升序：最低到最高" [ref=f3e976]
+                            - generic "降序：最高到最低" [ref=f3e977]
+                      - columnheader "广告订单" [ref=f3e979] [cursor=pointer]:
+                        - generic [ref=f3e980]:
+                          - generic [ref=f3e981]: 广告订单
+                          - generic [ref=f3e982]:
+                            - generic "升序：最低到最高" [ref=f3e983]
+                            - generic "降序：最高到最低" [ref=f3e984]
+                      - columnheader "CPA" [ref=f3e986] [cursor=pointer]:
+                        - generic [ref=f3e987]:
+                          - generic [ref=f3e988]: CPA
+                          - generic [ref=f3e989]:
+                            - generic "升序：最低到最高" [ref=f3e990]
+                            - generic "降序：最高到最低" [ref=f3e991]
+                      - columnheader "CVR" [ref=f3e993] [cursor=pointer]:
+                        - generic [ref=f3e994]:
+                          - generic [ref=f3e995]: CVR
+                          - generic [ref=f3e996]:
+                            - generic "升序：最低到最高" [ref=f3e997]
+                            - generic "降序：最高到最低" [ref=f3e998]
+                      - columnheader "ROAS" [ref=f3e1000] [cursor=pointer]:
+                        - generic [ref=f3e1001]:
+                          - generic [ref=f3e1002]: ROAS
+                          - generic [ref=f3e1003]:
+                            - generic "升序：最低到最高" [ref=f3e1004]
+                            - generic "降序：最高到最低" [ref=f3e1005]
+                - generic [ref=f3e1008]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+        - generic [ref=f3e1011]:
+          - generic [ref=f3e1012]:
+            - generic [ref=f3e1013]:
+              - generic [ref=f3e1014]: 数据对比
+              - generic [ref=f3e1015]:
+                - generic [ref=f3e1016]:
+                  - generic [ref=f3e1017] [cursor=pointer]: 
+                  - textbox "开始" [ref=f3e1018]: 07-16
+                  - generic [ref=f3e1019]: 
+                  - textbox "结束" [ref=f3e1021]: 07-26
+                - generic [ref=f3e1023]: VS
+                - generic [ref=f3e1024]:
+                  - generic [ref=f3e1025] [cursor=pointer]: 
+                  - textbox "开始" [ref=f3e1026]: 07-26
+                  - generic [ref=f3e1027]: 
+                  - textbox "结束" [ref=f3e1029]: 08-05
+            - generic [ref=f3e1032]:
+              - generic [ref=f3e1034]:
+                - table [ref=f3e1037]:
+                  - rowgroup [ref=f3e1043]:
+                    - row [ref=f3e1044]:
+                      - columnheader "指标" [ref=f3e1045]
+                      - columnheader "07/16 - 07/26" [ref=f3e1048]
+                      - columnheader "07/26 - 08/05" [ref=f3e1051]
+                      - columnheader "变化" [ref=f3e1054]
+                - generic [ref=f3e1058]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e1061]:
+            - generic [ref=f3e1062]:
+              - generic [ref=f3e1063]: 周对比
+              - generic [ref=f3e1064]:
+                - generic [ref=f3e1065]:
+                  - textbox [ref=f3e1066]: 2026 第 31 周
+                  - generic [ref=f3e1067]: 
+                  - generic [ref=f3e1070] [cursor=pointer]
+                - generic [ref=f3e1071]: VS
+                - generic [ref=f3e1072]:
+                  - textbox [ref=f3e1073]: 2026 第 32 周
+                  - generic [ref=f3e1074]: 
+                  - generic [ref=f3e1077] [cursor=pointer]
+            - generic [ref=f3e1079]:
+              - generic [ref=f3e1081]:
+                - table [ref=f3e1084]:
+                  - rowgroup [ref=f3e1090]:
+                    - row [ref=f3e1091]:
+                      - columnheader "指标" [ref=f3e1092]
+                      - columnheader "2026第31周" [ref=f3e1095]
+                      - columnheader "2026第32周" [ref=f3e1098]
+                      - columnheader "变化" [ref=f3e1101]
+                - generic [ref=f3e1105]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e1108]:
+            - generic [ref=f3e1109]:
+              - generic [ref=f3e1110]: 月对比
+              - generic [ref=f3e1111]:
+                - generic [ref=f3e1112]:
+                  - textbox [ref=f3e1113]: 2026-07
+                  - generic [ref=f3e1114]: 
+                  - generic [ref=f3e1117] [cursor=pointer]
+                - generic [ref=f3e1118]: VS
+                - generic [ref=f3e1119]:
+                  - textbox [ref=f3e1120]: 2026-08
+                  - generic [ref=f3e1121]: 
+                  - generic [ref=f3e1124] [cursor=pointer]
+            - generic [ref=f3e1126]:
+              - generic [ref=f3e1128]:
+                - table [ref=f3e1131]:
+                  - rowgroup [ref=f3e1137]:
+                    - row [ref=f3e1138]:
+                      - columnheader "指标" [ref=f3e1139]
+                      - columnheader "2026-07" [ref=f3e1142]
+                      - columnheader "2026-08" [ref=f3e1145]
+                      - columnheader "变化" [ref=f3e1148]
+                - generic [ref=f3e1152]:
+                  - table:
+                    - rowgroup
+              - generic: 暂无数据
+          - generic [ref=f3e1155]:
+            - generic [ref=f3e1156]: 转化漏斗
+            - generic [ref=f3e1159]:
+              - generic [ref=f3e1160]:
+                - generic [ref=f3e1161]: 曝光
+                - generic [ref=f3e1163]: "0"
+                - generic [ref=f3e1164]:
+                  - generic [ref=f3e1165]: "0"
+                  - generic [ref=f3e1167]: "--%"
+                  - generic [ref=f3e1168] [cursor=pointer]: 
+              - generic [ref=f3e1169]:
+                - generic [ref=f3e1170]: 点击
+                - generic [ref=f3e1172]: "0"
+                - generic [ref=f3e1173]:
+                  - generic [ref=f3e1174]: "0"
+                  - generic [ref=f3e1176]: "--%"
+                  - generic [ref=f3e1177] [cursor=pointer]: 
+              - generic [ref=f3e1178]:
+                - generic [ref=f3e1179]: 广告订单
+                - generic [ref=f3e1181]: "0"
+                - generic [ref=f3e1182]:
+                  - generic [ref=f3e1183]: "0"
+                  - generic [ref=f3e1185]: "--%"
+                  - generic [ref=f3e1186] [cursor=pointer]: 
+              - generic [ref=f3e1187]:
+                - generic [ref=f3e1188]: 广告销售额
+                - generic [ref=f3e1190]: $--
+                - generic [ref=f3e1191]:
+                  - generic [ref=f3e1192]: $--
+                  - generic [ref=f3e1194]: "--%"
+                  - generic [ref=f3e1195] [cursor=pointer]: 
+        - dialog "dialog" [ref=f3e1197]:
+          - generic [ref=f3e1198]:
+            - generic [ref=f3e1199]: 【表头】变更公告
+            - generic [ref=f3e1200]:
+              - generic [ref=f3e1201]: 优化
+              - generic [ref=f3e1203]:
+                - generic [ref=f3e1204]: 已变更的表头名称如下
+                - generic [ref=f3e1208]:
+                  - table [ref=f3e1211]:
+                    - rowgroup [ref=f3e1219]:
+                      - row [ref=f3e1220]:
+                        - columnheader "变更前" [ref=f3e1221]
+                        - columnheader "变更后" [ref=f3e1341]
+                        - columnheader "说明" [ref=f3e1342]
+                        - columnheader [ref=f3e1236]
+                  - table [ref=f3e1240]:
+                    - rowgroup [ref=f3e1247]:
+                      - row [ref=f3e1343]:
+                        - cell "销售额" [ref=f3e1344]
+                        - cell "广告销售额" [ref=f3e1346]
+                        - cell [ref=f3e1349]
+                      - row [ref=f3e1350]:
+                        - cell "直接成交销售额" [ref=f3e1351]
+                        - cell "直接销售额" [ref=f3e1354]
+                        - cell "广告引流后，购买了广告商品所产生的广告销售额。" [ref=f3e1357]
+                      - row [ref=f3e1360]:
+                        - cell "间接成交销售额" [ref=f3e1361]
+                        - cell "间接销售额" [ref=f3e1364]
+                        - cell "广告引流后，购买了非广告商品所产生的广告销售额。" [ref=f3e1367]
+                      - row [ref=f3e1370]:
+                        - cell "直接成交订单" [ref=f3e1371]
+                        - cell "直接订单" [ref=f3e1374]
+                        - cell "广告引流后，购买了广告商品所产生的订单。" [ref=f3e1377]
+                      - row [ref=f3e1380]:
+                        - cell "间接成交订单" [ref=f3e1381]
+                        - cell "间接订单" [ref=f3e1384]
+                        - cell "广告引流后，购买了非广告商品所产生的订单。" [ref=f3e1387]
+                      - row [ref=f3e1390]:
+                        - cell "直接成交销量" [ref=f3e1391]
+                        - cell "直接销量" [ref=f3e1394]
+                        - cell "广告引流后，购买了广告商品所产生的销量，目前只能统计SP和SB广告的，SD广告还不支持该指标。" [ref=f3e1397]
+                      - row [ref=f3e1400]:
+                        - cell "间接成交销量" [ref=f3e1401]
+                        - cell "间接销量" [ref=f3e1404]
+                        - cell [ref=f3e1407]
+                      - row [ref=f3e1408]:
+                        - cell "直接成交笔单价" [ref=f3e1409]
+                        - cell "直接笔单价" [ref=f3e1412]
+                        - cell "直接笔单价 = 直接销售额/直接订单" [ref=f3e1415]
+                      - row [ref=f3e1418]:
+                        - cell "间接成交笔单价" [ref=f3e1419]
+                        - cell "间接笔单价" [ref=f3e1422]
+                        - cell [ref=f3e1425]
+                      - row [ref=f3e1426]:
+                        - cell "最近一次超预算时间" [ref=f3e1427]
+                        - cell "超预算时间" [ref=f3e1430]
+                        - cell [ref=f3e1433]
+          - generic [ref=f3e1337]:
+            - generic [ref=f3e1435] [cursor=pointer]:
+              - generic [ref=f3e1436]:
+                - checkbox "不再提醒"
+              - generic [ref=f3e1438]: 不再提醒
+            - generic [ref=f3e1338]:
+              - button "上一条" [ref=f3e1439] [cursor=pointer]
+              - button "知道了" [ref=f3e1440] [cursor=pointer]
+      - text:  
+  - text:     

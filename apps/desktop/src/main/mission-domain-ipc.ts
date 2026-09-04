@@ -42,6 +42,7 @@ export const MISSION_DOMAIN_IPC_ROUTES = Object.freeze({
   'mission-domain:experiments:list': 'experiments.list',
   'mission-domain:experiments:update': 'experiments.update',
   'mission-domain:experiments:transition': 'experiments.transition',
+  'mission-domain:experiments:evaluate': 'experiments.evaluate',
   'mission-domain:experiments:archive': 'experiments.archive',
   'mission-domain:experiments:restore': 'experiments.restore',
   'mission-domain:experiments:list-observations': 'experiments.listObservations',

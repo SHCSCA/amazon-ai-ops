@@ -14,8 +14,11 @@ export interface ValidationResult {
   invalidCount: number;
 }
 
-// 关键字段：关键词/搜索词/投放报表通常没有 ASIN，不能因为缺 ASIN 丢弃真实广告明细。
-const REQUIRED_FIELDS = ['date', 'storeName', 'campaignName'];
+// date 的缺失已经在 parser 层通过 `m.date` 过滤掉，且 Main 的日期窗检查会兜底；
+// 把 date 列进 REQUIRED_FIELDS 会让一行空日期让整个文件的 validation.valid 变 false，
+// 进而被 assertLingxingParsedReportImportable fail-closed 整文件拒绝，丢失同批次其他有效行。
+// 因此这里只把"按行归属"字段列为必填。空日期仍被剔除；格式非法的日期走下一段的 isValidDateValue。
+const REQUIRED_FIELDS = ['storeName', 'campaignName'];
 
 // 数值字段：必须是数字
 const NUMERIC_FIELDS = ['impressions', 'clicks', 'cost', 'orders', 'sales', 'acos', 'cpc', 'cvr'];

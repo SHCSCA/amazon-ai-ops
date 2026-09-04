@@ -1,5 +1,6 @@
 import { formatUsd } from './formatters';
 import type { AdStrategyDiagnosisView, AiEvidenceDisplayItemView, RecommendationEvidence } from './types';
+import { localizeProductStage } from '@amazon-ai-ops/business-presenters';
 
 export type DecisionEvidenceTone = 'ready' | 'pending' | 'warning' | 'blocked';
 
@@ -303,17 +304,7 @@ function evidenceTypeLabel(type: AiEvidenceDisplayItemView['type']): string {
 }
 
 function adLifecycleLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '测词',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    declining_repair: '异常修复',
-    clearance: '清货',
-    unknown: '阶段待判定',
-  };
-  return labels[String(stage || 'unknown')] || String(stage || '阶段待判定');
+  return localizeProductStage(stage);
 }
 
 function evidenceSufficiencyStats(sufficiency: AdStrategyDiagnosisView['summary']['evidenceSufficiency']): string {

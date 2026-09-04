@@ -1,0 +1,8 @@
+{
+  "rawKeyword": ["Search Query", "搜索查询", "关键词"],
+  "impressions": ["Impressions", "曝光"],
+  "clicks": ["Clicks", "点击"],
+  "orders": ["Purchases", "Orders", "购买", "订单"],
+  "sales": ["Sales", "销售额"],
+  "cvr": ["CVR", "转化率"]
+}

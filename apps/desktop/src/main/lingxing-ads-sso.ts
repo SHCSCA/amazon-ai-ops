@@ -23,7 +23,17 @@ export interface DiscoverLingxingAdsKeywordTargetInput {
   readonly campaignName: string;
   readonly adGroupName: string;
   readonly entityName: string;
+  readonly matchType: string;
   readonly currentBidCents: number;
+}
+
+export interface LingxingKeywordTargetRowSnapshot {
+  readonly headers: readonly string[];
+  readonly cellTexts: readonly string[];
+  readonly keywordIds: readonly string[];
+  readonly bidValues: readonly string[];
+  readonly adGroupIds: readonly string[];
+  readonly adGroupNames: readonly string[];
 }
 
 export interface DiscoveredLingxingAdsKeywordTarget {
@@ -64,7 +74,7 @@ export async function ensureLingxingAdsHeaderStore(page: Page, expectedAlias: st
       const rect = element.getBoundingClientRect();
       const text = normalize(element.innerText || element.textContent);
       return visible(element) && rect.y >= 0 && rect.y <= 96 && rect.x >= 0 && rect.x <= 520
-        && text.length <= 64 && /^[a-z0-9._:-]+\s*美国$/iu.test(text);
+        && text.length <= 64 && text.endsWith('美国') && text.slice(0, -2).trim().length > 0;
     });
     const controls = candidates.filter((candidate) => !candidates.some((other) => (
       other !== candidate && candidate.contains(other)
@@ -80,7 +90,8 @@ export async function ensureLingxingAdsHeaderStore(page: Page, expectedAlias: st
   })));
   const selectedFrames = headerStates.filter(({ state: current }) => current.selectedCount === 1);
   if (selectedFrames.length === 1
-    && headerStates.reduce((sum, current) => sum + current.state.selectedCount, 0) === 1) return;
+    && headerStates.reduce((sum, current) => sum + current.state.selectedCount, 0) === 1
+    && headerStates.reduce((sum, current) => sum + current.state.controlCount, 0) === 1) return;
   const controlFrames = headerStates.filter(({ state: current }) => current.controlCount > 0);
   if (controlFrames.length !== 1 || controlFrames[0].state.controlCount !== 1) {
     throw new Error(`领星 Ads 顶部无法唯一定位当前账户下拉 ${displayAlias}，操作已阻断。`);
@@ -95,7 +106,7 @@ export async function ensureLingxingAdsHeaderStore(page: Page, expectedAlias: st
       return style.display !== 'none' && style.visibility !== 'hidden'
         && Number(style.opacity || '1') !== 0 && rect.width > 0 && rect.height > 0
         && rect.y >= 0 && rect.y <= 96 && rect.x >= 0 && rect.x <= 520
-        && text.length <= 64 && /^[a-z0-9._:-]+\s*美国$/iu.test(text);
+        && text.length <= 64 && text.endsWith('美国') && text.slice(0, -2).trim().length > 0;
     });
     const controls = candidates.filter((candidate) => !candidates.some((other) => (
       other !== candidate && candidate.contains(other)
@@ -193,6 +204,7 @@ type LingxingAdsPageState = Readonly<{
   title?: string;
   bodyText?: string;
   hasAccountInput?: true;
+  hasPasswordInput?: true;
 }>;
 
 const ADS_SSO_TIMEOUT_MS = 45_000;
@@ -251,6 +263,113 @@ function parseLingxingBidCents(value: unknown): number | null {
   if (!match) return null;
   const cents = (Number(match[1]) * 100) + Number((match[2] ?? '').padEnd(2, '0'));
   return Number.isSafeInteger(cents) && cents >= 0 ? cents : null;
+}
+
+function normalizedKeywordMatchType(value: unknown): 'exact' | 'phrase' | 'broad' | '' {
+  const normalized = normalizedKeywordTargetText(value);
+  if (['exact', 'exact match', '精准', '精确', '精准匹配', '精确匹配'].includes(normalized)) return 'exact';
+  if (['phrase', 'phrase match', '词组', '短语', '词组匹配', '短语匹配'].includes(normalized)) return 'phrase';
+  if (['broad', 'broad match', '广泛', '广泛匹配'].includes(normalized)) return 'broad';
+  return '';
+}
+
+export function resolveLingxingKeywordTargetRows(
+  rows: readonly LingxingKeywordTargetRowSnapshot[],
+  input: Pick<
+    DiscoverLingxingAdsKeywordTargetInput,
+    'campaignName' | 'adGroupName' | 'entityName' | 'matchType' | 'currentBidCents'
+  >,
+): { adGroupId: string; keywordId: string; bidCents: number } {
+  const expected = {
+    campaignName: normalizedKeywordTargetText(input.campaignName),
+    adGroupName: normalizedKeywordTargetText(input.adGroupName),
+    entityName: normalizedKeywordTargetText(input.entityName),
+    matchType: normalizedKeywordMatchType(input.matchType),
+    currentBidCents: Number(input.currentBidCents),
+  };
+  if (!expected.campaignName || !expected.adGroupName || !expected.entityName
+    || !expected.matchType
+    || !Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0) {
+    throw new Error('待识别关键词的活动、广告组、关键词、匹配方式或竞价权威不完整，操作已阻断。');
+  }
+  const normalizedRows = rows.map((row) => ({
+    ...row,
+    headers: row.headers.map(normalizedKeywordTargetText),
+    cellTexts: row.cellTexts.map(normalizedKeywordTargetText),
+    adGroupNames: row.adGroupNames.map(normalizedKeywordTargetText),
+  }));
+  const matchTypeHeaders = new Set(['匹配类型', '匹配方式', '匹配模式', 'match type', 'matchtype']);
+  const matchTypeHeaderCounts = normalizedRows.map((row) => (
+    row.headers.filter((header) => matchTypeHeaders.has(header)).length
+  ));
+  if (!matchTypeHeaderCounts.some((count) => count === 1)
+    || matchTypeHeaderCounts.some((count) => count > 1)) {
+    throw new Error('领星 Ads 关键词页缺少唯一匹配方式列，对象识别已阻断。');
+  }
+  const campaignHeaders = new Set(['广告活动', '广告活动名称', 'campaign', 'campaign name']);
+  const campaignColumnPresent = normalizedRows.some((row) => (
+    row.headers.some((header) => campaignHeaders.has(header))
+  ));
+  const candidateRows = normalizedRows.flatMap((row) => {
+    const matchTypeIndex = row.headers.findIndex((header) => matchTypeHeaders.has(header));
+    const campaignIndex = row.headers.findIndex((header) => campaignHeaders.has(header));
+    const rowMatchType = normalizedKeywordMatchType(row.cellTexts[matchTypeIndex]);
+    const bidValues = row.bidValues.map(parseLingxingBidCents).filter((value): value is number => value !== null);
+    if ((campaignColumnPresent && (campaignIndex < 0 || row.cellTexts[campaignIndex] !== expected.campaignName))
+      || !row.adGroupNames.includes(expected.adGroupName)
+      || !row.cellTexts.includes(expected.entityName)
+      || rowMatchType !== expected.matchType
+      || row.adGroupIds.length !== 1
+      || row.keywordIds.length !== 1) return [];
+    try {
+      return [{
+        keywordId: requireLingxingSelectorId(row.keywordIds[0], '关键词 ID'),
+        adGroupId: requireLingxingSelectorId(row.adGroupIds[0], '广告组 ID'),
+        bidValues,
+      }];
+    } catch {
+      return [];
+    }
+  });
+  const identityGroups = new Map<string, {
+    adGroupId: string;
+    keywordId: string;
+    bidValues: Set<number>;
+  }>();
+  for (const candidate of candidateRows) {
+    const key = `${candidate.adGroupId}\u0000${candidate.keywordId}`;
+    const group = identityGroups.get(key) ?? {
+      adGroupId: candidate.adGroupId,
+      keywordId: candidate.keywordId,
+      bidValues: new Set<number>(),
+    };
+    candidate.bidValues.forEach((bid) => group.bidValues.add(bid));
+    identityGroups.set(key, group);
+  }
+  const identities = [...identityGroups.values()].map((group) => ({
+    adGroupId: group.adGroupId,
+    keywordId: group.keywordId,
+    bidValues: [...group.bidValues],
+  }));
+  if (identities.length === 1 && identities[0].bidValues.length === 1) {
+    const observedBid = identities[0].bidValues[0];
+    if (observedBid !== expected.currentBidCents) {
+      throw new Error(
+        `领星 Ads 关键词 ${input.entityName} 当前竞价已变化：`
+        + `报表 $${(expected.currentBidCents / 100).toFixed(2)}，页面 $${(observedBid / 100).toFixed(2)}；`
+        + '建议已失效，禁止绑定或执行，请刷新数据后重新生成建议。',
+      );
+    }
+    return {
+      adGroupId: identities[0].adGroupId,
+      keywordId: identities[0].keywordId,
+      bidCents: observedBid,
+    };
+  }
+  throw new Error(
+    `领星 Ads 关键词页无法唯一定位 ${input.campaignName} > ${input.adGroupName}`
+    + ` > ${input.entityName}（${input.matchType}），操作已阻断。`,
+  );
 }
 
 type LingxingVisibleLink = Readonly<{ href: string; text: string }>;
@@ -551,11 +670,12 @@ export async function discoverLingxingAdsKeywordTarget(
     campaignName: normalizedKeywordTargetText(input.campaignName),
     adGroupName: normalizedKeywordTargetText(input.adGroupName),
     entityName: normalizedKeywordTargetText(input.entityName),
+    matchType: normalizedKeywordMatchType(input.matchType),
     currentBidCents: Number(input.currentBidCents),
   };
-  if (!expected.campaignName || !expected.adGroupName || !expected.entityName
+  if (!expected.campaignName || !expected.adGroupName || !expected.entityName || !expected.matchType
     || !Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0) {
-    throw new Error('待识别关键词的业务身份不完整，操作已阻断。');
+    throw new Error('待识别关键词的活动、广告组、关键词、匹配方式或竞价权威不完整，操作已阻断。');
   }
 
   const frameRows = await Promise.all(page.frames().map((frame) => frame.evaluate(() => (
@@ -590,76 +710,27 @@ export async function discoverLingxingAdsKeywordTarget(
               return [];
             }
           }))];
+        const adGroupNames = [...new Set([...row.querySelectorAll<HTMLAnchorElement>('a[href*="ad_group_id="]')]
+          .map((anchor) => normalize(anchor.innerText || anchor.textContent))
+          .filter(Boolean))];
         return [{
+          headers,
           keywordIds: [...new Set(markers.map((marker) => marker.value).filter(Boolean))],
           cellTexts: [...row.querySelectorAll<HTMLElement>('td,th')]
             .map((cell) => cell.innerText || cell.textContent || ''),
           bidValues: bidInputs.map((bid) => bid.value),
           adGroupIds,
+          adGroupNames,
         }];
       })
   )).catch(() => [])));
   const rows = frameRows.flat();
-  const campaignColumnPresent = rows.some((row) => row.cellTexts
-    .map(normalizedKeywordTargetText)
-    .includes(expected.campaignName));
-
-  const candidateRows = rows.flatMap((row) => {
-    const cellTexts = row.cellTexts.map(normalizedKeywordTargetText);
-    const bidValues = row.bidValues.map(parseLingxingBidCents).filter((value): value is number => value !== null);
-    if ((campaignColumnPresent && !cellTexts.includes(expected.campaignName))
-      || !cellTexts.includes(expected.adGroupName)
-      || !cellTexts.includes(expected.entityName)
-      || row.adGroupIds.length !== 1
-      || row.keywordIds.length !== 1) return [];
-    try {
-      return [{
-        keywordId: requireLingxingSelectorId(row.keywordIds[0], '关键词 ID'),
-        adGroupId: requireLingxingSelectorId(row.adGroupIds[0], '广告组 ID'),
-        bidValues,
-      }];
-    } catch {
-      return [];
-    }
-  });
-  const identityGroups = new Map<string, {
-    adGroupId: string;
-    keywordId: string;
-    bidValues: Set<number>;
-  }>();
-  for (const candidate of candidateRows) {
-    const key = `${candidate.adGroupId}\u0000${candidate.keywordId}`;
-    const group = identityGroups.get(key) ?? {
-      adGroupId: candidate.adGroupId,
-      keywordId: candidate.keywordId,
-      bidValues: new Set<number>(),
-    };
-    candidate.bidValues.forEach((bid) => group.bidValues.add(bid));
-    identityGroups.set(key, group);
-  }
-  const identities = [...identityGroups.values()].map((group) => ({
-    adGroupId: group.adGroupId,
-    keywordId: group.keywordId,
-    bidValues: [...group.bidValues],
-  }));
-  if (identities.length === 1 && identities[0].bidValues.length === 1) {
-    const observedBid = identities[0].bidValues[0];
-    if (observedBid !== expected.currentBidCents) {
-      throw new Error(
-        `领星 Ads 关键词 ${input.entityName} 当前竞价已变化：`
-        + `报表 $${(expected.currentBidCents / 100).toFixed(2)}，页面 $${(observedBid / 100).toFixed(2)}；`
-        + '建议已失效，禁止绑定或执行，请刷新数据后重新生成建议。',
-      );
-    }
-    return {
-      adsAccountId: expectedProfileId,
-      campaignId,
-      adGroupId: identities[0].adGroupId,
-      keywordId: identities[0].keywordId,
-      bidCents: observedBid,
-    };
-  }
-  throw new Error(`领星 Ads 关键词页无法唯一定位 ${input.campaignName} > ${input.adGroupName} > ${input.entityName}，操作已阻断。`);
+  const identity = resolveLingxingKeywordTargetRows(rows, input);
+  return {
+    adsAccountId: expectedProfileId,
+    campaignId,
+    ...identity,
+  };
 }
 
 type CapturedLingxingAdsProfileResponse = Readonly<{
@@ -743,9 +814,33 @@ async function consumeObservedAdsProfileResponse(
 export function isLingxingAdsExplicitlyLoggedOutPage(
   state: LingxingAdsPageState,
 ): boolean {
+  return isLingxingProviderExplicitlyLoggedOutPage('amazon_ads', state);
+}
+
+/**
+ * Classifies only explicit provider-owned login evidence. Same-origin alone is
+ * not enough to retain a verified session after a document replacement.
+ */
+export function isLingxingProviderExplicitlyLoggedOutPage(
+  provider: LingxingVisibleProvider,
+  state: LingxingAdsPageState,
+): boolean {
   const visibleText = `${state.title ?? ''}\n${state.bodyText ?? ''}`;
-  return /\/restartLogin(?:\/|$)/i.test(state.url)
-    || /您尚未登录|账号登录|微信登录|请从领星\s*ERP\s*进入/u.test(visibleText);
+  let loginPath = false;
+  try {
+    const currentUrl = new URL(state.url);
+    const expectedOrigin = provider === 'lingxing'
+      ? 'https://erp.lingxing.com'
+      : 'https://ads.lingxing.com';
+    loginPath = currentUrl.origin === expectedOrigin
+      && /(?:^|\/)(?:login|restartLogin)(?:\/|$)/iu.test(currentUrl.pathname);
+  } catch {
+    loginPath = false;
+  }
+  return loginPath
+    || state.hasAccountInput === true
+    || state.hasPasswordInput === true
+    || /您尚未登录|账号登录|密码登录|微信登录|登录领星|请从领星\s*ERP\s*进入/iu.test(visibleText);
 }
 
 type LingxingAdsAnnouncementAction = Readonly<{
@@ -849,6 +944,31 @@ export function isTransientLingxingAdsNavigationError(error: unknown): boolean {
     .test(errorMessage(error));
 }
 
+async function readLingxingAdsStateAcrossNavigation<T>(
+  page: Page,
+  readState: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < ADS_NAVIGATION_CONTEXT_READ_ATTEMPTS; attempt += 1) {
+    try {
+      return await readState();
+    } catch (error) {
+      if (!isTransientLingxingAdsNavigationError(error)
+        || attempt + 1 >= ADS_NAVIGATION_CONTEXT_READ_ATTEMPTS) {
+        throw error;
+      }
+      await page.waitForLoadState('domcontentloaded', { timeout: 5_000 })
+        .catch((loadError) => {
+          if (isPageClosed(page)
+            || /page|context|browser.*closed|target.*closed/iu.test(errorMessage(loadError))) {
+            throw loadError;
+          }
+        });
+      await page.waitForTimeout(ADS_NAVIGATION_CONTEXT_RETRY_WAIT_MS);
+    }
+  }
+  throw new Error('领星 Ads 页面导航完成后无法读取页面状态，操作已阻断。');
+}
+
 /**
  * Reads a small, non-secret page snapshot across a document replacement.
  * Only Chromium's explicit stale-execution-context errors are retryable;
@@ -861,16 +981,33 @@ export async function readLingxingAdsPageStateAfterNavigation(
   title: string;
   bodyText: string;
   hasAccountInput?: true;
+  hasPasswordInput?: true;
 }>> {
   for (let attempt = 0; attempt < ADS_NAVIGATION_CONTEXT_READ_ATTEMPTS; attempt += 1) {
     try {
       return await page.evaluate(() => {
-        const hasAccountInput = Boolean(document.querySelector('input[name="account"]'));
+        const visible = (element: Element): boolean => {
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return !element.closest('[hidden], [aria-hidden="true"], [inert]')
+            && style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity || '1') !== 0
+            && rect.width > 0
+            && rect.height > 0;
+        };
+        const hasAccountInput = [...document.querySelectorAll(
+          'input[name="account"], input[autocomplete="username"], input[placeholder*="用户名"], input[placeholder*="手机号"]',
+        )].some(visible);
+        const hasPasswordInput = [...document.querySelectorAll(
+          'input[name="pwd"], input[type="password"], input[autocomplete="current-password"]',
+        )].some(visible);
         return {
           url: window.location.href,
           title: document.title,
           bodyText: document.body?.innerText ?? '',
           ...(hasAccountInput ? { hasAccountInput: true as const } : {}),
+          ...(hasPasswordInput ? { hasPasswordInput: true as const } : {}),
         };
       });
     } catch (error) {
@@ -899,10 +1036,11 @@ export function isTrustedLingxingProviderUrl(
 ): boolean {
   try {
     const currentUrl = new URL(value);
+    const isLoginPath = /(?:^|\/)(?:login|restartLogin)(?:\/|$)/iu.test(currentUrl.pathname);
     return provider === 'lingxing'
-      ? currentUrl.origin === 'https://erp.lingxing.com'
+      ? currentUrl.origin === 'https://erp.lingxing.com' && !isLoginPath
       : currentUrl.origin === 'https://ads.lingxing.com'
-        && !/\/restartLogin(?:\/|$)/i.test(currentUrl.pathname);
+        && !isLoginPath;
   } catch {
     return false;
   }
@@ -963,6 +1101,106 @@ export async function findTrustedLingxingProviderPageAfterPendingNavigation(
     }
   }
   return null;
+}
+
+/**
+ * Observes new documents in the pending Ads controller's isolated context.
+ * The current page may still be ERP and is never Ads identity evidence. A
+ * newly-created page gets only the same bounded navigation-settle window used
+ * by the pending replacement recovery path. The observer remains active for
+ * the pending runtime lifetime and removes itself only after an explicit stop,
+ * one trusted adoption, or an unsafe ambiguous candidate set.
+ */
+export function bindPendingLingxingAdsNewPageAdoption(input: Readonly<{
+  observedPage: Page;
+  context: Pick<BrowserContext, 'on' | 'off'>;
+  readCandidates: () => readonly Page[];
+  onTrustedPage: (page: Page) => void | Promise<void>;
+  onUnsafeCandidates: (reason: string) => void | Promise<void>;
+}>): () => void {
+  let stopped = false;
+  let inspectionRunning = false;
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    input.context.off('page', inspectCandidate);
+  };
+  const inspectCandidate = (): void => {
+    if (stopped || inspectionRunning) return;
+    inspectionRunning = true;
+    void (async () => {
+      let stableCandidate: Page | null = null;
+      for (let attempt = 0; attempt < ADS_PENDING_NAVIGATION_PAGE_RECOVERY_ATTEMPTS; attempt += 1) {
+        let candidates: readonly Page[] = [];
+        try {
+          candidates = input.readCandidates();
+        } catch {
+          candidates = [];
+        }
+        const trustedCandidates = [...new Set(candidates)].filter((candidate) => (
+          candidate !== input.observedPage
+          && !isPageClosed(candidate)
+          && isTrustedLingxingProviderUrl('amazon_ads', candidate.url())
+        ));
+        if (trustedCandidates.length > 1) {
+          stop();
+          await input.onUnsafeCandidates(
+            '领星 Ads 同一隔离浏览器出现多个可信页面，无法唯一继续当前店铺识别，操作已阻断。',
+          );
+          return;
+        }
+        const candidate = trustedCandidates[0] ?? null;
+        if (candidate && candidate === stableCandidate) {
+          stop();
+          await input.onTrustedPage(candidate);
+          return;
+        }
+        stableCandidate = candidate;
+        if (attempt + 1 < ADS_PENDING_NAVIGATION_PAGE_RECOVERY_ATTEMPTS) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, ADS_PENDING_NAVIGATION_PAGE_RECOVERY_WAIT_MS);
+          });
+        }
+      }
+    })().finally(() => {
+      inspectionRunning = false;
+    });
+  };
+  input.context.on('page', inspectCandidate);
+  inspectCandidate();
+  return stop;
+}
+
+/**
+ * Watches only closure of an unverified Ads controller page. The page may
+ * still be the authenticated ERP document, so navigation is deliberately not
+ * observed and the page is never treated as Ads identity evidence.
+ */
+export function bindPendingLingxingAdsPageCloseOnlyLiveness(input: Readonly<{
+  page: Page;
+  readCandidates: () => readonly Page[];
+  onTrustedReplacement: (page: Page) => void | Promise<void>;
+  onClosed: (reason: string) => void | Promise<void>;
+}>): void {
+  let recoveryStarted = false;
+  const recoverOrClose = (): void => {
+    if (recoveryStarted) return;
+    recoveryStarted = true;
+    void (async () => {
+      const replacement = await findTrustedLingxingProviderPageAfterPendingNavigation(
+        'amazon_ads',
+        input.page,
+        input.readCandidates,
+      );
+      if (replacement) {
+        await input.onTrustedReplacement(replacement);
+        return;
+      }
+      await input.onClosed('可见浏览器已关闭。');
+    })();
+  };
+  input.page.once('close', recoverOrClose);
+  if (isPageClosed(input.page)) recoverOrClose();
 }
 
 /**
@@ -1733,11 +1971,11 @@ async function readAdsPageState(page: Page): Promise<{
   title: string;
   bodyText: string;
 }> {
-  return {
+  return readLingxingAdsStateAcrossNavigation(page, async () => ({
     url: page.url(),
     title: await page.title(),
     bodyText: await page.evaluate(() => (document.body?.innerText ?? '').slice(0, 8_192)),
-  };
+  }));
 }
 
 export function selectLingxingAdsProfileEvidence(

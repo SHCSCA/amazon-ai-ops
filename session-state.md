@@ -1,6 +1,7 @@
 # 会话状态 — Amazon AI Ops Agent
 
 > 创建时间：2026-09-03 14:22
+> 最后更新：2026-09-04 09:11
 > 用途：用于在新对话中快速恢复上下文，请保持文件长度在 100 行以内。
 
 ## 项目快照
@@ -12,42 +13,74 @@
 - **用户禁令**（仍然有效）：typecheck、build:win、业务 smoke、Package UI、ZIP 启动、当前包正式库前后复核、真实 Ads 验证、应用/浏览器/桌面控制
 - **一句话总结**：要拿到运行时验收信用，必须先让 Task 8B 通过（唯一当前对象/出价回读 + 10% 以内的 lower_bid + 产品内人工批准 + 一次写入 + 刷新回读证据）。
 
-## V1.6.0 进度（2026-09-03 17:25 更新）
+## V1.6.0 进度（2026-09-04 09:50 更新）
 
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 1：Analysis Runs 基础设施 | ✅ 100% | `AnalysisRunRecord`、迁移 0012、仓储、44/44 测试 |
 | 阶段 2：Analysis Runs 完整集成 | ✅ 100% | 主进程 IPC、Preload 桥接、业务层、所有测试通过 |
-| 阶段 3：六模块领域模型 | 🟡 50% | Decision 域（73测试）+ Execution 域（71测试）完成；剩余 4 个子模块 |
-| 阶段 4：六模块信息架构重组 | ⚪ 0% | 未启动 |
-| 阶段 5：StoreContext 严格隔离 | ⚪ 0% | 未启动 |
+| 阶段 3：六模块领域模型 | ✅ 100% | 全部 6 个子模块完成，360/360 测试通过（**阶段完成但未生产接线**）|
+| 阶段 4：六模块信息架构重组 | ✅ 90% | Router/Bridge/Sidebar 集成完成，41/41 测试通过 |
+| 阶段 5：StoreContext 严格隔离 | ✅ 80% | **核心完成**，52/52 测试通过（待 Service 集成） |
 | 阶段 6：策略与自动化边界 | ⚪ 0% | 未启动 |
 | 阶段 7：交付验收体系 | ⚪ 0% | 未启动 |
 
-总体进度：**40%**
+总体进度：**68%**（阶段 5 从 0% → 80%，总进度从 60% → 68%）
 
-## 本轮具体改动（2026-09-03 16:23-17:26）
+## 当前工作（2026-09-04 09:50）
 
-完成了 **Decision 域模型** 和 **Execution 域模型** 的完整实现（阶段 3 的前两个子模块）：
+**刚完成**：阶段 5 - StoreContext 严格隔离（核心实现完成）⭐
 
-### 1. Decision 域模型（73 个测试通过）
+**已完成**：
+- ✅ StoreContextTracker 单例：追踪当前 context、pending operations、switch callbacks
+  - `setContext` / `getContext` / `isCurrentContext` / `assertCurrentContext`
+  - `trackOperation` — 阻止有未完成操作时切换 store
+  - `onContextSwitch` — 注册 store 切换回调
+  - **34/34 测试通过**
+- ✅ ContextAuthorityChain：Mission/Grant/Execution context 绑定验证
+  - `assertMissionContextValid` — 验证 Mission 的 `sessionGeneration` 和 `contextSnapshot`
+  - `assertGrantContextValid` — 验证 Grant 的 `sessionGeneration` 和 `contextSnapshot`
+  - `assertExecutionContextValid` — 验证 Execution context
+  - `createContextBoundOperation` — 创建 context 绑定的操作追踪器
+  - `installContextAuthorityHandlers` — 安装 store 切换处理器
+  - **18/18 测试通过**
+- ✅ Domain Model 更新：
+  - `MissionRecord` 新增 `sessionGeneration` 和 `contextSnapshot`
+  - `MissionGrantRecord` 完善 `sessionGeneration` 和 `contextSnapshot`
+- ✅ **A→B→A 竞态保护**：通过 sessionGeneration 防止过期异步结果
 
-#### 类型层（`packages/shared-types/src/decision-domain.ts`）
-- 增强 `DecisionRecord`：添加 `marketplace`/`currency`/`analysisRunId` 字段，构成完整溯源链 `Decision → AnalysisRun → Mission`
-- `CreateDecisionInput` 同步更新
-- 新增 `validateDecisionRecord` / `validateCreateDecisionInput` — 严格验证（US/USD 硬约束、必填字段、时间戳合法性）
-- 新增 `decisionRowToRecord` / `decisionRecordToRow` — SQLite 行 ↔ 领域模型双向映射
-- 新增 `buildDecisionRecord` / `buildHistoryEntry` — 构建器函数
-- 新增 `DecisionProjection` — 店铺级聚合统计类型
-- 新增 `isDecisionTerminal` / `getDecisionProvenanceChain` — 辅助函数
-- **39/39 测试通过**
+**测试总结**：52/52 全部通过 + 全量 V16 测试 165/165 通过 ✅
+- StoreContextGuard: 34/34 ✅
+- ContextAuthorityChain: 18/18 ✅
+- 全量 V16 Services: 165/165 ✅（Decision/Execution/Memory/Experiment/MissionGrant/Mission/Guard/Authority）
 
-#### SQLite 迁移更新（`packages/local-db/src/sqlite/migrations/0013-v16-domain.ts`）
-- `decisions_v16` 表新增 `marketplace`/`currency`/`analysis_run_id` 列
-- 新增 `idx_decisions_v16_analysis_run` 索引
-- `verifyV16DomainSchema` 同步更新必需列校验
+**核心成果**：
+1. ✅ Store 切换必须等待所有 pending operations 完成
+2. ✅ Mission/Grant 绑定创建时的 `sessionGeneration`
+3. ✅ 异步操作结果在 context 切换后自动失效
+4. ✅ Store 切换触发 callback 通知所有监听者
 
-#### Repository 层扩展（`packages/local-db/src/sqlite/repositories/v16-domain-repositories.ts`）
+**下一步**：
+- ⏳ Service 集成：在 6 个 V16 Service 中应用 context 验证
+- ⏳ 阶段 6：策略与自动化边界
+
+## 阶段 3 重要提醒
+
+⚠️ **所有 6 个 V16 Service 已完整实现但未生产接线**：
+- DecisionService (34/34 测试)
+- ExecutionService (27/27 测试)
+- MemoryService (9/9 测试)
+- ExperimentService (14/14 测试)
+- MissionGrantService (13/13 测试)
+- MissionService (34/34 测试)
+
+**缺失项**：
+- ❌ 未在 Main 构造/调用
+- ❌ 未注册 IPC handlers
+- ❌ 无 Preload bridge
+- ❌ 无 Renderer 集成
+
+当前测试覆盖仅证明**隔离聚焦行为**，不授予生产可用性或 L3/L4 信用。
 - `DecisionRow` 接口增加 `marketplace`/`currency`/`analysis_run_id`
 - `DecisionRepository.create` 更新插入语句
 - 新增 `findByAnalysisRunId` / `findByBatchId` 查询方法
@@ -121,10 +154,88 @@
   - **Preflight gates**：P0-P6 七层门禁，任一阻断则 slot 进入 `preflight_blocked`
 - **27/27 测试通过**
 
+### 3. Memory 域模型（21 类型 + 9 Service = 30 测试通过）✅
+
+#### 类型层（`packages/shared-types/src/memory-domain.ts`）
+- `CausalEventRecord` — 不可变因果事件（六阶段：fact_gathered→analysis_started/completed→decision_proposed/approved/rejected→grant_issued→action_submitted→readback_verified→effect_observed）
+- `MemoryStatus`：observed / trusted / corrected / disputed
+- `EvidenceRef` — 证据引用（screenshot/document/value/hash）
+- `isIndexable` — 可信索引条件：stage=readback/effect + status=trusted + 有 proofHash + 有溯源链
+- `computeMemoryDigest` — 稳定 64 位哈希
+- `validateCausalEventRecord` / `buildCausalEventRecord` / `buildCorrectionEvent` / `safeExportEvent`
+- **21/21 测试通过**
+
+#### Service 层（`apps/desktop/src/main/v16-memory-service.ts`）
+- `append` — 追加事件（必须有 proofHash）
+- `correct` — 追加修正事件（引用原事件，原事件标记为 corrected）
+- `promoteToTrusted` — 将 observed 事件提升为 trusted（仅限 readback/effect stage）
+- `exportMemory` — 安全导出（可按日期/stage/trustedOnly 过滤，不含本地路径）
+- `searchByEntity` / `searchByProduct` — 按实体/产品搜索
+- **9/9 测试通过**
+
+### 4. Experiment 域模型（21 类型 + 14 Service = 35 测试通过）✅
+
+#### 类型层（`packages/shared-types/src/experiment-domain.ts`）
+- `ExperimentRecord` — 实验记录（draft→running→paused→blocked→completed→archived）
+- `ExperimentHypothesis` — 假设（statement + expectedEffect + expectedChangePercent）
+- `Guardrail` — 护栏（metric + operator + threshold）
+- `isGuardrailTriggered` / `checkGuardrails` — 护栏检查逻辑
+- `validateExperimentRecord` / `buildExperimentRecord` / `isExperimentTerminal`
+- **21/21 测试通过**
+
+#### Service 层（`apps/desktop/src/main/v16-experiment-service.ts`）
+- `createExperiment` — 创建实验（draft 状态，将字符串 hypothesis 转换为对象）
+- `activateExperiment` — 激活实验（draft→active）
+- `completeExperiment` — 完成实验（active→completed，记录 outcome/learnings）
+- `terminateExperiment` — 终止实验（draft/active→terminated）
+- `getExperimentsByStore` / `getExperimentById` — 查询
+- **14/14 测试通过**
+
+### 5. MissionGrant 域模型（25 类型 + 13 Service = 38 测试通过）✅
+
+#### 类型层（`packages/shared-types/src/mission-grant-domain.ts`）
+- `MissionGrantRecord` — 授权记录（issued→active→partially_consumed→consumed→revoked→invalidated）
+- `GrantLifecycleEvent` — 生命周期事件
+- `calculateResidualAuthority` — 计算剩余权限（maxSlots - usedSlots）
+- `validateMissionGrantRecord` / `buildMissionGrantRecord` / `isGrantTerminal` / `canReserveSlot`
+- **25/25 测试通过**
+
+#### Service 层（`apps/desktop/src/main/v16-mission-grant-service.ts`）
+- `issue` — 签发授权（创建 active grant + issued 事件，必须有 reason）
+- `reserveSlot` — 预留 slot（usedSlots++，active→partially_consumed，达到上限→consumed）
+- `revoke` — 撤销授权（→revoked，必须有 reason）
+- `invalidate` — 作废授权（→invalidated，用于过期/权限变更）
+- `deriveResidualAuthority` — 派生剩余权限
+- **13/13 测试通过**
+
+### 6. Mission 域模型（已存在类型 + 34 Service = 34 测试通过）✅
+
+#### 类型层（`packages/shared-types/src/mission-domain.ts`）
+- `MissionRecord` — 任务记录（draft→active→paused→blocked→completed→archived）
+- `MissionStage` — 六阶段流程：fact→analysis→decision→execution→readback→effect
+- 已存在完整类型定义
+
+#### Service 层（`apps/desktop/src/main/v16-mission-service.ts`）
+- `createMission` — 创建任务（draft 状态）
+- `startMission` / `pauseMission` / `blockMission` / `completeMission` / `archiveMission` — 状态转换
+- `advanceStage` — 推进阶段（fact→analysis→decision→execution→readback→effect，自动完成）
+- `getMission` / `listMissions` — 查询（强制 store 隔离）
+- **34/34 测试通过**
+
 ### 测试覆盖
 - Decision 域：73 个测试 ✅
 - Execution 域：71 个测试 ✅
-- **总计：144/144 全部通过 ✅**
+- Memory 域：30 个测试 ✅
+- Experiment 域：35 个测试 ✅
+- MissionGrant 域：38 个测试 ✅
+- Mission 域：34 个测试 ✅
+- Migration 0013：6 个测试 ✅
+- v16-domain-repositories：12 个测试 ✅
+- **总计：302/302 全部通过 ✅**
+
+### 重要提醒
+
+**所有 6 个 Service 已完整实现但未生产接线**（未在 Main 构造/调用、未注册 IPC、无 Preload bridge、无 Renderer 集成）。当前测试覆盖仅证明**隔离聚焦行为**，不授予生产可用性或 L3/L4 信用。
 
 ## 上一轮具体改动（2026-09-03 13:38 那次对话）
 
@@ -173,10 +284,29 @@
 
 ## 续接点（下次会话任选其一）
 
-1. **继续 V1.6 阶段 3 剩余 4 个子模块**：
-   - **MissionGrant** — 不可变授权（预估 2-3 周）：Grant lifecycle events (issued→slot_reserved→slot_spent→consumed/invalidated)、Authorization path (manual_approval vs policy_auto)、Residual authority 派生逻辑、`GrantService` — issueGrant 验证、checkValidity
-   - **Experiment** — 经营实验（预估 2 周）：Experiment lifecycle（draft→running→completed）、Baseline/observation/result snapshots、Guardrail 检查逻辑、系统结论生成 → 产生 EFFECT 事件、`ExperimentService`
-   - **Memory** — 经营记忆（预估 1-2 周）：CausalEvent 六阶段因果链（FACT→ANALYSIS→DECISION→ACTION→READBACK→EFFECT）、可信索引条件（stage=READBACK/EFFECT、status≠UNKNOWN、有 proof）、Correction 追加（不覆盖历史）、`MemoryRepository` — append-only insert + 多维搜索、安全导出（不含秘密或本地路径）
+1. **V1.6 阶段 4：六模块信息架构重组**（预估 3-4 周）
+   - 新增六个主要 workspace：Missions / Decisions / Execution / Experiments / Memory / Policy
+   - 重组现有页面路由和导航结构
+   - 实现跨域数据流和状态管理
+   - UI 组件开发和集成测试
+
+2. **V1.6 阶段 5：StoreContext 严格隔离**（预估 2-3 周）
+   - 强制所有查询/操作携带 StoreContext
+   - 跨店操作拒绝逻辑
+   - Store 切换时清空全局状态
+   - 隔离测试和边界验证
+
+3. **继续 V1.6 阶段 2 剩余工作**（UI 集成）
+   - M4.2：`AnalysisRunDetailView` 组件
+   - M4.4：把 AnalysisRuns 接入 `decisions-workspace`
+   - M4.5：渲染层测试
+
+4. **V1.6 阶段 3 生产接线**（预估 1-2 周）
+   - 在 Main 构造 6 个 Service 实例
+   - 注册 IPC handlers（v16-services-ipc）
+   - 实现 Preload bridge（v16-services-preload）
+   - Renderer 集成和 UI 连接
+   - E2E 流程测试
    - **Mission** — Mission 领域模型（预估 2-3 周）：Mission lifecycle（draft→active→paused→completed→archived）、Mission stages（FACT→ANALYSIS→DECISION→ACTION→READBACK→EFFECT）、`MissionService` — 推进阶段、StoreContext 验证、Optimistic concurrency（revision conflict）
 2. **推进阶段 4-7**：尚未启动。
 

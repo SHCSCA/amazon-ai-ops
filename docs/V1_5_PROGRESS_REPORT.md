@@ -1,8 +1,19 @@
 # Amazon AI Ops Agent v1.5 Progress Report
 
-Date: 2026-08-26
+Date: 2026-08-31
 
-## Current v1.5.1 static Windows checkpoint
+## Current v1.5.1 static Windows checkpoint (2026-08-31 build)
+
+- Version is `1.5.1`; delivery remains `APP_NEEDS_WORK / INTERNAL NON_READY` until current-package runtime evidence passes.
+- 2026-08-31 14:01:50 `pnpm run build:win` completed all seven steps with `freshCurrentRun=true`, source native bindings `unchangedExact=true`, and an end-to-end duration of about 5m53s; the manifest log is `output\build-win-20260831-135557.log`.
+- Policy create/update/enable and MissionGrant issuance now revalidate exact current completed-import evidence, the latest Stage5 revision, and required current Stage6 identity/session in one transaction. Keyword identity includes `match_type`; canonical campaign/ad-group scope uses IDs internally and hides them in ordinary UI.
+- Execution batch/job/slot, before/after/reload evidence and progress events are exact-context bound; authority changes discard stale async returns, including A→B→A races.
+- Focused authority verification passed `157/157`; the allowed full unit gate passed `285/285` files and `3584/3584` tests; package script contracts passed `12/12`; no committed skip/todo declarations exist. Independent review found `NO BLOCKER` and passed `126/126` tests.
+- Current package identity: installer `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B`, portable `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944`, folder ZIP `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796`, blockmap `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` (byte-identical to the 2026-07-17 external-security P1 candidate because the B1–B7 console-refactor plan limits changes to `resources/app.asar` and forbids touching main/preload/SQLite/IPC), Main bundle `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF` (lives inside `resources/app.asar` and therefore differs from prior builds). Source and packaged Renderer have zero exact `s is not defined` matches.
+- The user prohibited typecheck, business smoke, Package UI, folder-ZIP launch, current-package formal-DB pre/post verification, app/browser/desktop control and real Ads validation. The passing `1.5.0` `operator-core-20260826-91` manifest is historical and cannot credit this package.
+- Task 8B still requires a unique current-object/bid readback, a current `lower_bid` within 10%, exact human approval, one write and reload readback. No Ads write was performed in this round.
+
+## Historical 2026-08-26 v1.5.1 candidate
 
 - Version is `1.5.1`; delivery remains `APP_NEEDS_WORK / INTERNAL NON_READY` until current-package runtime evidence passes.
 - Policy create/update/enable and MissionGrant issuance now revalidate exact current completed-import evidence, the latest Stage5 revision, and required current Stage6 identity/session in one transaction. Keyword identity includes `match_type`; canonical campaign/ad-group scope uses IDs internally and hides them in ordinary UI.

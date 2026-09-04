@@ -117,6 +117,61 @@ describe('ReportParser Lingxing ad report rows', () => {
     });
   });
 
+  it('keeps an active batch importable when one non-paused row has an empty date but valid metrics', () => {
+    const result = parseRows([
+      {
+        '店铺名称': 'JF-US',
+        '国家': 'US',
+        '类型': 'SP',
+        '广告组合': 'Active portfolio',
+        '广告活动': 'Active campaign',
+        '有效状态': 'enabled',
+        '日期': '',
+        '曝光量': 7,
+        '点击': 1,
+        'CPC-本币': 1.5,
+        '花费-本币': 1.5,
+        '广告销售额-本币': 0,
+        '广告订单': 0,
+        'ACoS': '0%',
+        'CVR': '0%',
+      },
+      {
+        '店铺名称': 'JF-US',
+        '国家': 'US',
+        '类型': 'SP',
+        '广告组合': 'Active portfolio',
+        '广告活动': 'Active campaign',
+        '有效状态': 'enabled',
+        '日期': '2026-08-17',
+        '曝光量': 20,
+        '点击': 2,
+        'CPC-本币': 1.5,
+        '花费-本币': 3,
+        '广告销售额-本币': 30,
+        '广告订单': 1,
+        'ACoS': '10%',
+        'CVR': '50%',
+      },
+    ], { reportType: 'campaign' });
+
+    // Empty-date active row is silently dropped from `data` (parser-level m.date filter);
+    // it must NOT propagate as a fatal validation error that fails the whole file,
+    // so the surviving valid row can still import.
+    expect(result.success).toBe(true);
+    expect(result.schemaValid).toBe(true);
+    expect(result.validation.valid).toBe(true);
+    expect(result.validation.validCount).toBe(2);
+    expect(result.validation.invalidCount).toBe(0);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
+      campaignName: 'Active campaign',
+      date: '2026-08-17',
+      sourceRow: 3,
+      reportType: 'campaign',
+    });
+  });
+
   it.each([
     ['a non-zero metric', { '曝光量': 1 }],
     ['an invalid metric', { '花费-本币': 'abc' }],

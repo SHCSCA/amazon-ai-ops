@@ -134,4 +134,87 @@ describe('system AI runtime config', () => {
     expect(diagnosis).toContain('const settings = options.aiSettings');
     expect(diagnosis).not.toContain('readAiSettingsForMain()');
   });
+
+  it('feeds only Main-sealed causal memory into both production AI prompt phases', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const compositionStart = source.indexOf('const analysisAuthorityService = new AnalysisAuthorityService');
+    const compositionEnd = source.indexOf('const executionAuthorityService', compositionStart);
+    const composition = source.slice(compositionStart, compositionEnd);
+    expect(composition).toContain('captureTrustedAnalysisCausalMemory(scope)');
+
+    const captureStart = source.indexOf('function captureTrustedAnalysisCausalMemory');
+    const captureEnd = source.indexOf('function trustedCausalMemoryText', captureStart);
+    const capture = source.slice(captureStart, captureEnd);
+    expect(capture).toContain('Object.isFrozen(scope.causalMemory)');
+    expect(capture).toContain("/^[a-f0-9]{64}$/.test(memoryDigest)");
+    expect(capture).toContain('Object.isFrozen(item.proofs)');
+    expect(capture).toContain("['unknown', 'still_unknown'].includes(status.toLowerCase())");
+
+    const generationStart = source.indexOf('async function runRecommendationGeneration');
+    const generationEnd = source.indexOf('interface AdStrategyGenerationSummary', generationStart);
+    const generation = source.slice(generationStart, generationEnd);
+    expect(generation).toContain('trustedCausalMemory');
+    expect(generation).not.toMatch(/submitted\.(causalMemory|memoryDigest)/);
+    expect(generation).toContain('causalMemoryPrompt');
+
+    const promptStart = source.indexOf('function buildTrustedCausalMemoryPrompt');
+    const promptEnd = source.indexOf('async function runRecommendationGeneration', promptStart);
+    const promptBuilder = source.slice(promptStart, promptEnd);
+    expect(promptBuilder).toContain('历史已验证结果，仅供上下文');
+    expect(promptBuilder).toContain('不能替代当前 8 类报表、当前广告对象与竞价、人工审批');
+    expect(promptBuilder).toContain('memoryDigest');
+    expect(promptBuilder).toContain('trustedCausalMemory.items.length === 0) return undefined');
+    expect(promptBuilder).toContain('不能仅凭历史记忆生成、批准或执行动作');
+    expect(promptBuilder).not.toContain('event.eventId');
+    expect(promptBuilder).not.toContain('event.missionId');
+
+    const explanationsStart = source.indexOf('async function enrichAdRecommendationsWithAiExplanations');
+    const explanationsEnd = source.indexOf('async function enrichAdRecommendationsWithStrategyDiagnosis', explanationsStart);
+    const explanations = source.slice(explanationsStart, explanationsEnd);
+    expect(explanations).toContain('causalMemoryPrompt');
+    expect(explanations).toContain('withCausalMemoryUserContext');
+    expect(explanations).toContain('buildCausalMemorySystemPersona');
+    expect(explanations).not.toContain('buildAiPersonaWithCausalMemory');
+
+    const diagnosisStart = explanationsEnd;
+    const diagnosisEnd = source.indexOf('function buildAiInsightsFromValidation', diagnosisStart);
+    const diagnosis = source.slice(diagnosisStart, diagnosisEnd);
+    expect(diagnosis).toContain('causalMemoryPrompt');
+    expect(diagnosis).toContain('withCausalMemoryUserContext');
+    expect(diagnosis).toContain('buildCausalMemorySystemPersona');
+    expect(diagnosis).not.toContain('buildAiPersonaWithCausalMemory');
+
+    const rendererHandlerStart = source.indexOf("registerTrackedIpcHandler('recommendations:generate'");
+    const rendererHandlerEnd = source.indexOf('\n', rendererHandlerStart);
+    const rendererHandler = source.slice(rendererHandlerStart, rendererHandlerEnd);
+    expect(rendererHandler).not.toContain('captureTrustedAnalysisCausalMemory');
+    expect(generation).toContain('scope: gate.scope');
+    expect(generation).not.toContain('scope: submitted');
+  });
+
+  it('threads Mission analysis cancellation through both AI phases and every recommendation write', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const generationStart = source.indexOf('async function runRecommendationGeneration');
+    const generationEnd = source.indexOf('interface AdStrategyGenerationSummary', generationStart);
+    const generation = source.slice(generationStart, generationEnd);
+    expect(generation).toContain('submitted.signal instanceof AbortSignal');
+    expect(generation).toContain('signal: analysisSignal');
+    expect(generation).toContain('causalMemoryPrompt,\n    analysisSignal,');
+    const persistence = generation.slice(generation.indexOf('// Save to database'));
+    expect(persistence).toContain('for (const rec of recommendations) {\n    analysisSignal?.throwIfAborted();');
+    expect(persistence).toContain('analysisSignal?.throwIfAborted();\n  console.log');
+
+    const explanationsStart = source.indexOf('async function enrichAdRecommendationsWithAiExplanations');
+    const explanationsEnd = source.indexOf('async function enrichAdRecommendationsWithStrategyDiagnosis', explanationsStart);
+    const explanations = source.slice(explanationsStart, explanationsEnd);
+    expect(explanations).toContain('explainer.explain({');
+    expect(explanations).toContain('}, { signal });');
+    expect(explanations).toContain('catch (error) {\n      signal?.throwIfAborted();');
+
+    const diagnosisStart = explanationsEnd;
+    const diagnosisEnd = source.indexOf('function buildAiInsightsFromValidation', diagnosisStart);
+    const diagnosis = source.slice(diagnosisStart, diagnosisEnd);
+    expect(diagnosis).toContain('.diagnose(diagnosisInput, { signal: options.signal })');
+    expect(diagnosis).toContain('options.signal?.throwIfAborted();\n  recordAdStrategyAiCallLog');
+  });
 });

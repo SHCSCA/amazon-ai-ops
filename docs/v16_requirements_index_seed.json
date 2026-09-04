@@ -1,0 +1,163 @@
+[
+  {
+    "requirementId": "V16-ANA-001",
+    "level": "MUST",
+    "prdSection": "12.7",
+    "title": "Analysis authority - grant issuance",
+    "acceptanceIds": ["AC-L1-DOMAIN-001", "AC-L1-REPO-001"]
+  },
+  {
+    "requirementId": "V16-ANA-002",
+    "level": "MUST",
+    "prdSection": "12.7",
+    "title": "Analysis authority - revision binding",
+    "acceptanceIds": ["AC-L1-DOMAIN-001"]
+  },
+  {
+    "requirementId": "V16-GRANT-001",
+    "level": "MUST",
+    "prdSection": "12.8",
+    "title": "Execution grant - authority validation",
+    "acceptanceIds": ["AC-L1-DOMAIN-002", "AC-L1-REPO-002"]
+  },
+  {
+    "requirementId": "V16-GRANT-002",
+    "level": "MUST",
+    "prdSection": "12.8",
+    "title": "Execution grant - session binding",
+    "acceptanceIds": ["AC-L1-DOMAIN-002"]
+  },
+  {
+    "requirementId": "V16-MIS-001",
+    "level": "MUST",
+    "prdSection": "12.8",
+    "title": "Mission domain - store isolation",
+    "acceptanceIds": ["AC-L1-DOMAIN-003", "AC-L1-REPO-003"]
+  },
+  {
+    "requirementId": "V16-MIS-002",
+    "level": "MUST",
+    "prdSection": "12.8",
+    "title": "Mission domain - CRUD operations",
+    "acceptanceIds": ["AC-L1-DOMAIN-003"]
+  },
+  {
+    "requirementId": "V16-DATA-001",
+    "level": "MUST",
+    "prdSection": "12.6",
+    "title": "Data pipeline - formal gate",
+    "acceptanceIds": ["AC-L1-DOMAIN-004"]
+  },
+  {
+    "requirementId": "V16-DATA-002",
+    "level": "MUST",
+    "prdSection": "12.6",
+    "title": "Data pipeline - report completeness",
+    "acceptanceIds": ["AC-L1-DOMAIN-004"]
+  },
+  {
+    "requirementId": "V16-DATA-003",
+    "level": "MUST",
+    "prdSection": "12.6",
+    "title": "Data pipeline - Lingxing collection",
+    "acceptanceIds": ["AC-L1-DOMAIN-005"]
+  },
+  {
+    "requirementId": "V16-DATA-004",
+    "level": "MUST",
+    "prdSection": "12.6",
+    "title": "Data pipeline - SSO session",
+    "acceptanceIds": ["AC-L1-DOMAIN-005"]
+  },
+  {
+    "requirementId": "V16-DATA-005",
+    "level": "MUST",
+    "prdSection": "12.6",
+    "title": "Data pipeline - collection coordinator",
+    "acceptanceIds": ["AC-L1-DOMAIN-006"]
+  },
+  {
+    "requirementId": "V16-AI-001",
+    "level": "MUST",
+    "prdSection": "12.12",
+    "title": "AI adapter - strategy diagnosis",
+    "acceptanceIds": ["AC-L1-DOMAIN-007"]
+  },
+  {
+    "requirementId": "V16-AI-002",
+    "level": "MUST",
+    "prdSection": "12.12",
+    "title": "AI adapter - action reasoning",
+    "acceptanceIds": ["AC-L1-DOMAIN-007"]
+  },
+  {
+    "requirementId": "V16-AI-003",
+    "level": "MUST",
+    "prdSection": "12.12",
+    "title": "AI adapter - OpenAI compatibility",
+    "acceptanceIds": ["AC-L1-DOMAIN-008"]
+  },
+  {
+    "requirementId": "V16-DEC-001",
+    "level": "MUST",
+    "prdSection": "12.7",
+    "title": "Decisioning - recommendation eligibility",
+    "acceptanceIds": ["AC-L1-DOMAIN-009"]
+  },
+  {
+    "requirementId": "V16-AUTH-001",
+    "level": "MUST",
+    "prdSection": "12.13",
+    "title": "Shared types - authority identity",
+    "acceptanceIds": ["AC-L1-SHARED-001"]
+  },
+  {
+    "requirementId": "V16-AUTH-002",
+    "level": "MUST",
+    "prdSection": "12.13",
+    "title": "Shared types - repository integration",
+    "acceptanceIds": ["AC-L1-PRELOAD-001"]
+  },
+  {
+    "requirementId": "V16-ENG-001",
+    "level": "MUST",
+    "prdSection": "13.2",
+    "title": "L2 engineering - typecheck",
+    "acceptanceIds": ["AC-L2-ENG-001"]
+  },
+  {
+    "requirementId": "V16-ENG-002",
+    "level": "MUST",
+    "prdSection": "13.2",
+    "title": "L2 engineering - renderer build",
+    "acceptanceIds": ["AC-L2-ENG-002"]
+  },
+  {
+    "requirementId": "V16-ENG-003",
+    "level": "MUST",
+    "prdSection": "13.2",
+    "title": "L2 engineering - package scripts",
+    "acceptanceIds": ["AC-L2-ENG-003"]
+  },
+  {
+    "requirementId": "V16-UI-001",
+    "level": "MUST",
+    "prdSection": "13.3",
+    "title": "L3 business UI - Mission Control shell",
+    "acceptanceIds": ["AC-L3-UI-001"]
+  },
+  {
+    "requirementId": "V16-UI-002",
+    "level": "MUST",
+    "prdSection": "13.3",
+    "title": "L3 business UI - workspace routing",
+    "acceptanceIds": ["AC-L3-UI-002"]
+  },
+  {
+    "requirementId": "V16-ENG-010",
+    "level": "MUST",
+    "prdSection": "13.8",
+    "title": "L8 readiness - aggregation verifier",
+    "acceptanceIds": ["AC-L8-ENG-001"]
+  }
+]

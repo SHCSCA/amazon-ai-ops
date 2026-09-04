@@ -6,6 +6,10 @@ export interface AdActionReasonExplainerOptions {
   outputLanguage?: string;
 }
 
+export interface AdActionReasonRequestOptions {
+  signal?: AbortSignal | undefined;
+}
+
 const DEFAULT_OUTPUT_LANGUAGE = '简体中文';
 const DEFAULT_PERSONA = '你是中文亚马逊广告优化专家，负责解释广告动作为什么被建议，并评估其风险。';
 
@@ -37,7 +41,11 @@ export class AdActionReasonExplainer {
     private readonly options: AdActionReasonExplainerOptions = {},
   ) {}
 
-  async explain(input: AdActionExplainInput): Promise<AdActionExplainOutput> {
+  async explain(
+    input: AdActionExplainInput,
+    requestOptions: AdActionReasonRequestOptions = {},
+  ): Promise<AdActionExplainOutput> {
+    requestOptions.signal?.throwIfAborted();
     const userPrompt = `广告动作类型: ${input.actionType}
 关键词/Target: ${input.entityName}
 
@@ -62,7 +70,9 @@ export class AdActionReasonExplainer {
       temperature: 0.5,
       maxTokens: 800,
       responseFormat: 'json_object',
+      signal: requestOptions.signal,
     });
+    requestOptions.signal?.throwIfAborted();
 
     if (!response.success) {
       return {

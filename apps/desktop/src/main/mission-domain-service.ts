@@ -21,7 +21,7 @@ export const MISSION_DOMAIN_OPERATIONS = [
   'decisions.create', 'decisions.get', 'decisions.list', 'decisions.revise',
   'decisions.resolveHuman', 'decisions.history',
   'experiments.create', 'experiments.get', 'experiments.list',
-  'experiments.update', 'experiments.transition', 'experiments.archive',
+  'experiments.update', 'experiments.transition', 'experiments.evaluate', 'experiments.archive',
   'experiments.restore', 'experiments.listObservations',
   'experiments.listMetricSnapshots', 'experiments.appendObservation',
   'causal.listEvents', 'causal.appendEvent',
@@ -44,7 +44,7 @@ type MissionDomainRepositoryPort = Pick<MissionDomainRepository,
   | 'createDecision' | 'getDecision' | 'listDecisions' | 'reviseDecision'
   | 'resolveDecision' | 'listDecisionHistory'
   | 'createExperiment' | 'getExperiment' | 'listExperiments'
-  | 'updateExperiment' | 'transitionExperiment' | 'archiveExperiment'
+  | 'updateExperiment' | 'transitionExperiment' | 'evaluateExperiment' | 'archiveExperiment'
   | 'restoreExperiment' | 'listExperimentObservations'
   | 'listExperimentMetricSnapshots' | 'appendExperimentObservation'
   | 'appendExperimentMetricSnapshot'
@@ -81,6 +81,7 @@ export interface SetKillSwitchInput {
 
 const OPERATOR_ACTOR = 'operator';
 const POLICY_ACTOR = 'policy-engine';
+const EXPERIMENT_EVALUATOR_ACTOR = 'experiment-evaluator';
 
 /**
  * Main-only authority boundary for Mission Control's durable domain.
@@ -127,7 +128,16 @@ export class MissionDomainService {
       case 'missions.get': return this.run(contextInput, (c) => this.repository.getMission(c, requiredId(input)));
       case 'missions.list': return this.run(contextInput, (c) => this.repository.listMissions(c, input));
       case 'missions.update': return this.run(contextInput, (c) => this.repository.updateMission(c, withActor(input) as never));
-      case 'missions.transition': return this.run(contextInput, (c) => this.repository.transitionMission(c, withActor(input) as never));
+      case 'missions.transition': {
+        const status = requiredString(input, 'status');
+        if (!['active', 'paused'].includes(status)) {
+          throw new TypeError('运营任务只能由界面启动、暂停或恢复；完成、阻断与效果结论只能由系统证据链判定。');
+        }
+        if (Object.prototype.hasOwnProperty.call(input, 'phase')) {
+          throw new TypeError('界面不能指定运营任务阶段；阶段只能由已接通的事实、分析、执行、回读与实验结果推进。');
+        }
+        return this.run(contextInput, (c) => this.repository.transitionMission(c, withActor(input) as never));
+      }
       case 'missions.archive': return this.run(contextInput, (c) => this.repository.archiveMission(c, withActor(input) as never));
       case 'missions.restore': return this.run(contextInput, (c) => this.repository.restoreMission(c, withActor(input) as never));
       case 'missions.appendCheckpoint': {
@@ -163,7 +173,19 @@ export class MissionDomainService {
       case 'experiments.get': return this.run(contextInput, (c) => this.repository.getExperiment(c, requiredId(input)));
       case 'experiments.list': return this.run(contextInput, (c) => this.repository.listExperiments(c, input));
       case 'experiments.update': return this.run(contextInput, (c) => this.repository.updateExperiment(c, withActor(input) as never));
-      case 'experiments.transition': return this.run(contextInput, (c) => this.repository.transitionExperiment(c, withActor(input) as never));
+      case 'experiments.transition': {
+        if (requiredString(input, 'status') === 'completed') {
+          throw new TypeError('经营实验只能由系统根据指标判定；人工文字不能直接完成实验。');
+        }
+        return this.run(contextInput, (c) => this.repository.transitionExperiment(c, withActor(input) as never));
+      }
+      case 'experiments.evaluate': {
+        const evaluation = rendererExperimentEvaluationInput(input);
+        return this.run(contextInput, (c) => this.repository.evaluateExperiment(c, {
+          ...evaluation,
+          actorId: EXPERIMENT_EVALUATOR_ACTOR,
+        }));
+      }
       case 'experiments.archive': return this.run(contextInput, (c) => this.repository.archiveExperiment(c, withActor(input) as never));
       case 'experiments.restore': return this.run(contextInput, (c) => this.repository.restoreExperiment(c, withActor(input) as never));
       case 'experiments.listObservations': return this.run(contextInput, (c) => this.repository.listExperimentObservations(c, requiredString(input, 'experimentId')));
@@ -429,4 +451,21 @@ function requiredLogicalId(value: unknown, key: string): string {
 function optionalString(input: Record<string, unknown>, key: string): string | undefined {
   const value = input[key];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function rendererExperimentEvaluationInput(input: Record<string, unknown>): {
+  id: string;
+  expectedRevision: number;
+} {
+  if (Object.keys(input).some((key) => key !== 'id' && key !== 'expectedRevision')) {
+    throw new TypeError('Experiment evaluation accepts only id and expectedRevision.');
+  }
+  const expectedRevision = input.expectedRevision;
+  if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+    throw new TypeError('expectedRevision must be a positive integer.');
+  }
+  return {
+    id: requiredId(input),
+    expectedRevision: Number(expectedRevision),
+  };
 }

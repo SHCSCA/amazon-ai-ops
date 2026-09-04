@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
+import { localizeProductStage } from '@amazon-ai-ops/business-presenters';
 import { FormTable, FormTableRow, StatusPill } from '../components/ui';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { ResponsiveInspector, TaskBanner, WorkbenchPanel } from '../components/workspace';
@@ -372,16 +373,7 @@ function navigate(route: AppRoute) {
 }
 
 function stageLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '测词',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    declining_repair: '异常修复',
-    unknown: '阶段待判定',
-  };
-  return labels[stage || 'unknown'] || stage || '阶段待判定';
+  return localizeProductStage(stage);
 }
 
 export function ProductManagementPage() {

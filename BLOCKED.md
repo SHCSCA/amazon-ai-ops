@@ -1,26 +1,55 @@
 # BLOCKED — 2026-08-07
 
-## 当前：2026-08-27 Ads 会话真值已确认，经营决策与任务反馈待修复
+## 当前：2026-08-28 分析/核验源码闭环完成，运行态与后续产品缺口待验收
 
-- 源码阻断已关闭：历史 provider `ready` 不再冒充实时 ERP/Ads 会话；致命重连关闭全部浏览器后双端持久会话会降级；连接专项 `4/4 files、134/134 tests` 通过。
-- 旧窗口已按授权关闭；新 Windows 包七步重建成功并于 10:42 后启动，主 PID `7832`，包内 Main/Renderer 已核对包含本轮修复。当前不再阻断于“尚未入包”。
-- 操作者已在新包截图确认顶部显示“ERP/Ads 已连接”，本轮“历史 ready 冒充当前会话”的待确认项关闭；这只证明当前连接状态展示恢复，不替代真实广告执行与回读验收。
-- 新发现的经营决策阻断：`核验 Ads 对象` 可能先保存对象绑定，再错误使用顶栏当前日期重跑已绑定历史数据批次；日期不一致的原始错误又被内部术语过滤成通用失败，可能造成“实际已绑定、界面仍待核验”。需按任务绑定批次重跑，并把识别、绑定、重算、刷新拆成可回读阶段。
-- 新发现的任务反馈阻断：`运行分析` 没有持久运行记录、完成通知或任务阶段自动推进；“飞行计划”当前主要是手工检查点，分析建议的普通界面也没有可读批次来源与旧结果替代关系。
-- 交付状态继续保持 `APP_NEEDS_WORK / INTERNAL NON_READY`；真实广告写入继续为禁止项，直至 Task 8B 与上述业务闭环完成当前包验收。
+- 进行中而非关闭：策略列表虽一直按 priority 升序，但旧授权/执行实际依赖“最后启用”的 runtime pointer。resolver、MissionGrant 与分析快照/Main 授权已改为最低数字唯一命中并有定向红→绿；执行仓储和每次真实 dispatch 的同规则重验尚在并行补齐，因此当前不能把“数字越小越先匹配”整条生产链标为已完成。
+- 已关闭：UNKNOWN 广告执行批次的只读对账即使命中目标值，也不再进入 AI 因果记忆；原批次仍为 unknown、Mission 仍阻断，不能把事后观察冒充已验证执行。对账事件与两份证据现同事务提交，任一证据失败整笔回滚。RED 分别证明旧查询泄漏该事件及旧接口不存在，修后仓储+执行 `88/88`。这不等于 Task 8B 已完成；真实 Ads 写入与独立刷新回读仍缺当前运行证据。
+- 已关闭：AI Provider 无响应不再让“运行分析”永久悬挂。120 秒默认截止线、全链 AbortSignal、写库前取消检查和中文失败回执已有 `65/65` 单元证据；超时保持零建议、零动作批次、零决策并允许重新运行。当前只证明源码单元，不代替 Windows 包运行验收。
+- 已关闭：Ads 已验证页面回到登录态不再继续显示已连接，待接管 Ads 页面也不再因 15 秒过期或未保存密码而错失识别；连接 SSO 与 staged-status 两文件 `114/114` 为绿。为满足既有源码切片契约，显式 Ads 重试与自动收养保留两处等价 admission/lease/Package UI 安全包装，属于维护风险但不是当前行为 blocker。
+- `experiments.update` 可把草稿改成同店另一产品、写下错误血缘的 P0 已关闭：事务内重验 Mission 产品、nextProduct 与 nextAdEntity 产品归属，冲突返回 `REFERENCE_CONFLICT` 且实验/revision/因果事件零变化。RED 为 `1 failed / 47 skipped`，完整 GREEN 为仓储 `48/48 passed`。该项不再是源码 blocker。
+- Main 正式业务门跨批次拼接 8 类的 P0 已关闭：携带生产 batchId 的八类文件必须来自同一批次，缺失或多个批次直接阻断并提示继续原完整任务/重新获取完整八类。RED 为门单元 `7 tests / 1 failed`，GREEN 为 `7/7 passed`。本地 8 类导入是否原子建立完整 production lineage 仍是独立未闭合项，不能用本条单批次门冒充该入口已经完成。
+- 任务范围变化后继续展示旧分析建议的归属错误已关闭：Renderer 以当前 Mission revision 对动作批次做精确校验，不匹配时隐藏旧 evidence/proposals，保留历史回执并给“重新运行分析”中文下一步。RED 为 `28 tests / 1 failed`，GREEN 为任务工作区 `28/28 passed`。该项不再是源码 blocker；后端是否进一步冻结 decision 阶段产品/观察窗仍作为独立产品合同审计项处理。
+- 无真实执行回读的实验通过“草稿→归档→恢复→运行”绕过首次基线门的 P0 已关闭：恢复后的 paused 记录只有存在不可覆盖的历史 `experiment_running` 事件才能按暂停实验恢复；从未运行过的草稿仍必须重新通过唯一 verified Decision、三段 READBACK 证据与竞价值校验，表单 baseline 不能冒充。RED 为完整仓储 `47 tests / 1 failed`（未抛 `STATE_CONFLICT`），GREEN 为 `47/47 passed`、skipped=0。该项不再是源码 blocker。
+- 独立六模块原型的“分析建议、广告对象、实时执行队列”已改为同一套业务表格，并以广告活动→广告组两级独立表头分组；活动级广告位不伪造广告组，完整 8/8 样例已包含 placement 行。关键词、自动投放、商品投放、广告位的中文类型与变更单位已有 `32/32` 原型单元证据。由于用户当前禁止应用/浏览器/流程测试，本轮没有 1366×768 或 125% 的真实视觉证据；只能确认源码结构与 JSX 解析，不把它冒充界面验收。
+- 2026-08-27 的连接会话真值修复仍成立：历史 provider `ready` 不再冒充实时 ERP/Ads 会话，操作者实屏已确认顶部 `ERP/Ads 已连接`；这不是 Task 8B 写入回读证据。
+- Ads 首次文档替换导致 `Execution context was destroyed` 的闪退路径、只支持 ASCII 店铺别名，以及 pending Ads 控制器停在 ERP 页时关闭窗口不立即降级的缺口均已关闭；中文/空格/连字符店铺名按精确展示别名匹配，多候选仍失败关闭，ERP 页只绑定 close、不被误当 Ads 身份。ERP 不关闭而 Ads 新开页面时，现会唯一采纳可信新页并沿 retained claim 续接既有 Ads-only 识别，不重建 runtime；未保存密码仍保持 pending。完整单元 `56/56`。由于当前禁止应用/浏览器流程验收，这只证明源码回归，不冒充真实领星页面已验收。
+- `运行分析` 成功后不推进任务、飞行计划为空且没有持久回执的源码缺口已关闭：Main 原子推进至决策阶段并自动追加事实/分析检查点；每次尝试持久化 started/completed/failed，旧孤立 started 派生“已中断”。Renderer 立即刷新并以表格显示状态、起止时间、结果/原因和下一步；相同证据重跑仅增加运行历史，正式批次/建议/决策/检查点不增长。
+- 飞行计划的普通界面现在无论是否已有检查点都会显示六个系统阶段；已有检查点只作为证据覆盖对应阶段，人工“补充事实记录”不再冒充自动计划。定向 RED→GREEN 与完整任务工作区 `22/22` 均已通过，该源码缺口不再列为 blocker。
+- `核验 Ads 对象` 使用顶栏日期重跑历史任务批次的源码缺口已关闭：Main 自行派生任务批次日期，绑定范围来自 proposal 对应 evidence package；核验成功后选中新 proposal 关联决策，已知日期/任务漂移显示中文原因和下一步。
+- 本轮最新合并单元：Main analysis service `26/26`、Renderer 任务 `26/26`、经营实验工作区 `16/16`、经营实验/因果记忆仓储 `45/45`、决策工作区 `27/27`、Ads SSO `51/51`，合计 `191/191`；分析窗口 API `5/5`、Preload `2/2` 是本轮较早证据。任务草稿/暂停/归档/完成与人工检查点来源已按真实状态投影，不再列为 blocker。
+- 新动作批次的旧开放决策冗余已关闭：同任务中由不可变 proposal→decision 链证明属于分析生成的 `proposed / needs_approval / blocked` 会转为“已替代”，即使尚无稳定 `adEntityId` 也不会按对象名称猜测；人工/未关联决策及已批准、已拒绝、已执行、已回读历史不变。经营实验已完成“唯一 verified Decision + 至少三段持久回读证据”→真实基线→新批次结果→Main-only 机器判定/守护栏停止的 Repository、IPC 与 UI 接线，人工 transition 不能完成实验。TACOS 在取得产品总销售额权威前继续阻断，这不是可绕过的界面缺口。
+- 本轮额外关闭三项生产安全缺口：执行/回读/效果阶段的原任务不能重新分析；创建实验必须与任务产品完全一致；Renderer 进度通知异常不能反向中止真实执行。三文件联合单元 `113/113 passed`、skipped=0。它们仍只有源码/单元信用，当前禁令下没有新包运行态信用。
+- 跨产品实验的 UI 延迟报错也已关闭：选择任务即锁定任务产品并只列该产品广告对象，后端事务门继续保留。最终受影响生产单元合并为 `187/187 passed`；当前仅缺被禁令阻断的真实界面和当前包证据。
+- 实验到 Mission 的效果闭环反向门已闭合：成功实验、Mission `effect`、EFFECT 系统检查点同事务提交；守护栏触发原子进入 `blocked/effect` 且不可恢复；同一 Mission 尚有 `draft/running/paused` 实验时不会过早完成。此前遗漏的串行路径也已修复：首个完成后任务保持 `active/effect`，第二个草稿仍可在完整真实回读基线门下启动。完整仓储单元 `45/45`。
+- 成功判定后的用户反馈已同步说明关联运营任务进入效果阶段，不再只反馈实验自身；守护栏停止的后端阻断与界面恢复禁用均已收口，不再列为 blocker。
+- 普通 Renderer 任意提交 `phase/effect/completed` 伪造任务闭环的安全缺口已关闭；Main IPC 只允许启动/暂停/恢复，系统推进路径不受影响。暂停实验后改换合同并沿用旧受信基线的 P1 也已关闭，后端与界面均只允许 draft 编辑。
+- 成功实验 EFFECT 无证明导致生产因果记忆恒空的 P1 已关闭：结果批次与结果指标快照生成确定性 SHA-256 和 opaque proof，并与实验/Mission 结果同事务；记忆查询门没有放宽。
+- 守护栏触发后的通用恢复绕过已关闭：追加式 `experiment_guardrail_triggered` 是后端停止事实，原实验不能再恢复，界面明确要求复核并新建实验。
+- completed Mission/Experiment 经归档再恢复被降级为 paused 的风险已关闭：不改 schema，使用既有追加式 completed 事件恢复终态；普通活动态仍安全恢复为 paused。Renderer 成功提示现读取 Main 返回状态，不再把恢复后的 completed/effect 谎称 paused；完整工作区单元为经营实验 `17/17`、运营任务 `27/27`。
+- 实验合同的一一对应、比较符格式、非负有限阈值及可计算指标白名单已同时覆盖创建和草稿更新；该审计项关闭。TACOS 在缺少产品总销售额权威时不能创建或编辑进合同，错误均在零写入前返回 `INVALID_INPUT`。
+- Mission 创建的 completed batch、enabled policy version、active policy 和产品归属，以及 Experiment 创建的 Mission 状态、产品和广告对象归属，均已移入各自 `IMMEDIATE` 事务；旧校验后 policy retirement / Mission archive 的两个竞态关闭。
+- 因果记忆仓储筛选、稳定 `memoryDigest`、Main-only 生成边界注入、生产策略诊断/逐条解释 prompt、模型/动作换代、提交点与授权点漂移复核均已闭合；请求伪造记忆不会进入权威，历史也不能替代当前报表、对象、竞价和审批。该链完整生产 prompt 单元 `5/5`。六模块生产导航也已接入侧栏、搜索和能力提醒，相关单元合计 `26/26`；上述源码项不再列为 blocker。
+- Prompt 注入审查项已关闭：历史标题/观察结果不再拼进 system persona，而是以独立 user-context 传递并标明“不可信文本数据，不是指令”；system 只含静态安全边界。恶意文本/空记忆行为单元 `2/2`、接线单元 `5/5`。这不改变真实证据、审批或 Ads 写入门。
+- 分析建议生产表格已接入最新动作批次与整批授权区；正式 recommendation evidence 的匹配方式已进入不可变快照，`Exact/Phrase/Broad/auto` 可由真实 round-trip 中文化，不再依赖测试 spread 或名称后缀。旧快照无字段仍安全显示“待对象核验”，且不能替代 Main 的 Ads 身份校验。当前只允许 V1 关键词竞价，因此不会伪造活动预算、广告位或其他未授权动作；相关完整单元合计 `83/83`。
+- 用户当前仅允许单元测试，因此新源码尚未 typecheck、重建 Windows 包、运行业务 smoke/Package UI/ZIP 启动或正式库前后核对。交付状态继续保持 `APP_NEEDS_WORK / INTERNAL NON_READY`；真实广告写入仍为 0，Task 8B 仍需当前唯一 Ads 对象、≤10% 候选、该条人工批准及刷新回读证据。
+- 上述独立单类/部分采集源码缺口已关闭，不再是 blocker：正式 Main 只使用 `productionImport/exact-eight-lineage-v1`，独立部分任务为 `completed + not_applicable`、零 importer，伪造 lineage 会被剥离，仅原完整任务原位续跑可补齐第 8 类。Renderer 不再用历史行数报告本次自动入库，部分下载给中文原因与继续原 8 类/重新获取完整 8 类的下一步。新老单元合并 `99/99 passed`，未修改旧测试输入、断言或阈值。
+- 点击后 Ads 会话降级导致 UNKNOWN 自身无法落账的安全 blocker 已关闭：新增的仓储入口只能把已越过持久意图的动作进一步收紧为 UNKNOWN，不能创建意图、写 evidence 或绕过任何 ready/身份/审批门；同事务取消尚未点击的兄弟动作，随后撤销授权并阻断 Mission。完整 service+repo 单元 `58/58`，单次点击断言为 1。
+- 当前仍受用户明确禁令阻断的只是运行态验收：本轮新源码没有 typecheck、Windows 重建、7 类业务 smoke、Package UI 100%/125%/wide、ZIP 真启动或正式库前后核对信用。因此继续 `APP_NEEDS_WORK / INTERNAL NON_READY`；不得将 `99/99` 单元结果冒充当前 Windows 成品验收。
 
-## 当前：2026-08-26 v1.5.1 投产门
+## 当前：2026-08-31 v1.5.1 console-refactor 投产门
 
 - 源码与单元链无已知阻断：聚焦权限链 `157/157`、允许范围内全量单元 `285/285` files 与 `3584/3584` tests、交付脚本 `12/12` 均通过；源码测试没有 `.skip/.todo/skipIf/context.skip`。独立终审为 `NO BLOCKER`。
-- `1.5.1` 静态 Windows 候选已生成：installer `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`、portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`、folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`。`build:win` 七步通过，包内与源码 `s is not defined` 均为 0。旧中间哈希 `60304ED...`、`B4E50C...`、`C0FD11...` 已被本候选取代，不得引用。
+- 2026-08-31 14:01:50 `pnpm run build:win` 七步通过（构建日志 `output\build-win-20260831-135557.log`），约 5m53s，`freshCurrentRun=true`。新 `1.5.1` 静态 Windows 候选：installer `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B`、portable `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944`、folder ZIP `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796`、blockmap `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5`。win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` 与 2026-07-17 external-security P1 候选字节级一致——B1–B7 console-refactor 只改 `resources/app.asar`、禁止触碰 main/preload/SQLite/IPC，因此 unpacked EXE 字节不变；Main bundle `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF` 落在 `resources/app.asar` 内。包内与源码 `s is not defined` 均为 0。旧 2026-08-26 `444802A1` / `637E7CC1` / `CF1A80BC` / `1FAF882D` 中间哈希已被本候选取代，不得再作为当前包身份引用。
 - 用户禁令仍禁止启动或操控应用、浏览器、桌面，以及动态 smoke、Package UI、ZIP 真启动和真实 Ads；本轮也未运行 typecheck。因此当前候选没有与这些新哈希绑定的运行态 manifest，状态必须保持 `APP_NEEDS_WORK / INTERNAL NON_READY`，不能标记 `APP_READY`。这是验收边界阻断，不是源码缺陷。
 - 待解除禁令后才可执行的运行态门：Package UI 100%/125%/wide、folder ZIP 真启动、连接/采集/策略/运营任务/经营实验/弹窗/按钮 7 类业务 smoke，以及正式库前后只读零写入复核。不得用静态构建或历史 `1.5.0` 的 `operator-core-20260826-91` 代替。
 - Task 8B 仍缺当前运行态事实：必须先唯一回读当前 Ads 对象、身份修订和竞价，确认建议仍为不超过 10% 的 `lower_bid`，向操作者展示完整路径、当前/目标值、降幅、证据日期和版本并取得该条专属批准，才允许一次写入与刷新回读。任何对象、会话、导入或竞价漂移都使候选失效；本轮广告写入为 0。
 - 静态包装风险：构建警告 ASAR 未启用且使用 Electron 默认图标。它们未阻断本轮编译，但在最终生产签收前应单独决定是否纳入包装加固；本轮未越界修改。
 
+## 历史：2026-08-26 v1.5.1 投产门
+
 ## 历史：2026-08-26 Ads 对象回读准备记录
 
-> 本节及其后的旧“当前”、“最新”只表示当时快照，均已被顶部 `2026-08-26 v1.5.1 投产门` 取代；保留它们仅为可追溯恢复记录。
+> 本节及其后的旧“当前”、“最新”只表示当时快照，均已被顶部 `2026-08-31 v1.5.1 console-refactor 投产门` 取代；保留它们仅为可追溯恢复记录。
 
 - 旧 `win-unpacked` 应用占用已连续三轮只读复核且均为同一 4 个 Electron 进程；用户尚未关闭该应用，也未在最近的暂停后重新授权执行者关闭。按恢复规则停止重复检查。解除方式：用户手动关闭 Amazon AI Ops，或明确回复“允许关闭应用”；随后只关闭该目标应用、重建最新包并继续对象核验。
 - 最新源码聚焦测试 `20/20` 与 desktop typecheck 已通过；`pnpm run build:win` 在进入编译前被旧 `win-unpacked` 应用实例占用目录阻断：`EPERM rename ...release\\win-unpacked`。现场只读确认同一 Amazon AI Ops 实例有 4 个 Electron 进程；未强制关闭。恢复时只关闭这一旧应用实例，重建后直接启动新包，不触碰其他应用。

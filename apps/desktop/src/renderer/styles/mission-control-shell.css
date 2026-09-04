@@ -12,13 +12,9 @@
   display: grid;
   grid-template-columns:
     minmax(190px, 224px)
-    minmax(190px, 230px)
-    minmax(192px, 242px)
-    minmax(144px, 184px)
-    210px
-    minmax(160px, 1fr)
+    minmax(560px, 1fr)
     auto;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   min-width: 0;
   min-height: var(--mission-topbar-height);
@@ -26,6 +22,40 @@
   border-bottom: 1px solid #dfe5ed;
   background: rgb(255 255 255 / 0.98);
   box-shadow: 0 1px 0 rgb(15 23 42 / 0.03);
+}
+
+.mission-control-shell .mission-control-topbar-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.mission-control-shell .mission-control-topbar-contexts {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.mission-control-shell .mission-control-topbar-actions {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mission-control-shell .mission-control-topbar-contexts > .mission-control-topbar-select,
+.mission-control-shell .mission-control-topbar-contexts > .mission-control-product-scope,
+.mission-control-shell .mission-control-topbar-contexts > .mission-control-session-health {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.mission-control-shell .mission-control-topbar-actions > .mission-control-global-search {
+  min-width: 0;
+  flex: 1 1 180px;
+  max-width: 240px;
 }
 
 .mission-control-shell .mission-control-brand-lockup {
@@ -1174,6 +1204,54 @@
   width: min(520px, calc(100vw - 48px));
 }
 
+.mission-control-workspace-root .reason-required-dialog__body {
+  padding: 0 20px 18px;
+}
+
+.mission-control-workspace-root .reason-required-dialog__body label {
+  color: #46536a;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.mission-control-workspace-root .reason-required-dialog__body textarea {
+  border: 1px solid #ccd5e2;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 9px 10px;
+  width: 100%;
+  resize: vertical;
+}
+
+.mission-control-workspace-root .reason-required-dialog__body textarea:focus-visible {
+  border-color: #2563eb;
+  outline: 2px solid rgb(37 99 235 / 15%);
+  outline-offset: 1px;
+}
+
+.mission-control-workspace-root .reason-required-dialog__hint {
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 6px 0 0;
+}
+
+.mission-control-workspace-root .reason-required-dialog__diagnostics {
+  border-top: 1px solid #e3e8f0;
+  color: #46536a;
+  font-size: 11px;
+  padding: 8px 20px 16px;
+}
+
+.mission-control-workspace-root .reason-required-dialog__diagnostics summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 4px 0;
+}
+
 .mission-control-workspace-root .mission-control-runtime-config {
   display: grid;
   gap: 14px;
@@ -1987,12 +2065,8 @@
 @media (max-width: 1320px) {
   .mission-control-shell .mission-control-topbar {
     grid-template-columns:
-      176px
-      minmax(170px, 194px)
-      minmax(170px, 204px)
-      minmax(124px, 150px)
-      196px
-      minmax(42px, 1fr)
+      minmax(170px, 200px)
+      minmax(440px, 1fr)
       auto;
   }
 
@@ -2040,15 +2114,13 @@
 @media (max-width: 1080px) {
   .mission-control-shell .mission-control-topbar {
     grid-template-columns:
-      164px
-      minmax(160px, 1fr)
-      minmax(168px, 1fr)
-      188px
+      minmax(160px, 180px)
+      minmax(0, 1fr)
       auto;
   }
 
-  .mission-control-shell .mission-control-session-health,
-  .mission-control-shell .mission-control-global-search {
+  .mission-control-shell .mission-control-topbar-contexts > .mission-control-session-health,
+  .mission-control-shell .mission-control-topbar-actions > .mission-control-global-search {
     display: none;
   }
 

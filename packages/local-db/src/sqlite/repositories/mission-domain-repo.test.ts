@@ -40,7 +40,7 @@ interface Harness {
   contextTwo: StoreContextEnvelope;
 }
 
-function createHarness(): Harness {
+function createHarness(now: () => Date = () => new Date(NOW)): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-mission-repo-'));
   tempDirs.push(directory);
   const databasePath = path.join(directory, 'app.db');
@@ -105,7 +105,7 @@ function createHarness(): Harness {
   seedDefaultPolicyScopeAuthority(database, contextOne);
   seedDefaultPolicyScopeAuthority(database, contextTwo);
   const repository = new MissionDomainRepository(database, {
-    now: () => new Date(NOW),
+    now,
     references: {
       productBelongsToStore: (context, productId) => productId.startsWith(`${context.storeId}-product-`),
       adEntityBelongsToStore: (context, adEntityId) => adEntityId.startsWith(`${context.storeId}-keyword-`),
@@ -380,17 +380,28 @@ function seedExactPolicyAuthorityMetric(
     INSERT INTO ad_daily_metrics (
       batch_id, report_type, date, store_name, marketplace_code, asin,
       campaign_name, ad_group_name, targeting, source_file, source_row,
+      clicks, cost, orders, sales, acos, cvr, currency,
       store_id, store_authority_quarantined
-    ) VALUES (?, 'keyword', '2026-07-21', ?, 'US', ?, ?, ?, ?, ?, ?, ?, 0)
+    ) VALUES (
+      ?, 'keyword', '2026-07-21', ?, 'US', ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?, 0
+    )
   `).run(
     `batch-${context.storeId}`,
     context.storeId,
-    input.asin ?? 'B0BASELINE1',
+    input.asin ?? `${context.storeId}-product-1`,
     input.campaignName,
     input.adGroupName,
     input.entityName,
     input.sourceFile,
     input.sourceRow,
+    10,
+    20,
+    2,
+    50,
+    0.4,
+    0.2,
+    'USD',
     context.storeId,
   );
 }
@@ -426,8 +437,150 @@ function seedDefaultPolicyScopeAuthority(
     entityName: 'baseline keyword 2',
     campaignName: 'Baseline Campaign 2',
     adGroupName: 'Baseline Ad Group 2',
-    asin: 'B0BASELINE2',
+    asin: `${context.storeId}-product-2`,
   });
+}
+
+function seedExperimentObservationAuthority(
+  database: Database.Database,
+  context: StoreContextEnvelope,
+  input: {
+    missionId: string;
+    productId: string;
+    adEntityId: string;
+    clicks: number;
+    cost: number;
+    orders: number;
+    sales: number;
+  },
+): string {
+  const batchId = `experiment-result-batch-${context.storeId}`;
+  const runId = `experiment-result-run-${context.storeId}`;
+  const evidenceId = `experiment-result-evidence-${context.storeId}`;
+  const filePath = `C:/reports/${context.storeId}/experiment-result/keyword.xlsx`;
+  const fileHash = '7'.repeat(64);
+  const sourceRow = 51;
+  const completedAt = '2026-07-30T10:00:00.000Z';
+  database.prepare(`
+    INSERT INTO lingxing_report_batches (
+      id, date_start, date_end, store_name, marketplace_code, status,
+      download_dir, created_at, completed_at, store_id, request_id,
+      browser_profile_id, business_date, session_generation
+    ) VALUES (?, '2026-07-29', '2026-07-30', 'US Store One', 'US', 'completed',
+      ?, ?, ?, ?, ?, ?, '2026-07-30', ?)
+  `).run(
+    batchId,
+    `logical-download:${batchId}`,
+    completedAt,
+    completedAt,
+    context.storeId,
+    `request-${batchId}`,
+    context.browserProfileId,
+    context.sessionGeneration,
+  );
+  database.prepare(`
+    INSERT INTO report_import_runs (
+      store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
+      source_file_count, metric_row_count, reconciliation_count,
+      started_at, completed_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'completed', 1, 1, 1, ?, ?, ?)
+  `).run(
+    context.storeId,
+    runId,
+    `idempotency-${runId}`,
+    '6'.repeat(64),
+    batchId,
+    completedAt,
+    completedAt,
+    completedAt,
+  );
+  const reportFileId = Number(database.prepare(`
+    INSERT INTO report_files (
+      store_id, batch_id, report_type, file_path, file_name, file_size,
+      status, imported_rows, file_hash, last_imported_at
+    ) VALUES (?, ?, 'keyword', ?, 'keyword.xlsx', 1024, 'imported', 1, ?, ?)
+  `).run(context.storeId, batchId, filePath, fileHash, completedAt).lastInsertRowid);
+  database.prepare(`
+    INSERT INTO report_import_file_snapshots (
+      store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
+      file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
+    ) VALUES (?, ?, ?, ?, ?, 'keyword', ?, 'keyword.xlsx', 1024, ?, 1, ?)
+  `).run(
+    context.storeId,
+    `snapshot-${runId}`,
+    runId,
+    batchId,
+    reportFileId,
+    filePath,
+    fileHash,
+    completedAt,
+  );
+  database.prepare(`
+    INSERT INTO analysis_evidence_packages (
+      id, store_id, marketplace, currency, mission_id, data_batch_id,
+      import_run_id, date_from, date_to, asin, report_types_json, sources_json,
+      metric_row_count, reconciliation_hash, rule_revision, model_revision,
+      package_hash, imported_at, fresh_until, sealed_at,
+      created_session_generation
+    ) VALUES (?, ?, 'US', 'USD', ?, ?, ?, '2026-07-29', '2026-07-30', ?,
+      '["keyword"]', '[]', 1, ?, ?, 'model-test', ?, ?, ?, ?, ?)
+  `).run(
+    evidenceId,
+    context.storeId,
+    input.missionId,
+    batchId,
+    runId,
+    input.productId,
+    '5'.repeat(64),
+    '4'.repeat(64),
+    '3'.repeat(64),
+    completedAt,
+    '2026-08-06T10:00:00.000Z',
+    completedAt,
+    context.sessionGeneration,
+  );
+  database.prepare(`
+    INSERT INTO verified_ad_entity_authority (
+      authority_id, store_id, ad_entity_id, entity_revision, entity_type,
+      entity_name, campaign_name, ad_group_name, evidence_package_id,
+      source_report_type, source_file_hash, source_row, identity_source,
+      proof_sha256, verified_by, verified_at, created_at
+    ) VALUES (?, ?, ?, 2, 'keyword', 'baseline keyword 1', 'Baseline Campaign 1',
+      'Baseline Ad Group 1', ?, 'keyword', ?, ?, 'ads_ui', ?, 'operator', ?, ?)
+  `).run(
+    `experiment-result-authority-${context.storeId}`,
+    context.storeId,
+    input.adEntityId,
+    evidenceId,
+    fileHash,
+    sourceRow,
+    '2'.repeat(64),
+    completedAt,
+    completedAt,
+  );
+  database.prepare(`
+    INSERT INTO ad_daily_metrics (
+      batch_id, report_type, date, store_name, marketplace_code, asin,
+      campaign_name, ad_group_name, targeting, source_file, source_row,
+      clicks, cost, orders, sales, acos, cvr, currency,
+      store_id, store_authority_quarantined
+    ) VALUES (?, 'keyword', '2026-07-30', 'US Store One', 'US', ?,
+      'Baseline Campaign 1', 'Baseline Ad Group 1', 'baseline keyword 1', ?, ?,
+      ?, ?, ?, ?, ?, ?, 'USD', ?, 0)
+  `).run(
+    batchId,
+    input.productId,
+    filePath,
+    sourceRow,
+    input.clicks,
+    input.cost,
+    input.orders,
+    input.sales,
+    input.sales > 0 ? input.cost / input.sales : 0,
+    input.clicks > 0 ? input.orders / input.clicks : 0,
+    context.storeId,
+  );
+  return batchId;
 }
 
 function seedCanonicalPolicyIdentity(
@@ -480,6 +633,165 @@ function seedCanonicalPolicyIdentity(
     NOW,
     NOW,
   );
+}
+
+const EXACT_EIGHT_REPORT_TYPES = [
+  'campaign',
+  'ad_group',
+  'placement',
+  'advertised_product',
+  'auto_targeting',
+  'keyword',
+  'product_targeting',
+  'user_search_term',
+] as const;
+
+function seedExactEightImportedBatch(
+  database: Database.Database,
+  context: StoreContextEnvelope,
+  input: { batchId: string; requestId: string },
+): void {
+  const runId = `full8-import-${input.batchId}`;
+  database.prepare(`
+    INSERT INTO lingxing_report_batches (
+      id, date_start, date_end, store_name, marketplace_code, status,
+      download_dir, created_at, completed_at, store_id, request_id,
+      browser_profile_id, business_date, session_generation
+    ) VALUES (?, '2026-07-21', '2026-07-21', 'US Store One', 'US', 'completed',
+      ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.batchId,
+    `logical-download:${input.batchId}`,
+    NOW,
+    NOW,
+    context.storeId,
+    input.requestId,
+    context.browserProfileId,
+    context.businessDate,
+    context.sessionGeneration,
+  );
+  database.prepare(`
+    INSERT INTO report_import_runs (
+      store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
+      source_file_count, metric_row_count, reconciliation_count,
+      started_at, completed_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'completed', 8, 8, 8, ?, ?, ?)
+  `).run(
+    context.storeId,
+    runId,
+    `full8:${input.batchId}`,
+    'd'.repeat(64),
+    input.batchId,
+    NOW,
+    NOW,
+    NOW,
+  );
+  for (const [index, reportType] of EXACT_EIGHT_REPORT_TYPES.entries()) {
+    const filePath = `C:/reports/${input.batchId}/${reportType}.xlsx`;
+    const fileHash = String(index + 1).repeat(64).slice(0, 64);
+    const fileId = Number(database.prepare(`
+      INSERT INTO report_files (
+        store_id, batch_id, report_type, file_path, file_name, file_size,
+        status, imported_rows, file_hash, last_imported_at
+      ) VALUES (?, ?, ?, ?, ?, 1024, 'imported', 1, ?, ?)
+    `).run(
+      context.storeId,
+      input.batchId,
+      reportType,
+      filePath,
+      `${reportType}.xlsx`,
+      fileHash,
+      NOW,
+    ).lastInsertRowid);
+    database.prepare(`
+      INSERT INTO report_import_file_snapshots (
+        store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
+        file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1024, ?, 1, ?)
+    `).run(
+      context.storeId,
+      `full8-snapshot-${input.batchId}-${reportType}`,
+      runId,
+      input.batchId,
+      fileId,
+      reportType,
+      filePath,
+      `${reportType}.xlsx`,
+      fileHash,
+      NOW,
+    );
+  }
+}
+
+function seedSucceededProductionFullCollectionRoot(
+  database: Database.Database,
+  context: StoreContextEnvelope,
+  input: { batchId: string; requestId: string },
+): void {
+  const request = {
+    requestId: input.requestId,
+    storeContext: context,
+    dateStart: '2026-07-21',
+    dateEnd: '2026-07-21',
+    mode: 'create-and-download' as const,
+    reportTypes: EXACT_EIGHT_REPORT_TYPES,
+  };
+  const reports = EXACT_EIGHT_REPORT_TYPES.map((reportType) => ({
+    reportType,
+    state: 'downloaded' as const,
+    attemptIndex: 0,
+    autoRetryCount: 0,
+    fileSizeBytes: 1024,
+    updatedAt: NOW,
+  }));
+  const snapshot = {
+    jobId: input.batchId,
+    request,
+    lineage: {
+      lineageId: input.batchId,
+      rootJobId: input.batchId,
+      expectedReportTypes: EXACT_EIGHT_REPORT_TYPES,
+      purpose: 'production_full' as const,
+    },
+    state: 'completed' as const,
+    reports,
+    createdAt: NOW,
+    updatedAt: NOW,
+    completedAt: NOW,
+    importState: 'succeeded' as const,
+    importAttemptedAt: NOW,
+    importCompletedAt: NOW,
+  };
+  database.prepare(`
+    INSERT INTO lingxing_collection_jobs (
+      store_id, job_id, request_id, browser_profile_id, marketplace, currency,
+      business_timezone, business_date, session_generation, date_start, date_end,
+      mode, report_types_json, state, snapshot_json, created_at, updated_at, completed_at
+    ) VALUES (?, ?, ?, ?, 'US', 'USD', ?, ?, ?, '2026-07-21', '2026-07-21',
+      'create-and-download', ?, 'completed', ?, ?, ?, ?)
+  `).run(
+    context.storeId,
+    input.batchId,
+    input.requestId,
+    context.browserProfileId,
+    context.businessTimezone,
+    context.businessDate,
+    context.sessionGeneration,
+    JSON.stringify(EXACT_EIGHT_REPORT_TYPES),
+    JSON.stringify(snapshot),
+    NOW,
+    NOW,
+    NOW,
+  );
+  const insertCheckpoint = database.prepare(`
+    INSERT INTO lingxing_collection_report_checkpoints (
+      store_id, job_id, report_type, state, attempt_index, auto_retry_count,
+      file_size_bytes, updated_at
+    ) VALUES (?, ?, ?, 'downloaded', 0, 0, 1024, ?)
+  `);
+  for (const reportType of EXACT_EIGHT_REPORT_TYPES) {
+    insertCheckpoint.run(context.storeId, input.batchId, reportType, NOW);
+  }
 }
 
 function seedEnabledPolicy(
@@ -576,6 +888,7 @@ function createApprovedDecision(
     status: 'needs_approval',
     actorId: 'ai-analyst',
   });
+  expect(decision.productId).toBe(mission.productId);
   return repository.resolveDecision(context, {
     id: decision.id,
     expectedRevision: decision.revision,
@@ -583,6 +896,50 @@ function createApprovedDecision(
     actorId: 'operator-one',
     reason: 'Approved within the immutable policy envelope.',
   });
+}
+
+function seedVerifiedReadbackDecision(
+  repository: MissionDomainRepository,
+  context: StoreContextEnvelope,
+  mission: MissionRecord,
+  version: PolicyVersionRecord,
+  options: { withEvidenceCheckpoint?: boolean } = {},
+) {
+  const approved = createApprovedDecision(repository, context, mission, version, 1);
+  const executed = repository.resolveDecision(context, {
+    id: approved.id,
+    expectedRevision: approved.revision,
+    status: 'executed',
+    actorId: 'executor-one',
+    reason: 'Durable submit intent and after evidence recorded.',
+  });
+  const verified = repository.resolveDecision(context, {
+    id: executed.id,
+    expectedRevision: executed.revision,
+    status: 'verified',
+    actorId: 'executor-one',
+    reason: 'Independent reload readback matched the target bid.',
+  });
+  const readbackMission = repository.transitionMission(context, {
+    id: mission.id,
+    expectedRevision: mission.revision,
+    status: 'active',
+    phase: 'readback',
+    actorId: 'executor-one',
+    reason: 'Execution completed with independent reload readback.',
+  });
+  if (options.withEvidenceCheckpoint !== false) {
+    repository.appendMissionCheckpoint(context, {
+      id: `readback-checkpoint-${mission.id}`,
+      missionId: mission.id,
+      stage: 'READBACK',
+      title: '广告执行回读',
+      status: 'verified',
+      evidenceCount: 3,
+      actorId: 'executor-one',
+    });
+  }
+  return { decision: verified, mission: readbackMission };
 }
 
 function expectRepositoryError(
@@ -600,6 +957,51 @@ function expectRepositoryError(
 }
 
 describe('MissionDomainRepository policy and context authority', () => {
+  it('resolves the lowest numeric matching policy independent of enable order and fails closed on a tie', () => {
+    const { repository, contextOne } = createHarness();
+    const enable = (id: string, priority: number) => {
+      const policy = repository.createPolicy(contextOne, {
+        id: `priority-policy-${id}`,
+        name: `Priority policy ${id}`,
+        scope: 'store',
+        priority,
+        actorId: 'operator-one',
+      });
+      const draft = repository.createPolicyVersion(contextOne, {
+        id: `priority-policy-${id}-v1`,
+        policyId: policy.id,
+        version: 1,
+        rules: policyRules(contextOne.storeId),
+        validUntil: '2026-08-01T00:00:00.000Z',
+        actorId: 'operator-one',
+      });
+      return repository.enablePolicyVersion(contextOne, {
+        policyId: policy.id,
+        versionId: draft.id,
+        expectedPolicyRevision: policy.revision,
+        expectedVersionRevision: draft.revision,
+        actorId: 'operator-one',
+      });
+    };
+
+    const lowerPriority = enable('first-enabled-low-number', 10);
+    enable('last-enabled-high-number', 100);
+    expect(repository.getPolicyRuntime(contextOne).activePolicyVersionId)
+      .toBe('priority-policy-last-enabled-high-number-v1');
+    expect(repository.resolveEffectivePolicyVersion(contextOne, {
+      allowedActionTypes: ['set_keyword_bid'],
+      allowedAdEntityIds: [`${contextOne.storeId}-keyword-1`],
+      at: NOW,
+    }).id).toBe(lowerPriority.id);
+
+    enable('same-low-number', 10);
+    expectRepositoryError(() => repository.resolveEffectivePolicyVersion(contextOne, {
+      allowedActionTypes: ['set_keyword_bid'],
+      allowedAdEntityIds: [`${contextOne.storeId}-keyword-1`],
+      at: NOW,
+    }), 'STATE_CONFLICT');
+  });
+
   it('rejects a V1 policy version whose persisted bid-change boundary exceeds ten percent', () => {
     const { repository, contextOne } = createHarness();
     const policy = repository.createPolicy(contextOne, {
@@ -1601,6 +2003,398 @@ describe('MissionDomainRepository policy and context authority', () => {
 });
 
 describe('MissionDomainRepository mission lineage and grants', () => {
+  it('rejects a completed local exact-eight batch without a durable production collection root', () => {
+    const { database, repository, contextOne } = createHarness();
+    const batchId = 'batch_local_202608280002';
+    const runId = 'local-full8-import-run';
+    const reportTypes = [
+      'campaign',
+      'ad_group',
+      'placement',
+      'advertised_product',
+      'auto_targeting',
+      'keyword',
+      'product_targeting',
+      'user_search_term',
+    ] as const;
+    database.prepare(`
+      INSERT INTO lingxing_report_batches (
+        id, date_start, date_end, store_name, marketplace_code, status,
+        download_dir, created_at, completed_at, store_id, request_id,
+        browser_profile_id, business_date, session_generation
+      ) VALUES (?, '2026-07-21', '2026-07-21', 'US Store One', 'US', 'completed',
+        'logical-download:local-full8', ?, ?, ?, ?, ?, '2026-07-21', 4)
+    `).run(batchId, NOW, NOW, contextOne.storeId, `local-import:${batchId}`, contextOne.browserProfileId);
+    database.prepare(`
+      INSERT INTO report_import_runs (
+        store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
+        source_file_count, metric_row_count, reconciliation_count,
+        started_at, completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'completed', 8, 8, 8, ?, ?, ?)
+    `).run(
+      contextOne.storeId,
+      runId,
+      `local-full8:${batchId}`,
+      'd'.repeat(64),
+      batchId,
+      NOW,
+      NOW,
+      NOW,
+    );
+    for (const [index, reportType] of reportTypes.entries()) {
+      const filePath = `C:/reports/local-full8/${reportType}.xlsx`;
+      const fileHash = String(index + 1).repeat(64).slice(0, 64);
+      const fileId = Number(database.prepare(`
+        INSERT INTO report_files (
+          store_id, batch_id, report_type, file_path, file_name, file_size,
+          status, imported_rows, file_hash, last_imported_at
+        ) VALUES (?, ?, ?, ?, ?, 1024, 'imported', 1, ?, ?)
+      `).run(
+        contextOne.storeId,
+        batchId,
+        reportType,
+        filePath,
+        `${reportType}.xlsx`,
+        fileHash,
+        NOW,
+      ).lastInsertRowid);
+      database.prepare(`
+        INSERT INTO report_import_file_snapshots (
+          store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
+          file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1024, ?, 1, ?)
+      `).run(
+        contextOne.storeId,
+        `local-full8-snapshot-${reportType}`,
+        runId,
+        batchId,
+        fileId,
+        reportType,
+        filePath,
+        `${reportType}.xlsx`,
+        fileHash,
+        NOW,
+      );
+    }
+    const { version } = seedEnabledPolicy(repository, contextOne);
+
+    expect(() => repository.createMission(contextOne, {
+      id: 'mission-local-full8-without-root',
+      dataBatchId: batchId,
+      policyVersionId: version.id,
+      title: 'Must not trust a local synthetic batch',
+      objective: 'Prove formal collection lineage before analysis.',
+      priority: 'P1',
+      productId: `${contextOne.storeId}-product-1`,
+      observationStartsAt: '2026-07-22T00:00:00.000Z',
+      observationEndsAt: '2026-07-29T00:00:00.000Z',
+      successCriteria: ['Formal collection lineage is present'],
+      guardrails: ['Local files never replace production collection'],
+      actorId: 'operator-one',
+    })).toThrow(
+      '运营任务数据批次缺少已成功入库的 production_full 完整 8 类采集根证据；'
+      + '请先启动完整 8 类采集并等待入库成功。',
+    );
+    expect(repository.listMissions(contextOne)).toEqual([]);
+  });
+
+  it('accepts an exact-eight batch only after its durable production root import succeeds', () => {
+    const { database, repository, contextOne } = createHarness();
+    const batchId = 'batch-production-full8-ready';
+    const requestId = 'lx:production-full8-ready';
+    seedExactEightImportedBatch(database, contextOne, { batchId, requestId });
+    seedSucceededProductionFullCollectionRoot(database, contextOne, { batchId, requestId });
+    const { version } = seedEnabledPolicy(repository, contextOne);
+
+    const mission = repository.createMission(contextOne, {
+      id: 'mission-production-full8-ready',
+      dataBatchId: batchId,
+      policyVersionId: version.id,
+      title: 'Use the durable production collection root',
+      objective: 'Analyze only the exact imported production batch.',
+      priority: 'P1',
+      productId: `${contextOne.storeId}-product-1`,
+      observationStartsAt: '2026-07-22T00:00:00.000Z',
+      observationEndsAt: '2026-07-29T00:00:00.000Z',
+      successCriteria: ['Formal collection lineage remains current'],
+      guardrails: ['Reject local or pending substitutes'],
+      actorId: 'operator-one',
+    });
+
+    expect(mission).toMatchObject({ dataBatchId: batchId, status: 'draft', phase: 'fact' });
+  });
+
+  it('rejects unknown Mission patch keys without incrementing the revision', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+
+    expectRepositoryError(() => repository.updateMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      actorId: 'operator-one',
+      patch: { unsupportedAuthorityField: 'must-not-be-ignored' } as never,
+    }), 'INVALID_INPUT');
+
+    expect(repository.getMission(contextOne, mission.id)).toMatchObject({
+      revision: mission.revision,
+      title: mission.title,
+      phase: mission.phase,
+    });
+  });
+
+  it('freezes the complete Mission definition when the Mission reaches decision', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const decisionPhase = repository.transitionMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: 'active',
+      phase: 'decision',
+      actorId: 'operator-one',
+      reason: 'Analysis is complete and the Mission definition is now evidence-bound.',
+    });
+
+    expectRepositoryError(() => repository.updateMission(contextOne, {
+      id: decisionPhase.id,
+      expectedRevision: decisionPhase.revision,
+      actorId: 'operator-one',
+      patch: {
+        title: 'Must remain immutable',
+        objective: 'Must remain immutable',
+        priority: 'P0',
+        productId: `${contextOne.storeId}-product-2`,
+        observationStartsAt: '2026-07-23T00:00:00.000Z',
+        observationEndsAt: '2026-07-30T00:00:00.000Z',
+        successCriteria: ['Must remain immutable'],
+        guardrails: ['Must remain immutable'],
+      },
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getMission(contextOne, decisionPhase.id)).toEqual(decisionPhase);
+  });
+
+  it('allows a title-only rename after decision while preserving every authority field', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const decisionPhase = repository.transitionMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: 'active',
+      phase: 'decision',
+      actorId: 'operator-one',
+    });
+
+    const renamed = repository.updateMission(contextOne, {
+      id: decisionPhase.id,
+      expectedRevision: decisionPhase.revision,
+      actorId: 'operator-one',
+      patch: { title: '新的任务显示名称' },
+    });
+
+    expect(renamed).toMatchObject({
+      title: '新的任务显示名称',
+      revision: decisionPhase.revision + 1,
+      dataBatchId: decisionPhase.dataBatchId,
+      policyVersionId: decisionPhase.policyVersionId,
+      productId: decisionPhase.productId,
+      objective: decisionPhase.objective,
+      observationStartsAt: decisionPhase.observationStartsAt,
+      observationEndsAt: decisionPhase.observationEndsAt,
+      successCriteria: decisionPhase.successCriteria,
+      guardrails: decisionPhase.guardrails,
+    });
+  });
+
+  it('does not allow a Mission phase to move backward and reopen its frozen definition', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const decisionPhase = repository.transitionMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: 'active',
+      phase: 'decision',
+      actorId: 'operator-one',
+    });
+
+    expectRepositoryError(() => repository.transitionMission(contextOne, {
+      id: decisionPhase.id,
+      expectedRevision: decisionPhase.revision,
+      status: 'active',
+      phase: 'analysis',
+      actorId: 'operator-one',
+      reason: 'Must not reopen the editable definition.',
+    }), 'STATE_CONFLICT');
+    expect(repository.getMission(contextOne, decisionPhase.id)).toEqual(decisionPhase);
+  });
+
+  it('freezes Mission authority fields as soon as a Decision exists even if a legacy phase flag is stale', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    createApprovedDecision(repository, contextOne, mission, version, 72);
+    expect(mission.phase).toBe('analysis');
+
+    expectRepositoryError(() => repository.updateMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      actorId: 'operator-one',
+      patch: { objective: 'Must not rewrite the definition behind an existing Decision.' },
+    }), 'STATE_CONFLICT');
+    expect(repository.getMission(contextOne, mission.id)).toEqual(mission);
+  });
+
+  it('rejects a Decision whose product differs from its Mission product', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+
+    expectRepositoryError(() => repository.createDecision(contextOne, {
+      id: 'decision-product-lineage-mismatch',
+      missionId: mission.id,
+      dataBatchId: mission.dataBatchId,
+      policyVersionId: version.id,
+      policyRevision: version.revision,
+      actionRevision: 1,
+      title: 'Mismatched product decision',
+      rationale: 'This proposal must not escape the Mission product scope.',
+      recommendation: 'Do not persist this proposal.',
+      facts: ['The submitted product differs from the Mission product.'],
+      alternatives: ['Regenerate the analysis for the Mission product.'],
+      actionType: 'set_keyword_bid',
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      productId: `${contextOne.storeId}-product-2`,
+      currentValue: 1,
+      recommendedValue: 0.95,
+      confidence: 0.8,
+      status: 'needs_approval',
+      actorId: 'ai-analyst',
+    }), 'REFERENCE_CONFLICT');
+
+    expect(repository.listDecisions(contextOne, { missionId: mission.id })).toEqual([]);
+  });
+
+  it('issues a grant from the lower-number matching policy even when another policy was enabled later', () => {
+    const { repository, contextOne } = createHarness();
+    const lowPolicy = repository.createPolicy(contextOne, {
+      id: 'grant-priority-low-policy',
+      name: 'Exact object first-match policy',
+      scope: 'store',
+      priority: 10,
+      actorId: 'operator-one',
+    });
+    const lowDraft = repository.createPolicyVersion(contextOne, {
+      id: 'grant-priority-low-policy-v1',
+      policyId: lowPolicy.id,
+      version: 1,
+      rules: policyRules(contextOne.storeId),
+      validUntil: '2026-08-01T00:00:00.000Z',
+      actorId: 'operator-one',
+    });
+    const lowVersion = repository.enablePolicyVersion(contextOne, {
+      policyId: lowPolicy.id,
+      versionId: lowDraft.id,
+      expectedPolicyRevision: lowPolicy.revision,
+      expectedVersionRevision: lowDraft.revision,
+      actorId: 'operator-one',
+    });
+    const laterEnabled = seedEnabledPolicy(repository, contextOne);
+    expect(repository.getPolicyRuntime(contextOne).activePolicyVersionId).toBe(laterEnabled.version.id);
+
+    const draftMission = repository.createMission(contextOne, {
+      id: 'mission-priority-first-match',
+      dataBatchId: `batch-${contextOne.storeId}`,
+      policyVersionId: lowVersion.id,
+      title: 'Use the first matching strategy',
+      objective: 'Prove numeric priority instead of last-enabled ordering.',
+      productId: `${contextOne.storeId}-product-1`,
+      observationStartsAt: '2026-07-22T00:00:00.000Z',
+      observationEndsAt: '2026-07-29T00:00:00.000Z',
+      successCriteria: ['Lower numeric policy wins'],
+      guardrails: ['No last-enabled override'],
+      actorId: 'operator-one',
+    });
+    const mission = repository.transitionMission(contextOne, {
+      id: draftMission.id,
+      expectedRevision: draftMission.revision,
+      status: 'active',
+      phase: 'decision',
+      actorId: 'operator-one',
+    });
+    const decision = createApprovedDecision(repository, contextOne, mission, lowVersion, 71);
+    const runtime = repository.getPolicyRuntime(contextOne);
+    repository.updatePolicyRuntime(contextOne, {
+      expectedRevision: runtime.revision,
+      actorId: 'operator-one',
+      patch: {
+        autonomyMode: 'policy_auto',
+        activePolicyVersionId: laterEnabled.version.id,
+      },
+    });
+
+    const grant = repository.issueMissionGrant(contextOne, {
+      id: 'grant-priority-first-match',
+      missionId: mission.id,
+      missionRevision: mission.revision,
+      decisionIds: [decision.id],
+      actionRevision: decision.actionRevision,
+      allowedActionTypes: ['set_keyword_bid'],
+      allowedAdEntityIds: [decision.adEntityId!],
+      maxChangePct: 10,
+      totalImpactBudget: 25,
+      expiresAt: '2026-07-23T00:00:00.000Z',
+      policyVersionId: lowVersion.id,
+      policyRevision: lowVersion.revision,
+      requiredEvidence: policyRules(contextOne.storeId).requiredEvidence,
+      stopConditions: policyRules(contextOne.storeId).stopConditions,
+      issuer: { type: 'policy', actorId: 'policy-engine' },
+    });
+
+    expect(grant.policyVersionId).toBe(lowVersion.id);
+    expect(grant.allowedAdEntityIds).toEqual([decision.adEntityId]);
+  });
+
+  it('revalidates Mission authority after a concurrent policy change before the create commit', () => {
+    const { database, databasePath, repository, contextOne } = createHarness();
+    const { version } = seedEnabledPolicy(repository, contextOne);
+    const competing = new Database(databasePath);
+    databases.push(competing);
+    let retireBeforeCommit = true;
+    const raceRepository = new MissionDomainRepository(database, {
+      now: () => {
+        if (retireBeforeCommit) {
+          retireBeforeCommit = false;
+          competing.prepare(`
+            UPDATE policy_versions
+            SET status = 'retired', updated_at = ?
+            WHERE store_id = ? AND id = ?
+          `).run('2026-07-22T12:00:00.001Z', contextOne.storeId, version.id);
+        }
+        return new Date(NOW);
+      },
+      references: {
+        productBelongsToStore: (context, productId) => productId.startsWith(`${context.storeId}-product-`),
+        adEntityBelongsToStore: (context, adEntityId) => adEntityId.startsWith(`${context.storeId}-keyword-`),
+        adEntitySupportsKeywordBid: (context, adEntityId) => adEntityId.startsWith(`${context.storeId}-keyword-`),
+      },
+    });
+    const missionId = 'mission-concurrent-policy-retirement';
+
+    expectRepositoryError(() => raceRepository.createMission(contextOne, {
+      id: missionId,
+      dataBatchId: `batch-${contextOne.storeId}`,
+      policyVersionId: version.id,
+      title: 'Reject a stale Mission authority snapshot',
+      objective: 'Do not bind a Mission to a policy version retired before commit.',
+      priority: 'P1',
+      productId: `${contextOne.storeId}-product-1`,
+      observationStartsAt: '2026-07-22T00:00:00.000Z',
+      observationEndsAt: '2026-07-29T00:00:00.000Z',
+      successCriteria: ['No stale Mission is created'],
+      guardrails: ['Policy authority remains active'],
+      actorId: 'operator-one',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getMission(contextOne, missionId)).toBeUndefined();
+  });
+
   it('refuses grant issuance when an enabled campaign scope loses current session authority', () => {
     const { database, repository, contextOne } = createHarness();
     const adsAccountId = `ads-account-${contextOne.storeId}`;
@@ -1837,7 +2631,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
         actorId: 'operator-one',
         patch: { productId: `${contextTwo.storeId}-product-1` },
       }),
-      'REFERENCE_CONFLICT',
+      'STATE_CONFLICT',
     );
     const checkpoint = repository.appendMissionCheckpoint(contextOne, {
       id: 'checkpoint-one',
@@ -2137,6 +2931,1058 @@ describe('MissionDomainRepository mission lineage and grants', () => {
 });
 
 describe('MissionDomainRepository decisions, experiments, and causal ledger', () => {
+  it('rejects an Experiment when its product differs from the selected Mission product without leaving lineage writes', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const experimentId = 'experiment-cross-product-mission';
+    const before = repository.getMissionLineage(contextOne, mission.id);
+    const causalBefore = repository.listCausalEvents(contextOne, { missionId: mission.id });
+
+    expectRepositoryError(() => repository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject a cross-product experiment',
+      hypothesis: 'A product B experiment must not reuse product A Mission evidence.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-2`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'REFERENCE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+    const after = repository.getMissionLineage(contextOne, mission.id);
+    expect(after.experiments).toEqual(before.experiments);
+    expect(after.links).toEqual(before.links);
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id }))
+      .toEqual(causalBefore);
+  });
+
+  it('keeps a draft Experiment unchanged when an edit moves it to another same-store product and matching Ads object', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-cross-product-draft-edit',
+      missionId: mission.id,
+      name: 'Keep the Mission product boundary',
+      hypothesis: 'A draft edit must not reuse product A Mission evidence for product B.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-1`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const causalBefore = repository.listCausalEvents(contextOne, { missionId: mission.id });
+
+    expectRepositoryError(() => repository.updateExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      actorId: 'operator-one',
+      patch: {
+        productId: `${contextOne.storeId}-product-2`,
+        adEntityId: `${contextOne.storeId}-keyword-2`,
+      },
+    }), 'REFERENCE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
+    expect(repository.getExperiment(contextOne, draft.id)?.revision).toBe(draft.revision);
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id }))
+      .toEqual(causalBefore);
+  });
+
+  it('revalidates Experiment lineage after a concurrent Mission archive before the create commit', () => {
+    const { database, databasePath, repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const competing = new Database(databasePath);
+    databases.push(competing);
+    let archiveBeforeCommit = true;
+    const raceRepository = new MissionDomainRepository(database, {
+      now: () => {
+        if (archiveBeforeCommit) {
+          archiveBeforeCommit = false;
+          competing.prepare(`
+            UPDATE missions
+            SET status = 'archived', archived_at = ?, revision = revision + 1, updated_at = ?
+            WHERE store_id = ? AND id = ?
+          `).run(
+            '2026-07-22T12:00:00.001Z',
+            '2026-07-22T12:00:00.001Z',
+            contextOne.storeId,
+            mission.id,
+          );
+        }
+        return new Date(NOW);
+      },
+      references: {
+        productBelongsToStore: (context, productId) => productId.startsWith(`${context.storeId}-product-`),
+        adEntityBelongsToStore: (context, adEntityId) => adEntityId.startsWith(`${context.storeId}-keyword-`),
+        adEntitySupportsKeywordBid: (context, adEntityId) => adEntityId.startsWith(`${context.storeId}-keyword-`),
+      },
+    });
+    const experimentId = 'experiment-concurrent-mission-archive';
+
+    expectRepositoryError(() => raceRepository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject stale Experiment lineage',
+      hypothesis: 'An archived Mission cannot receive a new Experiment.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+  });
+
+  it('returns only same-product proven non-UNKNOWN causal memory for Main analysis', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const otherProductMission = repository.createMission(contextOne, {
+      id: 'mission-other-product-memory',
+      dataBatchId: mission.dataBatchId,
+      policyVersionId: version.id,
+      title: 'Other product memory source',
+      objective: 'Prove product-scoped memory isolation.',
+      productId: `${contextOne.storeId}-product-2`,
+      observationStartsAt: '2026-07-22T00:00:00.000Z',
+      observationEndsAt: '2026-07-29T00:00:00.000Z',
+      successCriteria: ['Keep products isolated'],
+      guardrails: ['Never mix causal memory'],
+      actorId: 'operator-one',
+    });
+    const appendEffect = (input: {
+      id: string;
+      missionId: string;
+      status?: string;
+      observedEffect?: string;
+      correctsEventId?: string;
+    }) => repository.appendCausalEvent(contextOne, {
+      id: input.id,
+      stage: 'EFFECT',
+      eventType: input.correctsEventId ? 'experiment_effect_correction' : 'experiment_effect',
+      entityType: 'experiment',
+      entityId: input.correctsEventId ?? input.id,
+      missionId: input.missionId,
+      title: `Causal memory ${input.id}`,
+      observedEffect: input.observedEffect ?? 'ACOS improved with stable orders.',
+      status: input.status ?? 'verified',
+      source: 'experiment-evaluator',
+      actorId: 'experiment-evaluator',
+      ...(input.correctsEventId ? { correctsEventId: input.correctsEventId } : {}),
+    });
+    const addProof = (eventId: string, ordinal: number) => repository.appendEvidenceRef(contextOne, {
+      id: `memory-proof-${ordinal}`,
+      eventId,
+      evidenceType: 'experiment_result',
+      evidenceRef: `artifact:experiment-result:${ordinal}`,
+      sha256: ordinal.toString(16).repeat(64),
+    });
+
+    const valid = appendEffect({ id: 'memory-valid', missionId: mission.id });
+    addProof(valid.id, 1);
+    const unknown = appendEffect({ id: 'memory-unknown', missionId: mission.id, status: 'still_unknown' });
+    addProof(unknown.id, 2);
+    appendEffect({ id: 'memory-without-proof', missionId: mission.id });
+    const otherProduct = appendEffect({ id: 'memory-other-product', missionId: otherProductMission.id });
+    addProof(otherProduct.id, 3);
+    const corrected = appendEffect({ id: 'memory-corrected', missionId: mission.id });
+    addProof(corrected.id, 4);
+    appendEffect({
+      id: 'memory-correction',
+      missionId: mission.id,
+      observedEffect: 'Corrected measurement supersedes the old effect.',
+      correctsEventId: corrected.id,
+    });
+    const reconciledUnknown = repository.appendCausalEvent(contextOne, {
+      id: 'memory-unknown-reconciled-target',
+      stage: 'READBACK',
+      eventType: 'execution_unknown_reconciled',
+      entityType: 'ad_execution_batch',
+      entityId: 'unknown-execution-batch',
+      missionId: mission.id,
+      title: 'Unknown execution reconciliation',
+      observedEffect: 'Two read-only observations found the target bid, but the original batch remains UNKNOWN.',
+      status: 'confirmed_target',
+      source: 'execution-authority',
+      actorId: 'operator-one',
+    });
+    repository.appendEvidenceRef(contextOne, {
+      id: 'memory-unknown-reconciled-proof-first',
+      eventId: reconciledUnknown.id,
+      evidenceType: 'ad_execution_reconciliation_first',
+      evidenceRef: 'artifact:execution-reconciliation:first',
+      sha256: '5'.repeat(64),
+    });
+    repository.appendEvidenceRef(contextOne, {
+      id: 'memory-unknown-reconciled-proof-reload',
+      eventId: reconciledUnknown.id,
+      evidenceType: 'ad_execution_reconciliation_reload',
+      evidenceRef: 'artifact:execution-reconciliation:reload',
+      sha256: '6'.repeat(64),
+    });
+
+    const first = repository.listAnalysisCausalMemory(contextOne, {
+      productId: mission.productId!,
+      limit: 40,
+    });
+    const second = repository.listAnalysisCausalMemory(contextOne, {
+      productId: mission.productId!,
+      limit: 40,
+    });
+
+    expect(first).toEqual(second);
+    expect(first).toEqual([expect.objectContaining({
+      eventId: valid.id,
+      missionId: mission.id,
+      stage: 'EFFECT',
+      observedEffect: 'ACOS improved with stable orders.',
+      proofs: [expect.objectContaining({
+        evidenceType: 'experiment_result',
+        evidenceRef: 'artifact:experiment-result:1',
+        sha256: '1'.repeat(64),
+      })],
+    })]);
+    expect(repository.listAnalysisCausalMemory(contextOne, { productId: '', limit: 40 }))
+      .toEqual([]);
+  });
+
+  it('rolls back a causal event when its complete evidence set cannot be appended atomically', () => {
+    const { repository, database, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const eventId = 'causal-atomic-readback-event';
+
+    expectRepositoryError(() => repository.appendCausalEventWithEvidence(contextOne, {
+      id: eventId,
+      stage: 'READBACK',
+      eventType: 'execution_unknown_reconciled',
+      entityType: 'ad_execution_batch',
+      entityId: 'unknown-batch-atomic',
+      missionId: mission.id,
+      title: 'Atomic reconciliation evidence',
+      observedEffect: 'Two read-only observations were attempted.',
+      status: 'confirmed_target',
+      source: 'execution-authority',
+      actorId: 'operator-one',
+    }, [{
+      id: 'duplicate-atomic-evidence-id',
+      eventId,
+      evidenceType: 'ad_execution_reconciliation_first',
+      evidenceRef: 'artifact:execution-reconciliation:atomic-first',
+      sha256: '7'.repeat(64),
+    }, {
+      id: 'duplicate-atomic-evidence-id',
+      eventId,
+      evidenceType: 'ad_execution_reconciliation_reload',
+      evidenceRef: 'artifact:execution-reconciliation:atomic-reload',
+      sha256: '8'.repeat(64),
+    }]), 'DUPLICATE_IDENTITY');
+
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id })
+      .some((event) => event.id === eventId)).toBe(false);
+    expect(database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM evidence_refs
+      WHERE store_id = ? AND event_id = ?
+    `).get(contextOne.storeId, eventId)).toEqual({ count: 0 });
+  });
+
+  it('keeps an Experiment in draft when the exact Ads object has no verified execution readback', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-without-verified-readback',
+      missionId: mission.id,
+      name: 'Reject an unverified experiment baseline',
+      hypothesis: 'A planned bid change must not be mistaken for an applied intervention.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-1`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: { bidUsd: 1 },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start without a real intervention.',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, draft.id)).toMatchObject({
+      status: 'draft',
+      revision: draft.revision,
+      baseline: { bidUsd: 1 },
+    });
+  });
+
+  it('does not let archive and restore bypass the verified execution baseline for a draft Experiment', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-restored-without-verified-readback',
+      missionId: mission.id,
+      name: 'Reject an archive restore baseline bypass',
+      hypothesis: 'Archiving a draft must not turn an unverified intervention into a trusted baseline.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-1`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: { untrustedRendererValue: true, bidUsd: 1 },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const archived = repository.archiveExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      actorId: 'operator-one',
+      reason: 'Temporarily hide the draft.',
+    });
+    const restored = repository.restoreExperiment(contextOne, {
+      id: archived.id,
+      expectedRevision: archived.revision,
+      actorId: 'operator-one',
+      reason: 'Restore the same unverified draft.',
+    });
+    const eventsBeforeStart = repository.listCausalEvents(contextOne, { missionId: mission.id });
+
+    expect(restored).toMatchObject({
+      status: 'paused',
+      baseline: { untrustedRendererValue: true, bidUsd: 1 },
+    });
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: restored.id,
+      expectedRevision: restored.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Attempt to start without verified execution readback.',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, restored.id)).toEqual(restored);
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id })).toEqual(eventsBeforeStart);
+    expect(eventsBeforeStart.filter((event) => (
+      event.entityId === restored.id && event.eventType === 'experiment_running'
+    ))).toHaveLength(0);
+  });
+
+  it('rejects an Experiment before persistence when guardrail metrics and criteria are not one-to-one', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const experimentId = 'experiment-invalid-guardrail-cardinality';
+
+    expectRepositoryError(() => repository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject an incomplete guardrail contract',
+      hypothesis: 'Every guardrail metric must have exactly one machine-readable criterion.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单', 'CVR'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+    expect(repository.getMissionLineage(contextOne, mission.id).experiments)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: experimentId })]));
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id }))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ entityId: experimentId })]));
+  });
+
+  it('rejects an Experiment before persistence when a guardrail criterion cannot be safely parsed', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const experimentId = 'experiment-invalid-guardrail-criterion';
+
+    expectRepositoryError(() => repository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject an ambiguous guardrail criterion',
+      hypothesis: 'A machine stop condition must have an explicit comparator and finite threshold.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 ~= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+    expect(repository.getMissionLineage(contextOne, mission.id).experiments)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: experimentId })]));
+  });
+
+  it('rejects an Experiment before persistence when a guardrail threshold is negative', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const experimentId = 'experiment-negative-guardrail-threshold';
+
+    expectRepositoryError(() => repository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject a negative guardrail threshold',
+      hypothesis: 'A result-to-baseline ratio threshold cannot be negative.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= -5%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+  });
+
+  it('rejects an Experiment before persistence when a metric lacks an authoritative data source', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const experimentId = 'experiment-unsupported-tacos';
+
+    expectRepositoryError(() => repository.createExperiment(contextOne, {
+      id: experimentId,
+      missionId: mission.id,
+      name: 'Reject TACOS without total product sales authority',
+      hypothesis: 'Advertising sales must not be substituted for total product sales.',
+      primaryMetric: 'TACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, experimentId)).toBeUndefined();
+  });
+
+  it('keeps a draft Experiment unchanged when an edit makes its guardrail contract invalid', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-invalid-draft-edit',
+      missionId: mission.id,
+      name: 'Keep a valid draft contract',
+      hypothesis: 'Draft edits must remain machine-evaluable before they are saved.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    expectRepositoryError(() => repository.updateExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      patch: { guardrailMetrics: ['广告订单', 'CVR'] },
+      actorId: 'operator-one',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id })
+      .filter((event) => event.entityId === draft.id && event.eventType === 'experiment_updated'))
+      .toEqual([]);
+  });
+
+  it('keeps a draft Experiment unchanged when an edit adds an ambiguous guardrail criterion', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-invalid-criterion-edit',
+      missionId: mission.id,
+      name: 'Keep a parseable draft criterion',
+      hypothesis: 'Draft stop conditions must remain machine-readable after every edit.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    expectRepositoryError(() => repository.updateExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      patch: { guardrailCriteria: ['广告订单 ~= 95%'] },
+      actorId: 'operator-one',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
+  });
+
+  it('keeps a draft Experiment unchanged when an edit selects a metric without authoritative data', () => {
+    const { repository, contextOne } = createHarness();
+    const { mission } = seedActiveMission(repository, contextOne);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-unsupported-metric-edit',
+      missionId: mission.id,
+      name: 'Keep an authoritative draft metric',
+      hypothesis: 'Editing cannot replace an observable metric with one lacking source authority.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: mission.productId,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: {},
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    expectRepositoryError(() => repository.updateExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      patch: { primaryMetric: 'TACOS' },
+      actorId: 'operator-one',
+    }), 'INVALID_INPUT');
+
+    expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
+  });
+
+  it('keeps an Experiment in draft when verified status has no durable readback evidence checkpoint', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version, {
+      withEvidenceCheckpoint: false,
+    });
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-without-readback-evidence',
+      missionId: verified.mission.id,
+      name: 'Require durable readback evidence',
+      hypothesis: 'A status label without evidence must not become an experiment baseline.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start from a status label without durable evidence.',
+    }), 'STATE_CONFLICT');
+    expect(repository.getExperiment(contextOne, draft.id)).toMatchObject({
+      status: 'draft',
+      revision: draft.revision,
+    });
+  });
+
+  it('starts an Experiment from the exact verified Decision and replaces the renderer baseline', () => {
+    const { database, repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    database.prepare(`
+      UPDATE ad_daily_metrics
+      SET asin = ?, clicks = 10, cost = 20, orders = 2, sales = 50,
+          acos = 0.4, cvr = 0.2, currency = 'USD'
+      WHERE store_id = ? AND batch_id = ? AND targeting = 'baseline keyword 1'
+    `).run(mission.productId, contextOne.storeId, mission.dataBatchId);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-with-verified-readback',
+      missionId: verified.mission.id,
+      name: 'Bind the verified keyword intervention',
+      hypothesis: 'The verified bid reduction improves ACOS without breaching the order guardrail.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { untrustedRendererValue: true, bidUsd: 99 },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start from the verified intervention.',
+    });
+
+    expect(running).toMatchObject({
+      status: 'running',
+      baseline: {
+        source: 'verified_ads_readback',
+        decisionId: verified.decision.id,
+        decisionRevision: verified.decision.revision,
+        actionRevision: verified.decision.actionRevision,
+        dataBatchId: verified.mission.dataBatchId,
+        productId: verified.mission.productId,
+        adEntityId: verified.decision.adEntityId,
+        currentBidUsd: 1,
+        appliedBidUsd: 0.94,
+      },
+    });
+    expect(running.baseline).not.toHaveProperty('untrustedRendererValue');
+    expect(repository.listExperimentMetricSnapshots(contextOne, running.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metric: 'ACOS',
+        value: 0.4,
+        dataBatchId: mission.dataBatchId,
+      }),
+      expect.objectContaining({
+        metric: '广告订单',
+        value: 2,
+        dataBatchId: mission.dataBatchId,
+      }),
+    ]));
+  });
+
+  it('captures the post-window batch and completes an Experiment with a machine-derived result', () => {
+    let currentNow = new Date(NOW);
+    const { database, repository, contextOne } = createHarness(() => currentNow);
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-machine-evaluation',
+      missionId: verified.mission.id,
+      name: 'Evaluate the measured keyword intervention',
+      hypothesis: 'The verified bid reduction improves ACOS while preserving attributed orders.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start from the verified intervention.',
+    });
+    const resultBatchId = seedExperimentObservationAuthority(database, contextOne, {
+      missionId: verified.mission.id,
+      productId: verified.mission.productId!,
+      adEntityId: verified.decision.adEntityId!,
+      clicks: 10,
+      cost: 15,
+      orders: 2,
+      sales: 50,
+    });
+    currentNow = new Date('2026-07-30T12:00:00.000Z');
+
+    const completed = repository.evaluateExperiment(contextOne, {
+      id: running.id,
+      expectedRevision: running.revision,
+      actorId: 'experiment-evaluator',
+    });
+
+    expect(completed.status).toBe('completed');
+    expect(completed.conclusion).toContain('ACOS：0.4 → 0.3');
+    expect(completed.conclusion).toContain('广告订单结果为基线的 100%');
+    expect(repository.listExperimentMetricSnapshots(contextOne, running.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metric: 'ACOS', value: 0.3, dataBatchId: resultBatchId }),
+      expect.objectContaining({ metric: '广告订单', value: 2, dataBatchId: resultBatchId }),
+    ]));
+    expect(repository.listCausalEvents(contextOne, { missionId: verified.mission.id })
+      .filter((event) => event.entityId === running.id && event.eventType === 'experiment_completed'))
+      .toHaveLength(1);
+    expect(repository.getMission(contextOne, verified.mission.id)).toMatchObject({
+      status: 'completed',
+      phase: 'effect',
+      revision: verified.mission.revision + 1,
+    });
+    expect(repository.listMissionCheckpoints(contextOne, verified.mission.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stage: 'EFFECT',
+        title: '经营实验完成效果评估',
+        status: 'completed',
+        evidenceCount: 2,
+        actorId: 'experiment-evaluator',
+      }),
+    ]));
+    expect(repository.listAnalysisCausalMemory(contextOne, {
+      productId: verified.mission.productId!,
+      limit: 40,
+    })).toEqual([expect.objectContaining({
+      eventType: 'experiment_completed',
+      entityId: running.id,
+      observedEffect: completed.conclusion,
+      proofs: [expect.objectContaining({
+        evidenceType: 'experiment_result_snapshot',
+        evidenceRef: expect.stringMatching(/^experiment-result:[a-f0-9]{64}$/),
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })],
+    })]);
+    const archivedExperiment = repository.archiveExperiment(contextOne, {
+      id: completed.id,
+      expectedRevision: completed.revision,
+      actorId: 'operator-one',
+      reason: 'Hide the completed experiment from the default queue.',
+    });
+    const restoredExperiment = repository.restoreExperiment(contextOne, {
+      id: archivedExperiment.id,
+      expectedRevision: archivedExperiment.revision,
+      actorId: 'operator-one',
+      reason: 'Show the immutable completed experiment again.',
+    });
+    expect(restoredExperiment.status).toBe('completed');
+
+    const completedMission = repository.getMission(contextOne, verified.mission.id)!;
+    const archivedMission = repository.archiveMission(contextOne, {
+      id: completedMission.id,
+      expectedRevision: completedMission.revision,
+      actorId: 'operator-one',
+      reason: 'Hide the completed Mission from the default queue.',
+    });
+    const restoredMission = repository.restoreMission(contextOne, {
+      id: archivedMission.id,
+      expectedRevision: archivedMission.revision,
+      actorId: 'operator-one',
+      reason: 'Show the immutable completed Mission again.',
+    });
+    expect(restoredMission).toMatchObject({ status: 'completed', phase: 'effect' });
+  });
+
+  it('keeps a Mission active and lets the next draft Experiment start after one Experiment completes', () => {
+    let currentNow = new Date(NOW);
+    const { database, repository, contextOne } = createHarness(() => currentNow);
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const firstDraft = repository.createExperiment(contextOne, {
+      id: 'experiment-first-of-two',
+      missionId: verified.mission.id,
+      name: 'Evaluate the first measured intervention',
+      hypothesis: 'The first verified bid reduction improves ACOS while preserving attributed orders.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const nextDraft = repository.createExperiment(contextOne, {
+      id: 'experiment-second-of-two',
+      missionId: verified.mission.id,
+      name: 'Observe the next measured intervention',
+      hypothesis: 'A second bounded observation remains runnable after the first result is recorded.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-31T12:00:00.000Z',
+      observationEndsAt: '2026-08-07T12:00:00.000Z',
+    });
+    const firstRunning = repository.transitionExperiment(contextOne, {
+      id: firstDraft.id,
+      expectedRevision: firstDraft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start the first verified intervention.',
+    });
+    seedExperimentObservationAuthority(database, contextOne, {
+      missionId: verified.mission.id,
+      productId: verified.mission.productId!,
+      adEntityId: verified.decision.adEntityId!,
+      clicks: 10,
+      cost: 15,
+      orders: 2,
+      sales: 50,
+    });
+    currentNow = new Date('2026-07-30T12:00:00.000Z');
+
+    const firstCompleted = repository.evaluateExperiment(contextOne, {
+      id: firstRunning.id,
+      expectedRevision: firstRunning.revision,
+      actorId: 'experiment-evaluator',
+    });
+
+    expect(firstCompleted.status).toBe('completed');
+    expect(repository.getMission(contextOne, verified.mission.id)).toMatchObject({
+      status: 'active',
+      phase: 'effect',
+      revision: verified.mission.revision + 1,
+    });
+
+    const nextRunning = repository.transitionExperiment(contextOne, {
+      id: nextDraft.id,
+      expectedRevision: nextDraft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start the next verified observation after recording the first effect.',
+    });
+
+    expect(nextRunning).toMatchObject({
+      status: 'running',
+      baseline: {
+        source: 'verified_ads_readback',
+        decisionId: verified.decision.id,
+        adEntityId: verified.decision.adEntityId,
+      },
+    });
+    expect(repository.getMission(contextOne, verified.mission.id)).toMatchObject({
+      status: 'active',
+      phase: 'effect',
+    });
+  });
+
+  it('pauses an Experiment and records one effect when a measured guardrail is breached', () => {
+    let currentNow = new Date(NOW);
+    const { database, repository, contextOne } = createHarness(() => currentNow);
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-guardrail-breach',
+      missionId: verified.mission.id,
+      name: 'Stop on attributed-order guardrail',
+      hypothesis: 'The verified bid reduction must preserve at least 95 percent of attributed orders.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start from the verified intervention.',
+    });
+    seedExperimentObservationAuthority(database, contextOne, {
+      missionId: verified.mission.id,
+      productId: verified.mission.productId!,
+      adEntityId: verified.decision.adEntityId!,
+      clicks: 10,
+      cost: 15,
+      orders: 1,
+      sales: 50,
+    });
+    currentNow = new Date('2026-07-30T12:00:00.000Z');
+
+    const paused = repository.evaluateExperiment(contextOne, {
+      id: running.id,
+      expectedRevision: running.revision,
+      actorId: 'experiment-evaluator',
+    });
+
+    expect(paused.status).toBe('paused');
+    expect(paused.conclusion).toContain('守护栏触发，实验已停止继续观察');
+    expect(paused.conclusion).toContain('广告订单结果为基线的 50%');
+    const experimentEffects = repository.listCausalEvents(contextOne, { missionId: verified.mission.id })
+      .filter((event) => event.entityId === running.id);
+    expect(experimentEffects.filter((event) => event.eventType === 'experiment_guardrail_triggered'))
+      .toHaveLength(1);
+    expect(experimentEffects.filter((event) => event.eventType === 'experiment_completed'))
+      .toHaveLength(0);
+    expect(repository.getMission(contextOne, verified.mission.id)).toMatchObject({
+      status: 'blocked',
+      phase: 'effect',
+      revision: verified.mission.revision + 1,
+    });
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: paused.id,
+      expectedRevision: paused.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Ignore the measured guardrail and keep running.',
+    }), 'STATE_CONFLICT');
+    expect(repository.getExperiment(contextOne, paused.id)).toMatchObject({
+      status: 'paused',
+      revision: paused.revision,
+      conclusion: paused.conclusion,
+    });
+  });
+
+  it('keeps an Experiment running when an operator tries to complete it before the observation window ends', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-early-completion',
+      missionId: verified.mission.id,
+      name: 'Observe one verified keyword intervention',
+      hypothesis: 'The bounded keyword bid change improves ACOS without breaching the order guardrail.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-1`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: { bidUsd: 1 },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start the evidence-bound observation window.',
+    });
+
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: running.id,
+      expectedRevision: running.revision,
+      status: 'completed',
+      actorId: 'operator-one',
+      reason: 'Looks good to me.',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, running.id)).toMatchObject({
+      status: 'running',
+      revision: running.revision,
+      conclusion: undefined,
+    });
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id })
+      .filter((event) => event.entityId === running.id && event.eventType === 'experiment_completed'))
+      .toEqual([]);
+  });
+
+  it('freezes the Experiment causal contract after its first verified start', () => {
+    const { repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-frozen-after-start',
+      missionId: verified.mission.id,
+      name: 'Freeze one verified intervention',
+      hypothesis: 'The verified bid reduction improves ACOS without breaching the order guardrail.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: verified.mission.productId,
+      adEntityId: verified.decision.adEntityId,
+      baseline: { ignored: true },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start from the verified intervention.',
+    });
+    const paused = repository.transitionExperiment(contextOne, {
+      id: running.id,
+      expectedRevision: running.revision,
+      status: 'paused',
+      actorId: 'operator-one',
+      reason: 'Pause without changing the causal contract.',
+    });
+
+    expectRepositoryError(() => repository.updateExperiment(contextOne, {
+      id: paused.id,
+      expectedRevision: paused.revision,
+      actorId: 'operator-one',
+      patch: { variant: { bidUsd: 0.5, onlyVariable: 'keyword_bid' } },
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, paused.id)).toMatchObject({
+      status: 'paused',
+      revision: paused.revision,
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+    });
+  });
+
+  it('keeps an Experiment running after the window when required metric snapshots are missing', () => {
+    let currentNow = new Date(NOW);
+    const { repository, contextOne } = createHarness(() => currentNow);
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const draft = repository.createExperiment(contextOne, {
+      id: 'experiment-missing-evaluation-snapshots',
+      missionId: verified.mission.id,
+      name: 'Require measured experiment results',
+      hypothesis: 'The keyword intervention improves ACOS while preserving attributed orders.',
+      primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'],
+      guardrailCriteria: ['广告订单 >= 95%'],
+      productId: `${contextOne.storeId}-product-1`,
+      adEntityId: `${contextOne.storeId}-keyword-1`,
+      baseline: { bidUsd: 1 },
+      variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: '2026-07-22T12:00:00.000Z',
+      observationEndsAt: '2026-07-29T12:00:00.000Z',
+    });
+    const running = repository.transitionExperiment(contextOne, {
+      id: draft.id,
+      expectedRevision: draft.revision,
+      status: 'running',
+      actorId: 'operator-one',
+      reason: 'Start the evidence-bound observation window.',
+    });
+    currentNow = new Date('2026-07-30T12:00:00.000Z');
+
+    expectRepositoryError(() => repository.transitionExperiment(contextOne, {
+      id: running.id,
+      expectedRevision: running.revision,
+      status: 'completed',
+      actorId: 'operator-one',
+      reason: 'The operator believes the result is positive.',
+    }), 'STATE_CONFLICT');
+
+    expect(repository.getExperiment(contextOne, running.id)).toMatchObject({
+      status: 'running',
+      revision: running.revision,
+      conclusion: undefined,
+    });
+  });
+
   it('retains decision history, experiment observations, evidence, and causal corrections', () => {
     const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
@@ -2192,6 +4038,23 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       reason: 'Reload readback matched 0.94 USD.',
     });
     expect(verified.status).toBe('verified');
+    const readbackMission = repository.transitionMission(contextOne, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: 'active',
+      phase: 'readback',
+      actorId: 'executor-one',
+      reason: 'Execution completed with independent reload readback.',
+    });
+    repository.appendMissionCheckpoint(contextOne, {
+      id: `readback-checkpoint-${mission.id}`,
+      missionId: mission.id,
+      stage: 'READBACK',
+      title: '广告执行回读',
+      status: 'verified',
+      evidenceCount: 3,
+      actorId: 'executor-one',
+    });
     expect(repository.listDecisionHistory(contextOne, decision.id).map((item) => item.eventType))
       .toEqual(['created', 'revised', 'approved', 'executed', 'verified']);
     expect(() => database.prepare(`
@@ -2200,7 +4063,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
 
     const experiment = repository.createExperiment(contextOne, {
       id: 'experiment-one',
-      missionId: mission.id,
+      missionId: readbackMission.id,
       name: 'Bid reduction observation',
       hypothesis: 'A six-percent bid reduction lowers ACOS without material sales loss.',
       primaryMetric: 'acos',
@@ -2209,7 +4072,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       productId: `${contextOne.storeId}-product-1`,
       adEntityId: `${contextOne.storeId}-keyword-1`,
       baseline: { bid: 1, acos: 0.41 },
-      variant: { bid: 0.94 },
+      variant: { bid: 0.94, bidUsd: 0.94, onlyVariable: 'keyword_bid' },
       observationStartsAt: '2026-07-22T12:00:00.000Z',
       observationEndsAt: '2026-07-29T12:00:00.000Z',
     });

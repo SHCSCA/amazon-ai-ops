@@ -1,0 +1,268 @@
+{
+  "schemaVersion": "v16.requirements/0.1",
+  "version": "v1.6.0",
+  "prdReference": "docs/amazon_ai_ops_agent_prd_v1_6_0.md",
+  "requirements": [
+    {
+      "id": "V16-ANA-001",
+      "title": "Analysis Authority - Grant Issuance",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.7",
+      "description": "Analysis authority must issue grants bound to exact store, batch, and report snapshot",
+      "testIds": ["V16-T-L1-ANALYSIS-AUTH", "V16-T-L2-CROSS-DOMAIN", "V16-T-L3-WORKFLOW"]
+    },
+    {
+      "id": "V16-ANA-002",
+      "title": "Analysis Authority - Revision Binding",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.7",
+      "description": "Analysis grants must bind to latest Stage5 revision and fail when stale",
+      "testIds": ["V16-T-L1-ANALYSIS-AUTH"]
+    },
+    {
+      "id": "V16-GRANT-001",
+      "title": "Execution Grant - Authority Validation",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.8",
+      "description": "Execution grants must validate current store authority and Stage6 session",
+      "testIds": ["V16-T-L1-EXECUTION-AUTH", "V16-T-L2-CROSS-DOMAIN", "V16-T-L3-WORKFLOW"]
+    },
+    {
+      "id": "V16-GRANT-002",
+      "title": "Execution Grant - Session Binding",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.8",
+      "description": "Execution grants must bind to current Stage6 identity and session",
+      "testIds": ["V16-T-L1-EXECUTION-AUTH"]
+    },
+    {
+      "id": "V16-MIS-001",
+      "title": "Mission Domain - Store Isolation",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.8",
+      "description": "Mission, Policy, Experiment, and AnalysisRun must be strictly store-scoped",
+      "testIds": ["V16-T-L1-MISSION-DOMAIN", "V16-T-L2-CROSS-DOMAIN"]
+    },
+    {
+      "id": "V16-MIS-002",
+      "title": "Mission Domain - CRUD Operations",
+      "category": "Core Domain",
+      "priority": "P0",
+      "prdSection": "12.8",
+      "description": "Mission domain must support create, read, update, and archive operations",
+      "testIds": ["V16-T-L1-MISSION-DOMAIN"]
+    },
+    {
+      "id": "V16-DATA-001",
+      "title": "Data Pipeline - Formal Gate",
+      "category": "Data Pipeline",
+      "priority": "P0",
+      "prdSection": "12.6",
+      "description": "Analysis must block when 8-report snapshot is incomplete",
+      "testIds": ["V16-T-L1-FORMAL-DATA-GATE", "V16-T-L3-WORKFLOW"]
+    },
+    {
+      "id": "V16-DATA-002",
+      "title": "Data Pipeline - Report Completeness",
+      "category": "Data Pipeline",
+      "priority": "P0",
+      "prdSection": "12.6",
+      "description": "System must track and validate all 8 required report types",
+      "testIds": ["V16-T-L1-FORMAL-DATA-GATE", "V16-T-L3-WORKFLOW"]
+    },
+    {
+      "id": "V16-DATA-003",
+      "title": "Data Pipeline - Lingxing Collection",
+      "category": "Data Pipeline",
+      "priority": "P1",
+      "prdSection": "12.6",
+      "description": "Lingxing collection coordinator must automate report downloads",
+      "testIds": []
+    },
+    {
+      "id": "V16-DATA-004",
+      "title": "Data Pipeline - SSO Session",
+      "category": "Data Pipeline",
+      "priority": "P1",
+      "prdSection": "12.6",
+      "description": "Lingxing SSO must maintain valid ERP session",
+      "testIds": []
+    },
+    {
+      "id": "V16-DATA-005",
+      "title": "Data Pipeline - Collection Coordinator",
+      "category": "Data Pipeline",
+      "priority": "P1",
+      "prdSection": "12.6",
+      "description": "Collection coordinator must orchestrate multi-report workflows",
+      "testIds": []
+    },
+    {
+      "id": "V16-AI-001",
+      "title": "AI Adapter - Strategy Diagnosis",
+      "category": "AI Integration",
+      "priority": "P1",
+      "prdSection": "12.12",
+      "description": "AI adapter must generate structured strategy diagnosis",
+      "testIds": []
+    },
+    {
+      "id": "V16-AI-002",
+      "title": "AI Adapter - Action Reasoning",
+      "category": "AI Integration",
+      "priority": "P1",
+      "prdSection": "12.12",
+      "description": "AI adapter must explain recommended actions with evidence",
+      "testIds": []
+    },
+    {
+      "id": "V16-AI-003",
+      "title": "AI Adapter - OpenAI Compatibility",
+      "category": "AI Integration",
+      "priority": "P1",
+      "prdSection": "12.12",
+      "description": "AI adapter must support OpenAI-compatible providers",
+      "testIds": []
+    },
+    {
+      "id": "V16-DEC-001",
+      "title": "Decisioning - Recommendation Eligibility",
+      "category": "Decision Engine",
+      "priority": "P0",
+      "prdSection": "12.7",
+      "description": "Recommendations must validate against current authority before approval",
+      "testIds": []
+    },
+    {
+      "id": "V16-AUTH-001",
+      "title": "Shared Types - Authority Identity",
+      "category": "Type System",
+      "priority": "P0",
+      "prdSection": "12.13",
+      "description": "Shared types must define authority identity contracts",
+      "testIds": []
+    },
+    {
+      "id": "V16-AUTH-002",
+      "title": "Shared Types - Repository Integration",
+      "category": "Type System",
+      "priority": "P0",
+      "prdSection": "12.13",
+      "description": "Preload API must expose authority contracts to renderer",
+      "testIds": ["V16-T-L4-UI-CONTRACT"]
+    },
+    {
+      "id": "V16-ENG-001",
+      "title": "L2 Engineering - Typecheck",
+      "category": "Engineering Quality",
+      "priority": "P0",
+      "prdSection": "13.2",
+      "description": "All workspace packages must pass TypeScript strict mode",
+      "testIds": []
+    },
+    {
+      "id": "V16-ENG-002",
+      "title": "L2 Engineering - Renderer Build",
+      "category": "Engineering Quality",
+      "priority": "P0",
+      "prdSection": "13.2",
+      "description": "Renderer must build without errors",
+      "testIds": []
+    },
+    {
+      "id": "V16-ENG-003",
+      "title": "L2 Engineering - Package Scripts",
+      "category": "Engineering Quality",
+      "priority": "P0",
+      "prdSection": "13.2",
+      "description": "Package scripts must pass contract verification",
+      "testIds": []
+    },
+    {
+      "id": "V16-UI-001",
+      "title": "L3 Business UI - Mission Control Shell",
+      "category": "User Interface",
+      "priority": "P0",
+      "prdSection": "13.3",
+      "description": "Mission Control shell must provide workspace navigation",
+      "testIds": ["V16-T-L4-UI-CONTRACT"]
+    },
+    {
+      "id": "V16-UI-002",
+      "title": "L3 Business UI - Workspace Routing",
+      "category": "User Interface",
+      "priority": "P0",
+      "prdSection": "13.3",
+      "description": "Workspace routing must isolate store context",
+      "testIds": ["V16-T-L4-UI-CONTRACT"]
+    },
+    {
+      "id": "V16-ENG-010",
+      "title": "L8 Readiness - Aggregation Verifier",
+      "category": "Delivery Quality",
+      "priority": "P0",
+      "prdSection": "13.8",
+      "description": "L8 aggregation must validate all gates and generate readiness report",
+      "testIds": []
+    },
+    {
+      "id": "V16-MODE-001",
+      "title": "Operating Mode - Per-Store Configuration",
+      "category": "Operating Mode",
+      "priority": "P0",
+      "prdSection": "7.2",
+      "description": "Each store must persist its own operating mode (人工审批/半自动/策略内自动)",
+      "testIds": []
+    },
+    {
+      "id": "V16-MODE-002",
+      "title": "Operating Mode - Mode Switching",
+      "category": "Operating Mode",
+      "priority": "P0",
+      "prdSection": "7.2",
+      "description": "Mode switching must require explicit confirmation dialog",
+      "testIds": []
+    },
+    {
+      "id": "V16-EXEC-001",
+      "title": "Execution Safety - V1 Action Scope",
+      "category": "Execution Safety",
+      "priority": "P0",
+      "prdSection": "8.3",
+      "description": "V1 must permit only keyword bid adjustments",
+      "testIds": []
+    },
+    {
+      "id": "V16-EXEC-002",
+      "title": "Execution Safety - Fail-Closed Gates",
+      "category": "Execution Safety",
+      "priority": "P0",
+      "prdSection": "8.3",
+      "description": "Execution must validate 8/8 reports, analysis completion, Ads session, store match, action type, approval, and readback requirement",
+      "testIds": []
+    },
+    {
+      "id": "V16-ARUN-001",
+      "title": "Analysis Run - Lifecycle Management",
+      "category": "Analysis Domain",
+      "priority": "P0",
+      "prdSection": "6.3",
+      "description": "Analysis run must progress through creation, verification, analysis, generation, and completion",
+      "testIds": []
+    },
+    {
+      "id": "V16-ARUN-002",
+      "title": "Analysis Run - Supersession Logic",
+      "category": "Analysis Domain",
+      "priority": "P0",
+      "prdSection": "6.3",
+      "description": "Re-running identical input must supersede older run and its recommendations",
+      "testIds": []
+    }
+  ]
+}

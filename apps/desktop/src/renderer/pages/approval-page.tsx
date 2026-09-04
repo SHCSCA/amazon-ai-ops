@@ -10,6 +10,7 @@ import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
+import { localizeProductStage } from '@amazon-ai-ops/business-presenters';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
@@ -635,20 +636,7 @@ function evidenceContextLine(item: AiEvidenceDisplayItemView): string {
 }
 
 function productStageLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '关键词探索',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    clearance: '清货',
-    declining_repair: '衰退修复',
-    launch: '新品启动',
-    growth: '增长期',
-    stabilize: '稳定期',
-    harvest: '利润收割',
-  };
-  return labels[String(stage || '')] || String(stage || '未配置');
+  return localizeProductStage(stage);
 }
 
 export function ApprovalPage() {

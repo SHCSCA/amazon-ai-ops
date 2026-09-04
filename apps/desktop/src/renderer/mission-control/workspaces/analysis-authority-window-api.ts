@@ -77,6 +77,12 @@ export function createPreviewAnalysisAuthorityApi(): AnalysisAuthorityRendererAp
         proposals: projection.proposals,
         generatedRecommendations: projection.proposals.length,
         skippedUnsupportedRecommendations: 0,
+        recommendationSummary: {
+          candidates: projection.proposals.length,
+          created: projection.proposals.length,
+          refreshed: 0,
+          reused: 0,
+        },
         ai: {
           configured: true,
           invoked: true,

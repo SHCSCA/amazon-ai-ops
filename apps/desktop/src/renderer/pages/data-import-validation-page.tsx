@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { LingxingCollectionJobSnapshot, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { localizeReportStatus } from '@amazon-ai-ops/business-presenters';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
@@ -232,15 +233,8 @@ export function dataImportOpenArtifactButtonView(input: {
 }
 
 function reportStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    missing: '缺少真实文件',
-    downloaded: '已下载待入库',
-    imported: '已入库',
-    import_failed: '导入失败',
-    failed: '失败',
-    ready: '可下载',
-  };
-  return labels[status] || status;
+  const label = localizeReportStatus(status);
+  return label === '状态待同步' ? status : label;
 }
 
 function feedbackClassName(tone: StatusTone): string {

@@ -1,4 +1,5 @@
 import { money } from './format-money';
+import type { Currency } from './currency';
 import { localizeMatchType } from './match-type';
 import { localizeObjectType } from './object-type';
 import { normalizeToken } from './normalize-token';
@@ -11,7 +12,7 @@ import { percent } from './format-percent';
  * trailing `· matchType` decoration that appears in some fixtures.
  */
 export function businessObjectName(
-  item: { objectName?: unknown; keyword?: unknown; title?: unknown; objectType?: unknown },
+  item: { objectName?: unknown; keyword?: unknown; title?: unknown; objectType?: unknown; entityType?: unknown },
   typeField: 'objectType' | 'entityType' = 'objectType',
 ): string {
   const objectType = normalizeToken(item[typeField]);
@@ -70,7 +71,12 @@ export function formattedChangeValue(
     || actionType === 'adjust_keyword_bid'
     || actionType === 'budget_change'
   ) {
-    return money(value, typeof item.currency === 'string' ? item.currency : 'USD');
+    const currency: Currency = (typeof item.currency === 'string' && 
+      (item.currency === 'USD' || item.currency === 'EUR' || item.currency === 'GBP' || 
+       item.currency === 'JPY' || item.currency === 'CAD' || item.currency === 'AUD'))
+      ? item.currency as Currency
+      : 'USD';
+    return money(value, currency);
   }
   if (value === null || value === undefined) return '—';
   return String(value);

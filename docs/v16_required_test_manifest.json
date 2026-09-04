@@ -1,0 +1,808 @@
+{
+  "schemaVersion": "v16.manifest/0.1",
+  "manifestVersion": "0.1",
+  "prdReference": {
+    "path": "docs/amazon_ai_ops_agent_prd_v1_6_0.md",
+    "version": "1.1"
+  },
+  "companionSpec": {
+    "id": "V16-COMPANION-VT",
+    "version": "0.1"
+  },
+  "identity": {
+    "sourceRevision": "uncommitted:v16-m0-seed",
+    "packageVersion": "v16.0.0",
+    "note": "Replace sourceRevision with git commit SHA before any formal run. packageVersion must match apps/desktop/package.json version."
+  },
+  "buckets": {
+    "active": [
+      {
+        "bucketId": "L1-domain-invariants",
+        "label": "L1 单元与合同 — 主域不变量",
+        "layer": "L1",
+        "producer": "pnpm --filter @amazon-ai-ops/desktop test --run --reporter=basic",
+        "verifier": "node scripts/verify-v16-l1-unit-contract.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L1-repo-contracts",
+        "label": "L1 单元与合同 — 仓库层合同",
+        "layer": "L1",
+        "producer": "pnpm --filter @amazon-ai-ops/local-db test --run",
+        "verifier": "node scripts/verify-v16-l1-repo-contracts.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L1-ai-adapter-contracts",
+        "label": "L1 单元与合同 — AI 适配器合同",
+        "layer": "L1",
+        "producer": "pnpm --filter @amazon-ai-ops/ai-adapter test --run",
+        "verifier": "node scripts/verify-v16-l1-ai-contracts.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L1-shared-types",
+        "label": "L1 单元与合同 — 共享类型",
+        "layer": "L1",
+        "producer": "pnpm --filter @amazon-ai-ops/shared-types test --run",
+        "verifier": "node scripts/verify-v16-l1-shared-types.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L1-preload-typed",
+        "label": "L1 单元与合同 — Preload 类型桥",
+        "layer": "L1",
+        "producer": "pnpm --filter @amazon-ai-ops/desktop test --run apps/desktop/src/preload",
+        "verifier": "node scripts/verify-v16-l1-preload-typed.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L2-typecheck",
+        "label": "L2 静态工程 — TypeScript 类型检查",
+        "layer": "L2",
+        "producer": "pnpm --filter @amazon-ai-ops/desktop run typecheck",
+        "verifier": "node scripts/verify-v16-l2-static.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L2-renderer-build",
+        "label": "L2 静态工程 — Renderer 构建",
+        "layer": "L2",
+        "producer": "pnpm --filter @amazon-ai-ops/desktop run build:renderer",
+        "verifier": "node scripts/verify-v16-l2-static.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L2-package-scripts",
+        "label": "L2 静态工程 — Package 脚本合同",
+        "layer": "L2",
+        "producer": "node scripts/package-scripts.test.mjs",
+        "verifier": "node scripts/verify-v16-l2-static.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L3-business-ui-dev",
+        "label": "L3 业务集成 (dev) — 开发环境 UI smoke",
+        "layer": "L3",
+        "producer": "node scripts/smoke-current-business-ui.js",
+        "verifier": "node scripts/verify-v16-l3-business-dev.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L3-readiness-aggregation-dev",
+        "label": "L3 业务集成 (dev) — 生产就绪性聚合",
+        "layer": "L3",
+        "producer": "node scripts/verify-mission-control-production-readiness.js",
+        "verifier": "node scripts/verify-v16-l3-business-dev.js",
+        "blockedBy": []
+      },
+      {
+        "bucketId": "L8-readiness-aggregation",
+        "label": "L8 就绪性聚合",
+        "layer": "L8",
+        "producer": "node scripts/aggregate-v16-readiness.js",
+        "verifier": "node scripts/verify-v16-l8-readiness-aggregation.js",
+        "blockedBy": []
+      }
+    ],
+    "gated": [
+      {
+        "bucketId": "L4-package-ui",
+        "label": "L4 Package UI (gated — user ban)",
+        "layer": "L4",
+        "producer": "pnpm run evidence:package-ui",
+        "verifier": "node scripts/verify-v16-l4-package-ui.js",
+        "blockedBy": ["user-ban-package-ui"]
+      },
+      {
+        "bucketId": "L5-package-security",
+        "label": "L5 Package 安全 (gated — user ban)",
+        "layer": "L5",
+        "producer": "pnpm run smoke:package-launch && pnpm run smoke:package-security-boundaries && pnpm run smoke:package-adversarial-node-env",
+        "verifier": "node scripts/verify-v16-l5-package-security.js",
+        "blockedBy": ["user-ban-zip-launch"]
+      },
+      {
+        "bucketId": "L6-formal-db",
+        "label": "L6 正式 DB 取证 (gated — user ban)",
+        "layer": "L6",
+        "producer": "node scripts/export-mission-control-authority-snapshot.js",
+        "verifier": "node scripts/verify-v16-l6-formal-db.js",
+        "blockedBy": ["user-ban-formal-db"]
+      },
+      {
+        "bucketId": "L7-canary-manual",
+        "label": "L7 Canary — 人工模式 (gated — user ban)",
+        "layer": "L7",
+        "producer": "node scripts/export-mission-control-execution-canary-evidence.js --mode=manual",
+        "verifier": "node scripts/verify-v16-l7-canary.js",
+        "blockedBy": ["user-ban-real-ads"]
+      },
+      {
+        "bucketId": "L7-canary-policy-auto",
+        "label": "L7 Canary — 策略自动模式 (gated — user ban)",
+        "layer": "L7",
+        "producer": "node scripts/export-mission-control-execution-canary-evidence.js --mode=policy-auto",
+        "verifier": "node scripts/verify-v16-l7-canary.js",
+        "blockedBy": ["user-ban-real-ads"]
+      }
+    ]
+  },
+  "tests": [
+    {
+      "testId": "V16-T-L1-ANALYSIS-AUTH",
+      "title": "Analysis Authority L1 主域不变量",
+      "notes": "v1.5.1 focused authority baseline: reuses apps/desktop/src/main/analysis-authority-service.test.ts. v1.6.0 delta: V16-ANA-003/004 entries to be added.",
+      "description": "Analysis Authority 主域不变量 — production_full 血缘、production_full lineage、阶段推进与 decision 取代 chain 的事务一致性",
+      "requirementIds": ["V16-ANA-001", "V16-ANA-002"],
+      "acceptanceIds": ["AC-ANA-001", "AC-ANA-002"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/analysis-authority-service.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_analysis_authority.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_analysis_authority.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 focused authority baseline: reuses apps/desktop/src/main/analysis-authority-service.test.ts. v1.6.0 delta: V16-ANA-003/004 entries to be added."
+    },
+    {
+      "testId": "V16-T-L1-EXECUTION-AUTH",
+      "title": "Execution Authority L1 主域不变量",
+      "notes": "v1.5.1 focused authority baseline. v1.6.0 delta: V16-GRANT-006 slot residual state machine tests to be added.",
+      "description": "Execution Authority 主域不变量 — Grant 不可变、residual state machine、revision CAS、append-only event sourcing",
+      "requirementIds": ["V16-GRANT-001", "V16-GRANT-006"],
+      "acceptanceIds": ["AC-GRANT-001", "AC-GRANT-006"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/execution-authority-service.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_execution_authority.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_execution_authority.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 focused authority baseline. v1.6.0 delta: V16-GRANT-006 slot residual state machine tests to be added."
+    },
+    {
+      "testId": "V16-T-L1-MISSION-DOMAIN",
+      "title": "Mission Domain L1 主域不变量",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-MIS-004 lifecycle archive/restore tests.",
+      "description": "Mission Domain 主域不变量 — 阶段不可跳、归档/恢复不改终态、跨产品 REFERENCE_CONFLICT",
+      "requirementIds": ["V16-MIS-001", "V16-MIS-002"],
+      "acceptanceIds": ["AC-MIS-001", "AC-MIS-002"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/mission-domain-service.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_mission_domain.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_mission_domain.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-MIS-004 lifecycle archive/restore tests."
+    },
+    {
+      "testId": "V16-T-L1-FORMAL-DATA-GATE",
+      "title": "Formal Business Data Gate L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DATA-010 template-compatibility-manifest unknown/ambiguous rejection.",
+      "description": "Formal Business Data Gate — exact 8/8 阻断、跨 batch 不拼接、production_full lineage 校验",
+      "requirementIds": ["V16-DATA-001", "V16-DATA-002"],
+      "acceptanceIds": ["AC-DATA-001", "AC-DATA-002"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/formal-business-data-gate.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_formal_data_gate.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_formal_data_gate.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DATA-010 template-compatibility-manifest unknown/ambiguous rejection."
+    },
+    {
+      "testId": "V16-T-L1-LINGXING-COLLECTION",
+      "title": "Lingxing Collection Coordinator L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DATA-007 store-switch stale-task rejection.",
+      "description": "Lingxing Collection Coordinator — store 切换过期任务拒绝、runner lineage 不被信任、生产 importer 隔离",
+      "requirementIds": ["V16-DATA-003", "V16-DATA-004"],
+      "acceptanceIds": ["AC-DATA-003", "AC-DATA-004"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/lingxing-collection-coordinator.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_lingxing_collection.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_lingxing_collection.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DATA-007 store-switch stale-task rejection."
+    },
+    {
+      "testId": "V16-T-L1-LINGXING-SSO",
+      "title": "Lingxing Ads SSO L1",
+      "notes": "v1.5.1 baseline.",
+      "description": "Lingxing Ads SSO — session/identity 主链、Ads 隔离 BrowserContext、ERP→Ads 续接、店铺切换隔离",
+      "requirementIds": ["V16-DATA-005"],
+      "acceptanceIds": ["AC-DATA-005"],
+      "layer": "L1",
+      "bucketId": "L1-domain-invariants",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/main/lingxing-ads-sso.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_lingxing_sso.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-unit-contract.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_lingxing_sso.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline."
+    },
+    {
+      "testId": "V16-T-L1-AI-AD-STRATEGY",
+      "title": "AI Strategy Diagnosis Adapter L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-AI-004 A0-A3 value-tier recording tests.",
+      "description": "AI Strategy Diagnosis Adapter — 8192 token floor、温度守恒、A0-A3 价值等级、fallback 阻断",
+      "requirementIds": ["V16-AI-001", "V16-AI-002"],
+      "acceptanceIds": ["AC-AI-001", "AC-AI-002"],
+      "layer": "L1",
+      "bucketId": "L1-ai-adapter-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/ai-adapter", "test", "--run", "--reporter=basic", "packages/ai-adapter/src/ad-strategy-diagnosis.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_ai_ad_strategy.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-ai-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_ai_ad_strategy.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-AI-004 A0-A3 value-tier recording tests."
+    },
+    {
+      "testId": "V16-T-L1-AI-OPENAI-COMPAT",
+      "title": "OpenAI-compatible Adapter L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-AI-005 cost=unknown not zero tests.",
+      "description": "OpenAI-compatible Adapter — usage/cost 未记零、A0-A3、AbortSignal 贯穿、8192 token floor",
+      "requirementIds": ["V16-AI-003"],
+      "acceptanceIds": ["AC-AI-003"],
+      "layer": "L1",
+      "bucketId": "L1-ai-adapter-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/ai-adapter", "test", "--run", "--reporter=basic", "packages/ai-adapter/src/openai-compatible.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_ai_openai_compat.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-ai-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_ai_openai_compat.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-AI-005 cost=unknown not zero tests."
+    },
+    {
+      "testId": "V16-T-L1-AI-AD-REASON",
+      "title": "AI Ad Action Reason Adapter L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DEC-002 reason-non-empty rejection tests.",
+      "description": "AI Ad Action Reason Adapter — 解释非空、结构化 JSON 验证、fallback 阻断",
+      "requirementIds": ["V16-DEC-001"],
+      "acceptanceIds": ["AC-DEC-001"],
+      "layer": "L1",
+      "bucketId": "L1-ai-adapter-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/ai-adapter", "test", "--run", "--reporter=basic", "packages/ai-adapter/src/ad-action-reason.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_ai_ad_reason.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-ai-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_ai_ad_reason.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "v1.5.1 baseline. v1.6.0 delta: V16-DEC-002 reason-non-empty rejection tests."
+    },
+    {
+      "testId": "V16-T-L1-REPO-ANALYSIS-AUTH",
+      "title": "Analysis Authority Repo L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: AC-ANA-007 immutable proposal snapshot tests.",
+      "description": "Analysis Authority 仓储层合同 — production_full lineage seed、正式建议快照不可变、append-only events",
+      "requirementIds": ["V16-ANA-001", "V16-ANA-007"],
+      "acceptanceIds": ["AC-ANA-001", "AC-ANA-007"],
+      "layer": "L1",
+      "bucketId": "L1-repo-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/local-db", "test", "--run", "--reporter=basic", "packages/local-db/src/sqlite/repositories/analysis-authority-repo.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_repo_analysis_auth.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-repo-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_repo_analysis_auth.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L1-REPO-EXECUTION-AUTH",
+      "title": "Execution Authority Repo L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: AC-GRANT-006 residual state machine complete coverage.",
+      "description": "Execution Authority 仓储层合同 — Grant 不可变 + append-only events、residual state machine、revision CAS",
+      "requirementIds": ["V16-GRANT-001", "V16-GRANT-006"],
+      "acceptanceIds": ["AC-GRANT-001", "AC-GRANT-006"],
+      "layer": "L1",
+      "bucketId": "L1-repo-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/local-db", "test", "--run", "--reporter=basic", "packages/local-db/src/sqlite/repositories/execution-authority-repo.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_repo_execution_auth.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-repo-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_repo_execution_auth.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L1-REPO-MISSION-DOMAIN",
+      "title": "Mission Domain Repo L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: AC-MIS-004 archive/restore lifecycle complete.",
+      "description": "Mission Domain 仓储层合同 — STATE_CONFLICT fail-closed、UNKNOWN 阻断记忆、归档/恢复不改终态、跨产品 REFERENCE_CONFLICT",
+      "requirementIds": ["V16-MIS-001", "V16-MIS-004"],
+      "acceptanceIds": ["AC-MIS-001", "AC-MIS-004"],
+      "layer": "L1",
+      "bucketId": "L1-repo-contracts",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/local-db", "test", "--run", "--reporter=basic", "packages/local-db/src/sqlite/repositories/mission-domain-repo.test.ts"],
+        "producesArtifact": "output/v16-evidence/v16_l1_repo_mission_domain.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-repo-contracts.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_repo_mission_domain.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L1-SHARED-TYPES",
+      "title": "Shared Types L1 共享类型合同",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: AC-MNT-001 store-scoped type guards.",
+      "description": "Shared Types 共享类型 L1 — Main/Preload/Renderer 共享类型合同、store-scoped 类型守卫",
+      "requirementIds": ["V16-MNT-001", "V16-SEC-002"],
+      "acceptanceIds": ["AC-MNT-001", "AC-SEC-002"],
+      "layer": "L1",
+      "bucketId": "L1-shared-types",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/shared-types", "test", "--run"],
+        "producesArtifact": "output/v16-evidence/v16_l1_shared_types.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-shared-types.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_shared_types.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L1-PRELOAD-TYPED",
+      "title": "Preload Typed API Bridge L1",
+      "notes": "v1.5.1 baseline. v1.6.0 delta: AC-SEC-002 constrained bridge validation.",
+      "description": "Preload Typed API Bridge — 类型化桥、store-scoped、不得暴露任意 Electron/文件/数据库能力",
+      "requirementIds": ["V16-MNT-001", "V16-SEC-002"],
+      "acceptanceIds": ["AC-MNT-001", "AC-SEC-002"],
+      "layer": "L1",
+      "bucketId": "L1-preload-typed",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "test", "--run", "--reporter=basic", "apps/desktop/src/preload"],
+        "producesArtifact": "output/v16-evidence/v16_l1_preload_typed.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l1-preload-typed.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l1_preload_typed.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L2-TYPECHECK",
+      "title": "L2 TypeScript 类型检查",
+      "notes": "User ban currently blocks typecheck in this round. Test scaffold only.",
+      "description": "L2 TypeScript 类型检查 — 可变 authority 事务性、Main/Preload 共享类型",
+      "requirementIds": ["V16-NFR-001", "V16-MNT-001"],
+      "acceptanceIds": ["AC-NFR-001", "AC-MNT-001"],
+      "layer": "L2",
+      "bucketId": "L2-typecheck",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "run", "typecheck"],
+        "producesArtifact": "output/v16-evidence/v16_l2_typecheck.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l2-static.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l2_typecheck.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L2-RENDERER-BUILD",
+      "title": "L2 Renderer 构建",
+      "notes": "User ban currently blocks build in this round. Test scaffold only.",
+      "description": "L2 Renderer 构建 — 1366x768 可操作、秘密/路径不暴露",
+      "requirementIds": ["V16-UI-001", "V16-UI-006"],
+      "acceptanceIds": ["AC-UI-001", "AC-UI-006"],
+      "layer": "L2",
+      "bucketId": "L2-renderer-build",
+      "producer": {
+        "script": "pnpm",
+        "args": ["--filter", "@amazon-ai-ops/desktop", "run", "build:renderer"],
+        "producesArtifact": "output/v16-evidence/v16_l2_renderer_build.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l2-static.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l2_renderer_build.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L2-PACKAGE-SCRIPTS",
+      "title": "L2 Package 脚本合同",
+      "description": "L2 Package 脚本合同 — 共享类型 store-scoped、关键流程结构化事件",
+      "requirementIds": ["V16-MNT-001", "V16-MNT-002"],
+      "acceptanceIds": ["AC-MNT-001", "AC-MNT-002"],
+      "layer": "L2",
+      "bucketId": "L2-package-scripts",
+      "producer": {
+        "script": "node",
+        "args": ["scripts/package-scripts.test.mjs"],
+        "producesArtifact": "output/v16-evidence/v16_l2_package_scripts.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l2-static.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l2_package_scripts.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"]
+    },
+    {
+      "testId": "V16-T-L3-BUSINESS-UI-DEV",
+      "title": "L3 业务集成 (dev) — 开发环境 UI smoke",
+      "notes": "Dev-environment smoke only. NOT the same as L4 Package UI smoke.",
+      "description": "L3 业务集成 (dev) UI smoke — 弹窗可滚动/footer 可达、键盘焦点可见",
+      "requirementIds": ["V16-UI-001", "V16-UI-002"],
+      "acceptanceIds": ["AC-UI-001", "AC-UI-002"],
+      "layer": "L3",
+      "bucketId": "L3-business-ui-dev",
+      "producer": {
+        "script": "node",
+        "args": ["scripts/smoke-current-business-ui.js"],
+        "producesArtifact": "output/v16-evidence/v16_l3_business_ui_dev.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l3-business-dev.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l3_business_ui_dev.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "Dev-environment smoke only. NOT the same as L4 Package UI smoke."
+    },
+    {
+      "testId": "V16-T-L3-READINESS-AGG-DEV",
+      "title": "L3 业务集成 (dev) — 生产就绪性聚合",
+      "notes": "Re-targeted from v1.5.1 to v1.6.0 scope. Aggregator always reports APP_NEEDS_WORK while L4-L7 gated.",
+      "description": "L3 生产就绪性聚合 (dev) — UI-002 弹窗滚动 + UI-005 键盘焦点 + L8 聚合返回 APP_NEEDS_WORK 直到 L4-L7 解禁",
+      "requirementIds": ["V16-UI-002", "V16-MNT-002"],
+      "acceptanceIds": ["AC-UI-002", "AC-MNT-002"],
+      "layer": "L3",
+      "bucketId": "L3-readiness-aggregation-dev",
+      "producer": {
+        "script": "node",
+        "args": ["scripts/verify-mission-control-production-readiness.js"],
+        "producesArtifact": "output/v16-evidence/v16_l3_readiness_agg_dev.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l3-business-dev.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l3_readiness_agg_dev.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "Re-targeted from v1.5.1 to v1.6.0 scope. Aggregator always reports APP_NEEDS_WORK while L4-L7 gated."
+    },
+    {
+      "testId": "V16-T-L2-IA-NAVIGATION",
+      "title": "L2 信息架构导航验证",
+      "description": "验证六模块导航结构、22 intent 归属、StoreContext 隔离和受阻能力显示",
+      "requirementIds": ["V16-IA-001", "V16-IA-002", "V16-IA-003", "V16-IA-004"],
+      "acceptanceIds": ["AC-IA-001", "AC-IA-002", "AC-IA-003"],
+      "layer": "L2",
+      "bucketId": "L2-navigation-structure",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "apps/desktop/src/renderer/mission-control/mission-control-shell.test.tsx"],
+        "producesArtifact": "output/v16-evidence/l2_ia_navigation.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-IA-NAVIGATION"],
+        "consumesArtifact": "output/v16-evidence/l2_ia_navigation.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers navigation structure, intent assignment, and blocked capability display"
+    },
+    {
+      "testId": "V16-T-L2-CTX-STORE-ISOLATION",
+      "title": "L2 店铺上下文隔离",
+      "description": "验证切店后产品、报表、分析、建议、审批、Grant、执行、实验和记忆上下文完全替换",
+      "requirementIds": ["V16-CTX-001", "V16-CTX-002", "V16-CTX-003", "V16-CTX-005", "V16-CTX-006"],
+      "acceptanceIds": ["AC-CTX-001", "AC-CTX-002", "AC-CTX-003", "AC-CTX-005", "AC-CTX-006"],
+      "layer": "L2",
+      "bucketId": "L2-store-context",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "apps/desktop/src/main/mission-domain-service.test.ts", "-t", "store context"],
+        "producesArtifact": "output/v16-evidence/l2_ctx_store_isolation.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-CTX-STORE-ISOLATION"],
+        "consumesArtifact": "output/v16-evidence/l2_ctx_store_isolation.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers store switching isolation and async response invalidation"
+    },
+    {
+      "testId": "V16-T-L2-CTX-US-ONLY",
+      "title": "L2 US/USD 强制门禁",
+      "description": "验证非 US marketplace 或非 USD currency 时业务主链必须阻断",
+      "requirementIds": ["V16-CTX-004"],
+      "acceptanceIds": ["AC-CTX-004"],
+      "layer": "L2",
+      "bucketId": "L2-store-context",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "apps/desktop/src/main/mission-domain-service.test.ts", "-t", "US USD gate"],
+        "producesArtifact": "output/v16-evidence/l2_ctx_us_only.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-CTX-US-ONLY"],
+        "consumesArtifact": "output/v16-evidence/l2_ctx_us_only.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "V1.6.0 only supports US marketplace and USD currency"
+    },
+    {
+      "testId": "V16-T-L2-FLOW-STAGE-DRIVEN",
+      "title": "L2 阶段事实驱动",
+      "description": "验证阶段完成由 Main 持久化事实驱动，Renderer 不自行推进业务真相",
+      "requirementIds": ["V16-FLOW-001", "V16-FLOW-002", "V16-FLOW-003"],
+      "acceptanceIds": ["AC-FLOW-001", "AC-FLOW-002", "AC-FLOW-003"],
+      "layer": "L2",
+      "bucketId": "L2-mission-flow",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "apps/desktop/src/main/mission-domain-service.test.ts", "-t", "stage progression"],
+        "producesArtifact": "output/v16-evidence/l2_flow_stage_driven.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-FLOW-STAGE-DRIVEN"],
+        "consumesArtifact": "output/v16-evidence/l2_flow_stage_driven.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers stage display, persistence-driven progression, and authority invalidation"
+    },
+    {
+      "testId": "V16-T-L3-TODAY-PRIMARY-ACTION",
+      "title": "L3 今日任务主动作单一性",
+      "description": "验证首页只显示一个当前主动作，其他动作降为次级，阻断能力不显示为就绪",
+      "requirementIds": ["V16-TODAY-001", "V16-TODAY-002", "V16-TODAY-003", "V16-TODAY-004", "V16-TODAY-005"],
+      "acceptanceIds": ["AC-TODAY-001", "AC-TODAY-002", "AC-TODAY-003", "AC-TODAY-004", "AC-TODAY-005"],
+      "layer": "L3",
+      "bucketId": "L3-today-workspace",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "apps/desktop/src/renderer/mission-control/workspaces/missions-workspace.test.tsx", "-t", "primary action"],
+        "producesArtifact": "output/v16-evidence/l3_today_primary_action.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L3-TODAY-PRIMARY-ACTION"],
+        "consumesArtifact": "output/v16-evidence/l3_today_primary_action.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers single primary action, blocker display, and recovery entry points"
+    },
+    {
+      "testId": "V16-T-L2-DATA-8OF8-GATE",
+      "title": "L2 数据 8/8 完整性门禁",
+      "description": "验证只有同一 production_full lineage 的 exact 8/8 可进入正式分析，7/8 必须阻断",
+      "requirementIds": ["V16-DATA-001", "V16-DATA-002", "V16-DATA-003", "V16-DATA-011"],
+      "acceptanceIds": ["AC-DATA-001", "AC-DATA-002", "AC-DATA-003", "AC-DATA-011"],
+      "layer": "L2",
+      "bucketId": "L2-data-collection",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "packages/local-db/src/sqlite/repositories/analysis-authority-repo.test.ts", "-t", "8/8 gate"],
+        "producesArtifact": "output/v16-evidence/l2_data_8of8_gate.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-DATA-8OF8-GATE"],
+        "consumesArtifact": "output/v16-evidence/l2_data_8of8_gate.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers exact 8/8 requirement, no cross-batch splicing, and provider blocking"
+    },
+    {
+      "testId": "V16-T-L2-DATA-REPORT-METADATA",
+      "title": "L2 报表元数据完整性",
+      "description": "验证每个报表保留类型、文件 hash、大小、导入行数、指标行数和 source row 范围",
+      "requirementIds": ["V16-DATA-004", "V16-DATA-005", "V16-DATA-006", "V16-DATA-007"],
+      "acceptanceIds": ["AC-DATA-004", "AC-DATA-005", "AC-DATA-006", "AC-DATA-007"],
+      "layer": "L2",
+      "bucketId": "L2-data-collection",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "packages/report-parser/src/parser-lingxing-ad-reports.test.ts", "-t", "metadata"],
+        "producesArtifact": "output/v16-evidence/l2_data_report_metadata.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-DATA-REPORT-METADATA"],
+        "consumesArtifact": "output/v16-evidence/l2_data_report_metadata.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers report metadata, grain labeling, and store authority binding"
+    },
+    {
+      "testId": "V16-T-L2-ANALYSIS-RUN-BINDING",
+      "title": "L2 分析运行绑定完整性",
+      "description": "验证每个建议属于一个 Analysis Run/店铺/产品/时间窗/Evidence Package",
+      "requirementIds": ["V16-ANA-001", "V16-ANA-002", "V16-ANA-003", "V16-ANA-004"],
+      "acceptanceIds": ["AC-ANA-001", "AC-ANA-002", "AC-ANA-003", "AC-ANA-004"],
+      "layer": "L2",
+      "bucketId": "L2-analysis-run",
+      "producer": {
+        "script": "pnpm",
+        "args": ["vitest", "run", "packages/local-db/src/sqlite/repositories/analysis-authority-repo.test.ts", "-t", "run binding"],
+        "producesArtifact": "output/v16-evidence/l2_analysis_run_binding.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-required-test-manifest.js", "--test", "V16-T-L2-ANALYSIS-RUN-BINDING"],
+        "consumesArtifact": "output/v16-evidence/l2_analysis_run_binding.json",
+        "resultKind": "vitest-output"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision"],
+      "notes": "Covers run display, fingerprint reuse, and authority invalidation"
+    },
+    {
+      "testId": "V16-T-L8-READINESS-AGGREGATION",
+      "title": "L8 就绪性聚合",
+      "notes": "Aggregator runs today. Result always APP_NEEDS_WORK. APP_READY requires all gated buckets resolved per PRD §21.6.",
+      "description": "L8 就绪性聚合 — 读取 trace closure + 各项 evidence，输出 APP_NEEDS_WORK 直到 L4-L7 gated 解禁",
+      "requirementIds": ["V16-MNT-002", "V16-MNT-003"],
+      "acceptanceIds": ["AC-MNT-002", "AC-MNT-003"],
+      "layer": "L8",
+      "bucketId": "L8-readiness-aggregation",
+      "producer": {
+        "script": "node",
+        "args": ["scripts/aggregate-v16-readiness.js"],
+        "producesArtifact": "output/v16-evidence/v16_l8_readiness_aggregation.json"
+      },
+      "verifier": {
+        "script": "node",
+        "args": ["scripts/verify-v16-l8-readiness-aggregation.js"],
+        "consumesArtifact": "output/v16-evidence/v16_l8_readiness_aggregation.json",
+        "resultKind": "structured-gate"
+      },
+      "evidenceSchemaRef": "docs/v16_evidence.schema.json",
+      "identityBindings": ["sourceRevision", "packageVersion"],
+      "notes": "Aggregator runs today. Result always APP_NEEDS_WORK. APP_READY requires all gated buckets resolved per PRD §21.6."
+    }
+  ]
+}

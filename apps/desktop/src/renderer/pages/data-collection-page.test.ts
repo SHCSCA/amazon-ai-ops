@@ -11,9 +11,11 @@ import * as dataCollectionPage from './data-collection-page';
 import {
   buildDataCollectionTaskState,
   buildCollectionMonitorState,
+  buildLastActionResult,
   buildAuthoritativeCollectionDateRange,
   buildCollectionProgressPresentation,
   buildCollectionImportPresentation,
+  buildCollectionJobLineagePresentation,
   buildCollectionJobWorkspaceRow,
   CollectionJobWorkspace,
   collectionActionButtonDetail,
@@ -101,11 +103,13 @@ function collectionJob(input: {
   downloadedCount?: number;
   context?: typeof storeContext;
   canary?: boolean;
+  reportTypes?: LingxingCollectionJobSnapshot['request']['reportTypes'];
   importState?: LingxingCollectionJobSnapshot['importState'];
   importError?: string;
 } = {}): LingxingCollectionJobSnapshot {
   const downloadedCount = input.downloadedCount ?? 0;
   const checkpointState = input.checkpointState ?? 'failed';
+  const reportTypes = input.reportTypes ?? allReportTypes;
   return {
     jobId: input.jobId || 'job_recent_1',
     request: {
@@ -114,10 +118,10 @@ function collectionJob(input: {
       dateStart: '2026-07-01',
       dateEnd: '2026-07-21',
       mode: 'create-and-download',
-      reportTypes: allReportTypes,
+      reportTypes,
     },
     state: input.jobState || 'failed',
-    reports: allReportTypes.map((reportType, index) => ({
+    reports: reportTypes.map((reportType, index) => ({
       reportType,
       state: index < downloadedCount ? 'downloaded' : index === downloadedCount ? checkpointState : 'queued',
       attemptIndex: 0,
@@ -431,6 +435,43 @@ describe('DataCollectionPage store authority collection contract', () => {
     expect(row.progressDetail).toContain('不计入生产 8/8');
     expect(markup).toContain('Canary（不入生产）');
     expect(markup).toContain('继续采集');
+  });
+
+  it('presents a completed standalone partial download as waiting for the original full eight-report task', () => {
+    const partial = collectionJob({
+      jobId: 'job-standalone-partial',
+      jobState: 'completed',
+      reportTypes: ['campaign', 'keyword'],
+      downloadedCount: 2,
+      importState: 'not_applicable',
+    });
+    const row = buildCollectionJobWorkspaceRow(partial, storeContext);
+    const progress = buildCollectionProgressPresentation({
+      ...collectionProgressEvent(),
+      job: partial,
+    });
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: null,
+      jobs: [partial],
+      loading: false,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+    }));
+
+    expect(row.canary).toBe(false);
+    expect(row.statusLabel).toBe('部分报表已下载，等待完整 8 类');
+    expect(row.progressLabel).toBe('2/2 类（本任务）');
+    expect(row.import.label).toBe('等待完整 8 类后入库');
+    expect(row.import.detail).toContain('未写生产指标');
+    expect(row.import.detail).toContain('不会跨独立批次拼接');
+    expect(buildCollectionJobLineagePresentation(partial).label).toBe('独立部分任务');
+    expect(progress?.statusLabel).toBe('等待完整 8 类');
+    expect(progress?.title).toContain('部分报表已下载');
+    expect(markup).not.toContain('Canary');
+    expect(markup).toContain('重新获取完整 8 类');
   });
 
   it('does not declare business completion until the durable import lifecycle succeeds', () => {
@@ -750,6 +791,34 @@ describe('collectionActionNextStep', () => {
 });
 
 describe('collectionCompletionNotice', () => {
+  it('does not reuse historical imported rows as proof that a partial download was imported', () => {
+    const partialDownloadResult = {
+      title: '已创建报表下载完成',
+      tone: 'warning' as const,
+      mode: 'download-existing' as const,
+      batchIds: ['partial_batch'],
+      downloadedCount: 8,
+      actionDownloadedFiles: [
+        { label: '关键词报告', fileName: 'keyword.xlsx', fileExtension: '.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 },
+      ],
+      failedCount: 0,
+      parsedFiles: 0,
+      insertedRows: 0,
+      currentImportedRows: 96,
+      actionImportState: 'not_applicable' as const,
+      nextStep: '下一步：继续原完整 8 类任务。',
+      failedFiles: [],
+    };
+
+    const notice = collectionCompletionNotice(partialDownloadResult);
+
+    expect(notice).toContain('本次部分报表已下载');
+    expect(notice).toContain('未写入生产指标');
+    expect(notice).toContain('继续原完整 8 类任务');
+    expect(notice).not.toContain('已自动导入 96 行');
+    expect(notice).not.toContain('采集动作已完成');
+  });
+
   it('does not claim a download action completed when no real file was produced by this action', () => {
     const notice = collectionCompletionNotice({
       title: '下载并导入已创建报表未完成',
@@ -789,6 +858,31 @@ describe('collectionCompletionNotice', () => {
     });
 
     expect(notice).toBe('采集动作已完成：本次新增 1 个真实原始报表文件，当前范围覆盖 8/8 类真实报表，已自动导入 96 行广告指标。');
+  });
+
+  it('separates rows written by this action from the current-scope historical total', () => {
+    const notice = collectionCompletionNotice({
+      title: '重新创建、下载并导入全部 8 类报表完成',
+      tone: 'success',
+      mode: 'recreate-full',
+      batchIds: ['batch_2'],
+      downloadedCount: 8,
+      actionDownloadedFiles: [
+        { label: '关键词报告', fileName: 'keyword.xlsx', fileExtension: '.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 },
+      ],
+      failedCount: 0,
+      parsedFiles: 8,
+      insertedRows: 3,
+      currentImportedRows: 99,
+      actionImportState: 'succeeded',
+      actionReportTypeCount: 8,
+      nextStep: '下一步：查看广告表现。',
+      failedFiles: [],
+    });
+
+    expect(notice).toContain('本次写入 3 行广告指标');
+    expect(notice).toContain('当前范围合计 99 行');
+    expect(notice).not.toContain('已自动导入 99 行');
   });
 
   it('records a partial header-only import as a receipt while keeping the full-lineage gate explicit', () => {
@@ -846,6 +940,75 @@ describe('collectionCompletionNotice', () => {
   });
 });
 
+describe('buildLastActionResult', () => {
+  it('carries the current partial job import truth instead of treating historical rows as this action receipt', () => {
+    const result = buildLastActionResult('download-existing', [{
+      batch: { id: 'partial_batch' },
+      job: {
+        importState: 'not_applicable',
+        request: { reportTypes: ['keyword'] },
+      },
+      files: [{
+        status: 'downloaded',
+        reportType: 'keyword',
+        displayName: '关键词报告',
+        fileName: 'keyword.xlsx',
+        fileExtension: '.xlsx',
+        artifactId: 'artifact:v1:keyword',
+        fileSizeBytes: 1024,
+      }],
+    }], 8, 96);
+
+    expect(result.actionImportState).toBe('not_applicable');
+    expect(result.actionReportTypeCount).toBe(1);
+    expect(result.tone).toBe('warning');
+    expect(result.currentImportedRows).toBe(96);
+    expect(result.nextStep).toContain('继续原完整 8 类任务');
+  });
+
+  it('labels a partial not-applicable download as waiting for the complete eight-report task', () => {
+    const result = buildLastActionResult('download-existing', [{
+      batch: { id: 'partial_batch' },
+      job: {
+        importState: 'not_applicable',
+        request: { reportTypes: ['keyword'] },
+      },
+      files: [{
+        status: 'downloaded',
+        reportType: 'keyword',
+        displayName: '关键词报告',
+        fileName: 'keyword.xlsx',
+        fileExtension: '.xlsx',
+        artifactId: 'artifact:v1:keyword',
+        fileSizeBytes: 1024,
+      }],
+    }], 8, 96);
+
+    expect(dataCollectionPage.collectionActionResultStatusLabel(result)).toBe('待完整 8 类');
+  });
+
+  it('fails closed when one selected action returns conflicting import states', () => {
+    const result = buildLastActionResult('recreate-selected', [
+      {
+        batch: { id: 'partial_a' },
+        job: { importState: 'not_applicable', request: { reportTypes: ['keyword'] } },
+        files: [{ status: 'downloaded', reportType: 'keyword', displayName: '关键词报告', fileName: 'keyword.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 }],
+      },
+      {
+        batch: { id: 'partial_b' },
+        job: { importState: 'succeeded', request: { reportTypes: ['campaign'] } },
+        files: [{ status: 'downloaded', reportType: 'campaign', displayName: '广告活动报告', fileName: 'campaign.xlsx', artifactId: 'artifact:v1:campaign', fileSizeBytes: 1024 }],
+        metricsImport: { parsedFiles: 1, inserted: 4, errors: [] },
+      },
+    ], 8, 100);
+
+    expect(result.actionImportState).toBe('mixed');
+    expect(result.tone).toBe('blocked');
+    expect(collectionCompletionNotice(result)).toContain('入库状态不一致');
+    expect(collectionCompletionNotice(result)).not.toContain('采集动作已完成');
+  });
+});
+
 describe('collectionActionError', () => {
   it('translates collection-only Lingxing identity rejection into a Chinese reason and next step', () => {
     expect(collectionActionError(
@@ -894,6 +1057,16 @@ describe('collectionActionGuide', () => {
 
     expect(importLocal.taskEffect).toBe('不访问领星下载中心');
     expect(importLocal.result).toContain('写入 DB 日级广告指标');
+  });
+
+  it('explains that selected partial downloads do not independently write production metrics', () => {
+    const downloadExisting = collectionActionGuide('download-existing');
+    const recreateSelected = collectionActionGuide('recreate-selected');
+
+    expect(downloadExisting.result).toContain('本次只下载');
+    expect(downloadExisting.result).toContain('只有完整 8 类生产任务闭合后才会自动写入 DB');
+    expect(recreateSelected.result).toContain('不写生产指标');
+    expect(recreateSelected.result).toContain('不会跨批次拼接');
   });
 });
 
@@ -1010,6 +1183,65 @@ describe('task-first data page helpers', () => {
     expect(monitor?.headline).toContain('全部 8 类');
     expect(monitor?.previewDetail).toContain('当前范围覆盖 8/8 类');
     expect(monitor?.canClose).toBe(true);
+  });
+
+  it('keeps a partial download pending even when the current scope has historical imported rows', () => {
+    const monitor = buildCollectionMonitorState({
+      runningAction: null,
+      actionNotice: '本次部分报表已下载。',
+      actionError: null,
+      lastActionResult: {
+        title: '部分报表已下载，等待完整 8 类任务',
+        tone: 'warning',
+        mode: 'download-existing',
+        batchIds: ['partial_batch'],
+        downloadedCount: 8,
+        actionDownloadedFiles: [
+          { label: '关键词报告', fileName: 'keyword.xlsx', fileExtension: '.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 },
+        ],
+        failedCount: 0,
+        parsedFiles: 0,
+        insertedRows: 0,
+        currentImportedRows: 96,
+        actionImportState: 'not_applicable',
+        actionReportTypeCount: 1,
+        nextStep: '下一步：继续原完整 8 类任务。',
+        failedFiles: [],
+      },
+      lastDiagnostic: null,
+      realReportCount: 8,
+      importedRowCount: 96,
+    });
+
+    expect(monitor?.tone).toBe('pending');
+    expect(monitor?.statusLabel).toBe('待补齐');
+    expect(monitor?.headline).toContain('等待完整 8 类任务');
+  });
+
+  it('shows the partial action as waiting for a complete production task instead of an automatic import step', () => {
+    const result = buildLastActionResult('download-existing', [{
+      batch: { id: 'partial_batch' },
+      job: {
+        importState: 'not_applicable',
+        request: { reportTypes: ['keyword'] },
+      },
+      files: [{
+        status: 'downloaded',
+        reportType: 'keyword',
+        displayName: '关键词报告',
+        fileName: 'keyword.xlsx',
+        fileExtension: '.xlsx',
+        artifactId: 'artifact:v1:keyword',
+        fileSizeBytes: 1024,
+      }],
+    }], 8, 96);
+
+    const steps = dataCollectionPage.buildActionProgressSteps(null, result);
+
+    expect(steps[1]?.label).toBe('2. 查找 ready 行');
+    expect(steps[3]?.label).toBe('4. 等待完整 8 类生产任务');
+    expect(steps[3]?.status).toBe('pending');
+    expect(steps[3]?.description).toContain('不会跨批次拼接');
   });
 
   it('renders an honest process-and-evidence state instead of an empty browser canvas', () => {
@@ -1160,6 +1392,24 @@ describe('task-first data page helpers', () => {
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBe(false);
     expect(locked.className).not.toContain('collection-action-button-running');
+  });
+
+  it('does not promise production import while a selected partial-report action is running', () => {
+    const downloading = collectionActionButtonView({
+      mode: 'download-existing',
+      runningAction: 'download-existing',
+      selectedCount: 1,
+    });
+    const recreating = collectionActionButtonView({
+      mode: 'recreate-selected',
+      runningAction: 'recreate-selected',
+      selectedCount: 1,
+    });
+
+    expect(downloading.detail).toBe('正在下载已选报表（不写生产指标）');
+    expect(recreating.detail).toBe('正在重新创建并下载已选报表（不写生产指标）');
+    expect(downloading.detail).not.toContain('并导入');
+    expect(recreating.detail).not.toContain('并导入');
   });
 
   it('keeps feedback repair action buttons visible with a focused busy contract', () => {

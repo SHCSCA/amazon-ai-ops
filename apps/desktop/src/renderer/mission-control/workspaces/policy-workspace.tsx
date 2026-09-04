@@ -23,7 +23,7 @@ import {
   type PolicyVersionRules,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { PageFrame, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
+import { PageFrame, ReasonRequiredDialog, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
 import {
   assertMissionAuthorityContext,
   assertPolicyBelongsToContext,
@@ -623,7 +623,7 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
   const [scopeOptionsError, setScopeOptionsError] = useState('');
   const [scopeReloadToken, setScopeReloadToken] = useState(0);
   const [clearKillSwitchOpen, setClearKillSwitchOpen] = useState(false);
-  const [clearKillSwitchReason, setClearKillSwitchReason] = useState('');
+  const [modeChangeConfirm, setModeChangeConfirm] = useState<{ mode: PolicyAutonomyMode } | null>(null);
   const sequence = useRef(0);
   const detailSequence = useRef(0);
   const mutationSequence = useRef(0);
@@ -901,14 +901,15 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
     setFeedback(`v${saved.version} 已启用并冻结为不可变策略快照。`);
   };
 
-  const setMode = async (mode: PolicyAutonomyMode) => {
+  const setMode = async (mode: PolicyAutonomyMode, reason?: string) => {
     if (!runtime) return;
     const capturedKey = authorityKey;
-    const saved = await mutate('runtime-mode', (domain, context) => domain.setAutonomyMode(context, { expectedRevision: runtime.revision, mode, reason: `operator_set_${mode}` }));
+    const saved = await mutate('runtime-mode', (domain, context) => domain.setAutonomyMode(context, { expectedRevision: runtime.revision, mode, reason: reason ?? `operator_set_${mode}` }));
     if (!saved) return;
     setRuntime(saved);
     if (!await synchronizeShellAuthority(capturedKey)) return;
-    setFeedback(mode === 'policy_auto' ? '已切换为策略内自动；仍受不可变版本、熔断和急停约束。' : '已切换为人工审批。');
+    const reasonPrefix = reason ? `[${reason}] ` : '';
+    setFeedback(`${reasonPrefix}${mode === 'policy_auto' ? '已切换为策略内自动；仍受不可变版本、熔断和急停约束。' : '已切换为人工审批。'}`);
   };
 
   const enableKillSwitch = async () => {
@@ -922,19 +923,19 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
     setFeedback('店铺级紧急停止已开启；自动模式已降级为人工审批。');
   };
 
-  const clearKillSwitch = async () => {
-    if (!runtime || !clearKillSwitchReason.trim()) return;
+  const clearKillSwitch = async (reasonFromDialog: string) => {
+    const trimmedReason = reasonFromDialog.trim();
+    if (!runtime || !trimmedReason) return;
     const capturedKey = authorityKey;
     if (!can('policy.kill-switch.clear')) { setError('缺少精确能力 policy.kill-switch.clear，解除急停已阻断。'); return; }
     const saved = await mutate('kill-switch-clear', (domain, context) => domain.setKillSwitch(context, {
       expectedRevision: runtime.revision,
       enabled: false,
-      reason: clearKillSwitchReason.trim(),
+      reason: trimmedReason,
     }));
     if (!saved) return;
     setRuntime(saved);
     setClearKillSwitchOpen(false);
-    setClearKillSwitchReason('');
     if (!await synchronizeShellAuthority(capturedKey)) return;
     setFeedback('紧急停止已解除；系统不会自动恢复策略内自动。');
   };
@@ -957,7 +958,7 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
       <section aria-label="策略店铺隔离范围" className="policy-domain-scope-notice"><LockKey size={15} /><strong>{storeContext ? '当前店铺已隔离' : '等待选择店铺'}</strong><span>策略、不可变版本与运行模式仅作用于当前店铺，不跨店铺继承。</span><em>Amazon US · USD</em></section>
       {scopeOptionsPhase !== 'ready' && <section aria-live="polite" className="policy-domain-scope-notice" data-state={scopeOptionsPhase} role={scopeOptionsPhase === 'error' ? 'alert' : 'status'}><ArrowClockwise size={15} /><strong>{scopeOptionsPhase === 'error' ? '策略对象读取失败' : '正在读取策略对象'}</strong><span>{scopeOptionsPhase === 'error' ? '无法确认真实产品与广告对象，创建、编辑和启用已阻断。请确认采集与导入完成后重试。' : '正在读取当前店铺产品、广告活动、广告组和关键词。'}</span>{scopeOptionsPhase === 'error' && <button className="workspace-button workspace-button--secondary" onClick={() => setScopeReloadToken((value) => value + 1)} type="button">重新读取对象</button>}<details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>{scopeOptionsError || 'scope-authority-loading'}</code></details></section>}
       <section className="policy-domain-runtime" aria-label="店铺级策略运行时">
-        <div><span>店铺运行模式</span><div className="policy-domain-segmented"><button aria-pressed={runtime?.mode === 'manual_approval'} disabled={!can('policy.runtime.mode.set') || busy || !runtime} onClick={() => void setMode('manual_approval')} type="button">人工审批</button><button aria-pressed={runtime?.mode === 'policy_auto'} disabled={!can('policy.runtime.mode.set') || busy || !runtime || !runtime.canAutoExecute} onClick={() => void setMode('policy_auto')} type="button">策略内自动</button></div><details className="policy-domain-auto-conditions"><summary>查看启用条件</summary><ul><li>已有启用策略版本</li><li>对象身份已核验且 Ads 身份已确认</li><li>变化、预算、次数、冷却和时段均在边界内</li><li>紧急停止关闭且执行安全门正常</li></ul></details></div>
+        <div><span>店铺运行模式</span><div className="policy-domain-segmented"><button aria-pressed={runtime?.mode === 'manual_approval'} disabled={!can('policy.runtime.mode.set') || busy || !runtime} onClick={() => setModeChangeConfirm({ mode: 'manual_approval' })} type="button">人工审批</button><button aria-pressed={runtime?.mode === 'policy_auto'} disabled={!can('policy.runtime.mode.set') || busy || !runtime || !runtime.canAutoExecute} onClick={() => setModeChangeConfirm({ mode: 'policy_auto' })} type="button">策略内自动</button></div><details className="policy-domain-auto-conditions"><summary>查看启用条件</summary><ul><li>已有启用策略版本</li><li>对象身份已核验且 Ads 身份已确认</li><li>变化、预算、次数、冷却和时段均在边界内</li><li>紧急停止关闭且执行安全门正常</li></ul></details></div>
         <div><span>当前规则状态</span><strong>{runtime?.activePolicyVersionId ? '已绑定启用规则' : '尚无启用规则'}</strong><small>{runtime?.canAutoExecute ? '满足策略规则前置条件' : '保持人工审批或阻断'}</small><details className="policy-domain-diagnostics"><summary>诊断详情</summary><code>activePolicyVersionId={runtime?.activePolicyVersionId ?? 'none'}</code><code>circuitBreakerState={runtime?.circuitBreakerState ?? 'none'}</code><p>不能写熔断器或 activeVersion。</p></details></div>
         {runtime?.killSwitch
           ? <button className="workspace-button workspace-button--primary policy-domain-kill-switch" disabled={!can('policy.kill-switch.clear') || busy} onClick={() => setClearKillSwitchOpen(true)} type="button"><Power size={16} />解除紧急停止</button>
@@ -986,6 +987,41 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
     {policyEditor && <PolicyDialog record={policyEditor.record} draft={policyEditor.draft} busy={pending === 'policy-save'} scopeFrozen={selectedVersions.length > 0} scopeOptions={scopeOptions} onChange={(draft) => setPolicyEditor((current) => current ? { ...current, draft } : current)} onClose={() => setPolicyEditor(null)} onSave={() => void savePolicy()} />}
     {strategyWizard && <StrategyWizardDialog draft={strategyWizard} scopeOptions={scopeOptions} busy={pending === 'strategy-create'} onChange={setStrategyWizard} onClose={() => setStrategyWizard(null)} onSave={() => void saveStrategy()} />}
     {selectedVersionEditor && <VersionDialog record={selectedVersionEditor.record} draft={selectedVersionEditor.draft} busy={pending === 'version-save'} onChange={(draft) => setVersionEditor((current) => current ? { ...current, draft } : current)} onClose={() => setVersionEditor(null)} onSave={() => void saveVersion()} />}
-    {clearKillSwitchOpen && <div className="mission-control-dialog-backdrop"><section aria-labelledby="clear-kill-switch-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>解除紧急停止</span><h2 id="clear-kill-switch-title">确认解除店铺级紧急停止</h2><p>解除急停不会自动恢复策略内自动。请记录复核原因后继续。</p></div></header><div className="policy-domain-clear-reason"><label><span>解除原因 *</span><textarea autoFocus onChange={(event) => setClearKillSwitchReason(event.target.value)} rows={4} value={clearKillSwitchReason} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => { setClearKillSwitchOpen(false); setClearKillSwitchReason(''); }} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !clearKillSwitchReason.trim() || !can('policy.kill-switch.clear')} onClick={() => void clearKillSwitch()} type="button">{pending === 'kill-switch-clear' ? '解除中…' : '确认解除'}</button></footer></section></div>}
+    <ReasonRequiredDialog
+      open={clearKillSwitchOpen}
+      eyebrow="解除紧急停止"
+      title="确认解除店铺级紧急停止"
+      description="解除急停不会自动恢复策略内自动。请记录复核原因后继续。"
+      tone="danger"
+      confirmLabel="确认解除"
+      reasonLabel="解除原因 *"
+      busy={pending === 'kill-switch-clear'}
+      reasonMinLength={1}
+      isConfirmDisabled={() => !can('policy.kill-switch.clear')}
+      diagnosticDetails={<><code>storeId={storeContext?.storeId ?? 'none'}</code><code>runtime.revision={runtime?.revision ?? 'none'}</code></>}
+      onConfirm={(reason) => void clearKillSwitch(reason)}
+      onClose={() => setClearKillSwitchOpen(false)}
+    />
+    {modeChangeConfirm && (
+      <ReasonRequiredDialog
+        eyebrow="模式切换"
+        open
+        title={`切换为${modeChangeConfirm.mode === 'policy_auto' ? '策略内自动' : '人工审批'}？`}
+        description="切换执行模式影响整店的 AI 自动执行边界。请说明这次操作的业务依据。"
+        tone="primary"
+        confirmLabel={`确认切换为${modeChangeConfirm.mode === 'policy_auto' ? '策略内自动' : '人工审批'}`}
+        reasonLabel="切换原因 *"
+        reasonMinLength={2}
+        reasonPlaceholder="例如：策略版本已发布，启用自动执行；或当前活动已结束，暂停 AI 自动调整"
+        isConfirmDisabled={() => !can('policy.runtime.mode.set')}
+        diagnosticDetails={<><code>storeId={storeContext?.storeId ?? 'none'}</code><code>runtime.revision={runtime?.revision ?? 'none'}</code></>}
+        onClose={() => setModeChangeConfirm(null)}
+        onConfirm={(reason) => {
+          const mode = modeChangeConfirm.mode;
+          setModeChangeConfirm(null);
+          void setMode(mode, reason);
+        }}
+      />
+    )}
   </div>;
 }

@@ -35,6 +35,52 @@ class FakeProvider implements AIProvider {
 }
 
 describe('AdStrategyDiagnoser', () => {
+  it('propagates analysis cancellation through diagnosis instead of publishing a rule fallback', async () => {
+    const cancellation = new Error('analysis generation cancelled');
+    let observedSignal: AbortSignal | undefined;
+    const provider: AIProvider = {
+      async chat(_messages, options) {
+        observedSignal = options?.signal;
+        if (!observedSignal) throw new Error('missing caller AbortSignal');
+        return new Promise<never>((_resolve, reject) => {
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+        });
+      },
+      async complete() {
+        throw cancellation;
+      },
+      async healthCheck() {
+        return true;
+      },
+    };
+    const controller = new AbortController();
+    const diagnoser = new AdStrategyDiagnoser(provider);
+
+    const pending = diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+    }, { signal: controller.signal });
+    controller.abort(cancellation);
+
+    await expect(pending).rejects.toBe(cancellation);
+    expect(observedSignal).toBe(controller.signal);
+  });
+
   it('asks AI to diagnose lifecycle stage, dynamic thresholds, and actions with operation events in USD context', async () => {
     const provider = new FakeProvider({
       success: true,

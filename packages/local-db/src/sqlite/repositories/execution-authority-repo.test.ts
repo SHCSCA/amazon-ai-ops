@@ -115,7 +115,10 @@ function seedStage5Authority(
   `).run(NOW, NOW);
   const rules = {
     allowedActionTypes: ['set_keyword_bid'],
-    allowedAdEntityIds: ['opaque-keyword-1'],
+    allowedAdEntityIds: Array.from(
+      { length: actionCount },
+      (_, index) => `opaque-keyword-${index + 1}`,
+    ),
     maxChangePct: 10,
     totalImpactBudget: 10,
     maxDailyActionCount: 10,
@@ -193,6 +196,14 @@ function seedStage5Authority(
       'door lock', 'Campaign A', 'Ad Group A', 'evidence-1', 'keyword', ?, 7,
       'ads_ui', ?, 'operator', ?, ?)
   `).run('1'.repeat(64), PROOF_HASH, NOW, NOW);
+  seedExactPolicyScopeEvidence(database, {
+    index: 1,
+    fileHash: '1'.repeat(64),
+    sourceRow: 7,
+    entityName: 'door lock',
+    campaignName: 'Campaign A',
+    adGroupName: 'Ad Group A',
+  });
   database.prepare(`
     INSERT INTO analysis_action_batches (
       id, store_id, mission_id, mission_revision, evidence_package_id,
@@ -314,6 +325,14 @@ function seedStage5Authority(
         id, store_id, proposal_id, decision_id, created_at
       ) VALUES (?, 'store-one', ?, ?, ?)
     `).run(`proposal-link-${actionIndex}`, proposalId, decisionId, NOW);
+    seedExactPolicyScopeEvidence(database, {
+      index: actionIndex,
+      fileHash: `${actionIndex}`.repeat(64).slice(0, 64),
+      sourceRow: actionIndex + 6,
+      entityName,
+      campaignName: 'Campaign A',
+      adGroupName,
+    });
   }
   const decisionIds = JSON.stringify(Array.from(
     { length: actionCount },
@@ -354,6 +373,30 @@ function seedStage5Authority(
 }
 
 describe('ExecutionAuthorityRepository', () => {
+  it('rejects batch materialization when a lower-number matching policy supersedes the grant policy', () => {
+    const harness = createHarness();
+    registerIdentity(harness);
+    enableLowerNumberMatchingPolicy(harness.database);
+
+    expect(() => harness.repository.createExactExecutionBatch(harness.context, 'grant-1'))
+      .toThrow(/highest priority|优先级|策略/i);
+    expect(harness.repository.listExecutionBatches(harness.context)).toEqual([]);
+  });
+
+  it('rejects starting a queued job after a lower-number matching policy supersedes its grant', () => {
+    const harness = createHarness();
+    registerIdentity(harness);
+    const created = harness.repository.createExactExecutionBatch(harness.context, 'grant-1').projection;
+    enableLowerNumberMatchingPolicy(harness.database);
+
+    expect(() => harness.repository.startJob(harness.context, {
+      jobId: created.jobs[0]!.id,
+      expectedRevision: created.jobs[0]!.revision,
+    })).toThrow(/highest priority|优先级|策略/i);
+    expect(harness.repository.getExecutionBatch(harness.context, created.batch.id)?.jobs[0])
+      .toMatchObject({ status: 'queued', revision: 1 });
+  });
+
   it('promotes only the latest Stage 5 keyword authority into an exact canonical revision', () => {
     const harness = createHarness();
     const identity = harness.repository.registerCanonicalKeywordIdentity(harness.context, {
@@ -1180,6 +1223,96 @@ describe('ExecutionAuthorityRepository', () => {
   });
 });
 
+function enableLowerNumberMatchingPolicy(database: Database.Database): void {
+  const source = database.prepare(`
+    SELECT rules_json AS rulesJson FROM policy_versions
+    WHERE store_id = 'store-one' AND id = 'policy-version-1'
+  `).get() as { rulesJson: string };
+  database.prepare(`
+    INSERT INTO policies (
+      id, store_id, name, scope, status, priority, active_version_id, revision,
+      created_at, updated_at
+    ) VALUES (
+      'policy-lower-number', 'store-one', 'Lower number wins', 'store', 'active', 0,
+      NULL, 2, ?, ?
+    )
+  `).run(NOW, NOW);
+  database.prepare(`
+    INSERT INTO policy_versions (
+      id, store_id, policy_id, version, status, rules_json, revision,
+      created_at, updated_at, enabled_at
+    ) VALUES (
+      'policy-lower-number-v1', 'store-one', 'policy-lower-number', 1, 'enabled', ?, 1,
+      ?, ?, ?
+    )
+  `).run(source.rulesJson, NOW, NOW, NOW);
+  database.prepare(`
+    UPDATE policies SET active_version_id = 'policy-lower-number-v1'
+    WHERE store_id = 'store-one' AND id = 'policy-lower-number'
+  `).run();
+}
+
+function seedExactPolicyScopeEvidence(
+  database: Database.Database,
+  input: {
+    index: number;
+    fileHash: string;
+    sourceRow: number;
+    entityName: string;
+    campaignName: string;
+    adGroupName: string;
+    storeId?: string;
+    batchId?: string;
+    runId?: string;
+  },
+): void {
+  const storeId = input.storeId ?? 'store-one';
+  const batchId = input.batchId ?? 'data-batch-1';
+  const runId = input.runId ?? 'import-run-1';
+  const filePath = `C:/reports/${storeId}/keyword-${input.index}.xlsx`;
+  const reportFileId = Number(database.prepare(`
+    INSERT INTO report_files (
+      store_id, batch_id, report_type, file_path, file_name, file_size,
+      status, imported_rows, file_hash, last_imported_at
+    ) VALUES (?, ?, 'keyword', ?, ?, 1024,
+      'imported', 1, ?, ?)
+  `).run(storeId, batchId, filePath, `keyword-${input.index}.xlsx`, input.fileHash, NOW).lastInsertRowid);
+  database.prepare(`
+    INSERT INTO report_import_file_snapshots (
+      store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
+      file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
+    ) VALUES (?, ?, ?, ?, ?, 'keyword',
+      ?, ?, 1024, ?, 1, ?)
+  `).run(
+    storeId,
+    `execution-scope-snapshot-${input.index}`,
+    runId,
+    batchId,
+    reportFileId,
+    filePath,
+    `keyword-${input.index}.xlsx`,
+    input.fileHash,
+    NOW,
+  );
+  database.prepare(`
+    INSERT INTO ad_daily_metrics (
+      batch_id, report_type, date, store_name, marketplace_code, asin,
+      campaign_name, ad_group_name, targeting, source_file, source_row,
+      store_id, store_authority_quarantined
+    ) VALUES (?, 'keyword', '2026-07-22', ?, 'US', 'B0EXECUTION',
+      ?, ?, ?, ?, ?, ?, 0)
+  `).run(
+    batchId,
+    storeId === 'store-one' ? 'US Store One' : 'US Store Two',
+    input.campaignName,
+    input.adGroupName,
+    input.entityName,
+    filePath,
+    input.sourceRow,
+    storeId,
+  );
+}
+
 function seedSecondStoreAuthority(database: Database.Database): StoreContextEnvelope {
   database.prepare(`INSERT INTO stores (
     store_id, browser_profile_id, marketplace, currency, display_name, status,
@@ -1276,6 +1409,17 @@ function seedSecondStoreAuthority(database: Database.Database): StoreContextEnve
     FROM verified_ad_entity_authority
     WHERE store_id = 'store-one' AND authority_id = 'stage5-authority-1'`
   ).run();
+  seedExactPolicyScopeEvidence(database, {
+    index: 1,
+    fileHash: '1'.repeat(64),
+    sourceRow: 7,
+    entityName: 'door lock',
+    campaignName: 'Campaign A',
+    adGroupName: 'Ad Group A',
+    storeId: 'store-two',
+    batchId: 'data-batch-2',
+    runId: 'import-run-2',
+  });
   database.prepare(`INSERT INTO analysis_action_batches (
     id, store_id, mission_id, mission_revision, evidence_package_id,
     rule_revision, model_revision, action_revision, created_at,

@@ -6,6 +6,7 @@ import {
   STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
   STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
   runAnalysisAuthorityMigration,
+  runAnalysisRunsMigration,
   runCollectionResumeAuthorityMigration,
   runStoreProviderIdentityAuthorityMigration,
   prepareUpgradeBackup,
@@ -18,6 +19,7 @@ import {
   runReportImportAuthorityMigration,
   runStoreAuthorityMigrations,
   runStoreAuthorityRepairMigration,
+  runV16DomainMigration,
   type UpgradeBackupManifest,
 } from './migrations';
 
@@ -724,6 +726,8 @@ function runMigrations(database: Database.Database, upgradeBackup: UpgradeBackup
   runStoreAuthorityRepairMigration(database, upgradeBackup);
   runCollectionResumeAuthorityMigration(database, upgradeBackup);
   runStoreProviderIdentityAuthorityMigration(database, upgradeBackup);
+  runAnalysisRunsMigration(database);
+  runV16DomainMigration(database);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

@@ -12,6 +12,7 @@ import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSe
 import { toUserFacingError } from '../user-facing-error';
 import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
+import { localizeProductStage, localizeQuantStatus } from '@amazon-ai-ops/business-presenters';
 import { hasCurrentRecommendationReviewResolution } from './approval-page';
 
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
@@ -50,17 +51,7 @@ function strategyLabel(rec: RecommendationView): string {
 }
 
 function lifecycleLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '关键词探索',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    clearance: '清货',
-    declining_repair: '衰退修复',
-    unknown: '未知阶段',
-  };
-  return labels[String(stage || 'unknown')] || String(stage || '未知阶段');
+  return localizeProductStage(stage);
 }
 
 function decisionLabel(rec: RecommendationView): string {
@@ -82,14 +73,8 @@ function decisionTone(rec: RecommendationView): 'ready' | 'pending' | 'blocked' 
 }
 
 function quantLabel(status?: string): string {
-  const labels: Record<string, string> = {
-    healthy: '健康',
-    watch: '观察',
-    waste: '浪费风险',
-    scale: '可扩量',
-    blocked: '样本不足',
-  };
-  return labels[String(status || '')] || '未量化';
+  const label = localizeQuantStatus(status);
+  return label === '样本不足' && status ? '未量化' : label;
 }
 
 function quantTone(status?: string): 'ready' | 'pending' | 'blocked' | 'warning' {
@@ -826,22 +811,7 @@ function generateFilterReasonLine(summary: GenerateAiSummary): string {
 }
 
 function productStageLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '关键词探索',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    clearance: '清货',
-    declining_repair: '衰退修复',
-    launch: '新品启动',
-    growth: '增长期',
-    stabilize: '稳定期',
-    harvest: '利润收割',
-    active: '在售',
-    unknown: '未知阶段',
-  };
-  return labels[String(stage || 'unknown')] || String(stage || '未知阶段');
+  return localizeProductStage(stage);
 }
 
 function optionalPercent(value: unknown): string {

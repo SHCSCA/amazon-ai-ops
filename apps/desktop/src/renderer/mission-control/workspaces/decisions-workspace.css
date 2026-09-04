@@ -275,6 +275,85 @@
   color: #b24b3d !important;
 }
 
+.decision-domain-analysis-overview {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dce6f4;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.decision-domain-analysis-overview > header h3,
+.decision-domain-analysis-overview > header p { margin: 0; }
+.decision-domain-analysis-overview > header h3 { color: #202a3b; font-size: 14px; }
+.decision-domain-analysis-overview > header p { margin-top: 3px; color: #69758b; font-size: 11px; }
+
+.decision-domain-analysis-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.decision-domain-analysis-table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: collapse;
+  color: #334155;
+  font-size: 11px;
+  text-align: left;
+}
+
+.decision-domain-analysis-table th,
+.decision-domain-analysis-table td {
+  border-bottom: 1px solid #e6ebf2;
+  padding: 7px 8px;
+  vertical-align: top;
+}
+
+.decision-domain-analysis-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f6f8fb;
+  color: #526079;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.decision-domain-analysis-table tbody:last-child tr:last-child td { border-bottom: 0; }
+.decision-domain-analysis-table .decision-domain-analysis-group th {
+  background: #edf4ff;
+  color: #1f5bc9;
+  font-size: 11px;
+  font-weight: 800;
+}
+.decision-domain-analysis-table tr[aria-selected="true"] td { background: #f7faff; }
+.decision-domain-analysis-table td strong { color: #202a3b; }
+.decision-domain-analysis-table td:nth-child(7),
+.decision-domain-analysis-table td:nth-child(8),
+.decision-domain-analysis-table td:nth-child(9) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.decision-domain-analysis-table .decision-domain-analysis-basis {
+  min-width: 220px;
+  max-width: 340px;
+  line-height: 1.45;
+}
+.decision-domain-analysis-table td > span[data-status] {
+  display: inline-flex;
+  border-radius: 999px;
+  background: #fff4dc;
+  padding: 3px 7px;
+  color: #95600d;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.decision-domain-analysis-table td > span[data-status="可审批"] { background: #eaf8f1; color: #087956; }
+.decision-domain-analysis-table td > span[data-status="已阻断"] { background: #fff0f0; color: #bc3434; }
+.decision-domain-analysis-table td > details { margin-top: 4px; }
+.decision-domain-analysis-table .workspace-button { min-height: 28px; padding: 4px 8px; white-space: nowrap; }
+
 .decision-domain-analysis-batch article {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

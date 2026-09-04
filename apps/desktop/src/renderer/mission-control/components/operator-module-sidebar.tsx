@@ -1,30 +1,30 @@
 import React from 'react';
 import {
-  ChartLineUp,
-  Database,
-  Flask,
-  Notebook,
-  ShieldCheck,
+  Brain,
+  ClipboardText,
+  GearSix,
+  Lightbulb,
+  Lightning,
   SidebarSimple,
-  Storefront,
+  Stack,
 } from '@phosphor-icons/react';
 import type { NavigationIntent } from '../../navigation';
 import {
-  OPERATOR_MODULES,
-  operatorEntryCapabilityAttention,
-  operatorModuleCapabilityAttention,
-  operatorModuleForIntent,
-} from '../operator-module-navigation';
+  V16_OPERATOR_MODULES as OPERATOR_MODULES,
+  v16OperatorEntryCapabilityAttention as operatorEntryCapabilityAttention,
+  v16OperatorModuleCapabilityAttention as operatorModuleCapabilityAttention,
+  v16OperatorModuleForIntent as operatorModuleForIntent,
+} from '../workspaces/v16-module-bridge';
 import type { MissionControlCapabilityProjection } from '@amazon-ai-ops/shared-types';
 import './operator-module-sidebar.css';
 
 const MODULE_ICONS = {
-  'today-decisions': ChartLineUp,
-  'products-ads': Storefront,
-  collection: Database,
-  'policy-automation': ShieldCheck,
-  'experiments-execution': Flask,
-  'memory-settings': Notebook,
+  'today': ClipboardText,
+  'operations-assets': Stack,
+  'decision-center': Lightbulb,
+  'execution-experiments': Lightning,
+  'operating-memory': Brain,
+  'system-settings': GearSix,
 } as const;
 
 export interface OperatorModuleSidebarProps {

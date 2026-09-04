@@ -1,5 +1,163 @@
 # Operator Core Flow Repair — 2026-08-07
 
+## 当前：v1.6.0 验证框架搭建中（M0 已完成，M1 启动）
+
+**目标**：基于 `docs/amazon_ai_ops_agent_prd_v1_6_0.md` + `docs/v16_companion_verification_traceability.md` 建立一套以 evidence 文件为驱动、覆盖 23 个需求 / 20 个必需测试的第三方可复核验证层。
+
+### M0 — 测试基础设施就绪 ✅
+- 4 个 evidence schema 完成：`docs/v16_{required_test_manifest,evidence,trace_closure,required_test_manifest}.schema.json`
+- 20 个必需测试清单：`docs/v16_required_test_manifest.json`（覆盖 8 个 bucket：domain authority / repo / 主进程服务 / 渲染层 / shared-types / preload IPC / 脚本合约 / 类型校验）
+- 23 个需求索引：`docs/v16_requirements_index.json`（来自 `v16_requirements_index_seed.json`）
+- 2 个 verifier 脚本 + 自身单测：
+  - `scripts/verify-v16-required-test-manifest.js` + `.test.mjs`（schema 与必需测试 ID 校验）
+  - `scripts/verify-v16-trace-closure.js` + `.test.mjs`（需求→测试→evidence 三向追溯）
+- 初始 trace 闭环记录：`output/v16-evidence/v16_trace_closure.json`（PASS 0 / FAIL 0 / PENDING 23）
+
+### M1 — L1 单元测试运行中 🟡
+**已发现并修复的 harness 缺陷**：`analysis-authority-service.test.ts` 的 `createHarness` 在 v1.6.0 后未提供 `production_full` 血缘的 `lingxing_collection_jobs` 行，导致 `createMission → formalBusinessDataGate → hasExactProductionRootIdentity` 全部失败（错误："缺少已成功入库的 production_full 完整 8 类采集根证据"）。已在 `createHarness` 中追加一条 `INSERT OR IGNORE INTO lingxing_collection_jobs` seed（jobId=`batch-1`、state=`completed`、importState=`succeeded`、lineage.purpose=`production_full`、8 类 expectedReportTypes）。下一步：再跑该文件确认 seed 生效，再扩展到 execution / mission domain / formal data gate / AI contracts / preload 等 L1 测试。
+
+### 仍未覆盖的 L1/L2 测试
+- L1：execution-authority-service / mission-domain-service / formal-business-data-gate / lingxing-collection-coordinator / lingxing-ads-sso / ai-adapter 三件套 / repo 三件套 / preload mission-domain & execution-authority / shared-types
+- L2：typecheck 与 build 仍被用户禁令挡住，需要在 v1.6.0 完成规范里明确写为外部依赖或 N/A
+- L3：业务 UI 与 Package UI 同样在禁令范围
+- L4–L7：被前置层阻断，本轮不展开
+- L8：readiness aggregation 单测可独立跑
+
+### 注意事项
+- 上一轮 trace-closure verifier 留有临时 `console.error` 调试日志，已在写入本文档前清理
+- `output/v16-evidence/` 是本地交付产物，不入 commit
+- Linear evidence file 命名规范：`<testId>.evidence.json`，需在 M2 中固化
+
+### M1 — L1 单元覆盖收口 ✅（2026-09-02）
+按 PRD 路线，3 个并行 worker 完成 L1 全部覆盖；统一采用 `seedProductionFullCollectionRoot` + `production_full` lineage 的 harness 根因修复模式（不再放宽任何断言、不引入 `.skip/.todo/.only/skipIf`）：
+
+- **Worker A — desktop main 服务（5 文件 / 151 测）**
+  - `execution-authority-service.test.ts`：+278/-6，注入 production_full 根任务 + 期望 8 类 + authority 上下文
+  - `formal-business-data-gate.test.ts`：+82/-0，formal 数据门 missingReportType 反向 + 中文失败文案
+  - `lingxing-ads-sso.test.ts`：+460/-9，吸附/真值门完整补全 + 三段覆盖（精确识别、跨上下文重试、ERP→Ads 续接）
+  - `lingxing-collection-coordinator.test.ts`：+148/-2，独立部分任务 lineage 拒绝 + 伪造 resume lineage 拒绝
+  - `mission-domain-service.test.ts`：+52/-1，跨产品 Mission 创建阻断 + STATE_CONFLICT 反射
+- **Worker B — workspace packages（5 文件 / 106 测）**
+  - `ad-action-reason.test.ts`：+37/-0，新结构化解释契约
+  - `ad-strategy-diagnosis.test.ts`：+46/-0，证据/诊断证据回填
+  - `openai-compatible.test.ts`：+28/-0，8192 token floor + temperature 守恒
+  - `execution-authority-repo.test.ts`：+145/-1，production_full seed
+  - `mission-domain-repo.test.ts`：+1958/-95，v1.6 fail-closed STATE_CONFLICT / UNKNOWN / 因果记忆过滤门 / 实验启动权威完整覆盖矩阵
+- **Worker C — preload + shared-types + M2 验证脚本（9 文件 / 61 测 + 3 evidence）**
+  - `mission-domain-api.test.ts`：+5/-0（最小修复）
+  - 既有 5 个 shared-types 测试 + 2 个 preload 测试均已存在并直接绿
+- **审计确认**：12 文件 diff `git diff --numstat` 总 +3343/-114 几乎纯插入；`findstr .skip/.todo/.only/skipIf` 在 12 文件范围 0 命中；删除断言 0；修复模式 100% 复用 `seedProductionFullCollectionRoot` + `production_full` lineage + v1.6 fail-closed 错误文案。
+- **L1 联合绿测**：`19/19 files / 318/318 passed`，skipped=0，exit 0
+
+### M2 — 验证脚本可跑，暴露出 4 类产品缺口 🟡
+- `node scripts/verify-v16-required-test-manifest.js` 产出 `output/v16-evidence/v16_manifest_verification.json`：20 测试 / 20 acceptanceId / 2 errors / 8 warnings，result=FAIL
+- `node scripts/verify-v16-trace-closure.js` 产出 `output/v16-evidence/v16_trace_closure.json`：total=160（全部 MUST）/ closed=0 / pending=0 / failed=0 / blocked=160
+- 4 类缺口（都是产品缺口，不是 verifier bug）：
+  1. `acceptanceId` 未链接：manifest 20 测试与 `v16_requirements_index.json` 160 AC 在 `acceptanceId` 上 0 交集 → verifier 把全部 AC 标 BLOCKED
+  2. testId 缺描述：8 个 L1/L2 testId 的 `description/title/notes` 为空
+  3. L8 文件缺失：`scripts/aggregate-v16-readiness.js` 未创建（L8 readiness aggregation 单测需要的脚本）
+  4. 覆盖率断点：159 acceptance criteria 完全没有 test 引用（当前 manifest 仅 20 个 L1 bucket）
+- M2 后续任务：补 acceptanceId 链接、补 description、新建 aggregate-v16-readiness.js、把 L1 测试扩展为 IA/FLOW/CTX/AUTH/EXEC/ANALYSIS/EXPERIMENT/MEMORY 全 8 个 bucket
+
+## 当前：2026-08-28 六模块原型与真实分析回执闭环
+
+- 策略“数字越小越先匹配”已从列表文案变成授权主链：新增公开 resolver 对每个广告对象只接受已启用、有效且规则/对象证据仍成立的最低数字策略；同优先级并列或同批对象分属不同赢家均失败关闭。RED 先证明 resolver 不存在、Grant 仍被最后启用的 runtime pointer 阻断、分析快照只回 `POLICY_RUNTIME_BLOCKED`；当前 resolver 与 Grant 定向 GREEN，Main 分析两条优先级行为 GREEN，Renderer 将变化翻译为“重新运行分析”。真实执行前重验仍在并行收口，整项未提前宣告完成。
+- UNKNOWN 对账不再污染生产因果记忆：公开仓储行为新增一条仍为 UNKNOWN 的批次对账事件（`status=confirmed_target`、两份合法 SHA-256 证据），旧查询先红为 `1 failed / 47 skipped`，实际把它排在“历史已验证”记忆首位；修后所有带 unknown 血缘的事件都从分析记忆入口排除，原批次/任务阻断语义保持不变。完整证据写入另加原子事务红测，旧接口先红为 `appendCausalEventWithEvidence is not a function`，修后事件与全部证据任一失败即整笔回滚；执行服务已改用该事务。仓储与执行完整合跑为 `2 files / 88/88 passed`、skipped=0。
+- AI 分析悬挂取消链已关闭：Analysis Authority 默认 120 秒超时并允许受控注入，`AbortSignal` 从服务贯穿 Main、诊断/解释到 OpenAI `fetch`；取消不再被吞成规则降级。每条 recommendation 写库和 `generated` 事件发布前再次检查取消，超时后 Mission 不推进，recommendation/action batch/proposal/decision 均为 0，同一 run 只保留 `started → failed` 且可以重试，迟到生成结果不能落库。四个公开行为 RED 分别命中“悬挂不停止、取消被包装、signal 未传、取消变 fallback”，最终 7 个相关单元文件 `65/65 passed`、skipped=0。
+- Ads 连接真值再补四个断点：已验证页面只要同源导航到 `/login`/`restartLogin`、出现可见用户名/密码 DOM 或明确登录提示，就会在初始检查、导航和 DOM 完成时立即降级；待接管的新 Ads 页面不再因固定 15 秒监听过期而永久错过；已认证页面续识别使用已验证 session 的账户标签，不再错误要求保存密码，只有确需重开浏览器才惰性读取本机保存凭证；收养页必须先证实不是登录态。完整连接 RED 为 `4 failed / 56 passed`，修后 SSO 与 staged-status 两文件合跑 `114/114 passed`、skipped=0；为保留不可改的旧源码切片契约，显式重试与自动收养现保留两处等价安全包装，后续维护必须同步。
+- 经营实验草稿更新的产品归属 P0 已关闭：`updateExperiment` 在同一 `IMMEDIATE` 事务内重读关联 Mission，要求 nextProduct 精确等于任务产品，并要求 nextAdEntity 属于该产品；同店另一个产品也不能借用原任务证据。定向 RED 为 `1 failed / 47 skipped`（未抛 `REFERENCE_CONFLICT`），修后定向转绿；完整仓储含上一条基线绕过回归共 `48/48 passed`、skipped=0，拒绝时 Experiment、revision 与 causal events 原样不变。
+- 正式分析门不再跨独立批次拼 8/8：生产 `realReportFiles` 只要携带批次血缘，八类文件就必须全部有 batchId 且唯一相同；`7 个当前批次 + 1 个旧批次` 的完整单元先红为 `7 tests / 1 failed`（未抛错），修后给中文原因与“继续原完整任务/重新获取完整 8 类”下一步，完整 `7/7 passed`、skipped=0。旧无批次字段的纯单元夹具保持兼容，正式 Main 返回的文件均携带真实 batchId。
+- 任务编辑后的旧分析归属已失败关闭：`latestMissionAnalysisResult` 现在同时校验动作批次的 `missionRevision` 与当前任务 revision；产品、观察窗口或任务版本变化后不再把旧 evidence/proposals 显示在新上下文，历史运行回执仍保留，普通界面明确要求重新运行分析。完整任务工作区先红为 `28 tests / 1 failed`（仍返回旧批次），修后 `28/28 passed`、skipped=0。
+- 经营实验首次启动的真实回读门补上归档/暂停绕过反向链：旧实现允许无任何执行回读的 draft 经“归档→恢复”为 paused 后直接 running。新增公开仓储行为单元完整跑文件先红为 `47 tests / 1 failed`，失败点为未抛 `STATE_CONFLICT`；修后 paused→running 只有存在不可覆盖的历史 `experiment_running` 事件才视为已完成首次基线，否则重新执行唯一 verified Decision、三段 READBACK 检查点和竞价前后值校验，并覆盖 Renderer baseline。完整仓储文件 `47/47 passed`、skipped=0。
+- 权威生产基线已核对为 `D:/Desktop/py/amazon-ai-ops`、`master@e76076735d73dbde6d0fbddb0f8ce868f3407748`；`c26be721` 是其 44 个提交之前的祖先，不存在待合并分支。tracked/staged 起点 clean，大量既有未跟踪资产继续保留。
+- 独立原型 `amazon-ai-ops-autonomy-prototype/` 已按六模块重构，并对标此前确认的店铺切换、产品与广告对象、8 类采集、人工/策略自动、经营实验、实时执行与回读、因果记忆和系统配置。此前 `11/11`、build 与浏览器错误日志 0 仅是旧原型快照；本轮遵守“只跑单元测试”禁令，没有重跑 build 或浏览器。
+- 原型状态真相完成第一轮红→绿：产品切换后不再把旧 completed 分析回退成当前运行；广告诊断与建议按所选产品 ASIN/对象键绑定，当前产品没有规范对象时明确零建议，不借用其他产品数据；对象必须明确选择并核验后才能通过执行门。
+- 延迟模拟执行现捕获安全门快照并在提交点重新核验店铺、产品、分析指纹、广告对象、批准与 Ads 身份；期间任何漂移均保持零执行。刷新回读改为独立观察值，可明确形成 `verified` 或 `readback_failed`，不一致不会生成因果记忆，并给“重新核验对象/人工接管”下一步。
+- 经营实验状态机已绑定当前产品、广告对象、建议与已验证回读基线；无基线不能启动，同对象不能并行，守护指标可停止，完成后重开会形成新的观察轮次而不是把完成状态改回草稿。
+- 系统设置从静态展示改为店铺级状态：策略必须“创建草稿→检查→启用”，V1 仅允许关键词竞价且数字越小越先匹配；配置保存带 revision 冲突门与执行 kill switch；自动任务可启停、立即运行、记录失败中文原因并重试。能力诊断不再把 Ads 阻断能力统一显示为“可用”。
+- 按操作者最新反馈，分析建议已从大卡片改为规范业务表；活动与广告组不再重复挤占数据列，而是形成两级独立表头，数据行直接显示具体对象、对象层级/中文匹配方式、动作、当前值、建议值、依据、状态和操作。广告对象与执行队列复用同一层级；活动级广告位只归属真实广告活动，不伪造广告组。选择后的对象路径也使用中文业务字段，不再回显 `close-match` 等原始技术值。
+- `Exact/Phrase/Broad/close-match/loose-match/substitutes/complements` 已映射为“精准匹配/词组匹配/广泛匹配/紧密匹配/宽泛匹配/替代商品/关联商品”；商品投放、自动投放按自身对象类型展示。竞价动作按关键词/自动投放/商品投放分别命名，广告位系数按百分比而不是 USD 展示，普通表格未增加 `id/objectKey` 列。
+- 正式不可变建议快照现保留真实 recommendation evidence 的 `matchType`，不再靠测试临时字段或关键词名称后缀才能中文化。无 schema 变更：规范值兼容写入现有快照 JSON，create/get/list 三段 round-trip 将 `Exact` 稳定读为 `exact`，旧快照缺字段继续显示“待对象核验”；authorization 的 human/policy 结构不变，V1 仍只允许 `set_keyword_bid`。Repository RED 为 `undefined` 而非 `exact`，presenter RED 为函数不存在；修后相关 repo+Renderer `37/37`、Main analysis `26/26`、execution authority repo `20/20`，合计 `83/83 passed`。
+- 任务中心“飞行计划”不再依赖人工检查点才出现：Renderer 始终投影事实核验→分析→决策→执行→回读→效果评估六个系统阶段，分别显示已完成/当前/受阻/等待、阶段说明、证据数与已记录事实；人工动作改名为“补充事实记录”，明确不会替代系统判定。右侧重复的六行状态已收敛为当前阶段与下一步。新增单元先红为 `missionFlightPlanRows is not a function`（`1 failed / 21 skipped`），修后定向为 `1 passed / 21 skipped`；完整任务工作区最终 `22/22 passed`、skipped=0（Vitest duration 25.48s）。
+- 任务来源链遗留的普通界面 `Crux 决策` 已改为“经营决策”，其余八种来源也通过统一 presenter 固定为中文业务名称。新增定向测试先红为 `missionLineageLinkLabel is not a function`（`1 failed / 22 skipped`），修后 `1 passed / 22 skipped`；加入后的完整任务工作区最终 `23/23 passed`、skipped=0（Vitest duration 20.91s）。
+- 六阶段计划经独立审查后关闭 3 个真相缺口：`draft / paused / archived` 不再冒充当前运行，`completed` 不再保留 current；人工 FACT/ANALYSIS 检查点常驻“人工补充”标签，且即使人工写了未来阶段 completed 记录也不会改变 Mission 阶段；“六阶段自动推进”改为真实能力说明——事实至回读随已接通系统事件更新，效果必须等关联经营实验完成指标判定与结果关联。三条新增 RED 分别精确失败，修后定向全绿，完整任务工作区 `26/26 passed`、skipped=0。
+- 经营实验成功判定现已补上运营任务最后一段后端事务闭环：同一 `IMMEDIATE` 事务写入结果指标、实验结论和 EFFECT 因果事件后，将仍处于回读/效果阶段的 active 任务推进到 `effect`；当没有其他未结束实验时同步置为 `completed`，并追加“经营实验完成效果评估”系统检查点。首个 RED 精确显示实验已 completed 而 Mission 仍为 `active/readback r3`，修后定向为 `1 passed / 33 skipped`；后续守护栏阻断与多实验聚合均已通过独立反向门核验。
+- 实验判定的成功反馈也已与新事务语义对齐：不再只说“效果记录已写入”，现在明确告知“关联运营任务已同步进入效果阶段”，让用户知道任务状态发生了什么。Renderer 定向 RED 为旧反馈缺少该结果，修后 `1 passed / 13 skipped`。
+- Renderer 伪造任务阶段/完成状态的 Main 边界已关闭：普通界面 IPC 现在只允许启动、暂停、恢复，不接受 `phase`，也不能提交 `completed / blocked / effect`；这些状态只能由分析、执行回读和经营实验的系统证据链推进。定向 RED 证明旧服务会把 `status=completed, phase=effect` 原样交给仓储，修后 `1 passed / 10 skipped`，内部系统服务仍可直接使用受控仓储事务。
+- 经营实验首次启动后的因果合同现已冻结：暂停只暂停观察，不再允许把旧 verified 回读基线与新产品、广告对象、指标、变量或窗口混算；需要改变合同必须归档并新建实验。Repository RED 证明 paused 状态可把竞价变量从 `0.94` 改成 `0.50`，修后 `1 passed / 34 skipped`；Renderer 只在 draft 提供编辑并常驻中文原因，presenter RED→GREEN 为 `1 passed / 14 skipped`。
+- 成功实验结果现可真实进入生产因果记忆：`evaluateExperiment` 在同一 `IMMEDIATE` 事务内对结果批次与按指标稳定排序的结果快照生成 SHA-256，写入非路径 opaque `experiment-result:<digest>` proof，再提交 EFFECT 事件和 Mission 结果；proof 失败会整批回滚。RED 为实验/任务均已完成但 `listAnalysisCausalMemory(productId)` 返回 `[]`，修后定向 `1 passed / 34 skipped`，未放宽“必须有 64 位证明、非 UNKNOWN、当前产品”的记忆过滤门。
+- 守护栏停止现不可被“恢复实验”绕过：系统测量触发 `experiment_guardrail_triggered` 后，Mission 原子进入 `blocked/effect`，Repository 在 paused→running 的提交事务内读取追加式停止事件并拒绝恢复；Experiment revision/结论保持不变。旧实现 RED 为恢复成功，修后 `1 passed / 34 skipped`；Renderer 同时禁用恢复并给“复核原因并新建实验”，presenter RED→GREEN 为 `1 passed / 15 skipped`。
+- 已完成记录的归档/恢复不再降级终态：恢复时在同一事务读取追加式 completed 事件，完成的经营实验恢复后仍为 `completed`，完成的运营任务仍为 `completed/effect`；非终态记录继续按原安全策略恢复为 paused。Renderer 也不再无条件谎称“恢复为暂停”，而是按 Main 返回状态明确说明终态与效果证据保持不变。两条反馈 helper 各自先红为 `is not a function`，修后完整经营实验 `17/17`、运营任务 `27/27`，skipped=0。
+- 经营实验合同的写入前校验已完整覆盖创建与草稿更新：指标/标准一一对应 RED（创建 `1 passed / 35 skipped`，更新 `1 passed / 39 skipped`）、`~=` 歧义比较符 RED（创建 `1 passed / 36 skipped`，更新 `1 passed / 40 skipped`）、`-5%` 负阈值 RED（创建 `1 passed / 37 skipped`，更新共用同一格式门），以及 TACOS/无权威指标 RED（创建 `1 passed / 38 skipped`，更新 `1 passed / 41 skipped`）均已转绿。两个入口现在都只接受当前权威链可计算的 ACOS、CVR、广告订单、广告销售额和花费及兼容别名；拒绝时 Experiment、revision、Mission link 和 causal event 均不增长。
+- 上述经营实验校验抽成创建/更新共用的深层合同后，完整 `mission-domain-repo.test.ts` 为 `42/42 passed`、skipped=0（Vitest duration 20.92s）；此前效果闭环、守护栏停止、终态归档恢复及因果记忆门均未回归。
+- Mission 创建的权威快照竞态完成首条红→绿：第二 SQLite 连接在旧校验后、提交前把 policy version 置为 retired，旧实现仍会落下 Mission；修后 completed 数据批次、enabled version、active policy 与产品归属全部在同一 `IMMEDIATE` 事务内重读，定向 `1 passed / 42 skipped`，竞态下 Mission 保持不存在。
+- Experiment 创建的来源竞态也已转绿：第二连接在旧 Mission 校验后、提交前归档任务，旧实现仍会创建实验；修后 Mission 生命周期、产品归属与广告对象归属均在同一 `IMMEDIATE` 事务内重验，归档漂移返回 `STATE_CONFLICT` 且零 Experiment，定向 `1 passed / 43 skipped`。
+- 两条创建竞态加入后，完整 `mission-domain-repo.test.ts` 更新为 `44/44 passed`、skipped=0（Vitest duration 21.55s）。
+- 同一运营任务的多实验串行闭环补齐真实断点：第一个实验完成且仍有第二个草稿时，任务正确保持 `active/effect`，但旧基线门只接受 `readback`，导致第二个实验无法启动。新增行为单元先红为 `1 failed / 44 skipped`，中文失败为“运营任务尚未完成真实广告执行与刷新回读”；修后基线门仅扩展到 `active + readback/effect`，已验证 READBACK 检查点、产品/对象归属、唯一 verified Decision、不可变历史及竞价前后值门均保持不变。定向转绿为 `1 passed / 44 skipped`，完整仓储文件现为 `45/45 passed`、skipped=0（Vitest duration 16.63s）。
+- 本轮受影响核心单元已做一次合并收口：Main 分析 `26/26`、Ads SSO `51/51`、决策工作区 `27/27`、任务工作区 `26/26`、经营实验工作区 `16/16`、Mission/Experiment 仓储 `45/45`，合计 `6/6 files、191/191 passed`、skipped=0、exit 0（Vitest duration 98.77s）。遵守当前禁令，未运行 typecheck、build、smoke、Package UI、ZIP 启动或应用/浏览器/桌面控制。
+- Ads 首次导航和多店铺名称适配完成三条红→绿：`openLingxingAdsFromErp` 首次读取遇到精确 `Execution context was destroyed` 原本直接失败，现只对该瞬态导航错误做有界重读，关闭/未知错误继续终止；顶部店铺选择不再只接受 ASCII，`华东 一号店-US` 等中文、空格、连字符展示名可按 NFKC/空白归一后的精确别名匹配；即使目标已出现，只要顶部存在两个候选控件仍阻断。补充关闭真值门：pending Ads 控制器仍停在 ERP 页时只绑定 close、不监听其导航；关闭后先有界查找可信 Ads 替代页，找不到才立即降级并沿用 `VISIBLE_BROWSER_CLOSED`。
+- ERP 页保持打开而 Ads 另开新页的真实断点也已补齐：同一隔离 BrowserContext 在 15 秒有界窗口内只采纳连续稳定、唯一、未关闭的可信 Ads 页面，ERP、`restartLogin`、跨域页均不构成 Ads 身份；多个可信页立即沿原门降级。采纳后不调用通用登录或重建 runtime，而是重验 runtimeId/epoch/store/retained claim 和 Main 保存凭证门，直接续接既有 Ads-only 识别事务。三个 RED 依次为 helper 缺失（`1 failed / 52 skipped`）、多页误选首项（`1 failed / 53 skipped`）、Main 未接线（`1 failed / 54 skipped`）；完整 `lingxing-ads-sso.test.ts` 为 `56/56 passed`、skipped=0。
+- 此前“两类通用 importer 测试与生产精确 8 类合同冲突”的记录已解除：不改旧测试输入/断言，而是将正式 Main importer 拆到独立 `productionImport` port，旧 callback 只允许与显式注入的测试 runner 共存。因此生产不再保留 2–7 类假入库绕过，该项不再是源码 blocker。
+- 独立部分采集已找到不改动既有两类通用导入测试的生产边界：Coordinator 新增由 Main 实例显式启用的 `exact-eight-lineage` 正式导入策略；精确 8 类根任务或携带 Main continuation lineage 的原任务续跑才可进入生产 importer，独立单类/部分下载保持 `completed + not_applicable` 且不调用 importer。首条行为 RED 为 `1 failed / 23 skipped`，实际误得 `succeeded`；修后定向为 `1 passed / 23 skipped`。完整八类、续跑、伪造 lineage 和 Renderer 中文状态仍在后续纵向切片核验，暂不提前关闭整项。
+- 正式 importer 已从兼容 callback 拆成独立 Main-only port，并禁止与旧 port 同时注入。旧 `importResult` 仅允许和显式注入的 collector runner 一起用于单元/兼容协调器；缺少 injected runner 的新反向单元先红为“未抛错”，修后构造阶段即以 `LINGXING_COLLECTION_LEGACY_IMPORT_PORT_FORBIDDEN` 失败关闭，定向 `1 passed / 24 skipped`。正式 `index.ts` 唯一实例已改用 `productionImport.policy=exact-eight-lineage-v1`。
+- 正式 port 不再把 `completed_with_errors` 当成可入库完成：request 必须精确 8 类，8 个 checkpoint 与 8 个文件都必须为 downloaded，且 job 必须为 completed。新反向单元将 full-8 的 campaign checkpoint 置为 failed，旧实现仍得到 `succeeded`；修后变为 `not_applicable` 且 importer 零调用，定向 `1 passed / 25 skipped`。
+- 正向生产合同已补证：精确八类根任务在正式 port 下由 Main 自动签发 `production_full` lineage，expectedReportTypes 精确覆盖 campaign/ad group/placement/advertised product/auto targeting/keyword/product targeting/user search term 八类，最终只调用一次 importer 并得到 `succeeded`。定向 `1 passed / 26 skipped`。
+- runner 返回的 lineage 不再被信任：独立部分任务即使伪造一个表面完整的 full-8 resume lineage，也不能获得生产导入资格，且该伪造字段会在持久化前从 job 中移除。新单元先红为输出仍含 `forged-root-eight`，修后 `not_applicable`、无 lineage、零 importer，定向 `1 passed / 27 skipped`。
+- 原完整八类 durable job 的恢复链也已在严格 port 下补正向证据：继续任务仍绑定同一 jobId、精确 8 类 request、当前执行代次与持久 claim，导入一次后以 succeeded receipt 收口；定向 `1 passed / 28 skipped`。这条证明安全收紧未切断已有 7 类补齐第 8 类的正确恢复入口。
+- Renderer 不再把所有 `not_applicable` 冒充 Canary：只有 `canary:` request 才显示诊断任务；普通独立部分下载显示“部分报表已下载，等待完整 8 类 / 等待完整 8 类后入库”，明确本次未写生产指标、继续原完整任务或重新获取完整 8 类、不会跨独立批次拼接。新单元先红为 `row.canary=true`，修后定向 `1 passed / 60 skipped`，任务血缘仍显示“独立部分任务”。
+- 部分下载的完成提示、监控抽屉、四步进度和最近动作标签现在都读取“本次 job importState + 本次 metricsImport”，不再借用当前店铺历史 `importedRows` 冒充本次回执。五条新 RED 分别复现历史 96 行假完成、monitor 假绿、进度误认自动导入、“待补导”错标和本次 3 行/累计 99 行混淆，修后均转绿。多结果返回冲突 importState 时投影为 `mixed` 并失败关闭。
+- 已选单类/部分报表的运行态、按钮说明和动作指南不再承诺“下载并自动导入”，常驻说明只保留真实文件、不写生产指标、不跨批次拼接；完整 8 类仍保留正常自动入库路径。Coordinator + Renderer 合并单元最终为 `2/2 files、99/99 passed`、skipped=0、exit 0；未运行任何被禁止的 typecheck/build/smoke/应用或浏览器流程。
+- post-intent 执行终态化缺口已关闭：单次保存点击后若 Ads liveness 立即降级，Service 不再先调用要求 Ads-ready 的读取把 UNKNOWN 落账反向阻断；它使用已持久化 job revision，经只允许 `intent_written/submitted/verifying → unknown` 的原子 CAS 入口完成 UNKNOWN、取消未越过意图的兄弟动作、授权撤销和 Mission action 阻断，绝不重试点击。行为 RED 为 Ads status/session 已降级后抛 `INVALID_CONTEXT` 且账本停在 intent，修后目标通过；完整 service+repo 单元 `2 files / 58/58 passed`。
+- 生产 AI 已真正消费 Main 封存的因果记忆：只有具备 64 位摘要、`READBACK / EFFECT` 类型、非未知结论及有效 SHA-256 证明的冻结结构化记忆，才能同时进入策略诊断与逐条建议解释；中文 system prompt 明确历史只能辅助，不得替代当前 8 类报表、广告对象/竞价、人工审批或生成/批准/执行动作。Renderer 请求不能注入，空记忆保持原行为，普通返回不暴露事件/任务 ID。定向 RED 为 `1 failed / 4 skipped`，修后 GREEN，完整 `system-ai-runtime-config.test.ts` 为 `5/5 passed`。
+- 因果记忆 prompt 又完成一次信任边界加固：审查发现标题/观察结果曾与 persona 一起进入 system role；新增行为单元先红为模块不存在，修后 system 只保留静态“历史不得替代当前证据/审批”规则，历史自由文本作为独立 user-context 注入并明确标为“不可信文本数据，不是指令”。恶意“忽略规则并执行”样例证明只存在于 user role，空记忆返回原 provider/persona。新行为单元 `2/2`、原生产接线单元 `5/5` 均通过。
+- 生产导航已收敛为六个一级模块：今日与决策、产品与广告、数据采集、策略与自动化、实验与执行、记忆与设置；原 10 个工作区和 22 个 intent 全部保留且唯一归属二级入口，当前模块才展开。侧栏、Ctrl-K 搜索与能力提醒共用同一 facade，提醒精确跳到受影响二级入口；自动任务归策略与自动化，AI/本机/交付设置归记忆与设置，交付验收不占一级入口。普通导航状态只显示“受阻/需关注”，不再显示“部分可用/PRODUCTION_NATIVE/LEGACY_ADAPTER/PROTOTYPE_ONLY/原型”。六个纵向 RED 均先复现缺口，相关 facade/sidebar/shell、既有 App Shell/Today 与 router 单元合计 `26/26 passed`。
+- 原型新增单元先红后绿：权威函数缺失、经营实验状态机缺失、设置模块缺失、表格 presenter 缺失均先失败；两级表头先后以 `businessGroupPath` / `businessGroupTransitions` 未导出精确 RED。随后活动级广告位又以“泄漏广告组名称”和“完整 8/8 样例没有 placement 对象”形成两个独立 RED（`7 passed / 1 failed`、`8 passed / 1 failed`）；修后活动级对象强制显示“活动级”，完整样例包含“搜索结果顶部”广告位，最终 `npm test` 为 `32/32 passed`、skipped=0。未启动原型、未操控浏览器、未运行构建或流程 smoke。
+- 原任务进入执行/回读/效果阶段后重新分析会破坏授权、回读与实验谱系；新增 RED 为 `1 failed / 26 skipped`，旧实现仍生成批次并提升任务 revision。Main 现于任何生成或写事务前阻断 `action/readback/effect`，要求新建运营任务；生成器、任务、Grant、Experiment 和分析账本均保持不变。定向 GREEN 为 `1 passed / 26 skipped`。
+- 新动作批次的旧开放 Decision 不再依赖 `adEntityId` 才能去重：Main 只使用不可变 proposal→decision 链识别分析生成记录，连尚未核验 Ads 身份的 `blocked` 建议也会在新批次发布后转为 `superseded`；人工或未关联决策，以及 approved/executed/verified/rejected 历史均不动。RED 为旧 Decision 仍是 `blocked`（`1 failed / 27 skipped`），修后完整分析服务 `28/28 passed`。
+- 经营实验创建现于同一 `IMMEDIATE` 事务强制 `Experiment.productId === Mission.productId`，任务缺产品或跨产品均以中文 `REFERENCE_CONFLICT` 零写入；Mission 链接和因果事件不增长。RED 为跨产品实验被旧实现接受（`1 failed / 45 skipped`），修后完整仓储 `46/46 passed`。
+- 经营实验表单同步前置该约束：Mission 选项保留真实产品，选择任务后自动绑定且只显示该产品；广告对象再按对象事实中的 ASIN 过滤，切换任务会清空不再合法的对象。按钮禁用与保存处理器双重阻断跨产品草稿，并给缺产品/缺对象的中文原因和入口。RED 为 `bindExperimentDraftToMission is not a function`（`1 failed / 17 passed`），修后完整工作区 `18/18 passed`、skipped=0。
+- 执行进度通知已从权限主链隔离：Renderer 进度发送即使同步抛错，也不能打断身份解析、写入、三段回读、Grant 消费、Decision 验证、Mission 推进、领域对账或租约释放。RED 为通知异常直接中止身份解析（`1 failed / 38 skipped`），修后完整执行服务 `39/39 passed`。
+- 上述三条生产主链与跨产品门已联合复验：`analysis-authority-service 28/28 + execution-authority-service 39/39 + mission-domain-repo 46/46 = 113/113 passed`、skipped=0、exit 0（Vitest duration 23.22s）；`git diff --check` 仅现有 CRLF 提示，受影响测试未新增 `.skip/.todo`。
+- 加入 Ads 新页续接与经营实验前置约束后的最终受影响单元为 `5/5 files、187/187 passed`、skipped=0、exit 0（Vitest duration 69.14s）；原型独立 `npm test` 同轮为 `32/32 passed`、skipped=0、todo=0。仍未运行被禁止的 typecheck、build、smoke 或任何应用/浏览器/桌面操作。
+- 生产分析主链红测先复现真实缺口：`pnpm exec vitest run apps/desktop/src/main/analysis-authority-service.test.ts -t "advances the Mission"` 为 `1 failed / 17 skipped`，实际 phase 仍为 `analysis`，没有自动事实/分析检查点。
+- Main 修复后在同一 `IMMEDIATE` 事务内校验异步运行期间 Mission 未漂移，成功时推进至 `decision`，再按新 revision 建立动作批次、建议快照和决策，并追加“8 类领星事实已封存”“分析完成，形成 N 条可复核建议”两个确定性检查点；任一快照失败会整批回滚，不留下半成品批次或错误阶段。
+- 重复分析结果新增明确摘要：候选、新建、刷新、复用已有。相同店铺/任务/证据/规则/模型再次分析的定向单元证明 Mission revision、evidence/action/proposal/decision 投影与两条检查点均不增长，返回 `created=0 / reused=1`。
+- Renderer 红测先分别得到 `refreshMissionAnalysisReceipt is not a function` 与 `missionRecommendationSummaryLabel is not a function`；修后分析成功会并行刷新分析投影、任务列表和来源链，校验店铺/任务归属后一次更新界面，立即显示“决策”阶段与自动检查点，并明确结果进入决策中心及新建/刷新/复用数量。
+- `核验 Ads 对象` 的真实根因也已红→绿：旧代码把顶栏 `2026-08-26` 当作任务绑定批次 `2026-08-10 至 2026-08-23` 的重分析/绑定范围。修后分析请求只传店铺上下文与 mission，Main 从 `mission.dataBatchId` 派生日期；Ads 绑定 ASIN 只接受 Main 从当前店铺 recommendation 派生的规范值，空值、格式错误或与 evidence package 不一致均中文失败关闭，顶栏 ASIN 不再参与猜测。
+- 生产安全复审补出并关闭旧 grant 风险：相同动作指纹才复用批次；新动作指纹会在同一 `IMMEDIATE` 事务内提升 Mission revision 后创建新批次，使旧 grant 自动失效。recommendation IDs 先做唯一正整数/本店完整性校验并稳定排序，缺失、跨店、重复或顺序变化不再被伪装成成功或制造冗余。
+- Ads 唯一对象匹配现同时使用 campaign、adGroup、keyword、matchType、bid 与稳定 ID；Renderer 重跑匹配要求 recommendationId 与完整业务路径一致，仍不唯一就阻断，禁止同名同价择首。对应红→绿：Main service `1 failed`→`21/21`；Decisions `2 failed`→`25/25`；Preload `2/2`；Lingxing 只运行纯 resolver/Main 源码契约单元，未启动浏览器。
+- 分析运行账本第一个纵向切片已红→绿：新单元首次精确失败为 `expected [] to have a length of 2` (`1 failed / 21 skipped`)；修后每次成功分析会使用独立 run 身份在当前店铺任务的因果账本持久化“分析已开始→分析已完成”，完成回执与动作批次、建议快照及检查点处于同一 `IMMEDIATE` 事务，并用中文记录建议数、来源与新建/刷新/复用数；定向绿测为 `1 passed / 21 skipped`。
+- 分析失败回执第二个纵向切片已红→绿：注入真实生成异常后，旧链只有 started，红测为 `expected [...] to have a length of 2 but got 1` (`1 failed / 22 skipped`)；修后会追加同一 run 的 `analysis_run_failed`，按 AI/策略、数据证据、店铺/任务/会话漂移给中文原因与下一步，不落库原始异常、路径或内部端点；回执写入失败也不覆盖原始异常。定向绿测为 `1 passed / 22 skipped`。
+- 任务中心持久分析记录的首个 presenter 切片已红→绿：红测为 `missionAnalysisRunReceipts is not a function` (`1 failed / 15 skipped`)；修后可将同一 run 的 started/completed 因果事件投影成一条普通用户可读回执，含“已完成”、起止时间、结果说明和“前往决策中心复核”下一步；定向绿测为 `1 passed / 15 skipped`。run ID 仅作诊断关联，不作普通标题。
+- 分析记录失败态 presenter 同样红→绿：新测首次为空列表 (`1 failed / 16 skipped`)；修后 started/failed 组合投影为“失败”，直接显示 Main 已脱敏中文原因并给“按失败原因处理后重新运行分析”，定向绿测 `1 passed / 16 skipped`。
+- 旧会话孤立 started 回执红→绿：新测首次为空列表 (`1 failed / 17 skipped`)；修后无终态且不属于当前最新会话的 run 显示“已中断 / 上次分析没有完成回执 / 刷新当前店铺后重新运行”，不再永久冒充运行中；定向绿测 `1 passed / 17 skipped`。
+- Renderer 任务来源链因果事件接口红→绿：预览 adapter 旧返回值的 `causalEvents` 为 `undefined` (`1 failed / 17 skipped`)；修后 `MissionLineageProjection` 显式带上 Main 已返回的当前任务因果事件，预览 adapter 也保持同形状空数组；定向绿测 `1 passed / 17 skipped`。
+- “分析运行记录”已真正接入任务中心的分析权威区：组件红测首次因未实现而报 React 无效组件 (`1 failed / 18 skipped`)；修后用紧凑表格固定显示状态、结果、下一步、开始/结束时间，失败/中断/运行/完成分色，最多展示最新 5 次；内部 run ID 仅位于折叠“诊断详情”。组件绿测 `1 passed / 18 skipped`，并新增因果事件的店铺/任务归属阻断。
+- 分析结果归属混搭已红→绿关闭：新测先因 `latestMissionAnalysisResult is not a function` 失败 (`1 failed / 19 skipped`)；修后普通界面先选最新成功 action batch，再用其 `evidencePackageId` 反查同一证据包，建议也只取同一 batch。因此新失败尝试留下的孤立证据不会再与上次成功建议拼成一次结果；定向绿测 `1 passed / 19 skipped`。
+- 分析失败后无感知的最后一段已红→绿：新测先因 `refreshMissionAnalysisFailureReceipt is not a function` 失败 (`1 failed / 20 skipped`)；修后 Renderer 在分析 IPC 拒绝后立即只读重读当前任务来源链，通过店铺/任务归属校验后展示 Main 刚持久化的失败回执，无需手动刷新；来源链重读失败也不会覆盖原始分析错误。定向绿测 `1 passed / 20 skipped`。
+- 分析回执与任务工作区合并单元回归通过：`analysis-authority-service.test.ts` 23 条 + `missions-workspace.test.tsx` 21 条，共 `2/2 files、44/44 passed`、skipped=0（exit 0，Vitest duration 23.70s）。未运行 typecheck/build/smoke/应用、浏览器或桌面控制。
+- 对“同样数据连续分析会否叠加”已增加明确反向断言：两次尝试保留 2 组独立 started/completed 运行历史，但 Mission revision、evidence/action/proposal/decision 投影和两个自动检查点均不增长，第二次返回 `created=0 / reused=1`。定向单元 `1 passed / 22 skipped`。
+- 经营实验指标快照因果记忆丢失已红→绿：Main 实际持久化 `entityType=experiment_metric_snapshot`，旧 Renderer 只匹配 `experiment_metric`。新测先因 `experimentCausalEventsForSelection is not a function` 失败 (`1 failed / 11 skipped`)；修后当前实验的指标快照会按实际事件类型进入因果账本，并保留旧名兼容读取；定向绿测 `1 passed / 11 skipped`，完整实验工作区 `12/12 passed`、skipped=0。
+- 本轮最终三文件单元回归为 `3/3 files、56/56 passed`、skipped=0（Main analysis 23 + 任务工作区 21 + 经营实验 12；exit 0，Vitest duration 21.93s）。`docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md` 与 `BLOCKED.md` 已同步；持久分析历史、失败即时回执、同批次结果绑定及实验指标事件不再列为待办。
+- 新结果替代旧开放决策已完成纵向红→绿：新动作批次发布后，同一任务、同一非空规范 `adEntityId` 的旧 `proposed / needs_approval / blocked` 决策原先仍停在 `needs_approval`，定向红测为 `1 failed / 23 skipped`；修后在分析完成的同一 `IMMEDIATE` 事务内把这些旧项转为 `superseded`，写入不可变 Decision history 与因果事件，新批次决策继续可审批，旧记录不删除。名称相似或缺少稳定对象身份时不会猜测替代。
+- 已批准及其他终态历史保持不可改写：现有“动作指纹变化使旧 Grant 失效”用例新增反向断言，确认旧 Decision 仍为 `approved`；与替代用例合跑 `2 passed / 22 skipped`。Main analysis service 完整文件最终为 `24/24 passed`、skipped=0（exit 0，Vitest duration 19.04s）。
+- 经营实验“手填文字即可提前完成”的第一个真实状态门已红→绿：新增单元在观察窗结束前提交 `Looks good to me.`，旧实现直接写成完成结论，红测为 `Expected MissionDomainRepositoryError STATE_CONFLICT`（`1 failed / 26 skipped`）；修后 Repository 在任何写入前按受控时钟比较 `observationEndsAt`，保持实验 `running`、revision 不变、conclusion 为空且不产生 `experiment_completed` 效果事件。定向绿测 `1 passed / 26 skipped`。
+- 经营实验完成门的第二个切片也已红→绿：观察窗结束后但没有系统基线/结果快照时，旧实现仍会接受“操作者认为结果为正”的自由文本并完成，红测同样为缺少 `STATE_CONFLICT`（`1 failed / 27 skipped`）。修后要求主指标和每个守护指标都同时具备“开始时点之前的基线快照”和“结束时点之后、来自不同新完成批次的结果快照”；缺任一项继续保持运行且不给结论。两个完成门合跑 `2 passed / 26 skipped`。
+- 经营实验启动权威已完成首个红→绿：没有已验证回读时旧实现直接从 draft 进入 running，红测为缺少 `STATE_CONFLICT`（`1 failed / 28 skipped`）；修后要求运营任务处于真实回读阶段，并唯一匹配同任务、同产品、同非空 `adEntityId`、`set_keyword_bid`、最新 action revision 的 `verified` Decision 及不可变 verified history。实验变量必须等于真实回读后的竞价；Renderer 传入的 baseline 会被 Main/Repository 用 Decision 的前值、后值、revision、data batch 与 verifiedAt 完整替换。无权威/不唯一/变量漂移均保持 draft。启动正反向与两个完成门合跑 `4 passed / 26 skipped`。
+- 实验基线指标已接入真实源行而非人工 JSON：正向启动用例先红为 `expected [] to deeply equal ArrayContaining`（`1 failed / 29 skipped`）；修后从当前店铺、任务 data batch、verified `adEntityId` 的 Stage5 权威精确联结 completed import、绑定 report snapshot 和唯一非隔离 `ad_daily_metrics` 源行，按汇总分子/分母生成 ACOS/CVR，并读取广告订单/花费。示例自动写入 `ACOS=0.4`、`广告订单=2` 两个只追加快照及 FACT 因果事件。TACOS 因无产品总销售额权威来源明确失败关闭，不用广告销售额冒充。定向绿测 `1 passed / 29 skipped`。
+- 观察结果与机器判定已形成首个闭环：新测试先精确红为 `repository.evaluateExperiment is not a function`（`1 failed / 30 skipped`）；修后系统只选择观察终点之后最新 completed import，仍按同店铺/产品/`adEntityId` 的精确权威源行写入 result 快照，然后比较基线。示例 `ACOS 0.4→0.3`、广告订单保持 100% 时自动完成并只追加一个 `experiment_completed` EFFECT；订单降至基线 50%、违反 `>=95%` 时自动转 `paused`，写入唯一 `experiment_guardrail_triggered`，不伪造完成。两种机器结果合跑 `2 passed / 30 skipped`。
+- 人工状态接口现无论是否已有快照都不能提交 `completed`；只有 `evaluateExperiment` 可生成系统结论。没有删除、跳过或放宽既有精确快照断言。
+- “verified 状态标签但没有持久回读证据”已单独红→绿：旧实现会启动实验，红测为缺少 `STATE_CONFLICT`（`1 failed / 32 skipped`）；修后启动还必须读取同任务 `READBACK / verified / evidenceCount>=3` 检查点，代表前值、提交后与独立刷新三段证据均已进入账本。缺证据保持 draft；正向精确回读用例仍绿（各 `1 passed / 32 skipped`）。
+- 因果记忆受控输入完成仓储第一段红→绿：新测先精确失败为 `repository.listAnalysisCausalMemory is not a function`（`1 failed / 33 skipped`）；修后 Main-only 查询只返回当前店铺、指定产品运营任务下的 `READBACK / EFFECT`，要求非空观察结果、状态非 `unknown / still_unknown`、至少一条有效 SHA-256 证据，并排除已有修正事件的旧结论。结果与证据均稳定排序，空产品范围直接返回空列表；同一查询两次完全相同。定向绿测 `1 passed / 33 skipped`，尚未把该记忆注入 AI 或授权指纹。
+- 因果记忆分析权威已完成第二段红→绿：首测先红为 generation scope 的 `causalMemory/memoryDigest` 均为 `undefined`（`1 failed / 24 skipped`）；修后 Main 按 Mission.productId 自读仓储过滤结果，忽略请求对象伪造的记忆/digest，并生成不含 eventId、missionId、createdAt、sequence、sessionGeneration 的稳定 64 位摘要。同一非空记忆复用相同有效模型 revision 与建议快照；新增可信记忆会换代有效模型 revision、Mission/action batch/proposal，并使旧建议授权返回“当前 AI 模型 revision 已变化”。
+- 生成期间记忆漂移也完成独立红→绿：旧链会 resolved 并创建动作批次/建议（`1 failed / 25 skipped`）；修后最终 `IMMEDIATE` 事务在任何 Mission/批次/建议/Decision/检查点写入前重读摘要，不一致立即失败关闭，测试证明 Mission revision/phase 不变、动作权威与 completed 回执均为空。Main analysis service 完整单元最新为 `26/26 passed`、skipped=0。
+- 加入观察窗、真实回读检查点、自动基线/结果、机器守护栏与因果记忆筛选后的仓储完整单元已复跑：`1/1 file、34/34 passed`、skipped=0、exit 0（Vitest duration 22.10s）。
+- 经营实验机器判定已完成 Renderer→Preload→IPC→Main 接线：新增 `experiments.evaluate` 只接受实验 ID 与 expected revision，Main 固定注入 `experiment-evaluator`，拒绝界面 actor/结论文本；人工 transition 的 completed 在 Renderer 与 Main 均失败关闭。UI 删除自由文本完成弹窗，改为“检查并判定”，明确区分系统完成、守护栏暂停、观察窗未结束和缺导入指标；产品与可回读广告对象为必选，TACOS 在总销售额权威缺失时从可选项移除，守护栏解释为“结果 ÷ 基线 × 100%”。各层 RED 均由缺接口/未阻断精确复现，最终 `5/5 files、40/40 passed`、skipped=0。
+- 正式“建议与审批”的分析建议表完成首个红→绿：新测先因 `AnalysisProposalBusinessTable` 未实现而报 React invalid element（`1 failed / 25 skipped`）；修后用规范表格按“广告活动 → 广告组”分组，独立列出对象层级、具体对象、匹配方式、建议动作、变更幅度、当前/建议值、主要依据、状态和操作。对象名明确后缀 `exact / broad / phrase` 只用于显示翻译并从对象名移除，普通列显示“精准匹配/广泛匹配/词组匹配”；没有明确类型时显示“待对象核验”，不猜测执行身份。该表已接入当前运营任务最新动作批次和整批授权区，定向绿测 `1 passed / 25 skipped`。
+- 分析表接入后的完整决策工作区单元已复跑：`1/1 file、26/26 passed`、skipped=0、exit 0（Vitest duration 18.68s）。
+- 当前生产单元证据还包括任务工作区 `15/15` 与分析窗口 API `5/5`；未删除或跳过任何测试。此前四文件一次合跑在 Main 完成后无失败详情 exit 1，拆分串行均绿，该历史异常不冒充已消失。
+- 未运行 typecheck、build、smoke、Package UI、ZIP 启动或真实 Ads 操作，遵守本阶段仅单元测试约束。整体状态继续是 `APP_NEEDS_WORK / INTERNAL NON_READY`，原型与单元绿不等于当前 Windows 包可投产；其余已发现产品缺口已写入 `BLOCKED.md`，等待用户确认优先级后再改。
+
 ## 当前：2026-08-27 Ads 当前会话真值修复（已入新包并由操作者确认）
 
 - 操作者实屏显示“ERP 已连接，Ads 尚未连接 / Ads 已识别 JF-US”，但目标进程下没有项目独立 Chromium。根因是 Renderer 把仓储中的历史 `session.status=ready` 当成当前可见浏览器仍存活，导致旧 ERP 状态冒充实时连接并错误进入 Ads 单独重试路径。
@@ -14,9 +172,9 @@
 - 本轮仅启动目标应用并确认窗口存在，没有点击应用、浏览器或其他桌面窗口，没有读取正式库、密码或 Cookie。随后操作者提供的新包实屏截图显示顶部“ERP/Ads 已连接”，当前会话真值显示修复获得人工确认；这不构成真实广告写入或 Task 8B 回读证据，状态仍保持 `APP_NEEDS_WORK / INTERNAL NON_READY`。
 - 对截图反馈的只读代码核查另确认两项后续产品缺口：经营决策核验把任务批次日期与顶栏当前日期混用且隐藏原始失败原因；任务分析只有临时按钮/页底反馈，不自动推进阶段或生成完整飞行计划。已记入 `BLOCKED.md`，本次 Git 推送不夹带未经授权的功能改造。
 
-## 当前：2026-08-26 v1.5.1 权限链修复与静态 Windows 候选完成
+## 当前：2026-08-31 v1.5.1 console-refactor 静态 Windows 候选完成
 
-- 本轮不是文案性改名：策略范围、关键词证据、Grant 签发与执行工作台都改为依赖同一条当前店铺真实权限链。策略创建、更新、启用和 Grant 签发均在 `IMMEDIATE` 事务中重新校验当前 completed import、绑定报表快照、最新 Stage5 修订及需要时的当前 Stage6 Ads 身份；旧名称 token、过期会话或缺失证据一律失败关闭。
+- 本轮在保持 2026-08-26 v1.5.1 权限链修复的基础上完成 B1–B7 console-refactor；策略范围、关键词证据、Grant 签发与执行工作台继续依赖同一条当前店铺真实权限链。策略创建、更新、启用和 Grant 签发均在 `IMMEDIATE` 事务中重新校验当前 completed import、绑定报表快照、最新 Stage5 修订及需要时的当前 Stage6 Ads 身份；旧名称 token、过期会话或缺失证据一律失败关闭。
 - 广告对象范围不再靠名称授权：活动和广告组使用 `adsAccountId/campaignId/adGroupId` 的规范 token；同名不同 ID 保持为不同选项，普通界面只显示中文序号和 `活动 > 广告组` 路径。缺少当前规范身份时仍可保留店铺/产品/关键词只读范围，但不会投影活动或广告组权限。
 - 关键词稳定对象现在把 `match_type` 纳入聚合键、对象键和稳定路径，精确/广泛匹配不再串线；缺少匹配方式、来源行数不等于 1、隔离行、旧导入、旧 Stage5、旧证明或旧会话均不能成为执行证据。最新完成导入以 `completed_at/created_at/run_id` 确定性排序。
 - 执行工作台固定使用操作者选择的 batch/job/slot，任务标题来自真实运营任务；before/after/reload 证据及进度事件均按同一 store/batch/job/grant 过滤。A→B→A 异步竞态通过 authority key 与单调序号阻断，任何待处理结果在权限变化后都不能写回新上下文。
@@ -24,7 +182,7 @@
 - 红→绿事实：执行竞态从 `1 failed / 23 passed` 到 `24/24`；匹配类型首轮从 `2 failed / 17 passed` 到 `19/19`；会话/证明/标签分支从 `3 failed` 到全绿；最新导入三个排序分支从 `3 failed / 25 passed` 到 `28/28`；Grant 会话漂移用例从 `1 failed` 到 `1/1 passed` 且 Grant 表保持 0。
 - 聚焦权限链命令最终为 `10/10` files、`157/157` tests passed。允许范围内的全量单元命令 `pnpm exec vitest run apps packages --reporter=basic --exclude "**/*{integration,e2e,playwright,smoke,launch,build-windows-package,package-ui}*.test.*"` 为 `285/285` files、`3584/3584` tests passed；`scripts/package-scripts.test.mjs` 为 `12/12`，`.skip/.todo/skipIf/context.skip` 命中 0。相对上一轮 3529 条单元基线净增 55 条。
 - 独立只读终审结论为 `NO BLOCKER`：Listing 权威、策略事务门、Grant 重验及 Execution 上下文绑定未发现源码阻断；独立覆盖 `126/126` tests passed，`git diff --check` 通过。
-- 静态 `pnpm run build:win` 七步全部通过，`freshCurrentRun=true`，source native bindings `unchangedExact=true`。Installer SHA-256 `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956`；portable `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D`；folder ZIP `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534`；Main bundle `1FAF882DA41047EA994B15EF73492BCFEE574A70AEFDBCD0CA8848527038FAB4`。源码与包内 Renderer 精确文本 `s is not defined` 命中均为 0。
+- 2026-08-31 14:01:50 `pnpm run build:win` 七步全部通过，`freshCurrentRun=true`，source native bindings `unchangedExact=true`，整体约 5m53s；构建日志 `output\build-win-20260831-135557.log`。Installer SHA-256 `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B`；portable `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944`；folder ZIP `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796`；blockmap `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5`；win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`（与 2026-07-17 external-security P1 候选字节级一致，因 B1–B7 限制只改 `resources\app.asar`、不动 main/preload/SQLite/IPC）；Main bundle `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF`（落在 `resources\app.asar`）。源码与包内 Renderer 精确文本 `s is not defined` 命中均为 0。
 - 构建仍报告 ASAR 未启用和 Electron 默认图标，已作为静态包装风险保留；本轮不为消除警告扩展打包范围。
 - 严格遵守用户禁令：未启动或操控应用、浏览器、桌面，未运行 typecheck、业务 smoke、Package UI、ZIP 真启动或真实 Ads；也没有执行广告写入。静态构建不等于运行态验收，当前状态继续是 `APP_NEEDS_WORK / INTERNAL NON_READY`，不能标记 `APP_READY`。
 - 禁令下尚未闭合的是：typecheck、当前包 Package UI 100%/125%/wide、folder ZIP 真启动、7 类业务 smoke、正式库前后只读零写入复核，以及 Task 8B 对唯一、当前、≤10% 且经单条人工批准的 `lower_bid` 做一次写入和刷新回读。这些不是本轮源码阻断，恢复条件记录于 `BLOCKED.md`。

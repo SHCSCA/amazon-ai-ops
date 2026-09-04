@@ -26,7 +26,7 @@ import {
   type MissionControlCapabilityProjection,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { PageFrame, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
+import { PageFrame, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState, selectEntityDeletePolicy } from '../../components/workspace';
 import {
   assertCausalEventBelongsToContext,
   assertMissionAuthorityContext,
@@ -481,6 +481,7 @@ export function MemoryWorkspace({
 
   const stageCounts = Object.fromEntries(CAUSAL_LEDGER_STAGES.map((stage) => [stage, events.filter((event) => event.stage === stage).length])) as Record<CausalLedgerStage, number>;
   const canCorrectSelected = Boolean(selected && RENDERER_WRITABLE_STAGES.includes(selected.stage));
+  const deletePolicy = selectEntityDeletePolicy('causal-event');
 
   const rebuildSearchIndex = () => {
     if (!storeContext || !actionReady('memory.timeline.rebuild-index')) {
@@ -547,7 +548,7 @@ export function MemoryWorkspace({
               <dl><div><dt>业务日期</dt><dd>{selected.businessDate}</dd></div><div><dt>记录时间</dt><dd>{selected.createdAt.slice(0, 16).replace('T', ' ')}</dd></div></dl>
               <div className="memory-event-fields">{selected.signal && <article><span>信号</span><p>{memoryOperatorCopy(selected.signal)}</p></article>}{selected.intervention && <article><span>干预</span><p>{memoryOperatorCopy(selected.intervention)}</p></article>}{selected.expectedEffect && <article><span>预期效果</span><p>{memoryOperatorCopy(selected.expectedEffect)}</p></article>}{selected.observedEffect && <article><span>实际效果</span><p>{memoryOperatorCopy(selected.observedEffect)}</p></article>}{selected.confidence !== undefined && <article><span>置信度</span><p>{Math.round(selected.confidence * 100)}%</p></article>}</div>
               {selected.correctsEventId && <p className="memory-correction-link"><ClockCounterClockwise size={15} />这是一条修正记录，原记录保持不变。</p>}
-              <section className="memory-authority-card" data-writable={canCorrectSelected || undefined}>{canCorrectSelected ? <NotePencil size={19} /> : <LockKey size={19} />}<div><strong>{canCorrectSelected ? '可追加修正' : '系统历史记录'}</strong><p>{canCorrectSelected ? '原记录不可编辑或删除；修正内容将作为新记录保存。' : `${STAGE_COPY[selected.stage].label}由系统业务过程记录，当前仅可查看。`}</p></div></section>
+              <section className="memory-authority-card" data-writable={canCorrectSelected || undefined}>{canCorrectSelected ? <NotePencil size={19} /> : <LockKey size={19} />}<div><strong>{canCorrectSelected ? '可追加修正' : '系统历史记录'}</strong><p>{canCorrectSelected ? deletePolicy.reason : `${STAGE_COPY[selected.stage].label}由系统业务过程记录，当前仅可查看。`}</p></div></section>
               <details className="memory-diagnostic-details"><summary>诊断详情</summary><dl><div><dt>sequence</dt><dd>{selected.sequence}</dd></div><div><dt>stage</dt><dd>{selected.stage}</dd></div><div><dt>eventType</dt><dd>{selected.eventType}</dd></div><div><dt>entityType / entityId</dt><dd>{selected.entityType} / {selected.entityId}</dd></div><div><dt>Mission ID</dt><dd>{selected.missionId || 'unbound'}</dd></div><div><dt>sessionGeneration</dt><dd>{selected.sessionGeneration}</dd></div><div><dt>source / actorId</dt><dd>{selected.source} / {selected.actorId}</dd></div>{selected.correctsEventId && <div><dt>correctsEventId / correction</dt><dd>{selected.correctsEventId}</dd></div>}</dl></details>
               <div className="memory-actions"><button className="workspace-button workspace-button--primary" disabled={!canCorrectSelected || !actionReady('memory.timeline.correct') || busy} onClick={() => selected && setEditor(memoryDraftFor(selected))} type="button"><ClockCounterClockwise size={15} />追加修正</button></div>
             </> : phase === 'ready' ? <WorkspaceState description="从左侧选择一条因果记录，查看依据、干预与效果。" kind="empty" title="等待选择记录" /> : null}

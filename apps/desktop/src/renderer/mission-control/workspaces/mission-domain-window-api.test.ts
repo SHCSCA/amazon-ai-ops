@@ -103,10 +103,15 @@ describe('preview experiment and causal-memory domain adapter', () => {
     expect(correction.correctsRecordId).toBe(observation.id);
     expect((await experiments.listExperimentObservations(firstContext, paused.id)).map((item) => item.id))
       .toEqual(expect.arrayContaining([observation.id, correction.id]));
-    const completed = await experiments.transitionExperiment(firstContext, {
+    await expect(experiments.transitionExperiment(firstContext, {
       id: paused.id, expectedRevision: paused.revision, status: 'completed', actorId: 'operator', reason: 'ACOS 改善 12%',
+    })).rejects.toThrow(/系统根据指标判定|人工文字/);
+    const completed = await experiments.evaluateExperiment(firstContext, {
+      id: paused.id,
+      expectedRevision: paused.revision,
     });
-    expect(completed).toMatchObject({ status: 'completed', conclusion: 'ACOS 改善 12%' });
+    expect(completed).toMatchObject({ status: 'completed' });
+    expect(completed.conclusion).toContain('系统已根据指标快照完成判定');
     const archived = await experiments.archiveExperiment(firstContext, {
       id: completed.id, expectedRevision: completed.revision, actorId: 'operator',
     });
@@ -278,6 +283,71 @@ describe('preview mission domain adapter', () => {
     const lineage = await api.getMissionLineage(firstContext, restored.id);
     expect(lineage.checkpoints).toEqual(expect.arrayContaining([expect.objectContaining({ id: checkpoint.id })]));
     expect(lineage.links.map((link) => link.linkType)).toEqual(expect.arrayContaining(['data_batch', 'policy_version', 'product']));
+  });
+
+  it('rejects unknown Mission patch fields in preview without changing its revision', async () => {
+    const api = createPreviewMissionDomainApi();
+    const mission = (await api.listMissions(firstContext, { includeArchived: true }))
+      .find((candidate) => candidate.phase === 'analysis')!;
+
+    await expect(api.updateMission(firstContext, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      actorId: 'operator',
+      patch: { unsupportedAuthorityField: 'must-not-be-ignored' } as never,
+    })).rejects.toThrow(/不支持|unsupported/i);
+
+    await expect(api.getMission(firstContext, mission.id)).resolves.toMatchObject({
+      revision: mission.revision,
+      title: mission.title,
+    });
+  });
+
+  it('freezes preview Mission authority fields after decision while preserving title-only rename', async () => {
+    const api = createPreviewMissionDomainApi();
+    const mission = (await api.listMissions(firstContext, { includeArchived: true }))
+      .find((candidate) => candidate.phase === 'decision')!;
+
+    await expect(api.updateMission(firstContext, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      actorId: 'operator',
+      patch: { objective: '不得覆盖已绑定决策的经营目标' },
+    })).rejects.toThrow(/锁定|重新创建/);
+    await expect(api.getMission(firstContext, mission.id)).resolves.toMatchObject({
+      revision: mission.revision,
+      objective: mission.objective,
+    });
+
+    const renamed = await api.updateMission(firstContext, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      actorId: 'operator',
+      patch: { title: '只修改任务显示名称' },
+    });
+    expect(renamed).toMatchObject({
+      title: '只修改任务显示名称',
+      objective: mission.objective,
+      revision: mission.revision + 1,
+    });
+  });
+
+  it('does not let preview Mission phases move backward to reopen editing', async () => {
+    const api = createPreviewMissionDomainApi();
+    const mission = (await api.listMissions(firstContext, { includeArchived: true }))
+      .find((candidate) => candidate.phase === 'decision')!;
+
+    await expect(api.transitionMission(firstContext, {
+      id: mission.id,
+      expectedRevision: mission.revision,
+      status: 'active',
+      phase: 'analysis',
+      actorId: 'operator',
+    })).rejects.toThrow(/回退|backward/i);
+    await expect(api.getMission(firstContext, mission.id)).resolves.toMatchObject({
+      phase: 'decision',
+      revision: mission.revision,
+    });
   });
 
   it('invalidates the preview store snapshot when the session generation changes', async () => {

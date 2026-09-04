@@ -28,6 +28,7 @@ export interface ChatOptions {
   maxTokens?: number;
   stop?: string[];
   responseFormat?: 'json_object' | 'text';
+  signal?: AbortSignal | undefined;
 }
 
 export interface CompleteOptions {
@@ -36,6 +37,7 @@ export interface CompleteOptions {
   maxTokens?: number;
   stop?: string[];
   responseFormat?: 'json_object' | 'text';
+  signal?: AbortSignal | undefined;
 }
 
 export abstract class BaseAIProvider implements AIProvider {

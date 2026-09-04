@@ -13,6 +13,10 @@ import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { hasRealReportCoverage, importedReportTypeCoverageCount, realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts } from '../product-context';
+import {
+  localizeProductStage,
+  localizeQuantStatus,
+} from '@amazon-ai-ops/business-presenters';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
@@ -367,27 +371,11 @@ export function strategyThresholdTitle(source?: string): string {
 }
 
 function lifecycleLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '测词',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    declining_repair: '异常修复',
-    unknown: '阶段待判定',
-  };
-  return labels[stage || 'unknown'] || stage || '阶段待判定';
+  return localizeProductStage(stage);
 }
 
 function quantStatusLabel(status?: string): string {
-  const labels: Record<string, string> = {
-    healthy: '健康',
-    watch: '观察',
-    waste: '浪费风险',
-    scale: '可扩量',
-    blocked: '样本不足',
-  };
-  return labels[status || 'blocked'] || status || '样本不足';
+  return localizeQuantStatus(status);
 }
 
 function trendLabel(value?: string): string {

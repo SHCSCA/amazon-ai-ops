@@ -13,7 +13,9 @@ import {
   X,
 } from '@phosphor-icons/react';
 import {
+  canonicalizeAmazonAsin,
   missionControlContextKey,
+  type AnalysisEvidencePackageRecord,
   type AnalysisProposalSnapshotRecord,
   type AuthorizeAnalysisProposalBatchRequest,
   type BindRecommendationWritableTargetRequest,
@@ -26,10 +28,12 @@ import {
   type MissionGrantEventRecord,
   type MissionGrantRecord,
   type MissionAnalysisProjection,
+  type RunMissionAnalysisRequest,
   type ReviseDecisionInput,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { PageFrame, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
+import { localizeMatchType } from '@amazon-ai-ops/business-presenters';
+import { PageFrame, ReasonRequiredDialog, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
 import {
   assertDecisionBelongsToContext,
   assertMissionAuthorityContext,
@@ -63,6 +67,8 @@ export type DecisionsWorkspaceProps = {
 type DiscoveredRecommendationTarget = {
   recommendationId: number;
   recommendationRevision: number;
+  recommendationAsin: string;
+  recommendationMatchType: string;
   pageIdentity: {
     adsAccountId: string;
     campaignId: string;
@@ -121,6 +127,77 @@ export function proposalIsSafeTargetVerificationCandidate(
   return ((current - proposed) / current) * 100 <= 10.000001;
 }
 
+export function findSafeTargetVerificationProposal(
+  proposals: readonly AnalysisProposalSnapshotRecord[],
+  authorityProposal: AnalysisProposalSnapshotRecord,
+): AnalysisProposalSnapshotRecord | undefined {
+  const normalized = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLowerCase();
+  return proposals.find((proposal) => (
+    proposal.legacyRecommendationId === authorityProposal.legacyRecommendationId
+    && normalized(proposal.campaignName) === normalized(authorityProposal.campaignName)
+    && normalized(proposal.adGroupName) === normalized(authorityProposal.adGroupName)
+    && normalized(proposal.entityName) === normalized(authorityProposal.entityName)
+    && proposal.currentBidCents === authorityProposal.currentBidCents
+    && proposalIsSafeTargetVerificationCandidate(proposal)
+  ));
+}
+
+export function buildProposalTargetVerificationPlan(
+  context: StoreContextEnvelope,
+  missionId: string,
+  proposal: AnalysisProposalSnapshotRecord,
+  evidencePackages: readonly AnalysisEvidencePackageRecord[],
+  operationScope: Record<string, unknown>,
+  authoritativeRecommendationAsin: string,
+): {
+  analysisRequest: RunMissionAnalysisRequest;
+  bindingScope: BindRecommendationWritableTargetRequest['scope'];
+} {
+  assertMissionAuthorityContext(context);
+  const evidencePackage = evidencePackages.find((item) => (
+    String(item.storeId) === String(context.storeId)
+    && item.missionId === missionId
+    && item.id === proposal.evidencePackageId
+    && item.packageHash === proposal.evidencePackageHash
+    && item.dataBatchId === proposal.dataBatchId
+  ));
+  if (!evidencePackage) {
+    throw new Error('当前建议缺少对应的数据证据范围；请刷新当前店铺并重新运行分析后，再核验 Ads 对象。');
+  }
+  const storeName = String(operationScope.storeName ?? '').trim();
+  if (!storeName) {
+    throw new Error('当前店铺名称尚未加载；请刷新当前店铺后，再核验 Ads 对象。');
+  }
+  let recommendationAsin: string;
+  try {
+    recommendationAsin = canonicalizeAmazonAsin(authoritativeRecommendationAsin);
+  } catch {
+    throw new Error('当前权威建议缺少 ASIN；为避免绑定到其他产品，Ads 对象核验已阻断。');
+  }
+  let evidenceAsin = '';
+  if (evidencePackage.asin) {
+    try {
+      evidenceAsin = canonicalizeAmazonAsin(evidencePackage.asin);
+    } catch {
+      throw new Error('当前证据包 ASIN 无效；请重新采集并运行分析后再核验 Ads 对象。');
+    }
+  }
+  if (evidenceAsin && evidenceAsin !== recommendationAsin) {
+    throw new Error('当前权威建议 ASIN 与证据包不一致；请重新运行分析后再核验 Ads 对象。');
+  }
+  return {
+    analysisRequest: { context, missionId },
+    bindingScope: {
+      dateFrom: evidencePackage.dateFrom,
+      dateTo: evidencePackage.dateTo,
+      storeName,
+      marketplaceCode: evidencePackage.marketplace,
+      asin: recommendationAsin,
+      batchId: evidencePackage.dataBatchId,
+    },
+  };
+}
+
 export function AnalysisProposalAuthorityStatus({
   busy,
   onVerify,
@@ -142,6 +219,117 @@ export function AnalysisProposalAuthorityStatus({
       type="button"
     >{busy ? '核验中…' : '核验 Ads 对象'}</button>}
   </span>;
+}
+
+type AnalysisProposalWithOptionalMatchType = AnalysisProposalSnapshotRecord & { matchType?: string };
+
+export type AnalysisProposalBusinessRow = {
+  adGroup: string;
+  action: string;
+  basis: string;
+  campaign: string;
+  change: string;
+  currentValue: string;
+  entityLevel: string;
+  matchType: string;
+  objectName: string;
+  proposedValue: string;
+  status: string;
+};
+
+/**
+ * Decide-workspace match-type label. Thin adapter around
+ * `@amazon-ai-ops/business-presenters` so the analysis table renders
+ * the same Chinese labels as every other workspace that consumes the
+ * shared presenter. Unknown tokens fall back to a non-silent "待对象核验"
+ * marker so the analysis table still surfaces ad-hoc data the upstream
+ * pipeline has not yet catalogued.
+ */
+export function analysisProposalMatchTypeLabel(value: unknown): string {
+  const label = localizeMatchType(value);
+  if (label === '不适用' || label === '其他投放方式') return '待对象核验';
+  return label;
+}
+
+function normalizedProposalMatchType(value: unknown): string {
+  return String(value ?? '').normalize('NFKC').trim().toLowerCase().replace(/[_\s]+/g, '-');
+}
+
+export function analysisProposalBusinessRow(
+  proposal: AnalysisProposalWithOptionalMatchType,
+): AnalysisProposalBusinessRow {
+  const explicit = normalizedProposalMatchType(proposal.matchType);
+  const suffix = proposal.entityName.match(/(?:\s*[·.\/()\-]\s*|\s+)(exact|phrase|broad|auto|close[-_ ]match|loose[-_ ]match|substitutes|complements)\s*\)?$/i);
+  const inferred = normalizedProposalMatchType(suffix?.[1]);
+  const matchType = explicit || inferred;
+  const objectName = suffix
+    ? proposal.entityName.slice(0, suffix.index).trim()
+    : proposal.entityName.trim();
+  const verified = proposalHasVerifiedAdsAuthority(proposal);
+  const eligible = proposal.authorization.human.eligible || proposal.authorization.policy.eligible;
+  return {
+    campaign: proposal.campaignName,
+    adGroup: proposal.adGroupName,
+    entityLevel: proposal.entityType === 'keyword' ? '关键词' : '投放对象',
+    objectName: objectName || '未命名对象',
+    matchType: analysisProposalMatchTypeLabel(matchType),
+    action: proposal.actionType === 'set_keyword_bid' ? '调整关键词竞价' : '受控动作',
+    change: `${proposal.changePct > 0 ? '+' : ''}${proposal.changePct.toFixed(1)}%`,
+    currentValue: `$${(proposal.currentBidCents / 100).toFixed(2)}`,
+    proposedValue: `$${(proposal.proposedBidCents / 100).toFixed(2)}`,
+    basis: proposal.explanation,
+    status: !verified ? '对象待核验' : eligible ? '可审批' : '已阻断',
+  };
+}
+
+export function AnalysisProposalBusinessTable({
+  busy,
+  onSelect,
+  proposals,
+  selectedProposalId,
+}: {
+  busy: boolean;
+  onSelect?: (proposal: AnalysisProposalSnapshotRecord) => void;
+  proposals: readonly AnalysisProposalSnapshotRecord[];
+  selectedProposalId?: string;
+}): React.ReactElement {
+  const groups = new Map<string, {
+    adGroup: string;
+    campaign: string;
+    proposals: AnalysisProposalSnapshotRecord[];
+  }>();
+  for (const proposal of proposals) {
+    const key = `${proposal.campaignName}\u0000${proposal.adGroupName}`;
+    const group = groups.get(key) ?? {
+      campaign: proposal.campaignName,
+      adGroup: proposal.adGroupName,
+      proposals: [],
+    };
+    group.proposals.push(proposal);
+    groups.set(key, group);
+  }
+  return <div className="decision-domain-analysis-table-wrap">
+    <table aria-label="分析建议业务表" className="decision-domain-analysis-table">
+      <thead><tr>
+        <th>广告活动</th><th>广告组</th><th>对象层级</th><th>具体对象</th><th>匹配方式</th>
+        <th>建议动作</th><th>变更</th><th>当前值</th><th>建议值</th><th>主要依据</th><th>状态</th><th>操作</th>
+      </tr></thead>
+      {[...groups.entries()].map(([key, group]) => <tbody data-ad-group={group.adGroup} data-campaign={group.campaign} key={key}>
+        <tr className="decision-domain-analysis-group"><th colSpan={12}>广告活动：{group.campaign} · 广告组：{group.adGroup}</th></tr>
+        {group.proposals.map((proposal) => {
+          const row = analysisProposalBusinessRow(proposal);
+          return <tr aria-selected={proposal.id === selectedProposalId || undefined} key={proposal.id}>
+            <td>{row.campaign}</td><td>{row.adGroup}</td><td>{row.entityLevel}</td><td><strong>{row.objectName}</strong></td>
+            <td>{row.matchType}</td><td>{row.action}</td><td>{row.change}</td><td>{row.currentValue}</td><td>{row.proposedValue}</td>
+            <td className="decision-domain-analysis-basis">{row.basis}</td><td><span data-status={row.status}>{row.status}</span></td>
+            <td>{onSelect ? <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => onSelect(proposal)} type="button">查看详情</button> : '—'}
+              <details><summary>诊断详情</summary><code>{proposal.id}</code><code>{proposal.adEntityRevision ?? '—'}</code></details>
+            </td>
+          </tr>;
+        })}
+      </tbody>)}
+    </table>
+  </div>;
 }
 
 export type DecisionDraft = {
@@ -224,6 +412,23 @@ export function preferredDecisionId(view: DecisionWorkspaceView, rows: readonly 
       ? 'needs_approval'
       : 'approved';
   return rows.find((item) => item.status === preferredStatus)?.id ?? rows[0]?.id ?? '';
+}
+
+export function preferredDecisionIdAfterTargetVerification(
+  currentDecisionId: string,
+  verifiedProposalId: string,
+  projection: MissionAnalysisProjection,
+  decisions: readonly DecisionRecord[],
+  view: DecisionWorkspaceView,
+): string {
+  const linkedDecisionId = projection.decisionLinks.find((link) => (
+    link.proposalId === verifiedProposalId
+    && decisions.some((decision) => decision.id === link.decisionId)
+  ))?.decisionId;
+  if (linkedDecisionId) return linkedDecisionId;
+  return decisions.some((decision) => decision.id === currentDecisionId)
+    ? currentDecisionId
+    : preferredDecisionId(view, decisions);
 }
 
 const AUTHORIZATION_STATUS_PRIORITY: Partial<Record<DecisionStatus, number>> = {
@@ -360,6 +565,17 @@ const DECISION_INTERNAL_OPERATOR_COPY = /(?:^|[^A-Za-z0-9])(?:Main|StoreContext|
 export function decisionOperatorCopy(value: unknown, fallback: string): string {
   const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
   return !normalized || DECISION_INTERNAL_OPERATOR_COPY.test(normalized) ? fallback : normalized;
+}
+
+export function targetVerificationOperatorError(error: unknown): string {
+  const detail = message(error);
+  if (/Mission changed while its analysis was running|analysis date range does not match|scope must equal the Mission data-batch date range/i.test(detail)) {
+    return '核验 Ads 对象时，运营任务或数据批次已变化；请刷新当前店铺，重新运行分析后再核验。';
+  }
+  return decisionOperatorCopy(
+    detail,
+    'Ads 对象核验未完成；请刷新当前店铺，确认数据批次与 Ads 连接后再重试。',
+  );
 }
 
 function decisionHistoryEventLabel(eventType: string): string {
@@ -548,7 +764,6 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const [feedback, setFeedback] = useState('');
   const [editor, setEditor] = useState<{ record: DecisionRecord | null; draft: DecisionDraft } | null>(null);
   const [resolution, setResolution] = useState<HumanDecisionResolutionInput['status'] | null>(null);
-  const [resolutionReason, setResolutionReason] = useState('');
   const sequence = useRef(0);
   const detailSequence = useRef(0);
   const analysisSequence = useRef(0);
@@ -752,12 +967,13 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     } catch (validationError) { setError(message(validationError)); }
   };
 
-  const resolveDecision = async () => {
+  const resolveDecision = async (reasonFromDialog: string) => {
     if (view !== 'decisions/approval') { setError('人工决议只能在审批工作台执行。'); return; }
-    if (!selected || !resolution || !resolutionReason.trim()) { setError('人工决议必须填写原因。'); return; }
-    const saved = await mutate('resolve', (domain, context) => domain.resolveDecisionHuman(context, { id: selected.id, expectedRevision: selected.revision, status: resolution, reason: resolutionReason.trim(), actorId: OPERATOR }));
+    const trimmedReason = reasonFromDialog.trim();
+    if (!selected || !resolution || !trimmedReason) { setError('人工决议必须填写原因。'); return; }
+    const saved = await mutate('resolve', (domain, context) => domain.resolveDecisionHuman(context, { id: selected.id, expectedRevision: selected.revision, status: resolution, reason: trimmedReason, actorId: OPERATOR }));
     if (!saved) return;
-    setDecisions((items) => items.map((item) => item.id === saved.id ? saved : item)); setResolution(null); setResolutionReason(''); setFeedback(`经营决策已${STATUS_LABELS[saved.status]}；这不代表真实 Ads 已执行。`);
+    setDecisions((items) => items.map((item) => item.id === saved.id ? saved : item)); setResolution(null); setFeedback(`经营决策已${STATUS_LABELS[saved.status]}；这不代表真实 Ads 已执行。`);
   };
 
   const revokeGrant = async (grant: MissionGrantRecord) => {
@@ -779,6 +995,14 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const selectedProposal = selectedProposalLink
     ? analysis?.proposals.find((proposal) => proposal.id === selectedProposalLink.proposalId)
     : undefined;
+  const selectedMissionBatchId = analysisActionBatchOptions(analysis)[0]?.id;
+  const selectedMissionProposals = selectedMissionBatchId
+    ? analysis?.proposals.filter((proposal) => proposal.actionBatchId === selectedMissionBatchId) ?? []
+    : [];
+  const selectProposalDecision = (proposal: AnalysisProposalSnapshotRecord) => {
+    const decisionId = analysis?.decisionLinks.find((link) => link.proposalId === proposal.id)?.decisionId;
+    if (decisionId && filtered.some((decision) => decision.id === decisionId)) setSelectedId(decisionId);
+  };
 
   const verifySelectedProposalTarget = async () => {
     if (!selectedProposal || !selected || !storeContext || !analysisApi || !api || !targetBindingApi || busy) {
@@ -794,22 +1018,14 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     setPending('target-verify'); setError(''); setFeedback('');
     try {
       const operationScope = await targetBindingApi.getOperationScope(storeContext);
-      const text = (value: unknown) => String(value ?? '').trim();
+      let verificationEvidencePackages = analysis?.evidencePackages ?? [];
       let safetyProposal = proposalIsSafeTargetVerificationCandidate(selectedProposal)
         ? selectedProposal
         : undefined;
       if (!safetyProposal) {
-        const prepared = await analysisApi.runMissionAnalysis({
-          context: storeContext,
-          missionId: selected.missionId,
-          dateFrom: text(operationScope.dateFrom),
-          dateTo: text(operationScope.dateTo),
-        });
-        safetyProposal = prepared.proposals.find((proposal) => (
-          proposal.entityName.trim().toLowerCase() === selectedProposal.entityName.trim().toLowerCase()
-          && proposal.currentBidCents === selectedProposal.currentBidCents
-          && proposalIsSafeTargetVerificationCandidate(proposal)
-        ));
+        const prepared = await analysisApi.runMissionAnalysis({ context: storeContext, missionId: selected.missionId });
+        safetyProposal = findSafeTargetVerificationProposal(prepared.proposals, selectedProposal);
+        verificationEvidencePackages = [prepared.evidencePackage];
       }
       if (!safetyProposal) {
         throw new Error('重新分析后没有生成单次降幅不超过 10% 的安全建议，未核验 Ads 对象。');
@@ -818,11 +1034,21 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         context: storeContext,
         recommendationId: safetyProposal.legacyRecommendationId,
       });
+      const verificationPlan = buildProposalTargetVerificationPlan(
+        storeContext,
+        selected.missionId,
+        safetyProposal,
+        verificationEvidencePackages,
+        operationScope,
+        discovery.recommendationAsin,
+      );
       if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       if (discovery.recommendationId !== safetyProposal.legacyRecommendationId
         || discovery.writableTarget.entityType !== 'keyword'
         || discovery.writableTarget.entityId !== discovery.pageIdentity.keywordId
         || discovery.pageIdentity.bidCents !== safetyProposal.currentBidCents
+        || !discovery.recommendationAsin.trim()
+        || !discovery.recommendationMatchType.trim()
         || !Number.isInteger(discovery.recommendationRevision)
         || discovery.recommendationRevision <= 0) {
         throw new Error('当前 Ads 页面与建议中的店铺、关键词或竞价不一致，未保存核验结果。');
@@ -830,14 +1056,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       await targetBindingApi.bindRecommendationWritableTarget({
         recommendationId: discovery.recommendationId,
         expectedRevision: discovery.recommendationRevision,
-        scope: {
-          dateFrom: text(operationScope.dateFrom),
-          dateTo: text(operationScope.dateTo),
-          storeName: text(operationScope.storeName),
-          marketplaceCode: text(operationScope.marketplaceCode),
-          asin: text(operationScope.asin),
-          batchId: safetyProposal.dataBatchId,
-        },
+        scope: verificationPlan.bindingScope,
         binding: {
           boundBy: OPERATOR,
           note: '已通过当前店铺可见 Ads 页面唯一核验对象和当前竞价。',
@@ -845,12 +1064,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         },
       });
       if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
-      const rerun = await analysisApi.runMissionAnalysis({
-        context: storeContext,
-        missionId: selected.missionId,
-        dateFrom: text(operationScope.dateFrom),
-        dateTo: text(operationScope.dateTo),
-      });
+      const rerun = await analysisApi.runMissionAnalysis(verificationPlan.analysisRequest);
       const verified = rerun.proposals.find((proposal) => (
         proposal.legacyRecommendationId === discovery.recommendationId
         && proposalHasVerifiedAdsAuthority(proposal)
@@ -867,10 +1081,18 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       refreshedDecisions.forEach((item) => assertDecisionBelongsToContext(item, storeContext));
       setAnalysis(projection);
       setDecisions(refreshedDecisions);
-      setSelectedId((id) => refreshedDecisions.some((item) => item.id === id) ? id : preferredDecisionId(view, refreshedDecisions));
+      setSelectedId((id) => preferredDecisionIdAfterTargetVerification(
+        id,
+        verified.id,
+        projection,
+        refreshedDecisions,
+        view,
+      ));
       setFeedback(`Ads 对象已核验；新分析批次已生成，当前值 $${(verified.currentBidCents / 100).toFixed(2)}，建议值 $${(verified.proposedBidCents / 100).toFixed(2)}。尚未批准或执行。`);
     } catch (verificationError) {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(verificationError));
+      if (authorityRef.current === capturedKey && mutationSequence.current === current) {
+        setError(targetVerificationOperatorError(verificationError));
+      }
     } finally {
       if (authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
     }
@@ -967,7 +1189,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
                   </select>
                 </label>
               </div>
-              {authorizationAnalysisError ? <p className="decision-domain-analysis-error">{visibleAuthorizationAnalysisError}</p> : authorizationAnalysisLoading ? <p>正在读取所选运营任务的分析建议…</p> : authorizationProposals.length ? <div className="decision-domain-analysis-proposals">{authorizationProposals.map((proposal) => <article key={proposal.id}><span><b>{proposal.entityName}</b><small>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'}</small><AnalysisProposalAuthorityStatus busy={busy} proposal={proposal} /></span><strong>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</strong><em data-eligible={(proposal.authorization.human.eligible || proposal.authorization.policy.eligible) || undefined}>{proposalAuthorizationLabel(proposal)}</em><details><summary>诊断详情</summary><code>{proposal.id}</code><code>{proposal.adEntityRevision ?? '—'}</code></details></article>)}</div> : <p>请选择包含分析建议的运营任务；策略内自动可以直接校验待审批或待复核经营决策。</p>}
+              {authorizationAnalysisError ? <p className="decision-domain-analysis-error">{visibleAuthorizationAnalysisError}</p> : authorizationAnalysisLoading ? <p>正在读取所选运营任务的分析建议…</p> : authorizationProposals.length ? <AnalysisProposalBusinessTable busy={busy} proposals={authorizationProposals} /> : <p>请选择包含分析建议的运营任务；策略内自动可以直接校验待审批或待复核经营决策。</p>}
               <details><summary>诊断详情</summary><code>{authorizationMissionId || '—'}</code><code>{authorizationBatchId || '—'}</code></details>
             </section>
           )}
@@ -979,6 +1201,15 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
           <nav className="decision-domain-pagination" aria-label="经营决策分页"><button disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button">上一页</button><span>{safePage}/{pageCount}</span><button disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button">下一页</button></nav>
         </WorkbenchPanel>
         <div className="decision-domain-detail">{selected ? <>
+          {view === 'decisions/recommendations' && selectedMissionProposals.length > 0 && <section className="decision-domain-analysis-overview" aria-label="本次分析建议">
+            <header><div><h3>本次分析建议</h3><p>按广告活动、广告组、对象和变更列展示；表内只显示当前运营任务的最新动作批次。</p></div></header>
+            <AnalysisProposalBusinessTable
+              busy={busy}
+              onSelect={selectProposalDecision}
+              proposals={selectedMissionProposals}
+              selectedProposalId={selectedProposal?.id}
+            />
+          </section>}
           <section className="decision-domain-detail-head">
             <div>
               <span>经营决策</span>
@@ -1008,6 +1239,21 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       {(error || feedback) && <p className="decision-domain-feedback" data-tone={error ? 'error' : 'success'} aria-live="polite">{visibleFeedback}</p>}
     </PageFrame>
     {editor && <DecisionDialog record={editor.record} draft={editor.draft} busy={pending === 'decision-save'} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onClose={() => setEditor(null)} onSave={() => void saveDecision()} />}
-    {view === 'decisions/approval' && resolution && selected && <div className="mission-control-dialog-backdrop"><section aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="dialog" aria-labelledby="resolve-title"><header><div><span>人工经营决策</span><h2 id="resolve-title">{STATUS_LABELS[resolution]}“{selected.title}”</h2><p>状态写入使用版本校验；批准不代表 Ads 已执行。</p></div></header><div className="decision-domain-resolution"><label><span>决议原因 *</span><textarea autoFocus rows={4} value={resolutionReason} onChange={(event) => setResolutionReason(event.target.value)} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setResolution(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy || !resolutionReason.trim()} onClick={() => void resolveDecision()} type="button">确认{STATUS_LABELS[resolution]}</button></footer><details><summary>诊断详情</summary><code>{selected.id}</code><code>{selected.revision}</code></details></section></div>}
+        {view === 'decisions/approval' && resolution && selected && (
+      <ReasonRequiredDialog
+        open
+        eyebrow="人工经营决策"
+        title={`${STATUS_LABELS[resolution]}"${selected.title}"`}
+        description="状态写入使用版本校验；批准不代表 Ads 已执行。"
+        tone={resolution === 'approved' ? 'primary' : 'danger'}
+        confirmLabel={`确认${STATUS_LABELS[resolution]}`}
+        reasonLabel="决议原因 *"
+        busy={Boolean(pending)}
+        reasonMinLength={1}
+        diagnosticDetails={<><code>id={selected.id}</code><code>revision={selected.revision}</code></>}
+        onConfirm={(reason) => void resolveDecision(reason)}
+        onClose={() => setResolution(null)}
+      />
+    )}
   </div>;
 }

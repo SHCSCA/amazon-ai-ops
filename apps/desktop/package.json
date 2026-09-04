@@ -30,6 +30,7 @@
     "@amazon-ai-ops/ai-adapter": "workspace:*",
     "@amazon-ai-ops/audit-log": "workspace:*",
     "@amazon-ai-ops/browser-worker": "workspace:*",
+    "@amazon-ai-ops/business-presenters": "workspace:*",
     "@amazon-ai-ops/keyword-opportunity": "workspace:*",
     "@amazon-ai-ops/lingxing-report-collector": "workspace:*",
     "@amazon-ai-ops/listing-analyzer": "workspace:*",

@@ -57,6 +57,9 @@ importers:
       '@amazon-ai-ops/browser-worker':
         specifier: workspace:*
         version: link:../../packages/browser-worker
+      '@amazon-ai-ops/business-presenters':
+        specifier: workspace:*
+        version: link:../../packages/business-presenters
       '@amazon-ai-ops/keyword-opportunity':
         specifier: workspace:*
         version: link:../../packages/keyword-opportunity
@@ -181,6 +184,15 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+
+  packages/business-presenters:
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.1
+        version: 1.6.1(@types/node@25.7.0)
 
   packages/keyword-opportunity:
     dependencies:
@@ -4957,6 +4969,24 @@ snapshots:
       - supports-color
       - terser
 
+  vite-node@1.6.1(@types/node@25.7.0):
+    dependencies:
+      cac: 6.7.14
+      debug: 4.4.3
+      pathe: 1.1.2
+      picocolors: 1.1.1
+      vite: 5.4.21(@types/node@25.7.0)
+    transitivePeerDependencies:
+      - '@types/node'
+      - less
+      - lightningcss
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - supports-color
+      - terser
+
   vite@5.4.21(@types/node@24.12.4):
     dependencies:
       esbuild: 0.21.5
@@ -4999,6 +5029,40 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.12.4
+    transitivePeerDependencies:
+      - less
+      - lightningcss
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - supports-color
+      - terser
+
+  vitest@1.6.1(@types/node@25.7.0):
+    dependencies:
+      '@vitest/expect': 1.6.1
+      '@vitest/runner': 1.6.1
+      '@vitest/snapshot': 1.6.1
+      '@vitest/spy': 1.6.1
+      '@vitest/utils': 1.6.1
+      acorn-walk: 8.3.5
+      chai: 4.5.0
+      debug: 4.4.3
+      execa: 8.0.1
+      local-pkg: 0.5.1
+      magic-string: 0.30.21
+      pathe: 1.1.2
+      picocolors: 1.1.1
+      std-env: 3.10.0
+      strip-literal: 2.1.1
+      tinybench: 2.9.0
+      tinypool: 0.8.4
+      vite: 5.4.21(@types/node@25.7.0)
+      vite-node: 1.6.1(@types/node@25.7.0)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 25.7.0
     transitivePeerDependencies:
       - less
       - lightningcss

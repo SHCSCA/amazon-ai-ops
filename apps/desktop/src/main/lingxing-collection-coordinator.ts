@@ -137,6 +137,13 @@ export interface LingxingCollectionCoordinatorDependencies {
     result: RunBatchResult,
     options: { startedAt: string },
   ): unknown | Promise<unknown>;
+  productionImport?: {
+    policy: 'exact-eight-lineage-v1';
+    run(
+      result: RunBatchResult,
+      options: { startedAt: string },
+    ): unknown | Promise<unknown>;
+  };
   publishProgress?(event: LingxingCollectionProgressEvent): void;
   isCancelled?(input: { jobId: string; requestId: string; storeId: string }): boolean;
   runCreateBatch?: (options: RunBatchOptions) => Promise<RunBatchResult>;
@@ -181,6 +188,14 @@ export class LingxingCollectionCoordinator {
   private readonly runExistingBatch: (options: RunBatchOptions) => Promise<RunBatchResult>;
 
   constructor(private readonly dependencies: LingxingCollectionCoordinatorDependencies) {
+    if (dependencies.productionImport && dependencies.importResult) {
+      throw new Error('LINGXING_COLLECTION_IMPORT_PORT_CONFLICT');
+    }
+    if (dependencies.importResult
+      && dependencies.runCreateBatch === undefined
+      && dependencies.runExistingBatch === undefined) {
+      throw new Error('LINGXING_COLLECTION_LEGACY_IMPORT_PORT_FORBIDDEN');
+    }
     this.runCreateBatch = dependencies.runCreateBatch ?? runLingxingReportBatch;
     this.runExistingBatch = dependencies.runExistingBatch ?? downloadExistingLingxingReportBatch;
   }
@@ -239,6 +254,8 @@ export class LingxingCollectionCoordinator {
           !runtime.canary
           && (result.job.state === 'completed' || result.job.state === 'completed_with_errors')
           && !result.job.reports.some((checkpoint) => checkpoint.state === 'create_unknown')
+          && this.isProductionImportAuthorized(request, input.lineage)
+          && this.isProductionResultComplete(request, result)
         );
         let finalizedResult: RunBatchResult = {
           ...result,
@@ -286,10 +303,11 @@ export class LingxingCollectionCoordinator {
             // persistImportState can itself yield. Re-read cancellation after
             // that write and before any report rows reach the authority DB.
             this.assertNotCancelled(result.job.jobId, request, capturedContext);
-            if (!this.dependencies.importResult) {
+            const importResult = this.resolveImportResultHandler(request);
+            if (!importResult) {
               throw new Error('LINGXING_COLLECTION_IMPORT_HANDLER_UNAVAILABLE');
             }
-            importSummary = await this.dependencies.importResult(finalizedResult, { startedAt: attemptedAt });
+            importSummary = await importResult(finalizedResult, { startedAt: attemptedAt });
           } catch (error) {
             const completedAt = nextCollectionTimestamp(finalizedResult.job.updatedAt);
             finalizedResult = {
@@ -441,6 +459,8 @@ export class LingxingCollectionCoordinator {
           result.job.state === 'completed'
           && result.job.reports.length === request.reportTypes.length
           && result.job.reports.every((checkpoint) => checkpoint.state === 'downloaded')
+          && this.isProductionImportAuthorized(request)
+          && this.isProductionResultComplete(request, result)
         );
         let finalizedResult: RunBatchResult = {
           ...result,
@@ -496,10 +516,11 @@ export class LingxingCollectionCoordinator {
           }, capturedContext);
           try {
             this.assertNotCancelled(finalizedResult.job.jobId, request, capturedContext);
-            if (!this.dependencies.importResult) {
+            const importResult = this.resolveImportResultHandler(request);
+            if (!importResult) {
               throw new Error('LINGXING_COLLECTION_IMPORT_HANDLER_UNAVAILABLE');
             }
-            importSummary = await this.dependencies.importResult(finalizedResult, {
+            importSummary = await importResult(finalizedResult, {
               startedAt: attemptedAt,
             });
             claim = await persistence.advanceCollectionResumeClaimAfterImportForStore(
@@ -639,6 +660,52 @@ export class LingxingCollectionCoordinator {
         throw error;
       }
     });
+  }
+
+  private isProductionImportAuthorized(
+    request: LingxingCollectionRequestDto,
+    continuationLineage?: LingxingCollectionLineage,
+  ): boolean {
+    if (this.dependencies.importResult) {
+      this.assertLegacyImportRunnerIsInjected(request.mode);
+      return true;
+    }
+    if (isExactFullCollectionRequest(request)) return true;
+    // attachCollectionJobLineage validates this Main-issued lineage before
+    // this decision is reached. A runner-provided job.lineage is never an
+    // authority source here.
+    return continuationLineage !== undefined;
+  }
+
+  private resolveImportResultHandler(
+    request: LingxingCollectionRequestDto,
+  ): LingxingCollectionCoordinatorDependencies['importResult'] {
+    if (this.dependencies.productionImport) return this.dependencies.productionImport.run;
+    if (!this.dependencies.importResult) return undefined;
+    this.assertLegacyImportRunnerIsInjected(request.mode);
+    return this.dependencies.importResult;
+  }
+
+  private isProductionResultComplete(
+    request: LingxingCollectionRequestDto,
+    result: RunBatchResult,
+  ): boolean {
+    if (!this.dependencies.productionImport) return true;
+    return isExactFullCollectionRequest(request)
+      && result.job.state === 'completed'
+      && result.job.reports.length === REPORT_TYPES.size
+      && result.job.reports.every((checkpoint) => checkpoint.state === 'downloaded')
+      && result.files.length === REPORT_TYPES.size
+      && result.files.every((file) => file.status === 'downloaded');
+  }
+
+  private assertLegacyImportRunnerIsInjected(
+    mode: LingxingCollectionRequestDto['mode'],
+  ): void {
+    const injected = mode === 'download-existing'
+      ? this.dependencies.runExistingBatch !== undefined
+      : this.dependencies.runCreateBatch !== undefined;
+    if (!injected) throw new Error('LINGXING_COLLECTION_LEGACY_IMPORT_PORT_FORBIDDEN');
   }
 
   private publishResumeProgress(
@@ -916,16 +983,15 @@ function attachCollectionJobLineage(
   request: LingxingCollectionRequestDto,
   input: StartLingxingCollectionInput,
 ): LingxingCollectionJobSnapshot {
-  if (input.canary) return job;
-  const fullRequest = request.reportTypes.length === REPORT_TYPES.size
-    && request.reportTypes.every((reportType) => REPORT_TYPES.has(reportType));
+  if (input.canary) return stripUntrustedCollectionLineage(job);
+  const fullRequest = isExactFullCollectionRequest(request);
   const lineage = input.lineage ?? (fullRequest ? {
     lineageId: job.jobId,
     rootJobId: job.jobId,
     expectedReportTypes: [...request.reportTypes],
     purpose: 'production_full' as const,
   } : undefined);
-  if (!lineage) return job;
+  if (!lineage) return stripUntrustedCollectionLineage(job);
 
   const safeJobId = (value: string) => /^[A-Za-z0-9._-]{1,180}$/.test(value);
   const expected = new Set(lineage.expectedReportTypes);
@@ -957,6 +1023,19 @@ function attachCollectionJobLineage(
       purpose: lineage.purpose,
     },
   };
+}
+
+function stripUntrustedCollectionLineage(
+  job: LingxingCollectionJobSnapshot,
+): LingxingCollectionJobSnapshot {
+  if (job.lineage === undefined) return job;
+  const { lineage: _untrustedLineage, ...safeJob } = job;
+  return safeJob;
+}
+
+function isExactFullCollectionRequest(request: LingxingCollectionRequestDto): boolean {
+  return request.reportTypes.length === REPORT_TYPES.size
+    && request.reportTypes.every((reportType) => REPORT_TYPES.has(reportType));
 }
 
 function assertCanaryRequestIdentity(requestId: string, canary: boolean): void {

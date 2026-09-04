@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import {
   CAUSAL_LEDGER_STAGES,
   normalizeDomainIdentifier,
@@ -171,6 +172,43 @@ export interface AppendExperimentMetricSnapshotInput {
   dataBatchId: string;
 }
 
+export interface EvaluateExperimentInput {
+  id: string;
+  expectedRevision: number;
+  actorId: string;
+}
+
+export interface AnalysisCausalMemoryProof {
+  evidenceType: string;
+  evidenceRef: string;
+  sha256: string;
+}
+
+export interface AnalysisCausalMemoryItem {
+  eventId: string;
+  missionId: string;
+  stage: Extract<CausalLedgerStage, 'READBACK' | 'EFFECT'>;
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  title: string;
+  observedEffect: string;
+  status: string;
+  source: string;
+  businessDate: string;
+  proofs: readonly AnalysisCausalMemoryProof[];
+}
+
+interface ExperimentMetricSourceRow {
+  entityRevision: number;
+  clicks: number;
+  cost: number;
+  orders: number;
+  sales: number;
+  currency: string | null;
+  dateEnd: string;
+}
+
 export interface AppendCausalLinkInput {
   id: string;
   sourceEventId: string;
@@ -192,6 +230,17 @@ export interface AppendEvidenceRefInput {
   evidenceType: string;
   evidenceRef: string;
   sha256?: string;
+}
+
+export interface AppendCausalEventWithEvidenceResult {
+  event: CausalEventRecord;
+  evidence: CausalEvidenceRefRecord[];
+}
+
+export interface ResolveEffectivePolicyVersionInput {
+  allowedActionTypes: CreateMissionGrantInput['allowedActionTypes'];
+  allowedAdEntityIds: readonly string[];
+  at?: string;
 }
 
 export interface MissionLineageProjection {
@@ -460,6 +509,60 @@ export class MissionDomainRepository {
       ORDER BY priority, updated_at DESC, id
     `).all(context.storeId, input.includeArchived ? 1 : 0) as PolicyRow[];
     return rows.map(mapPolicy);
+  }
+
+  resolveEffectivePolicyVersion(
+    contextInput: StoreContextEnvelope,
+    input: ResolveEffectivePolicyVersionInput,
+  ): PolicyVersionRecord {
+    const context = this.assertContext(contextInput);
+    const actionTypes = [...new Set(input.allowedActionTypes.map((action) => (
+      textOf(action, 'allowedActionType', 80)
+    )))];
+    const entityIds = [...new Set(input.allowedAdEntityIds.map((entityId) => (
+      idOf(entityId, 'adEntityId')
+    )))];
+    if (actionTypes.length === 0 || entityIds.length === 0) {
+      throw invalid('Effective policy resolution requires at least one action and one advertising entity.');
+    }
+    const at = input.at === undefined
+      ? this.timestamp()
+      : timestampOf(input.at, 'policyResolutionAt');
+    const atMs = Date.parse(at);
+    const candidates = this.listPolicies(context)
+      .filter((policy) => policy.status === 'active' && Boolean(policy.activeVersionId))
+      .map((policy) => ({
+        policy,
+        version: this.requirePolicyVersion(context, policy.activeVersionId!),
+      }))
+      .filter(({ version }) => version.status === 'enabled'
+        && (!version.validFrom || Date.parse(version.validFrom) <= atMs)
+        && (!version.validUntil || Date.parse(version.validUntil) > atMs))
+      .map(({ policy, version }) => ({ policy, version, rules: rulesOf(version.rules) }));
+
+    const winners = entityIds.map((entityId) => {
+      const declared = candidates.filter(({ rules }) => (
+        rules.allowedAdEntityIds.includes(entityId)
+        && actionTypes.every((action) => new Set<string>(rules.allowedActionTypes).has(action))
+      ));
+      if (declared.length === 0) {
+        throw stateConflict('当前广告对象没有命中任何已启用且有效的策略；请先检查对象范围与允许动作。');
+      }
+      const firstPriority = declared[0]!.policy.priority;
+      const firstMatches = declared.filter(({ policy }) => policy.priority === firstPriority);
+      for (const candidate of firstMatches) {
+        this.assertPolicyRules(context, candidate.policy, candidate.rules);
+      }
+      if (firstMatches.length !== 1) {
+        throw stateConflict('多个策略以相同优先级命中同一广告对象；请调整优先级后重试。');
+      }
+      return firstMatches[0]!.version;
+    });
+    const winnerIds = new Set(winners.map((version) => version.id));
+    if (winnerIds.size !== 1) {
+      throw stateConflict('同一动作批次命中了不同策略；请按策略拆分批次后重试。');
+    }
+    return winners[0]!;
   }
 
   updatePolicy(contextInput: StoreContextEnvelope, input: UpdatePolicyInput): PolicyRecord {
@@ -875,15 +978,6 @@ export class MissionDomainRepository {
     const id = idOf(input.id, 'missionId');
     const dataBatchId = idOf(input.dataBatchId, 'dataBatchId');
     const policyVersionId = idOf(input.policyVersionId, 'policyVersionId');
-    this.requireCompletedDataBatch(context, dataBatchId);
-    const policyVersion = this.requirePolicyVersion(context, policyVersionId);
-    if (policyVersion.status !== 'enabled') {
-      throw stateConflict('Mission must bind the currently enabled policy version.');
-    }
-    const policy = this.requirePolicy(context, policyVersion.policyId);
-    if (policy.activeVersionId !== policyVersion.id || policy.status !== 'active') {
-      throw stateConflict('Mission policy version is not the active store policy authority.');
-    }
     const observationStartsAt = timestampOf(input.observationStartsAt, 'observationStartsAt');
     const observationEndsAt = timestampOf(input.observationEndsAt, 'observationEndsAt');
     assertTimeRange(observationStartsAt, observationEndsAt, 'Mission observation window');
@@ -891,9 +985,18 @@ export class MissionDomainRepository {
     const guardrails = listOf(input.guardrails, 'guardrails', true);
     const actorId = idOf(input.actorId, 'actorId');
     const now = this.timestamp();
-    if (input.productId) this.assertProduct(context, input.productId);
     const priority = missionPriorityOf(input.priority ?? 'P2');
     const create = this.db.transaction(() => {
+      this.requireCompletedDataBatch(context, dataBatchId);
+      const policyVersion = this.requirePolicyVersion(context, policyVersionId);
+      if (policyVersion.status !== 'enabled') {
+        throw stateConflict('Mission must bind the currently enabled policy version.');
+      }
+      const policy = this.requirePolicy(context, policyVersion.policyId);
+      if (policy.activeVersionId !== policyVersion.id || policy.status !== 'active') {
+        throw stateConflict('Mission policy version is not the active store policy authority.');
+      }
+      if (input.productId) this.assertProduct(context, input.productId);
       try {
         this.db.prepare(`
           INSERT INTO missions (
@@ -985,6 +1088,28 @@ export class MissionDomainRepository {
     }
     const patch = input.patch;
     if (!patch || Object.keys(patch).length === 0) throw invalid('Mission patch cannot be empty.');
+    const allowedPatchKeys = new Set([
+      'title',
+      'objective',
+      'priority',
+      'productId',
+      'observationStartsAt',
+      'observationEndsAt',
+      'successCriteria',
+      'guardrails',
+    ]);
+    const unknownPatchKeys = Object.keys(patch).filter((key) => !allowedPatchKeys.has(key));
+    if (unknownPatchKeys.length > 0) {
+      throw invalid(`Mission patch contains unsupported fields: ${unknownPatchKeys.join(', ')}.`);
+    }
+    const authorityPatchKeys = Object.keys(patch).filter((key) => key !== 'title');
+    const hasBoundDecision = authorityPatchKeys.length > 0 && Boolean(this.db.prepare(`
+      SELECT 1 FROM decisions WHERE store_id = ? AND mission_id = ? LIMIT 1
+    `).get(context.storeId, current.id));
+    if (authorityPatchKeys.length > 0
+      && (hasBoundDecision || ['decision', 'action', 'readback', 'effect'].includes(current.phase))) {
+      throw stateConflict('运营任务进入决策阶段后经营定义已锁定；只能重命名标题，如需改变范围或目标，请终止当前任务并重新创建。');
+    }
     const actorId = idOf(input.actorId, 'actorId');
     if (patch.productId) this.assertProduct(context, patch.productId);
     const startsAt = patch.observationStartsAt === undefined
@@ -1049,8 +1174,12 @@ export class MissionDomainRepository {
     assertMissionTransition(current.status, input.status);
     const actorId = idOf(input.actorId, 'actorId');
     const phase = input.phase ?? current.phase;
-    if (!['fact', 'analysis', 'decision', 'action', 'readback', 'effect'].includes(phase)) {
+    const phaseSequence: readonly MissionPhase[] = ['fact', 'analysis', 'decision', 'action', 'readback', 'effect'];
+    if (!phaseSequence.includes(phase)) {
       throw invalid('Unsupported Mission phase.');
+    }
+    if (phaseSequence.indexOf(phase) < phaseSequence.indexOf(current.phase)) {
+      throw stateConflict('Mission phase cannot move backward; create a new Mission if its evidence-bound definition must change.');
     }
     const updatedAt = nextTimestamp(current.updatedAt, this.now());
     const transition = this.db.transaction(() => {
@@ -1182,14 +1311,24 @@ export class MissionDomainRepository {
       const rules = rulesOf(policyVersion.rules);
       this.assertPolicyRules(context, policy, rules);
       const issuedAt = this.timestamp();
+      const effectivePolicyVersion = this.resolveEffectivePolicyVersion(context, {
+        allowedActionTypes: input.allowedActionTypes,
+        allowedAdEntityIds: input.allowedAdEntityIds,
+        at: issuedAt,
+      });
+      if (effectivePolicyVersion.id !== policyVersion.id) {
+        throw stateConflict(
+          '运营任务绑定的策略不是当前广告对象的最高优先级匹配；请重新运行分析并按数字较小的策略建立任务。',
+        );
+      }
       const approvedDecisions = this.requireApprovedDecisionsForGrant(context, mission, input, issuedAt);
       const runtime = this.getPolicyRuntime(context);
       if (runtime.killSwitch
         || runtime.circuitBreakerState !== 'closed'
-        || runtime.activePolicyVersionId !== policyVersion.id
+        || !runtime.activePolicyVersionId
         || (input.issuer.type === 'policy' && runtime.autonomyMode !== 'policy_auto')) {
         throw stateConflict(
-          'MissionGrant issuer is blocked by autonomy mode, kill switch, circuit breaker, or active policy mismatch.',
+          'MissionGrant issuer is blocked by autonomy mode, kill switch, circuit breaker, or an unarmed policy runtime.',
         );
       }
       this.assertGrantWithinPolicy(input, policyVersion, rules, issuedAt);
@@ -1376,7 +1515,13 @@ export class MissionDomainRepository {
     const policyVersion = this.requirePolicyVersion(context, input.policyVersionId);
     this.assertRevision(policyVersion.revision, input.policyRevision, 'Policy version');
     const id = idOf(input.id, 'decisionId');
-    if (input.productId) this.assertProduct(context, input.productId);
+    const decisionProductId = input.productId === undefined
+      ? mission.productId
+      : optionalId(input.productId, 'productId');
+    if (decisionProductId !== mission.productId) {
+      throw referenceConflict('Decision product must match its Mission product lineage.');
+    }
+    if (decisionProductId) this.assertProduct(context, decisionProductId);
     if (input.adEntityId) this.assertAdEntity(context, input.adEntityId);
     const now = this.timestamp();
     const create = this.db.transaction(() => {
@@ -1414,7 +1559,7 @@ export class MissionDomainRepository {
           validUntil: optionalTimestamp(input.validUntil, 'validUntil'),
           actionType: textOf(input.actionType, 'actionType', 120),
           adEntityId: optionalId(input.adEntityId, 'adEntityId'),
-          productId: optionalId(input.productId, 'productId'),
+          productId: decisionProductId ?? null,
           currentValueJson: jsonNullable(input.currentValue),
           recommendedValueJson: jsonNullable(input.recommendedValue),
           confidence: confidenceOf(input.confidence),
@@ -1585,16 +1730,28 @@ export class MissionDomainRepository {
 
   createExperiment(contextInput: StoreContextEnvelope, input: CreateExperimentInput): ExperimentRecord {
     const context = this.assertContext(contextInput);
-    const mission = this.requireMission(context, input.missionId);
-    if (['completed', 'archived'].includes(mission.status)) throw stateConflict('Mission is closed to new Experiments.');
     const id = idOf(input.id, 'experimentId');
-    if (input.productId) this.assertProduct(context, input.productId);
-    if (input.adEntityId) this.assertAdEntity(context, input.adEntityId);
+    const missionId = idOf(input.missionId, 'missionId');
+    const productId = optionalId(input.productId, 'productId');
+    const adEntityId = optionalId(input.adEntityId, 'adEntityId');
     const startsAt = timestampOf(input.observationStartsAt, 'observationStartsAt');
     const endsAt = timestampOf(input.observationEndsAt, 'observationEndsAt');
     assertTimeRange(startsAt, endsAt, 'Experiment observation window');
+    const primaryMetric = textOf(input.primaryMetric, 'primaryMetric', 160);
+    const guardrailMetrics = listOf(input.guardrailMetrics, 'guardrailMetrics', true);
+    const guardrailCriteria = listOf(input.guardrailCriteria, 'guardrailCriteria', true);
+    validateExperimentMeasurementContract(primaryMetric, guardrailMetrics, guardrailCriteria);
     const now = this.timestamp();
     const create = this.db.transaction(() => {
+      const mission = this.requireMission(context, missionId);
+      if (['completed', 'archived'].includes(mission.status)) {
+        throw stateConflict('Mission is closed to new Experiments.');
+      }
+      if (!mission.productId || !productId || mission.productId !== productId) {
+        throw referenceConflict('经营实验产品必须与所选运营任务的产品完全一致；请重新选择当前任务产品。');
+      }
+      if (productId) this.assertProduct(context, productId);
+      if (adEntityId) this.assertAdEntity(context, adEntityId);
       try {
         this.db.prepare(`
           INSERT INTO experiments (
@@ -1614,11 +1771,11 @@ export class MissionDomainRepository {
           missionId: mission.id,
           name: textOf(input.name, 'name', 300),
           hypothesis: textOf(input.hypothesis, 'hypothesis', 4_000),
-          primaryMetric: textOf(input.primaryMetric, 'primaryMetric', 160),
-          guardrailMetricsJson: json(listOf(input.guardrailMetrics, 'guardrailMetrics', true)),
-          guardrailCriteriaJson: json(listOf(input.guardrailCriteria, 'guardrailCriteria', true)),
-          productId: optionalId(input.productId, 'productId'),
-          adEntityId: optionalId(input.adEntityId, 'adEntityId'),
+          primaryMetric,
+          guardrailMetricsJson: json(guardrailMetrics),
+          guardrailCriteriaJson: json(guardrailCriteria),
+          productId,
+          adEntityId,
           baselineJson: json(input.baseline),
           variantJson: json(input.variant),
           observationStartsAt: startsAt,
@@ -1669,8 +1826,8 @@ export class MissionDomainRepository {
     const context = this.assertContext(contextInput);
     const current = this.requireExperiment(context, input.id);
     this.assertRevision(current.revision, input.expectedRevision, 'Experiment');
-    if (!['draft', 'paused'].includes(current.status)) {
-      throw stateConflict('Only draft or paused Experiment can be edited.');
+    if (current.status !== 'draft') {
+      throw stateConflict('经营实验首次启动后，产品、广告对象、指标、变量与观察窗口已冻结；如需改变实验合同，请归档当前实验并新建实验。');
     }
     const patch = input.patch;
     if (!patch || Object.keys(patch).length === 0) throw invalid('Experiment patch cannot be empty.');
@@ -1685,8 +1842,33 @@ export class MissionDomainRepository {
     const nextAdEntityId = patch.adEntityId === undefined ? current.adEntityId : patch.adEntityId ?? undefined;
     if (nextProductId) this.assertProduct(context, nextProductId);
     if (nextAdEntityId) this.assertAdEntity(context, nextAdEntityId);
+    const nextPrimaryMetric = patch.primaryMetric === undefined
+      ? current.primaryMetric
+      : textOf(patch.primaryMetric, 'primaryMetric', 160);
+    const nextGuardrailMetrics = patch.guardrailMetrics === undefined
+      ? current.guardrailMetrics
+      : listOf(patch.guardrailMetrics, 'guardrailMetrics', true);
+    const nextGuardrailCriteria = patch.guardrailCriteria === undefined
+      ? current.guardrailCriteria
+      : listOf(patch.guardrailCriteria, 'guardrailCriteria', true);
+    validateExperimentMeasurementContract(
+      nextPrimaryMetric,
+      nextGuardrailMetrics,
+      nextGuardrailCriteria,
+    );
     const now = nextTimestamp(current.updatedAt, this.now());
     const update = this.db.transaction(() => {
+      const mission = this.requireMission(context, current.missionId);
+      if (!mission.productId || !nextProductId || mission.productId !== nextProductId) {
+        throw referenceConflict('经营实验产品必须与所选运营任务的产品完全一致；请重新选择当前任务产品。');
+      }
+      if (nextAdEntityId && !this.adEntityBelongsToPolicyScope(
+        context,
+        `product:${encodeURIComponent(nextProductId)}`,
+        nextAdEntityId,
+      )) {
+        throw referenceConflict('所选广告对象不属于当前运营任务产品；请从该产品的已核验广告对象中重新选择。');
+      }
       const result = this.db.prepare(`
         UPDATE experiments
       SET name = @name, hypothesis = @hypothesis, primary_metric = @primaryMetric,
@@ -1698,22 +1880,16 @@ export class MissionDomainRepository {
           conclusion = @conclusion,
           revision = revision + 1, updated_at = @updatedAt
       WHERE store_id = @storeId AND id = @id AND revision = @expectedRevision
-        AND status IN ('draft', 'paused')
+        AND status = 'draft'
       `).run({
       storeId: context.storeId,
       id: current.id,
       expectedRevision: input.expectedRevision,
       name: patch.name === undefined ? current.name : textOf(patch.name, 'name', 300),
       hypothesis: patch.hypothesis === undefined ? current.hypothesis : textOf(patch.hypothesis, 'hypothesis', 4_000),
-      primaryMetric: patch.primaryMetric === undefined
-        ? current.primaryMetric
-        : textOf(patch.primaryMetric, 'primaryMetric', 160),
-      guardrailMetricsJson: json(patch.guardrailMetrics === undefined
-        ? current.guardrailMetrics
-        : listOf(patch.guardrailMetrics, 'guardrailMetrics', true)),
-      guardrailCriteriaJson: json(patch.guardrailCriteria === undefined
-        ? current.guardrailCriteria
-        : listOf(patch.guardrailCriteria, 'guardrailCriteria', true)),
+      primaryMetric: nextPrimaryMetric,
+      guardrailMetricsJson: json(nextGuardrailMetrics),
+      guardrailCriteriaJson: json(nextGuardrailCriteria),
       productId: patch.productId === undefined ? current.productId ?? null : optionalId(patch.productId, 'productId'),
       adEntityId: patch.adEntityId === undefined ? current.adEntityId ?? null : optionalId(patch.adEntityId, 'adEntityId'),
       baselineJson: patch.baseline === undefined ? json(current.baseline) : json(patch.baseline),
@@ -1746,15 +1922,56 @@ export class MissionDomainRepository {
     const current = this.requireExperiment(context, input.id);
     this.assertRevision(current.revision, input.expectedRevision, 'Experiment');
     assertExperimentTransition(current.status, input.status);
+    if (input.status === 'completed') {
+      throw stateConflict('经营实验只能由系统根据观察窗与指标快照完成判定，人工文字不能直接形成实验结论。');
+    }
     const now = nextTimestamp(current.updatedAt, this.now());
     const transition = this.db.transaction(() => {
+      if (current.status === 'paused' && input.status === 'running') {
+        const guardrailStop = this.db.prepare(`
+          SELECT 1
+          FROM causal_events
+          WHERE store_id = ? AND mission_id = ?
+            AND entity_type = 'experiment' AND entity_id = ?
+            AND event_type = 'experiment_guardrail_triggered'
+          LIMIT 1
+        `).get(context.storeId, current.missionId, current.id);
+        if (guardrailStop) {
+          throw stateConflict('经营实验已由系统指标触发守护栏，不能恢复原实验；请复核原因并新建实验。');
+        }
+      }
+      const hasPriorRunningEvent = current.status === 'paused' && input.status === 'running'
+        ? Boolean(this.db.prepare(`
+            SELECT 1
+            FROM causal_events
+            WHERE store_id = ? AND mission_id = ?
+              AND entity_type = 'experiment' AND entity_id = ?
+              AND event_type = 'experiment_running'
+            LIMIT 1
+          `).get(context.storeId, current.missionId, current.id))
+        : false;
+      // A draft may become `paused` either directly or after archive/restore.
+      // Only an immutable prior running event proves that its baseline already
+      // passed the real execution/readback gate. Otherwise revalidate and
+      // replace all renderer-supplied baseline data before the first run.
+      const trustedBaseline = input.status === 'running'
+        && (current.status === 'draft' || !hasPriorRunningEvent)
+        ? this.requireVerifiedExperimentBaseline(context, current)
+        : undefined;
+      if (trustedBaseline && usesCanonicalExperimentMetrics(current)) {
+        const mission = this.requireMission(context, current.missionId);
+        this.captureExperimentMetrics(context, current, mission.dataBatchId, 'baseline', now);
+      }
       const result = this.db.prepare(`
         UPDATE experiments
         SET status = ?, conclusion = CASE WHEN ? = 'completed' THEN COALESCE(?, conclusion) ELSE conclusion END,
+            baseline_json = COALESCE(?, baseline_json),
             revision = revision + 1, updated_at = ?
         WHERE store_id = ? AND id = ? AND revision = ? AND status <> 'archived'
       `).run(
-        input.status, input.status, optionalText(input.reason), now,
+        input.status, input.status, optionalText(input.reason),
+        trustedBaseline === undefined ? null : json(trustedBaseline),
+        now,
         context.storeId, current.id, input.expectedRevision,
       );
       this.assertCas(result.changes, 'Experiment');
@@ -1770,6 +1987,149 @@ export class MissionDomainRepository {
       return experiment;
     });
     return transition.immediate();
+  }
+
+  evaluateExperiment(
+    contextInput: StoreContextEnvelope,
+    input: EvaluateExperimentInput,
+  ): ExperimentRecord {
+    const context = this.assertContext(contextInput);
+    const current = this.requireExperiment(context, input.id);
+    this.assertRevision(current.revision, input.expectedRevision, 'Experiment');
+    if (!['running', 'paused'].includes(current.status)) {
+      throw stateConflict('只有观察中或已暂停的经营实验可以由系统判定。');
+    }
+    if (this.now().getTime() < Date.parse(current.observationEndsAt)) {
+      throw stateConflict('观察窗口尚未结束，暂不能判定经营实验。请等待结束时间后导入新报表。');
+    }
+    const actorId = idOf(input.actorId, 'actorId');
+    const now = nextTimestamp(current.updatedAt, this.now());
+    const evaluate = this.db.transaction(() => {
+      const resultBatchId = this.requireLatestExperimentResultBatch(context, current);
+      this.captureExperimentMetrics(context, current, resultBatchId, 'result', now);
+      this.assertExperimentMetricCoverage(context, current);
+      const outcome = this.buildExperimentEvaluation(context, current);
+      const result = this.db.prepare(`
+        UPDATE experiments
+        SET status = ?, conclusion = ?, revision = revision + 1, updated_at = ?
+        WHERE store_id = ? AND id = ? AND revision = ?
+          AND status IN ('running', 'paused')
+      `).run(
+        outcome.status,
+        outcome.conclusion,
+        now,
+        context.storeId,
+        current.id,
+        input.expectedRevision,
+      );
+      this.assertCas(result.changes, 'Experiment');
+      const experiment = this.requireExperiment(context, current.id);
+      const effectEventId = `causal:experiment:${experiment.id}:r${experiment.revision}`;
+      this.appendCausalInternal(context, {
+        id: effectEventId,
+        stage: 'EFFECT',
+        eventType: outcome.eventType,
+        entityType: 'experiment',
+        entityId: experiment.id,
+        missionId: experiment.missionId,
+        title: experiment.name,
+        observedEffect: outcome.conclusion,
+        status: experiment.status,
+        source: resultBatchId,
+        actorId,
+      }, now);
+      const resultSnapshots = this.listExperimentMetricSnapshots(context, experiment.id)
+        .filter((snapshot) => snapshot.dataBatchId === resultBatchId
+          && Date.parse(snapshot.observedAt) >= Date.parse(experiment.observationEndsAt))
+        .sort((left, right) => left.metric.localeCompare(right.metric, 'en-US') || left.id.localeCompare(right.id, 'en-US'));
+      const resultProofSha256 = createHash('sha256').update(json({
+        schemaVersion: 1,
+        storeId: context.storeId,
+        missionId: experiment.missionId,
+        experimentId: experiment.id,
+        experimentRevision: experiment.revision,
+        resultBatchId,
+        outcome: {
+          eventType: outcome.eventType,
+          status: experiment.status,
+          conclusion: outcome.conclusion,
+        },
+        snapshots: resultSnapshots.map((snapshot) => ({
+          id: snapshot.id,
+          metric: snapshot.metric,
+          value: snapshot.value,
+          currency: snapshot.currency ?? null,
+          observedAt: snapshot.observedAt,
+          dataBatchId: snapshot.dataBatchId,
+        })),
+      })).digest('hex');
+      const evidenceIdentity = createHash('sha256').update(effectEventId).digest('hex').slice(0, 40);
+      this.appendEvidenceRef(context, {
+        id: `evidence:experiment:${evidenceIdentity}`,
+        eventId: effectEventId,
+        evidenceType: 'experiment_result_snapshot',
+        evidenceRef: `experiment-result:${resultProofSha256}`,
+        sha256: resultProofSha256,
+      });
+      const mission = this.requireMission(context, experiment.missionId);
+      if (mission.status !== 'active' || !['readback', 'effect'].includes(mission.phase)) {
+        throw stateConflict('关联运营任务不是可评估状态；请先恢复任务并确认执行回读，再重新判定经营实验。');
+      }
+      const remainingExperiments = this.db.prepare(`
+        SELECT count(*) AS count
+        FROM experiments
+        WHERE store_id = ? AND mission_id = ? AND id <> ?
+          AND status IN ('draft', 'running', 'paused')
+      `).get(context.storeId, mission.id, experiment.id) as { count: number };
+      const missionStatus: MissionLifecycleStatus = outcome.status === 'paused'
+        ? 'blocked'
+        : remainingExperiments.count === 0 ? 'completed' : 'active';
+      assertMissionTransition(mission.status, missionStatus);
+      const missionUpdatedAt = nextTimestamp(mission.updatedAt, new Date(now));
+      const missionResult = this.db.prepare(`
+        UPDATE missions
+        SET status = ?, phase = 'effect', revision = revision + 1, updated_at = ?
+        WHERE store_id = ? AND id = ? AND revision = ?
+          AND status = 'active' AND phase IN ('readback', 'effect')
+      `).run(
+        missionStatus,
+        missionUpdatedAt,
+        context.storeId,
+        mission.id,
+        mission.revision,
+      );
+      this.assertCas(missionResult.changes, 'Mission');
+      const evaluatedMission = this.requireMission(context, mission.id);
+      this.insertMissionEvent(
+        context,
+        evaluatedMission,
+        outcome.status === 'paused' ? 'experiment_guardrail_blocked' : 'experiment_effect_evaluated',
+        actorId,
+        outcome.conclusion,
+        missionUpdatedAt,
+      );
+      const evidenceCount = new Set([
+        experiment.primaryMetric,
+        ...experiment.guardrailMetrics,
+      ].map((metric) => metric.trim().toLocaleUpperCase('en-US'))).size;
+      this.db.prepare(`
+        INSERT INTO mission_checkpoints (
+          id, store_id, mission_id, stage, title, status,
+          evidence_count, actor_id, created_at
+        ) VALUES (?, ?, ?, 'EFFECT', ?, ?, ?, ?, ?)
+      `).run(
+        `checkpoint:experiment:${experiment.id}:r${experiment.revision}:effect`,
+        context.storeId,
+        mission.id,
+        outcome.status === 'paused' ? '经营实验触发守护栏' : '经营实验完成效果评估',
+        outcome.status === 'paused' ? 'blocked' : 'completed',
+        evidenceCount,
+        actorId,
+        missionUpdatedAt,
+      );
+      return experiment;
+    });
+    return evaluate.immediate();
   }
 
   archiveExperiment(context: StoreContextEnvelope, input: ArchiveRestoreInput): ExperimentRecord {
@@ -1919,6 +2279,35 @@ export class MissionDomainRepository {
     return append.immediate();
   }
 
+  appendCausalEventWithEvidence(
+    contextInput: StoreContextEnvelope,
+    input: AppendCausalEventInput,
+    evidenceInputs: readonly AppendEvidenceRefInput[],
+  ): AppendCausalEventWithEvidenceResult {
+    const context = this.assertContext(contextInput);
+    if (input.missionId) this.requireMission(context, input.missionId);
+    if (evidenceInputs.length === 0) {
+      throw invalid('A causal event evidence set cannot be empty.');
+    }
+    if (evidenceInputs.some((evidence) => evidence.eventId !== input.id)) {
+      throw invalid('Every evidence reference must target the causal event appended in the same transaction.');
+    }
+    const append = this.db.transaction(() => {
+      const createdAt = this.timestamp();
+      try {
+        this.appendCausalInternal(context, input, createdAt);
+      } catch (error) {
+        this.rethrowConstraint(error, `Causal event ${input.id} already exists or has invalid lineage.`);
+      }
+      const event = this.requireCausalEvent(context, input.id);
+      const evidence = evidenceInputs.map((evidenceInput) => (
+        this.appendEvidenceRefInternal(context, evidenceInput, createdAt)
+      ));
+      return { event, evidence };
+    });
+    return append.immediate();
+  }
+
   listCausalEvents(
     contextInput: StoreContextEnvelope,
     input: { missionId?: string; stages?: readonly CausalLedgerStage[] } = {},
@@ -1934,6 +2323,86 @@ export class MissionDomainRepository {
         AND stage IN (${placeholders})
       ORDER BY sequence DESC, id
     `).all(context.storeId, missionId, missionId, ...stages) as CausalRow[]).map(mapCausalEvent);
+  }
+
+  listAnalysisCausalMemory(
+    contextInput: StoreContextEnvelope,
+    input: { productId: string; limit?: number },
+  ): AnalysisCausalMemoryItem[] {
+    const context = this.assertContext(contextInput);
+    const productId = String(input.productId ?? '').trim();
+    if (!productId) return [];
+    const limit = input.limit ?? 40;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw invalid('Analysis causal-memory limit must be an integer from 1 to 100.');
+    }
+    const rows = this.db.prepare(`
+      SELECT event.id AS eventId,
+             event.mission_id AS missionId,
+             event.stage AS stage,
+             event.event_type AS eventType,
+             event.entity_type AS entityType,
+             event.entity_id AS entityId,
+             event.title AS title,
+             event.observed_effect AS observedEffect,
+             event.status AS status,
+             event.source AS source,
+             event.business_date AS businessDate
+      FROM causal_events event
+      JOIN missions mission
+        ON mission.store_id = event.store_id
+       AND mission.id = event.mission_id
+      WHERE event.store_id = ?
+        AND upper(trim(mission.product_id)) = upper(trim(?))
+        AND event.stage IN ('READBACK', 'EFFECT')
+        AND event.observed_effect IS NOT NULL
+        AND trim(event.observed_effect) <> ''
+        AND lower(trim(event.status)) NOT IN ('unknown', 'still_unknown')
+        AND lower(trim(event.event_type)) NOT LIKE '%unknown%'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM causal_events correction
+          WHERE correction.store_id = event.store_id
+            AND correction.corrects_event_id = event.id
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM evidence_refs proof
+          WHERE proof.store_id = event.store_id
+            AND proof.event_id = event.id
+            AND proof.sha256 IS NOT NULL
+            AND length(proof.sha256) = 64
+            AND lower(proof.sha256) NOT GLOB '*[^0-9a-f]*'
+        )
+      ORDER BY event.business_date DESC, event.sequence DESC, event.id DESC
+      LIMIT ?
+    `).all(context.storeId, productId, limit) as Array<{
+      eventId: string;
+      missionId: string;
+      stage: 'READBACK' | 'EFFECT';
+      eventType: string;
+      entityType: string;
+      entityId: string;
+      title: string;
+      observedEffect: string;
+      status: string;
+      source: string;
+      businessDate: string;
+    }>;
+    return rows.map((row) => {
+      const proofs = (this.db.prepare(`
+        SELECT evidence_type AS evidenceType,
+               evidence_ref AS evidenceRef,
+               lower(sha256) AS sha256
+        FROM evidence_refs
+        WHERE store_id = ? AND event_id = ?
+          AND sha256 IS NOT NULL
+          AND length(sha256) = 64
+          AND lower(sha256) NOT GLOB '*[^0-9a-f]*'
+        ORDER BY evidence_type, evidence_ref, sha256, id
+      `).all(context.storeId, row.eventId) as AnalysisCausalMemoryProof[]);
+      return { ...row, proofs };
+    });
   }
 
   appendCausalLink(contextInput: StoreContextEnvelope, input: AppendCausalLinkInput): CausalLinkRecord {
@@ -1961,6 +2430,14 @@ export class MissionDomainRepository {
 
   appendEvidenceRef(contextInput: StoreContextEnvelope, input: AppendEvidenceRefInput): CausalEvidenceRefRecord {
     const context = this.assertContext(contextInput);
+    return this.appendEvidenceRefInternal(context, input, this.timestamp());
+  }
+
+  private appendEvidenceRefInternal(
+    context: StoreContextEnvelope,
+    input: AppendEvidenceRefInput,
+    createdAt: string,
+  ): CausalEvidenceRefRecord {
     this.requireCausalEvent(context, input.eventId);
     const id = idOf(input.id, 'evidenceRefId');
     let evidenceRef: string;
@@ -1970,7 +2447,6 @@ export class MissionDomainRepository {
       throw invalid(error instanceof Error ? error.message : 'evidenceRef must be opaque.');
     }
     const sha256 = optionalSha256(input.sha256);
-    const createdAt = this.timestamp();
     try {
       this.db.prepare(`
         INSERT INTO evidence_refs (
@@ -2048,7 +2524,16 @@ export class MissionDomainRepository {
 
   private assertAdEntity(context: StoreContextEnvelope, adEntityIdInput: string): void {
     const adEntityId = idOf(adEntityIdInput, 'adEntityId');
-    if (!this.references?.adEntityBelongsToStore(context, adEntityId)) {
+    const belongsToStore = this.references
+      ? this.references.adEntityBelongsToStore(context, adEntityId)
+      : Boolean(this.db.prepare(`
+          SELECT 1 AS present
+          FROM verified_ad_entity_authority
+          WHERE store_id = ? AND ad_entity_id = ?
+          ORDER BY entity_revision DESC
+          LIMIT 1
+        `).get(context.storeId, adEntityId));
+    if (!belongsToStore) {
       throw referenceConflict(
         '当前广告对象缺少此店铺的可信身份与版本证据；请重新核验当前店铺广告对象。',
       );
@@ -2336,7 +2821,16 @@ export class MissionDomainRepository {
     if (!archive && current.status !== 'archived') throw stateConflict('Only archived Mission can be restored.');
     const now = nextTimestamp(current.updatedAt, this.now());
     const action = this.db.transaction(() => {
-      const status = archive ? 'archived' : 'paused';
+      const completedBeforeArchive = !archive && Boolean(this.db.prepare(`
+        SELECT 1
+        FROM mission_events
+        WHERE store_id = ? AND mission_id = ?
+          AND event_type IN ('status_completed', 'experiment_effect_evaluated')
+        LIMIT 1
+      `).get(context.storeId, current.id));
+      const status: MissionLifecycleStatus = archive
+        ? 'archived'
+        : completedBeforeArchive ? 'completed' : 'paused';
       const result = this.db.prepare(`
         UPDATE missions
         SET status = ?, archived_at = ?, revision = revision + 1, updated_at = ?
@@ -2366,21 +2860,33 @@ export class MissionDomainRepository {
     if (!archive && current.status !== 'archived') throw stateConflict('Only archived Experiment can be restored.');
     const now = nextTimestamp(current.updatedAt, this.now());
     const operation = this.db.transaction(() => {
+      const completedBeforeArchive = !archive && Boolean(this.db.prepare(`
+        SELECT 1
+        FROM causal_events
+        WHERE store_id = ? AND entity_type = 'experiment' AND entity_id = ?
+          AND event_type = 'experiment_completed'
+        LIMIT 1
+      `).get(context.storeId, current.id));
+      const status: ExperimentStatus = archive
+        ? 'archived'
+        : completedBeforeArchive ? 'completed' : 'paused';
       const result = this.db.prepare(`
         UPDATE experiments
         SET status = ?, archived_at = ?, revision = revision + 1, updated_at = ?
         WHERE store_id = ? AND id = ? AND revision = ?
       `).run(
-        archive ? 'archived' : 'paused', archive ? now : null,
+        status, archive ? now : null,
         now, context.storeId, current.id, input.expectedRevision,
       );
       this.assertCas(result.changes, 'Experiment');
       const experiment = this.requireExperiment(context, current.id);
       this.appendCausalInternal(context, {
         id: `causal:experiment:${experiment.id}:r${experiment.revision}`,
-        stage: 'ANALYSIS', eventType: archive ? 'experiment_archived' : 'experiment_restored',
+        stage: experiment.status === 'completed' ? 'EFFECT' : 'ANALYSIS',
+        eventType: archive ? 'experiment_archived' : 'experiment_restored',
         entityType: 'experiment', entityId: experiment.id, missionId: experiment.missionId,
         title: experiment.name, intervention: optionalText(input.reason) ?? undefined,
+        observedEffect: experiment.status === 'completed' ? experiment.conclusion : undefined,
         status: experiment.status, source: 'mission-domain', actorId: input.actorId,
       }, now);
       return experiment;
@@ -2501,6 +3007,335 @@ export class MissionDomainRepository {
     return mapExperiment(row);
   }
 
+  private requireVerifiedExperimentBaseline(
+    context: StoreContextEnvelope,
+    experiment: ExperimentRecord,
+  ): Record<string, unknown> {
+    const mission = this.requireMission(context, experiment.missionId);
+    if (mission.status !== 'active' || !['readback', 'effect'].includes(mission.phase)) {
+      throw stateConflict('运营任务尚未完成真实广告执行与刷新回读；请先在实时执行中完成并核验该动作。');
+    }
+    const readbackCheckpoint = this.listMissionCheckpoints(context, mission.id)
+      .find((checkpoint) => checkpoint.stage === 'READBACK'
+        && checkpoint.status === 'verified'
+        && checkpoint.evidenceCount >= 3);
+    if (!readbackCheckpoint) {
+      throw stateConflict('运营任务缺少包含前值、提交后与独立刷新证据的回读检查点；请先完成真实执行证据对账。');
+    }
+    if (!mission.productId || !experiment.productId || mission.productId !== experiment.productId) {
+      throw referenceConflict('经营实验产品必须与所选运营任务的产品完全一致；请重新选择当前任务产品。');
+    }
+    if (!experiment.adEntityId) {
+      throw referenceConflict('经营实验必须选择已核验的具体广告对象；请返回产品与广告对象重新选择。');
+    }
+    const verified = this.listDecisions(context, { missionId: mission.id })
+      .filter((decision) => decision.status === 'verified'
+        && decision.actionType === 'set_keyword_bid'
+        && decision.adEntityId === experiment.adEntityId
+        && (!decision.productId || decision.productId === experiment.productId));
+    if (verified.length === 0) {
+      throw stateConflict('所选广告对象没有当前运营任务的已验证执行回读；请先完成该对象的执行与刷新核验。');
+    }
+    const latestActionRevision = Math.max(...verified.map((decision) => decision.actionRevision));
+    const latest = verified.filter((decision) => decision.actionRevision === latestActionRevision);
+    if (latest.length !== 1) {
+      throw referenceConflict('所选广告对象存在多个同版本已验证结果，无法唯一确定实验干预；请先完成账本对账。');
+    }
+    const decision = latest[0];
+    const currentBidUsd = Number(decision.currentValue);
+    const appliedBidUsd = Number(decision.recommendedValue);
+    if (!Number.isFinite(currentBidUsd) || !Number.isFinite(appliedBidUsd)
+      || currentBidUsd <= 0 || appliedBidUsd <= 0) {
+      throw referenceConflict('已验证决策缺少可用的竞价前后值；请重新执行并刷新回读该广告对象。');
+    }
+    const variant = experiment.variant && typeof experiment.variant === 'object' && !Array.isArray(experiment.variant)
+      ? experiment.variant as Record<string, unknown>
+      : {};
+    if (variant.onlyVariable !== 'keyword_bid'
+      || !Number.isFinite(Number(variant.bidUsd))
+      || Math.abs(Number(variant.bidUsd) - appliedBidUsd) > 0.000_001) {
+      throw referenceConflict('实验变量与已验证竞价结果不一致；请按真实回读值重新建立实验。');
+    }
+    const verifiedHistory = this.listDecisionHistory(context, decision.id)
+      .find((event) => event.eventType === 'verified');
+    if (!verifiedHistory) {
+      throw referenceConflict('已验证决策缺少不可变回读历史；请先完成账本对账。');
+    }
+    return {
+      source: 'verified_ads_readback',
+      decisionId: decision.id,
+      decisionRevision: decision.revision,
+      actionRevision: decision.actionRevision,
+      dataBatchId: decision.dataBatchId,
+      productId: experiment.productId,
+      adEntityId: experiment.adEntityId,
+      currentBidUsd,
+      appliedBidUsd,
+      verifiedAt: verifiedHistory.createdAt,
+      readbackCheckpointId: readbackCheckpoint.id,
+      readbackEvidenceCount: readbackCheckpoint.evidenceCount,
+    };
+  }
+
+  private captureExperimentMetrics(
+    context: StoreContextEnvelope,
+    experiment: ExperimentRecord,
+    dataBatchId: string,
+    phase: 'baseline' | 'result',
+    createdAt: string,
+  ): void {
+    const rows = this.db.prepare(`
+      SELECT verified.entity_revision AS entityRevision,
+             metrics.clicks AS clicks,
+             metrics.cost AS cost,
+             metrics.orders AS orders,
+             metrics.sales AS sales,
+             metrics.currency AS currency,
+             batch.date_end AS dateEnd
+      FROM verified_ad_entity_authority verified
+      JOIN analysis_evidence_packages evidence
+        ON evidence.store_id = verified.store_id
+       AND evidence.id = verified.evidence_package_id
+      JOIN report_import_runs runs
+        ON runs.store_id = evidence.store_id
+       AND runs.run_id = evidence.import_run_id
+       AND runs.batch_id = evidence.data_batch_id
+       AND runs.status = 'completed'
+      JOIN report_import_file_snapshots snapshots
+        ON snapshots.store_id = runs.store_id
+       AND snapshots.run_id = runs.run_id
+       AND snapshots.batch_id = runs.batch_id
+       AND snapshots.report_type = verified.source_report_type
+       AND snapshots.file_hash = verified.source_file_hash
+       AND snapshots.report_file_id IS NOT NULL
+      JOIN ad_daily_metrics metrics
+        ON metrics.store_id = evidence.store_id
+       AND metrics.batch_id = evidence.data_batch_id
+       AND metrics.report_type = verified.source_report_type
+       AND metrics.source_file = snapshots.file_path
+       AND metrics.source_row = verified.source_row
+       AND metrics.store_authority_quarantined = 0
+      JOIN lingxing_report_batches batch
+        ON batch.store_id = evidence.store_id
+       AND batch.id = evidence.data_batch_id
+       AND batch.status = 'completed'
+      WHERE verified.store_id = ?
+        AND verified.ad_entity_id = ?
+        AND verified.entity_type = 'keyword'
+        AND verified.source_report_type = 'keyword'
+        AND evidence.data_batch_id = ?
+        AND upper(trim(metrics.asin)) = upper(trim(?))
+        AND lower(trim(metrics.campaign_name)) = lower(trim(verified.campaign_name))
+        AND lower(trim(metrics.ad_group_name)) = lower(trim(verified.ad_group_name))
+        AND lower(trim(metrics.targeting)) = lower(trim(verified.entity_name))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM store_migration_quarantine quarantine
+          WHERE quarantine.source_table = 'ad_daily_metrics'
+            AND quarantine.source_row_id = CAST(metrics.id AS TEXT)
+            AND quarantine.status = 'pending'
+        )
+      ORDER BY verified.entity_revision DESC, verified.authority_id DESC
+    `).all(
+      context.storeId,
+      experiment.adEntityId,
+      dataBatchId,
+      experiment.productId,
+    ) as ExperimentMetricSourceRow[];
+    if (rows.length !== 1) {
+      throw referenceConflict(`无法从${phase === 'baseline' ? '当前任务' : '观察结果'}批次唯一定位该广告对象的指标源行；请刷新对象权威并重新运行分析。`);
+    }
+    const row = rows[0];
+    if (row.currency !== 'USD') {
+      throw referenceConflict('经营实验 V1 只接受当前美国站 USD 指标；请检查报表币种后重试。');
+    }
+    const observedAt = timestampOf(
+      `${row.dateEnd}T23:59:59.999Z`,
+      phase === 'baseline' ? 'baselineObservedAt' : 'resultObservedAt',
+    );
+    if (phase === 'baseline' && Date.parse(observedAt) > Date.parse(experiment.observationStartsAt)) {
+      throw stateConflict('当前任务批次晚于实验观察起点，不能作为基线；请重新设置观察窗口。');
+    }
+    if (phase === 'result' && Date.parse(observedAt) < Date.parse(experiment.observationEndsAt)) {
+      throw stateConflict('最新完成批次尚未覆盖实验观察终点；请等待并导入观察窗结束后的报表。');
+    }
+    const requiredMetrics = [...new Set([experiment.primaryMetric, ...experiment.guardrailMetrics])];
+    requiredMetrics.forEach((metric, index) => {
+      const normalized = metric.trim().toLocaleUpperCase('en-US');
+      let value: number;
+      let currency: UsCurrency | null = null;
+      if (normalized === 'ACOS') {
+        if (!(row.sales > 0)) throw stateConflict(`${phase === 'baseline' ? '基线' : '结果'}广告销售额为 0，无法计算 ACOS；请补齐有效观察数据。`);
+        value = row.cost / row.sales;
+      } else if (normalized === 'CVR') {
+        if (!(row.clicks > 0)) throw stateConflict(`${phase === 'baseline' ? '基线' : '结果'}点击量为 0，无法计算 CVR；请补齐有效观察数据。`);
+        value = row.orders / row.clicks;
+      } else if (normalized === '广告订单' || normalized === 'ORDERS') {
+        value = row.orders;
+      } else if (normalized === '花费' || normalized === 'SPEND' || normalized === 'COST') {
+        value = row.cost;
+        currency = 'USD';
+      } else if (normalized === '广告销售额' || normalized === 'SALES') {
+        value = row.sales;
+        currency = 'USD';
+      } else if (normalized === 'TACOS') {
+        throw stateConflict('当前数据只有广告销售额，不能冒充 TACOS 所需的产品总销售额；请改用受支持指标。');
+      } else {
+        throw stateConflict(`暂不支持经营实验指标“${metric.trim()}”；请改用 ACOS、CVR、广告订单、广告销售额或花费。`);
+      }
+      if (!Number.isFinite(value) || value < 0) {
+        throw referenceConflict(`经营实验基线指标“${metric.trim()}”不是有效数值；请重新导入报表。`);
+      }
+      const id = `experiment-metric:${experiment.id}:${phase}:${index + 1}`;
+      this.db.prepare(`
+        INSERT INTO experiment_metric_snapshots (
+          id, store_id, experiment_id, metric, value, currency,
+          observed_at, data_batch_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, context.storeId, experiment.id, metric.trim(), value, currency,
+        observedAt, dataBatchId, createdAt,
+      );
+      this.appendCausalInternal(context, {
+        id: `causal:${id}`,
+        stage: 'FACT',
+        eventType: 'experiment_metric_snapshot',
+        entityType: 'experiment_metric_snapshot',
+        entityId: id,
+        missionId: experiment.missionId,
+        title: `${metric.trim()} ${phase === 'baseline' ? '基线' : '结果'}快照`,
+        signal: `${metric.trim()}=${value}`,
+        status: 'recorded',
+        source: dataBatchId,
+        actorId: 'system',
+      }, createdAt);
+    });
+  }
+
+  private assertExperimentMetricCoverage(
+    context: StoreContextEnvelope,
+    experiment: ExperimentRecord,
+  ): void {
+    const snapshots = this.listExperimentMetricSnapshots(context, experiment.id);
+    const requiredMetrics = [...new Set([
+      experiment.primaryMetric,
+      ...experiment.guardrailMetrics,
+    ].map((metric) => metric.trim().toLocaleUpperCase('en-US')))];
+    const missing: string[] = [];
+    for (const requiredMetric of requiredMetrics) {
+      const matching = snapshots.filter((snapshot) => (
+        snapshot.metric.trim().toLocaleUpperCase('en-US') === requiredMetric
+      ));
+      const baseline = matching.find((snapshot) => (
+        Date.parse(snapshot.observedAt) <= Date.parse(experiment.observationStartsAt)
+      ));
+      const result = matching.find((snapshot) => (
+        Date.parse(snapshot.observedAt) >= Date.parse(experiment.observationEndsAt)
+          && snapshot.dataBatchId !== baseline?.dataBatchId
+      ));
+      if (!baseline || !result) missing.push(requiredMetric);
+    }
+    if (missing.length > 0) {
+      throw stateConflict(
+        `经营实验缺少系统指标快照：${missing.join('、')}。请先完成基线采集，并在观察窗结束后导入新的完整报表。`,
+      );
+    }
+  }
+
+  private requireLatestExperimentResultBatch(
+    context: StoreContextEnvelope,
+    experiment: ExperimentRecord,
+  ): string {
+    const mission = this.requireMission(context, experiment.missionId);
+    const row = this.db.prepare(`
+      SELECT batch.id AS batchId,
+             MAX(COALESCE(runs.completed_at, runs.created_at)) AS importedAt
+      FROM lingxing_report_batches batch
+      JOIN report_import_runs runs
+        ON runs.store_id = batch.store_id
+       AND runs.batch_id = batch.id
+       AND runs.status = 'completed'
+      WHERE batch.store_id = ?
+        AND batch.status = 'completed'
+        AND batch.id <> ?
+        AND batch.date_end >= ?
+      GROUP BY batch.id, batch.completed_at, batch.created_at
+      ORDER BY importedAt DESC, batch.completed_at DESC, batch.created_at DESC, batch.id DESC
+      LIMIT 1
+    `).get(
+      context.storeId,
+      mission.dataBatchId,
+      experiment.observationEndsAt.slice(0, 10),
+    ) as { batchId: string } | undefined;
+    if (!row) {
+      throw stateConflict('观察窗结束后还没有新的已完成导入；请先采集并导入覆盖观察终点的 8 类报表。');
+    }
+    return row.batchId;
+  }
+
+  private buildExperimentEvaluation(
+    context: StoreContextEnvelope,
+    experiment: ExperimentRecord,
+  ): {
+    status: 'completed' | 'paused';
+    conclusion: string;
+    eventType: 'experiment_completed' | 'experiment_guardrail_triggered';
+  } {
+    const snapshots = this.listExperimentMetricSnapshots(context, experiment.id);
+    const pairFor = (metric: string) => {
+      const normalized = metric.trim().toLocaleUpperCase('en-US');
+      const matching = snapshots.filter((snapshot) => (
+        snapshot.metric.trim().toLocaleUpperCase('en-US') === normalized
+      ));
+      const baseline = matching.find((snapshot) => (
+        Date.parse(snapshot.observedAt) <= Date.parse(experiment.observationStartsAt)
+      ));
+      const result = matching.find((snapshot) => (
+        Date.parse(snapshot.observedAt) >= Date.parse(experiment.observationEndsAt)
+          && snapshot.dataBatchId !== baseline?.dataBatchId
+      ));
+      if (!baseline || !result) {
+        throw stateConflict(`经营实验指标“${metric}”缺少可比较的基线或结果快照。`);
+      }
+      return { baseline, result };
+    };
+    const primary = pairFor(experiment.primaryMetric);
+    const primaryChangePct = primary.baseline.value === 0
+      ? undefined
+      : ((primary.result.value - primary.baseline.value) / Math.abs(primary.baseline.value)) * 100;
+    const primaryLine = `${experiment.primaryMetric}：${formatExperimentNumber(primary.baseline.value)} → ${formatExperimentNumber(primary.result.value)}`
+      + (primaryChangePct === undefined
+        ? '（基线为 0，仅记录绝对结果）'
+        : `（${primaryChangePct >= 0 ? '上升' : '下降'} ${formatExperimentNumber(Math.abs(primaryChangePct))}%）`);
+    const guardrailLines: string[] = [];
+    let breached = false;
+    experiment.guardrailMetrics.forEach((metric, index) => {
+      const criterion = experiment.guardrailCriteria[index]?.trim();
+      if (!criterion) {
+        throw stateConflict(`守护指标“${metric}”缺少结构化判断标准；请暂停后补充。`);
+      }
+      const parsed = criterion.match(/(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*%\s*$/);
+      if (!parsed) {
+        throw stateConflict(`守护标准“${criterion}”无法安全解析；请使用例如“${metric} >= 95%”的基线比例格式。`);
+      }
+      const pair = pairFor(metric);
+      if (pair.baseline.value === 0) {
+        throw stateConflict(`守护指标“${metric}”基线为 0，无法计算相对比例；请改用可判定指标。`);
+      }
+      const actualPct = (pair.result.value / pair.baseline.value) * 100;
+      const threshold = Number(parsed[2]);
+      const passed = compareExperimentGuardrail(actualPct, parsed[1], threshold);
+      if (!passed) breached = true;
+      guardrailLines.push(
+        `${metric}结果为基线的 ${formatExperimentNumber(actualPct)}%，要求 ${parsed[1]} ${formatExperimentNumber(threshold)}%，${passed ? '未触发' : '已触发'}`,
+      );
+    });
+    const conclusion = `系统已根据同店铺、同任务、同广告对象的只追加指标快照完成判定。${primaryLine}。守护栏：${guardrailLines.join('；')}。`;
+    return breached
+      ? { status: 'paused', conclusion: `守护栏触发，实验已停止继续观察。${conclusion}`, eventType: 'experiment_guardrail_triggered' }
+      : { status: 'completed', conclusion, eventType: 'experiment_completed' };
+  }
+
   private requireExperimentObservation(
     context: StoreContextEnvelope,
     experimentId: string,
@@ -2525,10 +3360,118 @@ export class MissionDomainRepository {
   private requireCompletedDataBatch(context: StoreContextEnvelope, idInput: string): void {
     const id = idOf(idInput, 'dataBatchId');
     const row = this.db.prepare(`
-      SELECT status FROM lingxing_report_batches WHERE store_id = ? AND id = ?
-    `).get(context.storeId, id) as { status: string } | undefined;
+      SELECT status, request_id AS requestId
+      FROM lingxing_report_batches
+      WHERE store_id = ? AND id = ?
+    `).get(context.storeId, id) as { status: string; requestId: string | null } | undefined;
     if (!row) throw referenceConflict(`Data batch ${id} does not belong to store ${context.storeId}.`);
     if (row.status !== 'completed') throw stateConflict(`Data batch ${id} is ${row.status}; Mission authority requires completed data.`);
+
+    const exactReportTypes = [
+      'campaign',
+      'ad_group',
+      'placement',
+      'advertised_product',
+      'auto_targeting',
+      'keyword',
+      'product_targeting',
+      'user_search_term',
+    ] as const;
+    const exactImport = this.db.prepare(`
+      SELECT runs.run_id AS runId
+      FROM report_import_runs runs
+      JOIN report_import_file_snapshots snapshots
+        ON snapshots.store_id = runs.store_id
+       AND snapshots.run_id = runs.run_id
+       AND snapshots.batch_id = runs.batch_id
+       AND snapshots.report_file_id IS NOT NULL
+      WHERE runs.store_id = ?
+        AND runs.batch_id = ?
+        AND runs.status = 'completed'
+        AND runs.source_file_count = 8
+        AND runs.reconciliation_count = 8
+      GROUP BY runs.run_id
+      HAVING COUNT(*) = 8
+        AND COUNT(DISTINCT snapshots.report_type) = 8
+        AND COUNT(DISTINCT CASE
+          WHEN snapshots.report_type IN (
+            'campaign', 'ad_group', 'placement', 'advertised_product',
+            'auto_targeting', 'keyword', 'product_targeting', 'user_search_term'
+          ) THEN snapshots.report_type
+        END) = 8
+      ORDER BY runs.completed_at DESC, runs.created_at DESC, runs.run_id DESC
+      LIMIT 1
+    `).get(context.storeId, id) as { runId: string } | undefined;
+    // Existing non-formal fixture/legacy batches can still be referenced by
+    // local-only records, but a batch claiming exact-eight formal authority
+    // must prove the Main-owned production collection root below.
+    if (!exactImport) return;
+
+    const jobRow = this.db.prepare(`
+      SELECT snapshot_json AS snapshotJson
+      FROM lingxing_collection_jobs
+      WHERE store_id = ? AND job_id = ?
+    `).get(context.storeId, id) as { snapshotJson: string } | undefined;
+    const checkpoint = this.db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(DISTINCT report_type) AS distinctTypes,
+        SUM(CASE WHEN state = 'downloaded' THEN 1 ELSE 0 END) AS downloaded
+      FROM lingxing_collection_report_checkpoints
+      WHERE store_id = ? AND job_id = ?
+    `).get(context.storeId, id) as {
+      total: number;
+      distinctTypes: number;
+      downloaded: number;
+    };
+    const job = jobRow ? parseJson<{
+      jobId?: string;
+      state?: string;
+      importState?: string;
+      completedAt?: string;
+      importCompletedAt?: string;
+      request?: { requestId?: string; reportTypes?: unknown };
+      lineage?: {
+        lineageId?: string;
+        rootJobId?: string;
+        parentJobId?: string;
+        expectedReportTypes?: unknown;
+        purpose?: string;
+      };
+    }>(jobRow.snapshotJson) : undefined;
+    const exactSet = (value: unknown): boolean => {
+      if (!Array.isArray(value)) return false;
+      const normalized = value.map((item) => String(item || '').trim()).filter(Boolean);
+      return normalized.length === exactReportTypes.length
+        && new Set(normalized).size === exactReportTypes.length
+        && exactReportTypes.every((reportType) => normalized.includes(reportType));
+    };
+    const persistedRequestId = row.requestId?.trim() ?? '';
+    const jobRequestId = job?.request?.requestId?.trim() ?? '';
+    const productionRootReady = job?.jobId === id
+      && Boolean(persistedRequestId)
+      && jobRequestId === persistedRequestId
+      && !jobRequestId.startsWith('local-import:')
+      && !jobRequestId.startsWith('canary:')
+      && job.state === 'completed'
+      && job.importState === 'succeeded'
+      && Boolean(job.completedAt)
+      && Boolean(job.importCompletedAt)
+      && job.lineage?.purpose === 'production_full'
+      && job.lineage.lineageId === id
+      && job.lineage.rootJobId === id
+      && job.lineage.parentJobId === undefined
+      && exactSet(job.request?.reportTypes)
+      && exactSet(job.lineage.expectedReportTypes)
+      && Number(checkpoint.total) === exactReportTypes.length
+      && Number(checkpoint.distinctTypes) === exactReportTypes.length
+      && Number(checkpoint.downloaded) === exactReportTypes.length;
+    if (!productionRootReady) {
+      throw stateConflict(
+        '运营任务数据批次缺少已成功入库的 production_full 完整 8 类采集根证据；'
+        + '请先启动完整 8 类采集并等待入库成功。',
+      );
+    }
   }
 
   private insertMissionEvent(
@@ -3277,6 +4220,65 @@ function confidenceOf(value: unknown): number {
     throw invalid('Confidence must be a finite number from 0 to 1.');
   }
   return Number(value);
+}
+
+function formatExperimentNumber(value: number): string {
+  return Number(value.toFixed(4)).toString();
+}
+
+const SUPPORTED_EXPERIMENT_METRICS = new Set([
+  'ACOS',
+  'CVR',
+  '广告订单',
+  'ORDERS',
+  '花费',
+  'SPEND',
+  'COST',
+  '广告销售额',
+  'SALES',
+]);
+
+function assertSupportedExperimentMetric(metric: string): void {
+  const normalized = metric.trim().toLocaleUpperCase('en-US');
+  if (normalized === 'TACOS') {
+    throw invalid('当前没有产品总销售额权威，不能创建 TACOS 经营实验；请改用 ACOS、CVR、广告订单、广告销售额或花费。');
+  }
+  if (!SUPPORTED_EXPERIMENT_METRICS.has(normalized)) {
+    throw invalid(`暂不支持经营实验指标“${metric.trim()}”；请改用 ACOS、CVR、广告订单、广告销售额或花费。`);
+  }
+}
+
+function validateExperimentMeasurementContract(
+  primaryMetric: string,
+  guardrailMetrics: readonly string[],
+  guardrailCriteria: readonly string[],
+): void {
+  assertSupportedExperimentMetric(primaryMetric);
+  guardrailMetrics.forEach(assertSupportedExperimentMetric);
+  if (guardrailMetrics.length !== guardrailCriteria.length) {
+    throw invalid('每个经营实验守护指标必须且只能对应一个判断标准；请补齐或删除多余标准后重试。');
+  }
+  guardrailCriteria.forEach((criterion, index) => {
+    const parsed = criterion.match(/(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*%\s*$/);
+    const threshold = Number(parsed?.[2]);
+    if (!parsed || !Number.isFinite(threshold) || threshold < 0) {
+      throw invalid(`守护标准“${criterion}”无法安全解析；请使用例如“${guardrailMetrics[index]} >= 95%”的基线比例格式。`);
+    }
+  });
+}
+
+function usesCanonicalExperimentMetrics(experiment: ExperimentRecord): boolean {
+  const supported = new Set(['ACOS', 'CVR', '广告订单', '花费', 'TACOS']);
+  return [experiment.primaryMetric, ...experiment.guardrailMetrics]
+    .every((metric) => supported.has(metric.trim().toLocaleUpperCase('en-US')));
+}
+
+function compareExperimentGuardrail(actual: number, comparator: string, threshold: number): boolean {
+  if (comparator === '>=') return actual >= threshold;
+  if (comparator === '>') return actual > threshold;
+  if (comparator === '<=') return actual <= threshold;
+  if (comparator === '<') return actual < threshold;
+  throw invalid('Experiment guardrail comparator is unsupported.');
 }
 
 function json(value: unknown): string {

@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amazon-ai-ops.local/schemas/v16_trace_closure.schema.json",
+  "title": "V16 Trace Closure",
+  "description": "Binds every PRD MUST requirement to its ACs, layers, tests, evidence files, and results. Produced by scripts/verify-v16-trace-closure.js. See docs/v16_companion_verification_traceability.md §5.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "prdReference",
+    "companionSpec",
+    "producedAt",
+    "identity",
+    "closedAt",
+    "summary",
+    "requirements"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v16.trace/0.1"
+    },
+    "prdReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "version"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+$" }
+      }
+    },
+    "companionSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "V16-COMPANION-VT" },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+$" }
+      }
+    },
+    "producedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "identity": { "$ref": "v16_evidence.schema.json#/definitions/identity" },
+    "closedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Set by the verifier after cross-checking evidence; never earlier than producedAt."
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "closed", "pending", "failed", "blocked"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "closed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Requirements with at least one PASS AC and zero FAIL."
+        },
+        "pending": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Requirements whose ACs are all PENDING or BLOCKED."
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Requirements with at least one FAIL AC."
+        },
+        "blocked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Requirements whose verifiers reported SCHEMA_VERSION_TOO_NEW or environment-blocker."
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/requirementTrace" }
+    }
+  },
+  "definitions": {
+    "requirementTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirementId", "level", "acceptanceIds", "tests", "result"],
+      "properties": {
+        "requirementId": {
+          "type": "string",
+          "pattern": "^V16-[A-Z0-9-]+$"
+        },
+        "level": {
+          "type": "string",
+          "enum": ["MUST", "SHOULD", "FUTURE"]
+        },
+        "prdSection": {
+          "type": "string",
+          "description": "e.g. '8.2' or '12.3'."
+        },
+        "title": { "type": "string" },
+        "acceptanceIds": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/acceptanceTrace" }
+        },
+        "result": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "PENDING", "BLOCKED"]
+        },
+        "resultDetail": { "type": "string" }
+      }
+    },
+    "acceptanceTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acceptanceId", "layer", "testId", "evidenceRef", "result"],
+      "properties": {
+        "acceptanceId": {
+          "type": "string",
+          "pattern": "^AC-[A-Z0-9-]+$"
+        },
+        "layer": {
+          "type": "string",
+          "enum": ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"]
+        },
+        "testId": {
+          "type": "string",
+          "pattern": "^V16-T-[A-Z0-9_-]+$"
+        },
+        "evidenceRef": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative path to the consumed evidence file, or empty when not yet produced."
+        },
+        "result": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "PENDING", "BLOCKED"]
+        },
+        "resultDetail": { "type": "string" }
+      }
+    }
+  }
+}

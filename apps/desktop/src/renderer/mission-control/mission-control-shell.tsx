@@ -23,13 +23,19 @@ import type {
   StoreRecord,
   StoreScopeRef,
 } from '@amazon-ai-ops/shared-types';
-import { Sidebar, workspaceCapabilityState } from '../components/app-shell';
+import { ReasonRequiredDialog } from '../components/workspace';
 import {
   StoreScopeSwitcher,
   type StoreScopeSwitcherProps,
 } from '../components/store-scope-switcher';
-import { VISIBLE_WORKSPACES } from '../navigation';
 import type { NavigationIntent } from '../navigation';
+import { OperatorModuleSidebar } from './components/operator-module-sidebar';
+import {
+  OPERATOR_MODULES,
+  operatorEntryCapabilityAttention,
+  operatorModuleCapabilityReminder,
+  searchOperatorModuleEntries,
+} from './operator-module-navigation';
 
 export const DEFAULT_BLOCKED_AUTONOMY: MissionControlAutonomyProjection = {
   currentMode: 'manual_approval',
@@ -109,6 +115,7 @@ export function MissionControlShell({
   const projection = autonomy ?? DEFAULT_BLOCKED_AUTONOMY;
   const [pendingMode, setPendingMode] = useState<MissionControlAutonomyMode | null>(null);
   const [modeFeedback, setModeFeedback] = useState('');
+  const [modeChangeConfirm, setModeChangeConfirm] = useState<{ mode: MissionControlAutonomyMode } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
@@ -118,16 +125,16 @@ export function MissionControlShell({
   const activeStoreId = String(authoritativeContext.storeId);
   const autoBlockerId = 'mission-control-auto-mode-blocker';
   const visibleCommandItems = useMemo(() => {
-    const normalized = commandQuery.trim().toLocaleLowerCase('zh-CN');
-    return VISIBLE_WORKSPACES.filter((workspace) => (
-      !normalized
-      || `${workspace.label} ${workspace.description}`.toLocaleLowerCase('zh-CN').includes(normalized)
-    ));
+    return searchOperatorModuleEntries(commandQuery);
   }, [commandQuery]);
-  const constrainedWorkspaces = useMemo(() => VISIBLE_WORKSPACES.map((workspace) => ({
-    workspace,
-    state: workspaceCapabilityState(capabilities, workspace.id),
-  })).filter((item) => item.state === 'BLOCKED' || item.state === 'MIXED'), [capabilities]);
+  const constrainedModules = useMemo(() => OPERATOR_MODULES.map((module) => {
+    const reminder = operatorModuleCapabilityReminder(capabilities, module);
+    return {
+      module,
+      attention: reminder?.attention,
+      target: reminder?.target.intent ?? module.defaultIntent,
+    };
+  }).filter((item) => Boolean(item.attention)), [capabilities]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -160,7 +167,7 @@ export function MissionControlShell({
     annotateMissionControlSidebarScrollOwner(shellRef.current);
   }, []);
 
-  async function requestMode(mode: MissionControlAutonomyMode) {
+  async function requestMode(mode: MissionControlAutonomyMode, reason?: string) {
     if (pendingMode) return;
     if (mode === projection.currentMode) {
       setModeFeedback(`当前已经是${autonomyModeLabel(mode)}模式。`);
@@ -179,6 +186,7 @@ export function MissionControlShell({
     }
     setPendingMode(mode);
     setModeFeedback('');
+    const reasonPrefix = reason ? `[${reason}] ` : '';
     try {
       const result = await onSetAutonomyMode(mode);
       if (result == null) {
@@ -189,7 +197,10 @@ export function MissionControlShell({
         setModeFeedback(result.detail || '模式请求被本机安全边界阻断。');
         return;
       }
-      setModeFeedback(readModeResponseDetail(result) || `${autonomyModeLabel(mode)}请求已处理，当前状态以确认结果为准。`);
+      setModeFeedback(
+        readModeResponseDetail(result)
+        || `${reasonPrefix}${autonomyModeLabel(mode)}请求已处理，当前状态以确认结果为准。`,
+      );
     } catch (error) {
       setModeFeedback(error instanceof Error ? error.message : '模式切换失败');
     } finally {
@@ -204,64 +215,73 @@ export function MissionControlShell({
       ref={shellRef}
     >
       <header className="topbar mission-control-topbar">
-        <div className="mission-control-brand-lockup">
-          <span className="mission-control-brand-mark" aria-hidden="true">
-            <Robot size={21} weight="fill" />
-          </span>
-          <span className="mission-control-brand-copy">
-            <span className="mission-control-brand-title">
-              <strong>运营智能体</strong>
-              <small>运营工作台</small>
+        <div className="mission-control-topbar-brand">
+          <div className="mission-control-brand-lockup">
+            <span className="mission-control-brand-mark" aria-hidden="true">
+              <Robot size={21} weight="fill" />
             </span>
-            {brandBadges && <span className="mission-control-brand-badges">{brandBadges}</span>}
-          </span>
+            <span className="mission-control-brand-copy">
+              <span className="mission-control-brand-title">
+                <strong>运营智能体</strong>
+                <small>运营工作台</small>
+              </span>
+              {brandBadges && <span className="mission-control-brand-badges">{brandBadges}</span>}
+            </span>
+          </div>
         </div>
 
         <div
-          aria-label="当前店铺权威摘要"
-          className="mission-control-topbar-select mission-control-store-select mission-control-store-select--readonly"
-          data-error={storeError ? 'true' : undefined}
+          aria-label="店铺与站点"
+          className="mission-control-topbar-contexts"
           data-store-id={activeStoreId}
-          role="status"
-          title={storeError || activeStore?.displayName || activeStoreId}
         >
-          <Storefront aria-hidden="true" size={17} weight="duotone" />
-          <span className="mission-control-store-field">
-            <strong>{activeStore?.displayName || activeStoreId}</strong>
-            <small>当前店铺</small>
-          </span>
-          <span className="mission-control-fixed-scope" aria-label="美国站，美元">
-            <span>US</span>
-            <span>USD</span>
-          </span>
+          <div
+            aria-label="当前店铺权威摘要"
+            className="mission-control-topbar-select mission-control-store-select mission-control-store-select--readonly"
+            data-error={storeError ? 'true' : undefined}
+            data-store-id={activeStoreId}
+            role="status"
+            title={storeError || activeStore?.displayName || activeStoreId}
+          >
+            <Storefront aria-hidden="true" size={17} weight="duotone" />
+            <span className="mission-control-store-field">
+              <strong>{activeStore?.displayName || activeStoreId}</strong>
+              <small>当前店铺</small>
+            </span>
+            <span className="mission-control-fixed-scope" aria-label="美国站，美元">
+              <span>US</span>
+              <span>USD</span>
+            </span>
+          </div>
+
+          <div className="mission-control-product-scope" aria-label="当前产品范围">
+            <Target aria-hidden="true" size={17} weight="duotone" />
+            <span className="mission-control-product-scope-copy">
+              {contextTools || (
+                <>
+                  <strong>产品范围</strong>
+                  <small>在工作区内选择</small>
+                </>
+              )}
+            </span>
+            <time dateTime={authoritativeContext.businessDate} title={`业务日 ${authoritativeContext.businessDate}`}>
+              {authoritativeContext.businessDate}
+            </time>
+          </div>
+
+          <div className="mission-control-session-health" aria-label="当前浏览器会话状态">
+            <PlugsConnected aria-hidden="true" size={17} weight="fill" />
+            {sessionStatus || <span className="session-line session-line-warning">会话状态待同步</span>}
+          </div>
         </div>
 
-        <div className="mission-control-product-scope" aria-label="当前产品范围">
-          <Target aria-hidden="true" size={17} weight="duotone" />
-          <span className="mission-control-product-scope-copy">
-            {contextTools || (
-              <>
-                <strong>产品范围</strong>
-                <small>在工作区内选择</small>
-              </>
-            )}
-          </span>
-          <time dateTime={authoritativeContext.businessDate} title={`业务日 ${authoritativeContext.businessDate}`}>
-            {authoritativeContext.businessDate}
-          </time>
-        </div>
-
-        <div className="mission-control-session-health" aria-label="当前浏览器会话状态">
-          <PlugsConnected aria-hidden="true" size={17} weight="fill" />
-          {sessionStatus || <span className="session-line session-line-warning">会话状态待同步</span>}
-        </div>
-
-        <div className="mission-control-mode" aria-label="AI 执行模式" role="group">
+        <div className="mission-control-topbar-actions" aria-label="全局工具与模式">
+          <div className="mission-control-mode" aria-label="AI 执行模式" role="group">
           <button
             aria-pressed={projection.currentMode === 'manual_approval'}
             className="mission-control-mode-button"
             disabled={Boolean(pendingMode)}
-            onClick={() => void requestMode('manual_approval')}
+            onClick={() => setModeChangeConfirm({ mode: 'manual_approval' })}
             type="button"
           >
             {pendingMode === 'manual_approval' ? '切换中...' : '人工审批'}
@@ -274,7 +294,7 @@ export function MissionControlShell({
             className="mission-control-mode-button"
             data-authority-blocked={!projection.policyAutoAvailable ? 'true' : undefined}
             disabled={Boolean(pendingMode)}
-            onClick={() => void requestMode('policy_auto')}
+            onClick={() => setModeChangeConfirm({ mode: 'policy_auto' })}
             type="button"
           >
             <Sparkle aria-hidden="true" size={14} weight="fill" />
@@ -293,7 +313,7 @@ export function MissionControlShell({
                   className="mission-control-mode-feedback__action"
                   onClick={() => {
                     setModeFeedback('');
-                    onNavigate(VISIBLE_WORKSPACES.find((item) => item.id === 'policy')!.defaultIntent);
+                    onNavigate(OPERATOR_MODULES.find((item) => item.id === 'policy-automation')!.defaultIntent);
                   }}
                   type="button"
                 >
@@ -313,7 +333,7 @@ export function MissionControlShell({
         </div>
 
         <button
-          aria-label="打开全局工作区搜索"
+          aria-label="打开全局功能搜索"
           className="mission-control-global-search"
           onClick={() => {
             setGlobalPopover(null);
@@ -322,7 +342,7 @@ export function MissionControlShell({
           type="button"
         >
           <MagnifyingGlass aria-hidden="true" size={17} />
-          <span>搜索工作区</span>
+          <span>搜索功能</span>
           <kbd>Ctrl K</kbd>
         </button>
 
@@ -330,33 +350,33 @@ export function MissionControlShell({
           <div className="mission-control-popover-anchor">
             <button
               aria-expanded={globalPopover === 'boundaries'}
-              aria-label={`能力边界，${constrainedWorkspaces.length} 个工作区需关注`}
+              aria-label={`能力边界，${constrainedModules.length} 个模块需关注`}
               className="mission-control-icon-button"
               onClick={() => setGlobalPopover((current) => current === 'boundaries' ? null : 'boundaries')}
               type="button"
             >
               <Bell aria-hidden="true" size={19} />
-              {constrainedWorkspaces.length > 0 && (
-                <span className="mission-control-notification-dot">{constrainedWorkspaces.length}</span>
+              {constrainedModules.length > 0 && (
+                <span className="mission-control-notification-dot">{constrainedModules.length}</span>
               )}
             </button>
             {globalPopover === 'boundaries' && (
               <div className="mission-control-small-popover" role="status">
                 <strong>生产能力边界</strong>
-                {constrainedWorkspaces.map(({ workspace, state }) => (
+                {constrainedModules.map(({ module, attention, target }) => (
                   <button
-                    key={workspace.id}
+                    key={module.id}
                     onClick={() => {
                       setGlobalPopover(null);
-                      onNavigate(workspace.defaultIntent);
+                      onNavigate(target);
                     }}
                     type="button"
                   >
-                    <span>{workspace.label}</span>
-                    <small>{state === 'BLOCKED' ? '受阻' : '部分可用'}</small>
+                    <span>{module.label}</span>
+                    <small>{attention === 'blocked' ? '受阻' : '需关注'}</small>
                   </button>
                 ))}
-                {constrainedWorkspaces.length === 0 && <span>当前没有工作区级阻断。</span>}
+                {constrainedModules.length === 0 && <span>当前没有模块级阻断。</span>}
               </div>
             )}
           </div>
@@ -388,6 +408,7 @@ export function MissionControlShell({
             <SignOut aria-hidden="true" size={19} />
           </button>
         </div>
+        </div>
       </header>
 
       {(storeError || !activeStore) && (
@@ -404,7 +425,7 @@ export function MissionControlShell({
       )}
 
       <div className="app-body mission-control-body">
-        <Sidebar
+        <OperatorModuleSidebar
           activeIntent={activeIntent}
           capabilities={capabilities}
           collapsed={sidebarCollapsed}
@@ -422,7 +443,7 @@ export function MissionControlShell({
               error={storeError}
               onCreate={onCreateStore ?? (() => Promise.reject(new Error('店铺创建接口不可用。')))}
               onManage={() => onNavigate(
-                VISIBLE_WORKSPACES.find((item) => item.id === 'settings')!.defaultIntent,
+                { workspace: 'settings', subview: 'ai-and-local' },
               )}
               onRetry={onRetryStores ?? (() => undefined)}
               onSwitch={onSwitchStore}
@@ -451,7 +472,7 @@ export function MissionControlShell({
           role="presentation"
         >
           <section
-            aria-label="全局工作区搜索"
+            aria-label="全局功能搜索"
             aria-modal="true"
             className="mission-control-command-palette"
             onMouseDown={(event) => event.stopPropagation()}
@@ -461,9 +482,9 @@ export function MissionControlShell({
               <MagnifyingGlass aria-hidden="true" size={19} />
               <input
                 aria-controls="mission-control-command-results"
-                aria-label="搜索工作区"
+                aria-label="搜索功能"
                 onChange={(event) => setCommandQuery(event.target.value)}
-                placeholder="搜索任务、决策、执行或设置"
+                placeholder="搜索任务、决策、采集、执行或设置"
                 ref={commandInputRef}
                 value={commandQuery}
               />
@@ -472,29 +493,29 @@ export function MissionControlShell({
               </button>
             </div>
             <div className="mission-control-command-results" id="mission-control-command-results" role="listbox">
-              {visibleCommandItems.map((workspace) => {
-                const state = workspaceCapabilityState(capabilities, workspace.id);
+              {visibleCommandItems.map((item) => {
+                const attention = operatorEntryCapabilityAttention(capabilities, item);
                 return (
                   <button
-                    key={workspace.id}
+                    key={item.view}
                     onClick={() => {
                       setCommandOpen(false);
-                      onNavigate(workspace.defaultIntent);
+                      onNavigate(item.intent);
                     }}
                     role="option"
                     type="button"
                   >
                     <span>
-                      <strong>{workspace.label}</strong>
-                      <small>{workspace.description}</small>
+                      <strong>{item.label}</strong>
+                      <small>{item.moduleLabel} · {item.description}</small>
                     </span>
-                    {(state === 'BLOCKED' || state === 'MIXED') && (
-                      <b data-state={state}>{state === 'BLOCKED' ? '受阻' : '部分可用'}</b>
+                    {attention && (
+                      <b data-attention={attention}>{attention === 'blocked' ? '受阻' : '需关注'}</b>
                     )}
                   </button>
                 );
               })}
-              {visibleCommandItems.length === 0 && <p>没有匹配的工作区。</p>}
+              {visibleCommandItems.length === 0 && <p>没有匹配的功能。</p>}
             </div>
             <footer>
               <span><kbd>Enter</kbd> 打开</span>
@@ -502,6 +523,25 @@ export function MissionControlShell({
             </footer>
           </section>
         </div>
+      )}
+
+      {modeChangeConfirm && (
+        <ReasonRequiredDialog
+          eyebrow="模式切换"
+          confirmLabel={`确认切换为${autonomyModeLabel(modeChangeConfirm.mode)}`}
+          description="切换执行模式影响整店的 AI 自动执行边界。请说明这次操作的业务依据，记录后生效。"
+          reasonLabel="切换原因 *"
+          reasonMinLength={2}
+          reasonPlaceholder="例如：当前活动已结束，暂停 AI 自动调整；或策略版本已发布，启用自动执行"
+          open={Boolean(modeChangeConfirm)}
+          tone="primary"
+          onClose={() => setModeChangeConfirm(null)}
+          onConfirm={(reason) => {
+            const mode = modeChangeConfirm.mode;
+            setModeChangeConfirm(null);
+            void requestMode(mode, reason);
+          }}
+        />
       )}
     </div>
   );

@@ -11,6 +11,7 @@ import {
   ExecutionAuthorityMigrationError,
 } from './0008-execution-authority';
 import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
+import { V16_DOMAIN_MIGRATION_VERSION } from './0013-v16-domain';
 import type { UpgradeBackupManifest } from './types';
 
 const tempDirs: string[] = [];
@@ -89,7 +90,7 @@ describe('Execution authority migration v8', () => {
         name: 'trg_ad_execution_domain_reconciliations_append_only_update',
       });
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
+        .toEqual({ count: V16_DOMAIN_MIGRATION_VERSION });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

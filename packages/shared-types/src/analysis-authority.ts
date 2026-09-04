@@ -27,6 +27,19 @@ export const ANALYSIS_REQUIRED_REPORT_TYPES = [
 
 export type AnalysisRequiredReportType = (typeof ANALYSIS_REQUIRED_REPORT_TYPES)[number];
 
+export const ANALYSIS_PROPOSAL_MATCH_TYPES = [
+  'exact',
+  'phrase',
+  'broad',
+  'auto',
+  'close-match',
+  'loose-match',
+  'substitutes',
+  'complements',
+] as const;
+
+export type AnalysisProposalMatchType = (typeof ANALYSIS_PROPOSAL_MATCH_TYPES)[number];
+
 export interface AnalysisEvidenceSourceRef {
   reportType: AnalysisRequiredReportType;
   fileHash: string;
@@ -130,6 +143,7 @@ export type AnalysisProposalBlockerCode =
   | 'CHANGE_LIMIT_EXCEEDED'
   | 'POLICY_ENTITY_NOT_ALLOWED'
   | 'POLICY_ACTION_NOT_ALLOWED'
+  | 'POLICY_PRIORITY_MISMATCH'
   | 'POLICY_RUNTIME_BLOCKED';
 
 export interface AnalysisAuthorizationEligibility {
@@ -175,6 +189,8 @@ export interface AnalysisProposalSnapshotRecord {
   legacyRecommendationId: number;
   actionType: 'set_keyword_bid';
   entityType: 'keyword';
+  /** Canonical match type sealed from the recommendation evidence; absent on legacy snapshots. */
+  matchType?: AnalysisProposalMatchType;
   entityName: string;
   campaignName: string;
   adGroupName: string;
@@ -225,6 +241,12 @@ export interface RunMissionAnalysisResult {
   proposals: readonly AnalysisProposalSnapshotRecord[];
   generatedRecommendations: number;
   skippedUnsupportedRecommendations: number;
+  recommendationSummary: {
+    candidates: number;
+    created: number;
+    refreshed: number;
+    reused: number;
+  };
   /** Present only when policy-auto attempted the exact latest batch immediately. */
   automaticAuthorization?: AuthorizeAnalysisProposalBatchResult;
   ai: {
@@ -335,6 +357,9 @@ export function validateAnalysisProposalSnapshot(
   if (value.marketplace !== 'US' || value.currency !== 'USD'
     || value.actionType !== 'set_keyword_bid' || value.entityType !== 'keyword') {
     throw new TypeError('Stage 5 proposals support US/USD keyword bid changes only.');
+  }
+  if (value.matchType !== undefined && !ANALYSIS_PROPOSAL_MATCH_TYPES.includes(value.matchType)) {
+    throw new TypeError('Unsupported proposal match type.');
   }
   requiredText(value.entityName, 'proposal.entityName');
   requiredText(value.campaignName, 'proposal.campaignName');

@@ -1,0 +1,49 @@
+{
+  "name": "lingxing-download-center",
+  "description": "领星广告系统下载中心页面模型。动作选择器已通过真实领星下载中心 8 类广告报表 canary 验证。",
+  "candidateUrls": [
+    "https://ads.lingxing.com/ak_download/download_center/download_report_log/index",
+    "https://ads.lingxing.com/home",
+    "https://erp.lingxing.com/erp/home"
+  ],
+  "entryHints": ["下载中心", "创建报告", "领星广告系统"],
+  "reportNames": [
+    "广告活动报告",
+    "广告组报告",
+    "广告位报告",
+    "广告（推广的商品）报告",
+    "自动投放报告",
+    "关键词报告",
+    "商品投放报告",
+    "用户搜索词报告"
+  ],
+  "verifySelectors": [
+    { "name": "ads-download-center-menu", "selector": "a[href=\"/ak_download/download_center/download_report_log/index\"]", "required": true },
+    { "name": "download-link", "selector": ".JS-download-report", "required": false },
+    { "name": "store-search", "selector": "input[placeholder=\"搜索店铺\"]", "required": false },
+    { "name": "report-name-input", "selector": "input[placeholder=\"报告名称\"]", "required": false },
+    { "name": "date-start-input", "selector": "input[placeholder=\"开始日期\"]", "required": false },
+    { "name": "date-end-input", "selector": "input[placeholder=\"结束日期\"]", "required": false }
+  ],
+  "actionSelectors": {
+    "storeSearchInput": ".el-transfer-panel:has-text(\"待选店铺\") input[placeholder=\"店铺搜索\"]",
+    "storeOption": ".el-transfer-panel:has-text(\"待选店铺\") label.el-transfer-panel__item:has-text(\"{storeName}\")",
+    "storeMoveButton": ".el-transfer__buttons button:has(.el-icon-arrow-right)",
+    "reportSearchInput": "input[placeholder=\"报告名称\"].el-input__inner",
+    "reportTypeSelect": ".report-item .el-select input.el-input__inner",
+    "reportTypeOption": ".el-select-dropdown:visible .el-select-dropdown__item:has-text(\"{reportName}\")",
+    "dateStartInput": "input[placeholder=\"开始日期\"].el-range-input",
+    "dateEndInput": "input[placeholder=\"结束日期\"].el-range-input",
+    "dailyDetailRadio": "label.el-radio:has-text(\"每日明细\")",
+    "createReportButton": "a:has-text(\"创建报告\")",
+    "confirmCreateButton": "button:has-text(\"生成报告\")",
+    "listRefreshButton": "button:has-text(\"查询\"), button:has-text(\"搜索\"), button:has-text(\"刷新\"), a:has-text(\"刷新\")",
+    "createTimeSortHeader": "th:has-text(\"创建时间\"), [role=\"columnheader\"]:has-text(\"创建时间\"), .el-table__header-wrapper th:has-text(\"创建时间\")",
+    "readyReportSelector": "tr:has-text(\"{generatedReportName}\"):has-text(\"{dateStart} - {dateEnd}\"):has-text(\"生成成功\")",
+    "statusTextSelector": "",
+    "downloadButton": "tr:has-text(\"{generatedReportName}\"):has-text(\"{dateStart} - {dateEnd}\") a.JS-download-report",
+    "readyTimeoutMs": 300000,
+    "downloadTimeoutMs": 120000
+  },
+  "requiresManualVerification": false
+}

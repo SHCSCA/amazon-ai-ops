@@ -6,13 +6,16 @@ import type { DecisionRecord, MissionControlCapabilityProjection, StoreContextEn
 import { createPreviewDecisionDomainApi } from './mission-domain-window-api';
 import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-api';
 import {
+  AnalysisProposalBusinessTable,
   AnalysisProposalAuthorityStatus,
   DecisionsWorkspace,
   DecisionEvidenceFacts,
   DecisionDialog,
   analysisActionBatchOptions,
+  analysisProposalMatchTypeLabel,
   authorizationMissionIds,
   buildAnalysisBatchAuthorizationRequest,
+  buildProposalTargetVerificationPlan,
   buildCreateDecisionInput,
   buildReviseDecisionInput,
   decisionCapabilityReady,
@@ -20,10 +23,13 @@ import {
   decisionListScopeLabel,
   decisionOperatorCopy,
   decisionRevisionDisplayLabel,
+  findSafeTargetVerificationProposal,
   formatDecisionMoney,
   preferredDecisionId,
+  preferredDecisionIdAfterTargetVerification,
   proposalIsSafeTargetVerificationCandidate,
   responseMatchesDecisionDetail,
+  targetVerificationOperatorError,
   type DecisionWorkspaceView,
   type DecisionDraft,
 } from './decisions-workspace';
@@ -48,6 +54,145 @@ const actionCapabilities = [
 ];
 
 describe('DecisionsWorkspace', () => {
+  it('maps canonical proposal match types to Chinese business labels', () => {
+    expect([
+      analysisProposalMatchTypeLabel('exact'),
+      analysisProposalMatchTypeLabel('phrase'),
+      analysisProposalMatchTypeLabel('broad'),
+      analysisProposalMatchTypeLabel('auto'),
+    ]).toEqual(['精准匹配', '词组匹配', '广泛匹配', '自动投放']);
+  });
+
+  it('presents analysis suggestions as campaign and ad-group business rows with Chinese match types', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const proposals = projection.proposals.map((proposal, index) => ({
+      ...proposal,
+      campaignName: index === 0 ? 'D6-精准-核心长尾' : 'D7-竞品防守',
+      adGroupName: index === 0 ? 'Exact-Core' : 'Broad-Defense',
+      entityName: index === 0 ? 'keypad door lock · exact' : 'competitor lock · broad',
+      proposedBidCents: index === 0 ? 108 : proposal.proposedBidCents,
+    }));
+    const markup = renderToStaticMarkup(<AnalysisProposalBusinessTable
+      busy={false}
+      onSelect={() => undefined}
+      proposals={proposals}
+      selectedProposalId={proposals[0].id}
+    />);
+    const ordinaryText = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '')
+      .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    expect(markup).toContain('aria-label="分析建议业务表"');
+    expect(ordinaryText).toContain('广告活动 广告组 对象层级 具体对象 匹配方式 建议动作 变更 当前值 建议值 主要依据 状态 操作');
+    expect(ordinaryText).toContain('D6-精准-核心长尾 Exact-Core 关键词 keypad door lock 精准匹配 调整关键词竞价');
+    expect(ordinaryText).toContain('D7-竞品防守 Broad-Defense 关键词 competitor lock 广泛匹配 调整关键词竞价');
+    expect(ordinaryText).toContain('$1.20 $1.08');
+    expect(ordinaryText).not.toContain('keypad door lock exact');
+    expect(ordinaryText).not.toContain('competitor lock broad');
+    expect(ordinaryText).not.toContain('set_keyword_bid');
+    expect(markup).toContain('data-campaign="D6-精准-核心长尾"');
+    expect(markup).toContain('data-ad-group="Exact-Core"');
+  });
+
+  it('uses the proposal evidence range for Ads verification while leaving analysis dates to Main', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const evidencePackage = {
+      ...projection.evidencePackages[0],
+      dateFrom: '2026-08-10',
+      dateTo: '2026-08-23',
+      asin: 'B0EVID1234',
+    };
+    const proposal = {
+      ...projection.proposals[0],
+      evidencePackageId: evidencePackage.id,
+      evidencePackageHash: evidencePackage.packageHash,
+      dataBatchId: evidencePackage.dataBatchId,
+    };
+
+    const plan = buildProposalTargetVerificationPlan(
+      context,
+      'MISSION-1',
+      proposal,
+      [evidencePackage],
+      {
+        dateFrom: '2026-08-26',
+        dateTo: '2026-08-26',
+        asin: 'B0TOPB1234',
+        storeName: 'JF-US',
+        marketplaceCode: 'US',
+      },
+      'B0EVID1234',
+    );
+
+    expect(plan.analysisRequest).toEqual({ context, missionId: 'MISSION-1' });
+    expect(plan.bindingScope).toEqual({
+      dateFrom: '2026-08-10',
+      dateTo: '2026-08-23',
+      asin: 'B0EVID1234',
+      storeName: 'JF-US',
+      marketplaceCode: 'US',
+      batchId: evidencePackage.dataBatchId,
+    });
+  });
+
+  it('derives a store-level Mission Ads binding ASIN only from the authoritative recommendation', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const evidencePackage = { ...projection.evidencePackages[0], asin: undefined };
+    const proposal = {
+      ...projection.proposals[0],
+      evidencePackageId: evidencePackage.id,
+      evidencePackageHash: evidencePackage.packageHash,
+      dataBatchId: evidencePackage.dataBatchId,
+    };
+
+    const plan = buildProposalTargetVerificationPlan(
+      context,
+      'MISSION-1',
+      proposal,
+      [evidencePackage],
+      { storeName: 'JF-US', asin: 'B0TOPB1234' },
+      'b0rec12345',
+    );
+
+    expect(plan.bindingScope.asin).toBe('B0REC12345');
+    expect(() => buildProposalTargetVerificationPlan(
+      context,
+      'MISSION-1',
+      proposal,
+      [evidencePackage],
+      { storeName: 'JF-US', asin: 'B0TOPB1234' },
+      '',
+    )).toThrow('权威建议缺少 ASIN');
+  });
+
+  it('turns stale analysis authority failures into an actionable Ads verification message', () => {
+    expect(targetVerificationOperatorError(new Error('Mission changed while its analysis was running.')))
+      .toBe('核验 Ads 对象时，运营任务或数据批次已变化；请刷新当前店铺，重新运行分析后再核验。');
+    expect(targetVerificationOperatorError(new Error('Analysis scope must equal the Mission data-batch date range.')))
+      .toBe('核验 Ads 对象时，运营任务或数据批次已变化；请刷新当前店铺，重新运行分析后再核验。');
+    expect(targetVerificationOperatorError(new Error('Ads 对象核验被阻断：当前竞价已变化，请重新识别。')))
+      .toBe('Ads 对象核验被阻断：当前竞价已变化，请重新识别。');
+  });
+
+  it('selects the decision linked to the newly verified proposal', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const decisions = await createPreviewDecisionDomainApi().listDecisions(context);
+    const verifiedProposal = projection.proposals[0];
+    const linkedDecisionId = projection.decisionLinks.find((link) => link.proposalId === verifiedProposal.id)?.decisionId;
+    expect(linkedDecisionId).toBeTruthy();
+    const refreshedDecisions = [
+      ...decisions,
+      { ...decisions[0], id: linkedDecisionId! },
+    ];
+
+    expect(preferredDecisionIdAfterTargetVerification(
+      decisions[0].id,
+      verifiedProposal.id,
+      projection,
+      refreshedDecisions,
+      'decisions/recommendations',
+    )).toBe(linkedDecisionId);
+  });
+
   it('reuses an already-safe proposal instead of forcing another analysis before Ads discovery', async () => {
     const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
     const proposal = projection.proposals[0];
@@ -64,6 +209,30 @@ describe('DecisionsWorkspace', () => {
       proposedBidCents: 185,
       changePct: -20.2586,
     })).toBe(false);
+  });
+
+  it('never chooses the first same-name same-bid proposal from another campaign or ad group', async () => {
+    const projection = await createPreviewAnalysisAuthorityApi().getMissionProjection(context, 'MISSION-1');
+    const selected = {
+      ...projection.proposals[0],
+      legacyRecommendationId: 91,
+      campaignName: 'Campaign B',
+      adGroupName: 'Group B',
+      entityName: 'door lock',
+      currentBidCents: 149,
+      proposedBidCents: 135,
+    };
+    const wrong = {
+      ...selected,
+      id: 'WRONG',
+      legacyRecommendationId: 92,
+      campaignName: 'Campaign A',
+      adGroupName: 'Group A',
+    };
+    const exact = { ...selected, id: 'EXACT' };
+
+    expect(findSafeTargetVerificationProposal([wrong, exact], selected)?.id).toBe('EXACT');
+    expect(findSafeTargetVerificationProposal([wrong], selected)).toBeUndefined();
   });
 
   it('fails closed and exposes Ads target verification when a linked proposal has no authority', async () => {

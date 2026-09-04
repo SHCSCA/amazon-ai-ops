@@ -1,0 +1,30 @@
+- main [ref=f1e3]:
+  - generic [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - paragraph [ref=f1e6]: MISSION CONTROL · US / USD
+      - heading "选择本次运营店铺" [level=1] [ref=f1e7]
+      - paragraph [ref=f1e8]: 首次进入必须明确选择。系统不会自动绑定店铺，也不会跨店铺复用数据或浏览器会话。
+    - generic [ref=f1e9]:
+      - generic [ref=f1e10]: 美国站店铺
+      - combobox "美国站店铺" [active] [ref=f1e11]:
+        - option "请选择店铺" [selected]
+        - option "SHC001 · 美国站预览 · US · USD"
+        - option "SHC002 · 美国站预览 · US · USD"
+      - button "进入所选店铺" [disabled] [ref=f1e12]
+  - region [ref=f1e13]:
+    - heading "创建美国站店铺" [level=2] [ref=f1e14]
+    - generic [ref=f1e15]:
+      - generic [ref=f1e16]: 店铺名称
+      - textbox "店铺名称" [ref=f1e17]:
+        - /placeholder: 例如 SHC001
+      - generic "固定站点配置" [ref=f1e18]:
+        - generic [ref=f1e19]:
+          - text: 站点
+          - strong [ref=f1e20]: US
+        - generic [ref=f1e21]:
+          - text: 币种
+          - strong [ref=f1e22]: USD
+        - generic [ref=f1e23]:
+          - text: 业务时区
+          - strong [ref=f1e24]: America/Los_Angeles
+      - button "创建美国站店铺" [disabled] [ref=f1e25]

@@ -1,0 +1,16 @@
+﻿node.exe : npm warn Unknown env config "devdir". This will stop working in the next major version of npm.
+所在位置 行:1 字符: 1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm warn Unknow...version of npm.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+vite v6.4.2 building for production...
+transforming...
+鉁?4572 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.57 kB 鈹?gzip:   0.38 kB
+dist/assets/index-MchE_B22.css   68.72 kB 鈹?gzip:  11.96 kB
+dist/assets/index-DaflxwSS.js   377.15 kB 鈹?gzip: 108.71 kB
+鉁?built in 4.74s

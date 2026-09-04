@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
+import {
+  localizeAgreement,
+  localizeRecommendationSource,
+} from '@amazon-ai-ops/business-presenters';
 import { StatusPill } from '../components/ui';
 import {
   PageFrame,
@@ -447,22 +451,15 @@ export const EMPTY_FORM: ReadbackFormState = {
 };
 
 export function decisionAgreementLabel(value?: string): string {
-  const labels: Record<string, string> = {
-    aligned: '规则+AI 一致',
-    rule_only: '规则独立建议',
-    ai_only: 'AI 独立洞察',
-    conflict: '规则/AI 冲突',
-  };
-  return labels[String(value || '').trim()] || String(value || '-');
+  const label = localizeAgreement(value);
+  if (label === '未知一致性') return String(value || '-') || '-';
+  return label;
 }
 
 export function decisionSourceLabel(value?: string): string {
-  const labels: Record<string, string> = {
-    rule_ai: '规则+AI 合并',
-    rule: '规则',
-    ai: 'AI',
-  };
-  return labels[String(value || '').trim()] || String(value || '-');
+  const label = localizeRecommendationSource(value);
+  if (label === '未知来源') return String(value || '-') || '-';
+  return label;
 }
 
 function readbackErrorMessage(caught: unknown, fallback: string): string {

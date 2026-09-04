@@ -235,7 +235,21 @@ describe('MissionDomainService Main authority boundary', () => {
     const resolveDecision = vi.fn();
     const appendMissionGrantEvent = vi.fn();
     const appendCausalEvent = vi.fn();
-    const { service, active } = setup({ resolveDecision, appendMissionGrantEvent, appendCausalEvent });
+    const transitionMission = vi.fn();
+    const { service, active } = setup({
+      resolveDecision,
+      appendMissionGrantEvent,
+      appendCausalEvent,
+      transitionMission,
+    });
+
+    expect(() => service.executeOperation('missions.transition', active, {
+      id: 'mission-1', expectedRevision: 4, status: 'completed', phase: 'effect', reason: 'fake',
+    })).toThrow(/cannot complete|只能由系统/i);
+    expect(() => service.executeOperation('missions.transition', active, {
+      id: 'mission-1', expectedRevision: 4, status: 'active', phase: 'decision', reason: 'fake',
+    })).toThrow(/cannot set.*phase|不能指定.*阶段/i);
+    expect(transitionMission).not.toHaveBeenCalled();
 
     expect(() => service.executeOperation('decisions.resolveHuman', active, {
       id: 'decision-1', expectedRevision: 1, status: 'executed', reason: 'fake',
@@ -265,6 +279,43 @@ describe('MissionDomainService Main authority boundary', () => {
     expect(() => service.executeOperation('grants.authorize' as never, active, {
       grantId: 'grant-1',
     })).toThrow(/Unsupported Mission domain operation/);
+  });
+
+  it('prevents Renderer text from completing experiments and exposes only a Main-authored evaluation request', () => {
+    const transitionExperiment = vi.fn();
+    const evaluateExperiment = vi.fn((_context, input) => ({
+      id: input.id,
+      status: 'completed',
+      revision: input.expectedRevision + 1,
+    }));
+    const { service, active, coordinator } = setup({ transitionExperiment, evaluateExperiment });
+
+    expect(() => service.executeOperation('experiments.transition', active, {
+      id: 'experiment-1',
+      expectedRevision: 4,
+      status: 'completed',
+      reason: '我觉得实验成功',
+      actorId: 'attacker',
+    })).toThrow(/只能由系统根据指标判定/);
+    expect(transitionExperiment).not.toHaveBeenCalled();
+
+    expect(() => service.executeOperation('experiments.evaluate' as never, active, {
+      id: 'experiment-1',
+      expectedRevision: 4,
+      actorId: 'attacker',
+    })).toThrow(/accepts only id and expectedRevision/);
+    expect(evaluateExperiment).not.toHaveBeenCalled();
+
+    expect(service.executeOperation('experiments.evaluate' as never, active, {
+      id: 'experiment-1',
+      expectedRevision: 4,
+    })).toEqual(expect.objectContaining({ status: 'completed', revision: 5 }));
+    expect(evaluateExperiment).toHaveBeenCalledWith(active, {
+      id: 'experiment-1',
+      expectedRevision: 4,
+      actorId: 'experiment-evaluator',
+    });
+    expect(coordinator.assertActiveStoreContext).toHaveBeenCalledTimes(2);
   });
 
   it('turns an authoritative operation-event mutation receipt into a causal FACT', () => {

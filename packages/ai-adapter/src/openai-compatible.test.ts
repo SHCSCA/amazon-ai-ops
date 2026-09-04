@@ -87,4 +87,32 @@ describe('OpenAICompatibleProvider request body', () => {
       response_format: { type: 'json_object' },
     });
   });
+
+  it('propagates caller cancellation to fetch and does not hide it as a rule fallback', async () => {
+    let observedSignal: AbortSignal | null | undefined;
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      observedSignal = init?.signal;
+      if (!observedSignal) {
+        reject(new Error('missing caller AbortSignal'));
+        return;
+      }
+      observedSignal.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+    })));
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    });
+    const controller = new AbortController();
+
+    const pending = provider.chat(
+      [{ role: 'user', content: '只返回 JSON' }],
+      { responseFormat: 'json_object', signal: controller.signal },
+    );
+    const cancellation = new Error('analysis generation cancelled');
+    controller.abort(cancellation);
+
+    await expect(pending).rejects.toBe(cancellation);
+    expect(observedSignal).toBe(controller.signal);
+  });
 });

@@ -200,6 +200,7 @@ interface HarnessOptions {
   policyDispatchRetryMs?: number;
   policyDispatchTimer?: NonNullable<ExecutionAuthorityServiceOptions['policyDispatchTimer']>;
   policyDispatchSuppression?: PolicyDispatchSuppressionReadPort;
+  emitProgress?: ExecutionAuthorityServiceOptions['emitProgress'];
 }
 
 class MutablePolicyDispatchSuppression implements PolicyDispatchSuppressionReadPort {
@@ -353,6 +354,7 @@ function createHarness(actionCount = 1, options: HarnessOptions = {}): Harness {
     now,
     policyDispatchSuppression: options.policyDispatchSuppression
       ?? new MutablePolicyDispatchSuppression(false),
+    ...(options.emitProgress ? { emitProgress: options.emitProgress } : {}),
     ...(options.policyDispatchRetryMs !== undefined
       ? { policyDispatchRetryMs: options.policyDispatchRetryMs }
       : {}),
@@ -389,6 +391,36 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     expect(() => new ExecutionAuthorityService(
       {} as ExecutionAuthorityServiceOptions,
     )).toThrow('policyDispatchSuppression read port is required');
+  });
+
+  it('rejects batch creation when a lower-number matching policy supersedes the grant policy', () => {
+    const harness = createHarness(1, { createBatch: false });
+    enableLowerNumberMatchingPolicy(harness.database);
+
+    expect(() => harness.service.createBatch({
+      context: harness.context,
+      grantId: 'grant-1',
+    })).toThrow(/highest priority|优先级|策略/i);
+    expect(harness.executionRepository.listExecutionBatches(harness.context)).toEqual([]);
+  });
+
+  it('marks automatic dispatch attention-required when a lower-number policy supersedes its grant', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    enableLowerNumberMatchingPolicy(harness.database);
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'attention_required',
+      code: 'POLICY_AUTHORITY_CHANGED',
+      batchJobCount: 0,
+    });
+    expect(harness.executionRepository.listExecutionBatches(harness.context)).toEqual([]);
+    expect(harness.page.clickCount).toBe(0);
   });
 
   it('holds an exact external-write lease through visible browser takeover', async () => {
@@ -578,6 +610,45 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     `).get(harness.batchId)).toEqual({ batchStatus: 'unknown', evidenceRefCount: 1 });
   });
 
+  it('terminalizes the batch UNKNOWN when Ads liveness drops after the single save click', async () => {
+    const harness = createHarness(2);
+    const running = harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+
+    await harness.page.afterScreenshotStarted;
+    harness.database.transaction(() => {
+      harness.database.prepare(`
+        UPDATE store_connections
+        SET status = 'attention_required', last_failure_code = 'VISIBLE_BROWSER_CLOSED', updated_at = ?
+        WHERE store_id = 'store-one' AND provider = 'amazon_ads'
+      `).run(NOW);
+      harness.database.prepare(`
+        UPDATE store_session_metadata
+        SET status = 'blocked', failure_code = 'VISIBLE_BROWSER_CLOSED', updated_at = ?
+        WHERE store_id = 'store-one' AND provider = 'amazon_ads'
+      `).run(NOW);
+    })();
+    harness.page.allowAfterScreenshot();
+
+    const projection = await running;
+    expect(projection.batch.status).toBe('unknown');
+    expect(projection.jobs.map((job) => job.status)).toEqual(['unknown', 'cancelled']);
+    expect(projection.jobs[0]?.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: 'unknown',
+        reasonCode: 'ADS_AUTHORITY_LOST_AFTER_INTENT',
+        detail: 'Ads 会话在保存后失去可信状态，提交结果必须人工核对。',
+      }),
+    ]));
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toEqual(expect.objectContaining({ eventType: 'revoked' }));
+    expect(harness.missionRepository.getMission(harness.context, 'mission-1'))
+      .toEqual(expect.objectContaining({ status: 'blocked', phase: 'action' }));
+  });
+
   it('reconciles an UNKNOWN batch with two read-only page observations without retrying save', async () => {
     const harness = createHarness();
     harness.page.clickError = new Error('browser disconnected during save');
@@ -702,6 +773,60 @@ describe('ExecutionAuthorityService safety orchestration', () => {
       FROM ad_execution_domain_reconciliations
       WHERE store_id = 'store-one' AND batch_id = ?
     `).get(harness.batchId)).toEqual({ batchStatus: 'succeeded', evidenceRefCount: 3 });
+  });
+
+  it('keeps identity resolution and verified execution complete when UI progress notification throws', async () => {
+    let failNotifications = false;
+    const attemptedPhases: string[] = [];
+    const harness = createHarness(1, {
+      registerIdentity: false,
+      createBatch: false,
+      emitProgress: (event) => {
+        attemptedPhases.push(event.phase);
+        if (failNotifications) throw new Error('renderer progress channel unavailable');
+      },
+    });
+    failNotifications = true;
+
+    await expect(harness.service.resolveIdentity({
+      context: harness.context,
+      grantId: 'grant-1',
+      adEntityId: 'opaque-keyword-1',
+    })).resolves.toMatchObject({ adEntityId: 'opaque-keyword-1' });
+    expect(harness.leases.current(harness.context.storeId)).toBeUndefined();
+
+    const created = harness.service.createBatch({
+      context: harness.context,
+      grantId: 'grant-1',
+    });
+    harness.page.allowAfterScreenshot();
+    const projection = await harness.service.startBatch({
+      context: harness.context,
+      batchId: created.projection.batch.id,
+    });
+
+    expect(attemptedPhases).toEqual(expect.arrayContaining(['identity', 'readback', 'terminal']));
+    expect(projection.batch.status).toBe('succeeded');
+    expect(projection.jobs).toEqual([expect.objectContaining({
+      status: 'succeeded',
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ slot: 'before' }),
+        expect.objectContaining({ slot: 'after' }),
+        expect.objectContaining({ slot: 'reload' }),
+      ]),
+    })]);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toEqual(expect.objectContaining({ eventType: 'consumed' }));
+    expect(harness.missionRepository.getDecision(harness.context, 'decision-1'))
+      .toEqual(expect.objectContaining({ status: 'verified' }));
+    expect(harness.missionRepository.getMission(harness.context, 'mission-1'))
+      .toEqual(expect.objectContaining({ status: 'active', phase: 'readback' }));
+    expect(harness.database.prepare(`
+      SELECT batch_status AS batchStatus, evidence_ref_count AS evidenceRefCount
+      FROM ad_execution_domain_reconciliations
+      WHERE store_id = 'store-one' AND batch_id = ?
+    `).get(created.projection.batch.id)).toEqual({ batchStatus: 'succeeded', evidenceRefCount: 3 });
+    expect(harness.leases.current(harness.context.storeId)).toBeUndefined();
   });
 
   it('keeps startup alive when one recovered domain projection fails and retries it later', () => {
@@ -1693,6 +1818,34 @@ function driveFirstJobToSuccess(harness: Harness, batchId: string): void {
 }
 
 function seedSecondSameStorePolicyGrant(database: Database.Database): void {
+  const sourcePolicy = database.prepare(`
+    SELECT rules_json AS rulesJson FROM policy_versions
+    WHERE store_id = 'store-one' AND id = 'policy-version-1'
+  `).get() as { rulesJson: string };
+  const secondPolicyRules = JSON.parse(sourcePolicy.rulesJson) as { allowedAdEntityIds: string[] };
+  secondPolicyRules.allowedAdEntityIds = ['opaque-keyword-2'];
+  database.prepare(`
+    INSERT INTO policies (
+      id, store_id, name, scope, status, priority, active_version_id, revision,
+      created_at, updated_at
+    ) VALUES (
+      'policy-2', 'store-one', 'Second keyword safety', 'store', 'active', 1,
+      NULL, 2, ?, ?
+    )
+  `).run(NOW, NOW);
+  database.prepare(`
+    INSERT INTO policy_versions (
+      id, store_id, policy_id, version, status, rules_json, revision,
+      created_at, updated_at, enabled_at
+    ) VALUES (
+      'policy-version-2', 'store-one', 'policy-2', 1, 'enabled', ?, 1,
+      ?, ?, ?
+    )
+  `).run(JSON.stringify(secondPolicyRules), NOW, NOW, NOW);
+  database.prepare(`
+    UPDATE policies SET active_version_id = 'policy-version-2'
+    WHERE store_id = 'store-one' AND id = 'policy-2'
+  `).run();
   database.prepare(`
     INSERT INTO missions (
       id, store_id, marketplace, currency, business_date, created_session_generation,
@@ -1701,7 +1854,7 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
       guardrails_json, revision, created_at, updated_at
     )
     SELECT 'mission-2', store_id, marketplace, currency, business_date,
-      created_session_generation, data_batch_id, policy_version_id,
+      created_session_generation, data_batch_id, 'policy-version-2',
       'Lower second keyword bid', objective, status, phase, priority,
       observation_starts_at, observation_ends_at, success_criteria_json,
       guardrails_json, revision, created_at, updated_at
@@ -1735,6 +1888,14 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
     FROM verified_ad_entity_authority
     WHERE store_id = 'store-one' AND authority_id = 'stage5-authority-1'
   `).run('2'.repeat(64), '3'.repeat(64));
+  seedExactPolicyScopeEvidence(database, {
+    index: 2,
+    fileHash: '2'.repeat(64),
+    sourceRow: 8,
+    entityName: 'window lock',
+    campaignName: 'Campaign B',
+    adGroupName: 'Ad Group B',
+  });
   database.prepare(`
     INSERT INTO analysis_action_batches (
       id, store_id, mission_id, mission_revision, evidence_package_id,
@@ -1759,8 +1920,8 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
       created_session_generation
     )
     SELECT 'proposal-mission-2', store_id, marketplace, currency, 'mission-2',
-      mission_revision, 'evidence-2', ?, data_batch_id, policy_version_id,
-      policy_revision, rule_revision, model_revision, 'analysis-batch-2',
+      mission_revision, 'evidence-2', ?, data_batch_id, 'policy-version-2',
+      1, rule_revision, model_revision, 'analysis-batch-2',
       action_revision, 2, action_type, entity_type, 'window lock', 'Campaign B',
       'Ad Group B', 'stage5-authority-2', 'opaque-keyword-2', ad_entity_revision,
       200, 190, -5, confidence, source, 'lower second inefficient bid',
@@ -1777,7 +1938,7 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
       created_at, updated_at
     )
     SELECT 'decision-mission-2', store_id, 'mission-2', data_batch_id,
-      policy_version_id, policy_revision, action_revision,
+      'policy-version-2', 1, action_revision,
       'Lower second keyword bid', rationale, recommendation, facts_json,
       alternatives_json, valid_until, action_type, 'opaque-keyword-2',
       '2.00', '1.90', confidence, status, revision, created_at, updated_at
@@ -1805,7 +1966,7 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
     SELECT 'grant-2', store_id, marketplace, currency, 'mission-2',
       mission_revision, '["decision-mission-2"]', action_revision,
       allowed_action_types_json, '["opaque-keyword-2"]', max_change_pct,
-      total_impact_budget, expires_at, policy_version_id, policy_revision,
+      total_impact_budget, expires_at, 'policy-version-2', 1,
       required_evidence_json, stop_conditions_json, 'policy', 'policy-engine',
       issued_at, created_session_generation
     FROM mission_grants
@@ -1877,7 +2038,14 @@ function seedAuthority(
     maxChangePct: 10, totalImpactBudget: 10, maxDailyActionCount: 10, cooldownMinutes: 0,
     executionWindow,
     requiredEvidence: ['page_identity', 'before_screenshot', 'after_screenshot', 'reload_screenshot', 'readback_value'],
-    stopConditions: [{ code: 'unknown_result', detail: 'stop' }, { code: 'kill_switch', detail: 'stop' }],
+    stopConditions: [
+      { code: 'identity_drift', detail: 'stop' },
+      { code: 'expected_before_mismatch', detail: 'stop' },
+      { code: 'unknown_result', detail: 'stop' },
+      { code: 'data_stale', detail: 'stop' },
+      { code: 'impact_budget_exhausted', detail: 'stop' },
+      { code: 'kill_switch', detail: 'stop' },
+    ],
     killSwitch: false,
   };
   database.prepare(`INSERT INTO stores (
@@ -1961,6 +2129,14 @@ function seedAuthority(
     'door lock', 'Campaign A', 'Ad Group A', 'evidence-1', 'keyword', ?, 7,
     'ads_ui', ?, 'operator', ?, ?)`
   ).run('1'.repeat(64), 'b'.repeat(64), NOW, NOW);
+  seedExactPolicyScopeEvidence(database, {
+    index: 1,
+    fileHash: '1'.repeat(64),
+    sourceRow: 7,
+    entityName: 'door lock',
+    campaignName: 'Campaign A',
+    adGroupName: 'Ad Group A',
+  });
   database.prepare(`INSERT INTO analysis_action_batches (
     id, store_id, mission_id, mission_revision, evidence_package_id, rule_revision,
     model_revision, action_revision, created_at, created_session_generation
@@ -2006,6 +2182,14 @@ function seedAuthority(
       'window lock', 'Campaign B', 'Ad Group B', 'evidence-1', 'keyword', ?, 8,
       'ads_ui', ?, 'operator', ?, ?)`
     ).run('2'.repeat(64), '3'.repeat(64), NOW, NOW);
+    seedExactPolicyScopeEvidence(database, {
+      index: 2,
+      fileHash: '2'.repeat(64),
+      sourceRow: 8,
+      entityName: 'window lock',
+      campaignName: 'Campaign B',
+      adGroupName: 'Ad Group B',
+    });
     database.prepare(`INSERT INTO analysis_proposal_snapshots (
       id, store_id, marketplace, currency, mission_id, mission_revision,
       evidence_package_id, evidence_package_hash, data_batch_id, policy_version_id,
@@ -2068,4 +2252,92 @@ function seedAuthority(
     id, store_id, grant_id, event_type, actor_id, created_at
   ) VALUES ('grant-event-1', 'store-one', 'grant-1', 'issued', 'operator', ?)`
   ).run(NOW);
+}
+
+function enableLowerNumberMatchingPolicy(database: Database.Database): void {
+  const source = database.prepare(`
+    SELECT rules_json AS rulesJson FROM policy_versions
+    WHERE store_id = 'store-one' AND id = 'policy-version-1'
+  `).get() as { rulesJson: string };
+  const lowerRules = JSON.parse(source.rulesJson) as { stopConditions: Array<{ code: string; detail: string }> };
+  lowerRules.stopConditions = [
+    { code: 'identity_drift', detail: 'stop' },
+    { code: 'expected_before_mismatch', detail: 'stop' },
+    { code: 'unknown_result', detail: 'stop' },
+    { code: 'data_stale', detail: 'stop' },
+    { code: 'impact_budget_exhausted', detail: 'stop' },
+    { code: 'kill_switch', detail: 'stop' },
+  ];
+  database.prepare(`
+    INSERT INTO policies (
+      id, store_id, name, scope, status, priority, active_version_id, revision,
+      created_at, updated_at
+    ) VALUES (
+      'policy-lower-number', 'store-one', 'Lower number wins', 'store', 'active', 0,
+      NULL, 2, ?, ?
+    )
+  `).run(NOW, NOW);
+  database.prepare(`
+    INSERT INTO policy_versions (
+      id, store_id, policy_id, version, status, rules_json, revision,
+      created_at, updated_at, enabled_at
+    ) VALUES (
+      'policy-lower-number-v1', 'store-one', 'policy-lower-number', 1, 'enabled', ?, 1,
+      ?, ?, ?
+    )
+  `).run(JSON.stringify(lowerRules), NOW, NOW, NOW);
+  database.prepare(`
+    UPDATE policies SET active_version_id = 'policy-lower-number-v1'
+    WHERE store_id = 'store-one' AND id = 'policy-lower-number'
+  `).run();
+}
+
+function seedExactPolicyScopeEvidence(
+  database: Database.Database,
+  input: {
+    index: number;
+    fileHash: string;
+    sourceRow: number;
+    entityName: string;
+    campaignName: string;
+    adGroupName: string;
+  },
+): void {
+  const filePath = `C:/reports/store-one/keyword-${input.index}.xlsx`;
+  const fileName = `keyword-${input.index}.xlsx`;
+  const reportFileId = Number(database.prepare(`
+    INSERT INTO report_files (
+      store_id, batch_id, report_type, file_path, file_name, file_size,
+      status, imported_rows, file_hash, last_imported_at
+    ) VALUES ('store-one', 'data-batch-1', 'keyword', ?, ?, 1024,
+      'imported', 1, ?, ?)
+  `).run(filePath, fileName, input.fileHash, NOW).lastInsertRowid);
+  database.prepare(`
+    INSERT INTO report_import_file_snapshots (
+      store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
+      file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
+    ) VALUES ('store-one', ?, 'import-run-1', 'data-batch-1', ?, 'keyword',
+      ?, ?, 1024, ?, 1, ?)
+  `).run(
+    `execution-service-scope-snapshot-${input.index}`,
+    reportFileId,
+    filePath,
+    fileName,
+    input.fileHash,
+    NOW,
+  );
+  database.prepare(`
+    INSERT INTO ad_daily_metrics (
+      batch_id, report_type, date, store_name, marketplace_code, asin,
+      campaign_name, ad_group_name, targeting, source_file, source_row,
+      store_id, store_authority_quarantined
+    ) VALUES ('data-batch-1', 'keyword', '2026-07-22', 'US Store One', 'US', 'B0EXECUTION',
+      ?, ?, ?, ?, ?, 'store-one', 0)
+  `).run(
+    input.campaignName,
+    input.adGroupName,
+    input.entityName,
+    filePath,
+    input.sourceRow,
+  );
 }

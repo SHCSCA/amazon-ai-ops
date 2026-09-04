@@ -4,11 +4,15 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import {
   assertLingxingAdsSelectedStoreTags,
+  bindPendingLingxingAdsNewPageAdoption,
+  bindPendingLingxingAdsPageCloseOnlyLiveness,
   dismissLingxingAdsChangeAnnouncements,
   discoverLingxingAdsKeywordTarget,
   ensureLingxingErpAuthenticated,
   ensureLingxingAdsHeaderStore,
   findTrustedLingxingProviderReplacementPage,
+  isLingxingProviderExplicitlyLoggedOutPage,
+  isTrustedLingxingProviderUrl,
   navigateToLingxingAdsCampaignKeywordTarget,
   findTrustedLingxingProviderPageAfterPendingNavigation,
   resolveLingxingStableIdentityFromAdsProfile,
@@ -16,12 +20,61 @@ import {
   openLingxingAdsFromErp,
   readLingxingAdsPageStateAfterNavigation,
   readLingxingAdsProfileEvidence,
+  resolveLingxingKeywordTargetRows,
   restoreAuthenticatedLingxingErpPage,
   selectOnlyLingxingAdsStore,
   selectLingxingAdsProfileEvidence,
 } from './lingxing-ads-sso';
 
 describe('discoverLingxingAdsKeywordTarget', () => {
+  it('uses campaign, ad group and match type authority instead of choosing the first same-name same-bid row', () => {
+    const headers = ['广告活动', '匹配类型', '关键词', '广告组', '竞价'];
+    const rows = [
+      {
+        headers,
+        cellTexts: ['Campaign A', '精准', 'door lock', 'Group A', '$1.49'],
+        keywordIds: ['keyword-a'],
+        adGroupIds: ['group-a'],
+        adGroupNames: ['Group A'],
+        bidValues: ['$1.49'],
+      },
+      {
+        headers,
+        cellTexts: ['Campaign B', '词组', 'door lock', 'Group B', '$1.49'],
+        keywordIds: ['keyword-b-phrase'],
+        adGroupIds: ['group-b'],
+        adGroupNames: ['Group B'],
+        bidValues: ['$1.49'],
+      },
+      {
+        headers,
+        cellTexts: ['Campaign B', '精准', 'door lock', 'Group B', '$1.49'],
+        keywordIds: ['keyword-b-exact'],
+        adGroupIds: ['group-b'],
+        adGroupNames: ['Group B'],
+        bidValues: ['$1.49'],
+      },
+    ];
+
+    expect(resolveLingxingKeywordTargetRows(rows, {
+      campaignName: 'Campaign B',
+      adGroupName: 'Group B',
+      entityName: 'door lock',
+      matchType: 'exact',
+      currentBidCents: 149,
+    })).toEqual({ adGroupId: 'group-b', keywordId: 'keyword-b-exact', bidCents: 149 });
+    expect(() => resolveLingxingKeywordTargetRows(rows.map((row) => ({
+      ...row,
+      headers: row.headers.filter((header) => header !== '匹配类型'),
+    })), {
+      campaignName: 'Campaign B',
+      adGroupName: 'Group B',
+      entityName: 'door lock',
+      matchType: 'exact',
+      currentBidCents: 149,
+    })).toThrow('缺少唯一匹配方式');
+  });
+
   it('switches the Ads header to one exact US store and verifies the selected label', async () => {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -41,6 +94,48 @@ describe('discoverLingxingAdsKeywordTarget', () => {
       await ensureLingxingAdsHeaderStore(page, 'JF-US');
 
       expect(await page.locator('#store-control').innerText()).toBe('JF-US 美国');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('switches an arbitrary Chinese and spaced Ads header store by one exact display name', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <button id="store-control" style="position:fixed;left:20px;top:10px">旧 店-一 美国</button>
+        <div id="menu" style="position:fixed;left:20px;top:50px" hidden>
+          <button id="target-store">华东 一号店-US 美国</button>
+        </div>
+        <script>
+          document.querySelector('#store-control').onclick = () => { document.querySelector('#menu').hidden = false; };
+          document.querySelector('#target-store').onclick = () => {
+            document.querySelector('#store-control').textContent = '华东 一号店-US 美国';
+            document.querySelector('#menu').hidden = true;
+          };
+        </script>
+      `);
+
+      await ensureLingxingAdsHeaderStore(page, '华东 一号店-US');
+
+      expect(await page.locator('#store-control').innerText()).toBe('华东 一号店-US 美国');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('rejects an already-selected arbitrary store when the Ads header control is not unique', async () => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <button id="store-control-one" style="position:fixed;left:20px;top:10px">华东 一号店-US 美国</button>
+        <button id="store-control-two" style="position:fixed;left:240px;top:10px">华南 二号店-US 美国</button>
+      `);
+
+      await expect(ensureLingxingAdsHeaderStore(page, '华东 一号店-US'))
+        .rejects.toThrow('无法唯一定位当前账户下拉');
     } finally {
       await browser.close();
     }
@@ -100,7 +195,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
     } finally {
       await browser.close();
     }
-  });
+  }, 30_000);
 
   it('opens the exact store and campaign keyword page from the Ads sidebar without submitting data', async () => {
     const browser = await chromium.launch({ headless: true });
@@ -144,25 +239,25 @@ describe('discoverLingxingAdsKeywordTarget', () => {
     const page = await browser.newPage();
     try {
       const html = `
-        <table><tbody>
+        <table><thead><tr><th>广告活动</th><th>匹配类型</th><th>关键词</th><th>选择</th><th>广告组</th><th>竞价</th><th>动作</th></tr></thead><tbody>
           <tr>
             <td>U07-1P-精准</td><td>精准</td><td>cupping set</td>
             <td><input class="select-item" value="keyword-set" /></td>
-            <td><a href="/ad_group/index?ad_group_id=group-set">cupping set</a></td>
+            <td><a href="/ad_group/index?ad_group_id=group-set">精准</a></td>
             <td><input class="form-control price" value="$2.55" /></td>
             <td><button class="Js-bid-save">save</button></td>
           </tr>
           <tr>
             <td>U07-1P-精准</td><td>精准</td><td>cupping</td>
             <td><input class="select-item" value="keyword-cupping" /></td>
-            <td><a href="/ad_group/index?ad_group_id=group-cupping">cupping</a></td>
+            <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
             <td><input class="form-control price" value="$2.51" /></td>
             <td><button class="Js-bid-save" onclick="window.saveClicks += 1">save</button></td>
           </tr>
           <tr>
             <td>OTHER-CAMPAIGN</td><td>精准</td><td>cupping</td>
             <td><input class="select-item" value="keyword-other" /></td>
-            <td><a href="/ad_group/index?ad_group_id=group-other">cupping</a></td>
+            <td><a href="/ad_group/index?ad_group_id=group-other">精准</a></td>
             <td><input class="form-control price" value="$2.51" /></td>
             <td><button class="Js-bid-save">save</button></td>
           </tr>
@@ -180,6 +275,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
         campaignName: 'U07-1P-精准',
         adGroupName: '精准',
         entityName: 'cupping',
+        matchType: 'exact',
         currentBidCents: 251,
       });
 
@@ -222,6 +318,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
         campaignName: 'U07-1P-精准',
         adGroupName: '精准',
         entityName: 'cupping',
+        matchType: 'exact',
         currentBidCents: 251,
       })).resolves.toMatchObject({
         adGroupId: 'group-cupping',
@@ -240,10 +337,11 @@ describe('discoverLingxingAdsKeywordTarget', () => {
       await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
         body: `
           <table>
-            <thead><tr><th></th><th>关键词</th><th>广告组</th><th>竞价</th></tr></thead>
+            <thead><tr><th></th><th>关键词</th><th>匹配类型</th><th>广告组</th><th>竞价</th></tr></thead>
             <tbody><tr>
               <td><input class="check-item" type="checkbox" value="keyword-cupping" /></td>
               <td>cupping</td>
+              <td>精准</td>
               <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
               <td><input value="2.51" /></td>
             </tr></tbody>
@@ -257,6 +355,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
         campaignName: 'U07-1P-精准',
         adGroupName: '精准',
         entityName: 'cupping',
+        matchType: 'exact',
         currentBidCents: 251,
       })).resolves.toMatchObject({ keywordId: 'keyword-cupping', bidCents: 251 });
     } finally {
@@ -270,7 +369,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
     try {
       await page.route('https://ads.lingxing.com/**', (route) => route.fulfill({
         body: `
-          <table><tbody>
+          <table><thead><tr><th>关键词</th><th>匹配类型</th><th>选择</th><th>广告组</th><th>竞价</th></tr></thead><tbody>
             <tr><td>cupping</td><td>精准</td>
               <td><input class="native select-item" type="checkbox" value="keyword-cupping" /></td>
               <td><a href="/ad_group/index?ad_group_id=group-cupping">精准</a></td>
@@ -288,6 +387,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
         campaignName: 'U07-1P-精准',
         adGroupName: '精准',
         entityName: 'cupping',
+        matchType: 'exact',
         currentBidCents: 251,
       })).rejects.toThrow('报表 $2.51，页面 $1.80');
     } finally {
@@ -300,10 +400,10 @@ describe('discoverLingxingAdsKeywordTarget', () => {
     const page = await browser.newPage();
     try {
       const html = `
-        <table><tbody>${[1, 2].map((index) => `
+        <table><thead><tr><th>广告活动</th><th>匹配类型</th><th>关键词</th><th>选择</th><th>广告组</th><th>竞价</th></tr></thead><tbody>${[1, 2].map((index) => `
           <tr><td>U07-1P-精准</td><td>精准</td><td>cupping</td>
           <td><input class="select-item" value="keyword-${index}" /></td>
-          <td><a href="/ad_group/index?ad_group_id=group-${index}">cupping</a></td>
+          <td><a href="/ad_group/index?ad_group_id=group-${index}">精准</a></td>
           <td><input class="form-control price" value="$2.51" /></td></tr>`).join('')}
         </tbody></table>
       `;
@@ -318,6 +418,7 @@ describe('discoverLingxingAdsKeywordTarget', () => {
         campaignName: 'U07-1P-精准',
         adGroupName: '精准',
         entityName: 'cupping',
+        matchType: 'exact',
         currentBidCents: 251,
       })).rejects.toThrow('无法唯一定位');
     } finally {
@@ -327,14 +428,101 @@ describe('discoverLingxingAdsKeywordTarget', () => {
 });
 
 describe('Lingxing Ads navigation continuity', () => {
+  it('treats same-origin provider login paths and visible login DOM as an immediate identity loss', () => {
+    expect(isTrustedLingxingProviderUrl('lingxing', 'https://erp.lingxing.com/login'))
+      .toBe(false);
+    expect(isTrustedLingxingProviderUrl('amazon_ads', 'https://ads.lingxing.com/login/index'))
+      .toBe(false);
+    expect(isLingxingProviderExplicitlyLoggedOutPage('lingxing', {
+      url: 'https://erp.lingxing.com/erp/home',
+      title: '领星 ERP',
+      bodyText: '',
+      hasAccountInput: true,
+    })).toBe(true);
+    expect(isLingxingProviderExplicitlyLoggedOutPage('amazon_ads', {
+      url: 'https://ads.lingxing.com/dashboard',
+      title: '领星广告',
+      bodyText: '您尚未登录，请从领星 ERP 进入',
+    })).toBe(true);
+    expect(isLingxingProviderExplicitlyLoggedOutPage('amazon_ads', {
+      url: 'https://ads.lingxing.com/dashboard',
+      title: '领星广告',
+      bodyText: '广告活动 ACoS',
+    })).toBe(false);
+  });
+
+  it('wires verified-provider liveness to recheck same-origin login DOM after navigation', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const livenessSource = mainSource.slice(
+      mainSource.indexOf('function bindCompletedLoginPageLiveness'),
+      mainSource.indexOf('async function degradeVisibleLoginProvider'),
+    );
+
+    expect(livenessSource).toContain('isLingxingProviderExplicitlyLoggedOutPage(provider, pageState)');
+    expect(livenessSource).toContain('providerStateInspectionPending = true');
+    expect(livenessSource).toContain("page.on('domcontentloaded'");
+    expect(livenessSource).toContain("degradeVisibleLoginProvider(provider, runtimeId, context, '页面已退回登录状态。')");
+    expect(livenessSource).toContain('const adoptedPageState = await readLingxingPageState(replacementPage);');
+    expect(livenessSource.indexOf('isLingxingProviderExplicitlyLoggedOutPage(provider, adoptedPageState)'))
+      .toBeLessThan(livenessSource.indexOf('continuePendingAmazonAdsIdentityRecognition(runtimeId, context)'));
+  });
+
+  it('continues an adopted authenticated Ads page without requiring a saved password', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const continuationSource = mainSource.slice(
+      mainSource.indexOf('async function continuePendingAmazonAdsIdentityRecognition'),
+      mainSource.indexOf('function bindCompletedLoginPageLiveness'),
+    );
+    const currentRetryCheckSource = mainSource.slice(
+      mainSource.indexOf('function isCurrentAmazonAdsRetryContinuation'),
+      mainSource.indexOf('function assertCurrentAmazonAdsRetryAuthority'),
+    );
+
+    expect(continuationSource).toContain('username: connections.lingxing.accountLabel');
+    expect(continuationSource).not.toContain('readSavedLoginCredentialStatus(');
+    expect(continuationSource).not.toContain('saved.passwordAvailable');
+    expect(currentRetryCheckSource).not.toContain('readSavedLoginCredentialStatus(');
+    expect(currentRetryCheckSource).not.toContain('saved.passwordAvailable');
+  });
+
+  it('wires bounded pending Ads new-page adoption into the retained identity retry claim', () => {
+    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const continuationSource = mainSource.slice(
+      mainSource.indexOf('async function continuePendingAmazonAdsIdentityRecognition'),
+      mainSource.indexOf('function bindCompletedLoginPageLiveness'),
+    );
+    const livenessSource = mainSource.slice(
+      mainSource.indexOf('function bindCompletedLoginPageLiveness'),
+      mainSource.indexOf('async function degradeVisibleLoginProvider'),
+    );
+
+    expect(livenessSource).toContain('bindPendingLingxingAdsNewPageAdoption({');
+    expect(livenessSource).toContain('context: pendingAdsBrowserContext');
+    expect(livenessSource).toContain('controller.setActivePage?.(replacementPage)');
+    expect(livenessSource).toContain(
+      'continuePendingAmazonAdsIdentityRecognition(runtimeId, context)',
+    );
+    expect(livenessSource).toContain('onUnsafeCandidates: (reason) => degradeVisibleLoginProvider(');
+    expect(continuationSource).toContain('pendingAmazonAdsIdentityRetry');
+    expect(continuationSource).toContain('isCurrentAmazonAdsRetryContinuation(request, activeContext)');
+    expect(continuationSource).toContain('executeCurrentAmazonAdsRetryContinuation(');
+    expect(continuationSource).not.toContain('handleBrowserLogin(');
+    expect(continuationSource).not.toContain('runUserVisibleBrowserTransition(');
+    expect(continuationSource).not.toContain('publishCandidate(');
+  });
+
   it('wires current-store recommendation target discovery through the execution authority bridge', () => {
     const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
     expect(mainSource).toContain("registerTrackedIpcHandler('execution-authority:discover-recommendation-target'");
     expect(mainSource).toContain("withLegacyOperatorBrowserLease(\n    'amazon_ads',\n    `discover-recommendation-target:");
     expect(mainSource).toContain('state.recommendationRepo.findByIdForStore(context.storeId, recommendationId)');
+    expect(mainSource).toContain('recommendationAsin = canonicalizeAmazonAsin(recommendation.asin)');
+    expect(mainSource).toContain("const recommendationMatchType = String(evidence?.matchType ?? '').normalize('NFKC').trim()");
     expect(mainSource).toContain('navigateToLingxingAdsCampaignKeywordTarget(page, {');
     expect(mainSource).toContain('discoverLingxingAdsKeywordTarget(page, {');
+    expect(mainSource).toContain('matchType: recommendationMatchType');
+    expect(mainSource).toContain('recommendationAsin,\n        recommendationMatchType,');
     expect(mainSource).not.toContain('execution-authority:discover-recommendation-target-bypass');
   });
 
@@ -500,6 +688,226 @@ describe('Lingxing Ads navigation continuity', () => {
       await vi.advanceTimersByTimeAsync(500);
 
       await expect(recovery).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('degrades a pending Ads controller closed while its active page is still ERP', async () => {
+    vi.useFakeTimers();
+    try {
+      let closed = false;
+      let closeListener: (() => void) | undefined;
+      const erpPage = {
+        url: () => 'https://erp.lingxing.com/erp/home',
+        isClosed: () => closed,
+        once: vi.fn((event: string, listener: () => void) => {
+          if (event === 'close') closeListener = listener;
+          return erpPage;
+        }),
+      };
+      const onTrustedReplacement = vi.fn();
+      const onClosed = vi.fn();
+
+      bindPendingLingxingAdsPageCloseOnlyLiveness({
+        page: erpPage as never,
+        readCandidates: () => [erpPage] as never,
+        onTrustedReplacement,
+        onClosed,
+      });
+
+      expect(erpPage.once).toHaveBeenCalledWith('close', expect.any(Function));
+      closed = true;
+      closeListener?.();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(onTrustedReplacement).not.toHaveBeenCalled();
+      expect(onClosed).toHaveBeenCalledOnce();
+      expect(onClosed).toHaveBeenCalledWith('可见浏览器已关闭。');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('adopts one trusted Ads page that appears while the pending controller ERP page remains open', async () => {
+    vi.useFakeTimers();
+    try {
+      const erpPage = {
+        url: () => 'https://erp.lingxing.com/erp/home',
+        isClosed: () => false,
+      };
+      let candidateUrl = 'about:blank';
+      let candidateVisible = false;
+      const adsCandidate = {
+        url: () => candidateUrl,
+        isClosed: () => false,
+      };
+      let pageListener: ((page: unknown) => void) | undefined;
+      const context = {
+        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+          if (event === 'page') pageListener = listener;
+          return context;
+        }),
+        off: vi.fn(() => context),
+      };
+      const onTrustedPage = vi.fn();
+      const onUnsafeCandidates = vi.fn();
+
+      bindPendingLingxingAdsNewPageAdoption({
+        observedPage: erpPage as never,
+        context: context as never,
+        readCandidates: () => (candidateVisible ? [erpPage, adsCandidate] : [erpPage]) as never,
+        onTrustedPage,
+        onUnsafeCandidates,
+      });
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onTrustedPage).not.toHaveBeenCalled();
+      candidateVisible = true;
+      candidateUrl = 'https://ads.lingxing.com/ak_download/download_center/download_report_log/index';
+      pageListener?.(adsCandidate);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(onTrustedPage).toHaveBeenCalledOnce();
+      expect(onTrustedPage).toHaveBeenCalledWith(adsCandidate);
+      expect(onUnsafeCandidates).not.toHaveBeenCalled();
+      expect(context.off).toHaveBeenCalledWith('page', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps pending Ads new-page adoption active beyond the former fixed fifteen-second window', async () => {
+    vi.useFakeTimers();
+    try {
+      const erpPage = {
+        url: () => 'https://erp.lingxing.com/erp/home',
+        isClosed: () => false,
+      };
+      let candidateVisible = false;
+      const adsCandidate = {
+        url: () => 'https://ads.lingxing.com/dashboard',
+        isClosed: () => false,
+      };
+      let pageListener: ((page: unknown) => void) | undefined;
+      const context = {
+        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+          if (event === 'page') pageListener = listener;
+          return context;
+        }),
+        off: vi.fn(() => context),
+      };
+      const onTrustedPage = vi.fn();
+
+      bindPendingLingxingAdsNewPageAdoption({
+        observedPage: erpPage as never,
+        context: context as never,
+        readCandidates: () => (candidateVisible ? [erpPage, adsCandidate] : [erpPage]) as never,
+        onTrustedPage,
+        onUnsafeCandidates: vi.fn(),
+      });
+
+      await vi.advanceTimersByTimeAsync(15_500);
+      expect(context.off).not.toHaveBeenCalled();
+      candidateVisible = true;
+      pageListener?.(adsCandidate);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(onTrustedPage).toHaveBeenCalledOnce();
+      expect(onTrustedPage).toHaveBeenCalledWith(adsCandidate);
+      expect(context.off).toHaveBeenCalledWith('page', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed instead of choosing between multiple trusted pending Ads pages', async () => {
+    vi.useFakeTimers();
+    try {
+      const erpPage = {
+        url: () => 'https://erp.lingxing.com/erp/home',
+        isClosed: () => false,
+      };
+      const firstAdsPage = {
+        url: () => 'https://ads.lingxing.com/dashboard',
+        isClosed: () => false,
+      };
+      const secondAdsPage = {
+        url: () => 'https://ads.lingxing.com/ak_download/download_center/download_report_log/index',
+        isClosed: () => false,
+      };
+      let pageListener: ((page: unknown) => void) | undefined;
+      const context = {
+        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+          if (event === 'page') pageListener = listener;
+          return context;
+        }),
+        off: vi.fn(() => context),
+      };
+      const onTrustedPage = vi.fn();
+      const onUnsafeCandidates = vi.fn();
+
+      bindPendingLingxingAdsNewPageAdoption({
+        observedPage: erpPage as never,
+        context: context as never,
+        readCandidates: () => [erpPage, firstAdsPage, secondAdsPage] as never,
+        onTrustedPage,
+        onUnsafeCandidates,
+      });
+
+      pageListener?.(firstAdsPage);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(onTrustedPage).not.toHaveBeenCalled();
+      expect(onUnsafeCandidates).toHaveBeenCalledOnce();
+      expect(onUnsafeCandidates).toHaveBeenCalledWith(
+        '领星 Ads 同一隔离浏览器出现多个可信页面，无法唯一继续当前店铺识别，操作已阻断。',
+      );
+      expect(context.off).toHaveBeenCalledWith('page', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores restartLogin, ERP, closed, and cross-origin context pages while Ads identity stays pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const erpPage = {
+        url: () => 'https://erp.lingxing.com/erp/home',
+        isClosed: () => false,
+      };
+      const invalidPages = [
+        { url: () => 'https://ads.lingxing.com/restartLogin', isClosed: () => false },
+        { url: () => 'https://erp.lingxing.com/erp/index', isClosed: () => false },
+        { url: () => 'https://ads.lingxing.com/dashboard', isClosed: () => true },
+        { url: () => 'https://example.com/ads', isClosed: () => false },
+      ];
+      let pageListener: ((page: unknown) => void) | undefined;
+      const context = {
+        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+          if (event === 'page') pageListener = listener;
+          return context;
+        }),
+        off: vi.fn(() => context),
+      };
+      const onTrustedPage = vi.fn();
+      const onUnsafeCandidates = vi.fn();
+      const stop = bindPendingLingxingAdsNewPageAdoption({
+        observedPage: erpPage as never,
+        context: context as never,
+        readCandidates: () => [erpPage, ...invalidPages] as never,
+        onTrustedPage,
+        onUnsafeCandidates,
+      });
+
+      for (const invalidPage of invalidPages) pageListener?.(invalidPage);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(onTrustedPage).not.toHaveBeenCalled();
+      expect(onUnsafeCandidates).not.toHaveBeenCalled();
+      expect(context.off).not.toHaveBeenCalled();
+      stop();
+      expect(context.off).toHaveBeenCalledWith('page', expect.any(Function));
     } finally {
       vi.useRealTimers();
     }
@@ -1143,6 +1551,49 @@ describe('resolveLingxingStableIdentityFromAdsProfile', () => {
 });
 
 describe('openLingxingAdsFromErp', () => {
+  it('recovers when the first authenticated Ads state read loses its execution context to navigation', async () => {
+    const click = vi.fn(async () => undefined);
+    const evaluate = vi.fn()
+      .mockRejectedValueOnce(new Error('Execution context was destroyed'))
+      .mockResolvedValue('领星广告系统 返回ERP 广告活动 ACoS');
+    const adsPage = {
+      url: () => 'https://ads.lingxing.com/home',
+      title: vi.fn(async () => '仪表盘'),
+      evaluate,
+      isClosed: vi.fn(() => false),
+      waitForLoadState: vi.fn(async () => undefined),
+      waitForTimeout: vi.fn(async () => undefined),
+      waitForURL: vi.fn(async () => undefined),
+      bringToFront: vi.fn(async () => undefined),
+    };
+    const erpPage = {
+      url: () => 'https://erp.lingxing.com/erp/home',
+      waitForTimeout: vi.fn(async () => undefined),
+      getByRole: vi.fn(() => ({
+        first: () => ({ isVisible: vi.fn(async () => true), click }),
+      })),
+    };
+    const context = {
+      pages: vi.fn(() => [erpPage]),
+      waitForEvent: vi.fn(async () => adsPage),
+    };
+    const controller = {
+      getPage: () => erpPage,
+      getContext: () => context,
+      setActivePage: vi.fn(),
+    };
+
+    await expect(openLingxingAdsFromErp(controller as never)).resolves.toBe(adsPage);
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(adsPage.waitForLoadState).toHaveBeenNthCalledWith(
+      2,
+      'domcontentloaded',
+      { timeout: 5_000 },
+    );
+    expect(adsPage.waitForTimeout).toHaveBeenCalledWith(250);
+    expect(controller.setActivePage).toHaveBeenCalledWith(adsPage);
+  });
+
   it('waits for the current ERP sidebar Ads entry to become visible after the home shell renders', async () => {
     const click = vi.fn(async () => undefined);
     const isVisible = vi.fn()

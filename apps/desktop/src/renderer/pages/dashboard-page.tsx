@@ -24,6 +24,7 @@ import type { NavigationIntent } from '../navigation';
 import type { NextSafeAction } from '../workflow-state';
 import type { AiDiagnosisRunView, AppRoute, BusinessQuantDiagnostic, DeliveryEvidenceStatusView, DeliveryReadinessView, ProductHistoryLedgerView, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+import { localizeProductStage } from '@amazon-ai-ops/business-presenters';
 
 type DashboardRecommendationStatus = 'pending' | 'needs_review';
 
@@ -737,16 +738,7 @@ function navigate(target: AppRoute | NavigationIntent) {
 }
 
 function productStageLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    cold_start: '冷启动',
-    keyword_exploration: '测词',
-    stable_conversion: '稳定转化',
-    scaling: '放量',
-    profit_harvesting: '利润收割',
-    declining_repair: '异常修复',
-    unknown: '阶段待判定',
-  };
-  return labels[stage || 'unknown'] || stage || '阶段待判定';
+  return localizeProductStage(stage);
 }
 
 export function dashboardSelectProductHistory(

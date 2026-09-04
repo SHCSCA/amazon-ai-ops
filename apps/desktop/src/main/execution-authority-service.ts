@@ -538,7 +538,7 @@ export class ExecutionAuthorityService {
       const existing = this.missionRepository.listCausalEvents(context, { missionId: projection.batch.missionId })
         .find((event) => event.id === eventId);
       if (!existing) {
-        this.missionRepository.appendCausalEvent(context, {
+        this.missionRepository.appendCausalEventWithEvidence(context, {
           id: eventId,
           stage: 'READBACK',
           eventType: 'execution_unknown_reconciled',
@@ -552,21 +552,19 @@ export class ExecutionAuthorityService {
           status: status.toLowerCase(),
           source: 'execution-authority',
           actorId: OPERATOR_ACTOR,
-        });
-        this.missionRepository.appendEvidenceRef(context, {
+        }, [{
           id: `${eventId}:first`,
           eventId,
           evidenceType: 'ad_execution_reconciliation_first',
           evidenceRef: firstArtifact.artifactRef,
           sha256: firstArtifact.contentSha256,
-        });
-        this.missionRepository.appendEvidenceRef(context, {
+        }, {
           id: `${eventId}:reload`,
           eventId,
           evidenceType: 'ad_execution_reconciliation_reload',
           evidenceRef: reloadArtifact.artifactRef,
           sha256: reloadArtifact.contentSha256,
-        });
+        }]);
       }
       this.progress(context, batchId, job.id, 'readback', 'unknown', statusCopy);
       return {
@@ -857,30 +855,45 @@ export class ExecutionAuthorityService {
             },
           });
         } catch (error) {
-          job = this.requireJob(context, batchId, job.id);
           if (['intent_written', 'submitted', 'verifying'].includes(job.status)) {
-            this.markUnknownAndStop(
+            const authorityLost = error instanceof ExecutionAuthorityRepositoryError
+              && (error.code === 'INVALID_CONTEXT' || error.code === 'STALE_CONTEXT');
+            return this.markUnknownAndStop(
               context,
               batchId,
               job,
-              'COORDINATOR_FAILURE_AFTER_INTENT',
-              safeMessage(error),
+              authorityLost ? 'ADS_AUTHORITY_LOST_AFTER_INTENT' : 'COORDINATOR_FAILURE_AFTER_INTENT',
+              authorityLost
+                ? 'Ads 会话在保存后失去可信状态，提交结果必须人工核对。'
+                : safeMessage(error),
             );
-          } else {
-            this.repository.markBlocked(context, {
-              jobId: job.id,
-              expectedRevision: job.revision,
-              reasonCode: 'COORDINATOR_FAILURE_BEFORE_INTENT',
-              detail: safeMessage(error),
-            });
-            projection = this.requireBatch(context, batchId);
-            this.cancelRemainingBeforeIntent(context, projection, 'batch_apply_blocked');
-            this.revokeGrantAndStopMission(context, projection, safeMessage(error), false);
           }
+          job = this.requireJob(context, batchId, job.id);
+          this.repository.markBlocked(context, {
+            jobId: job.id,
+            expectedRevision: job.revision,
+            reasonCode: 'COORDINATOR_FAILURE_BEFORE_INTENT',
+            detail: safeMessage(error),
+          });
+          projection = this.requireBatch(context, batchId);
+          this.cancelRemainingBeforeIntent(context, projection, 'batch_apply_blocked');
+          this.revokeGrantAndStopMission(context, projection, safeMessage(error), false);
           return this.requireBatch(context, batchId);
         }
 
         if (applyResult.status !== 'SUBMITTED') {
+          if (applyResult.status === 'UNKNOWN' || applyResult.submitAttempted) {
+            if (!['intent_written', 'submitted', 'verifying'].includes(job.status)) {
+              throw new Error('保存结果不确定，但执行账本缺少已持久化的提交意图。');
+            }
+            return this.markUnknownAndStop(
+              context,
+              batchId,
+              job,
+              applyResult.error.code,
+              applyResult.error.message,
+            );
+          }
           job = this.requireJob(context, batchId, job.id);
           if (job.status === 'cancelled') return this.requireBatch(context, batchId);
           if (grant.issuer.type === 'policy'
@@ -889,9 +902,7 @@ export class ExecutionAuthorityService {
             && isPolicyExecutionBatchSafelyRestartable(this.requireBatch(context, batchId))) {
             throw new Error('Final policy permit is temporarily unavailable before submit intent.');
           }
-          if (applyResult.status === 'UNKNOWN' || applyResult.submitAttempted) {
-            this.markUnknownAndStop(context, batchId, job, applyResult.error.code, applyResult.error.message);
-          } else if (job.status === 'intent_written') {
+          if (job.status === 'intent_written') {
             this.repository.markNotSubmittedAfterIntent(context, {
               jobId: job.id,
               expectedRevision: job.revision,
@@ -939,8 +950,13 @@ export class ExecutionAuthorityService {
           }).job;
           const readback = await adapter.reloadReadback(preparedJob.command, applyResult);
           if (readback.status !== 'VERIFIED') {
-            this.markUnknownAndStop(context, batchId, job, readback.error.code, readback.error.message);
-            return this.requireBatch(context, batchId);
+            return this.markUnknownAndStop(
+              context,
+              batchId,
+              job,
+              readback.error.code,
+              readback.error.message,
+            );
           }
           const reload = buildExecutionEvidenceInput({
             storeId: String(context.storeId),
@@ -961,9 +977,18 @@ export class ExecutionAuthorityService {
           }).job;
           this.progress(context, batchId, job.id, 'readback', job.status, '提交后证据与独立刷新回读均已命中目标值。');
         } catch (error) {
-          job = this.requireJob(context, batchId, job.id);
           if (['intent_written', 'submitted', 'verifying'].includes(job.status)) {
-            this.markUnknownAndStop(context, batchId, job, 'COORDINATOR_FAILURE_AFTER_INTENT', safeMessage(error));
+            const authorityLost = error instanceof ExecutionAuthorityRepositoryError
+              && (error.code === 'INVALID_CONTEXT' || error.code === 'STALE_CONTEXT');
+            return this.markUnknownAndStop(
+              context,
+              batchId,
+              job,
+              authorityLost ? 'ADS_AUTHORITY_LOST_AFTER_INTENT' : 'COORDINATOR_FAILURE_AFTER_INTENT',
+              authorityLost
+                ? 'Ads 会话在保存后失去可信状态，提交结果必须人工核对。'
+                : safeMessage(error),
+            );
           }
           return this.requireBatch(context, batchId);
         }
@@ -1619,10 +1644,19 @@ export class ExecutionAuthorityService {
         message,
       );
     }
+    try {
+      this.assertGrantUsesEffectivePolicyVersion(context, grant);
+    } catch (error) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'POLICY_AUTHORITY_CHANGED',
+        safeMessage(error),
+      );
+    }
     const runtime = this.missionRepository.getPolicyRuntime(context);
     if (runtime.killSwitch
       || runtime.circuitBreakerState !== 'closed'
-      || runtime.activePolicyVersionId !== grant.policyVersionId
+      || !runtime.activePolicyVersionId
       || runtime.autonomyMode !== 'policy_auto') {
       throw new PolicyGrantDispatchFailure(
         'waiting_runtime',
@@ -1678,13 +1712,30 @@ export class ExecutionAuthorityService {
       throw new Error('授权绑定的策略版本不再是当前启用 revision。');
     }
     assertExecutionWindowOpen(policy.rules, context, this.now());
+    this.assertGrantUsesEffectivePolicyVersion(context, grant);
     const runtime = this.missionRepository.getPolicyRuntime(context);
     if (runtime.killSwitch || runtime.circuitBreakerState !== 'closed'
-      || runtime.activePolicyVersionId !== grant.policyVersionId
+      || !runtime.activePolicyVersionId
       || (grant.issuer.type === 'policy' && runtime.autonomyMode !== 'policy_auto')) {
       throw new Error('Kill switch、熔断器或策略运行模式阻断执行。');
     }
     return grant;
+  }
+
+  private assertGrantUsesEffectivePolicyVersion(
+    context: StoreContextEnvelope,
+    grant: MissionGrantRecord,
+  ): void {
+    const effective = this.missionRepository.resolveEffectivePolicyVersion(context, {
+      allowedActionTypes: grant.allowedActionTypes,
+      allowedAdEntityIds: grant.allowedAdEntityIds,
+      at: this.now().toISOString(),
+    });
+    if (effective.id !== grant.policyVersionId) {
+      throw new Error(
+        '授权绑定的策略不再是当前广告对象的最高优先级唯一匹配；请重新运行分析并签发新授权。',
+      );
+    }
   }
 
   private requireBatch(context: StoreContextEnvelope, batchId: string): AdExecutionBatchProjection {
@@ -1728,18 +1779,16 @@ export class ExecutionAuthorityService {
     job: AdExecutionJobProjection,
     reasonCode: string,
     detail: string,
-  ): void {
-    this.repository.markUnknown(context, {
+  ): AdExecutionBatchProjection {
+    const projection = this.repository.terminalizePostIntentUnknownAfterAuthorityLoss(context, {
       jobId: job.id,
       expectedRevision: job.revision,
       reasonCode,
       detail,
     });
-    let projection = this.requireBatch(context, batchId);
-    this.cancelRemainingBeforeIntent(context, projection, 'batch_stopped_after_unknown');
-    projection = this.requireBatch(context, batchId);
     this.revokeGrantAndStopMission(context, projection, detail, true);
     this.progress(context, batchId, job.id, 'terminal', 'unknown', '保存结果无法证明，已停止 Mission 且禁止自动重试。');
+    return projection;
   }
 
   private revokeGrantAndStopMission(
@@ -1774,7 +1823,16 @@ export class ExecutionAuthorityService {
         unknown ? 'unknown_requires_reconciliation' : 'blocked_before_verified_completion',
         projection.jobs.reduce((total, job) => total + job.evidence.length, 0));
     }
-    this.repository.completeDomainReconciliation(context, projection.batch.id);
+    try {
+      this.repository.completeDomainReconciliation(context, projection.batch.id);
+    } catch (error) {
+      const authorityUnavailable = error instanceof ExecutionAuthorityRepositoryError
+        && (error.code === 'INVALID_CONTEXT' || error.code === 'STALE_CONTEXT');
+      if (!unknown || !authorityUnavailable) throw error;
+      const pending = this.recoveredBatchReconciliations.get(String(context.storeId)) ?? new Set<string>();
+      pending.add(projection.batch.id);
+      this.recoveredBatchReconciliations.set(String(context.storeId), pending);
+    }
   }
 
   private finalizeSucceededBatch(
@@ -1926,7 +1984,7 @@ export class ExecutionAuthorityService {
     status: AdExecutionProgressEvent['status'],
     message: string,
   ): void {
-    this.emit({
+    const event: AdExecutionProgressEvent = {
       storeId: context.storeId,
       batchId,
       ...(jobId ? { jobId } : {}),
@@ -1934,7 +1992,12 @@ export class ExecutionAuthorityService {
       status,
       message,
       occurredAt: this.timestamp(),
-    });
+    };
+    try {
+      this.emit(event);
+    } catch {
+      // Renderer/UI progress is best-effort and must never own execution authority.
+    }
   }
 
   private timestamp(): string {

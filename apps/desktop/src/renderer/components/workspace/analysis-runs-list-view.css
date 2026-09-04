@@ -1,0 +1,218 @@
+.analysis-runs-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+}
+
+.analysis-runs-loading,
+.analysis-runs-error,
+.analysis-runs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  color: #64748b;
+  text-align: center;
+}
+
+.analysis-runs-loading .spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.analysis-runs-error .error-message {
+  color: #dc2626;
+  font-size: 14px;
+}
+
+.analysis-runs-empty p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.analysis-runs-status {
+  font-size: 13px;
+  color: #64748b;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.analysis-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.analysis-run-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.analysis-run-item:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+  transform: translateY(-1px);
+}
+
+.analysis-run-item:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.analysis-run-item:active {
+  transform: scale(0.98);
+}
+
+.analysis-run-item.selected {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.run-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-id {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.run-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.status-pending {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.status-analyzing {
+  background: #dbeafe;
+  color: #1e40af;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.status-completed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.status-failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-blocked {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-unknown {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.run-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.run-product,
+.run-date-range {
+  display: inline-flex;
+  align-items: center;
+}
+
+.run-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #475569;
+}
+
+.run-recommendations {
+  font-weight: 500;
+}
+
+.run-time {
+  color: #94a3b8;
+}
+
+.run-blocked-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.blocked-label {
+  font-weight: 600;
+  color: #92400e;
+}
+
+.blocked-text {
+  color: #78350f;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-run-item,
+  .analysis-runs-loading .spinner,
+  .status-analyzing {
+    animation: none;
+    transition: none;
+  }
+  
+  .analysis-run-item:hover {
+    transform: none;
+  }
+  
+  .analysis-run-item:active {
+    transform: none;
+  }
+}

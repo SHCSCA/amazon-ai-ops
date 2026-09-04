@@ -1,0 +1,9 @@
+﻿Total lines: 4139
+L55: 
+L56: const AI_MODES = [
+L57:   { id: "manual", label: "浜哄伐瀹℃壒", short: "浜哄伐", icon: UserCircle, color: "#64748b" },
+L58:   { id: "semi", label: "鍗婅嚜鍔?, short: "鍗婅嚜", icon: Lightning, color: "#c8790a" },
+L59:   { id: "auto", label: "绛栫暐鍐呰嚜鍔?, short: "鑷姩", icon: Robot, color: "#14965e" },
+L60: ];
+L61: 
+L62: // ============================================================

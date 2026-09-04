@@ -46,6 +46,7 @@ describe('Mission domain preload API', () => {
     await api.grants.listEvents(storeContext, { missionId: 'mission-1' });
     await api.experiments.listObservations(storeContext, { experimentId: 'experiment-1' });
     await api.experiments.listMetricSnapshots(storeContext, { experimentId: 'experiment-1' });
+    await api.experiments.evaluate(storeContext, { id: 'experiment-1', expectedRevision: 4 });
 
     expect(invoke.mock.calls).toEqual([
       ['mission-domain:missions:create', { storeContext, input: { id: 'mission-1' } }],
@@ -68,6 +69,10 @@ describe('Mission domain preload API', () => {
       ['mission-domain:experiments:list-metric-snapshots', {
         storeContext,
         input: { experimentId: 'experiment-1' },
+      }],
+      ['mission-domain:experiments:evaluate', {
+        storeContext,
+        input: { id: 'experiment-1', expectedRevision: 4 },
       }],
     ]);
   });

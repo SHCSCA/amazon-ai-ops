@@ -14,14 +14,17 @@
 | 当前版本 | `1.5.1` |
 | 当前状态 | `APP_NEEDS_WORK / INTERNAL NON_READY`（静态 Windows 候选；尚无当前包运行态签收） |
 | 当前源码验证 | 聚焦权限链 `157/157`；全量单元 `285/285` files、`3584/3584` tests；脚本契约 `12/12`；无 `.skip/.todo/skipIf/context.skip` |
-| 无安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1-portable.exe`；SHA-256 `637E7CC1E1BCAF3D2BE574D7D97563E70CDA1A5CD47FD52B955197EE81355A1D` |
-| 安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe`；SHA-256 `444802A1B282AC8EA28CA621ACA375229401DF650DB406B89926BCB9B7FEB956` |
-| 文件夹 ZIP | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.zip`；SHA-256 `CF1A80BC9D3F17B28071BDE49B1551C49C5644E7C171784AB058734352A7C534` |
+| 无安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1-portable.exe`；SHA-256 `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944` |
+| 安装版 | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe`；SHA-256 `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B` |
+| 文件夹 ZIP | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.zip`；SHA-256 `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796` |
+| Blockmap | `apps\desktop\release\AmazonAIOpsAgent-1.5.1.exe.blockmap`；SHA-256 `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5` |
+| win-unpacked | `apps\desktop\release\win-unpacked\AmazonAIOpsAgent.exe`；SHA-256 `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`（与 2026-07-17 external-security P1 候选字节级一致；B1–B7 限制只改 `resources\app.asar`，不动 main/preload/SQLite/IPC） |
+| Main bundle | `apps\desktop\release\win-unpacked\resources\app\dist\main\index.js`；SHA-256 `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF`（renderer/main 改动落在 `resources\app.asar`，因此 installer/portable/ZIP hash 与 win-unpacked EXE hash 解耦） |
 | 真实业务基线 | 最新已记录采集为 8/8、导入为 8 files / 1937 metrics / 8 reconciliations；存在 enabled 策略、active 运营任务和 draft 经营实验 |
 | 新增执行恢复 | `UNKNOWN` 只读双次对账会在刷新前后读取并截图，校验稳定对象，保持原执行 `unknown` 且另记 `READBACK`；不会重试写入 |
 | 新增因果记忆 | 当前店铺索引真实重建、索引搜索和 US/USD JSON 时间线导出 |
 | 当前 Ads 安全门 | 最近只读记录仍为对象 authority=0、approval=0、Ads execution=0；真实写入须先唯一回读当前对象并取得该候选专属批准 |
-| 当前静态构建 | `pnpm run build:win` 七步通过，`freshCurrentRun=true`；Main bundle `1FAF882D...8FAB4`；源码与包内 `s is not defined` 均为 0 |
+| 当前静态构建 | 2026-08-31 14:01:50 `pnpm run build:win` 七步通过，`freshCurrentRun=true`，约 5m53s；构建日志 `output\build-win-20260831-135557.log` |
 | 最近运行态基线 | `1.5.0` 的 Package UI `operator-core-20260826-91` 三档曾通过；这是历史基线，不授予 `1.5.1` 信用 |
 | `1.5.1` 动态门 | typecheck、7 类业务 smoke、Package UI、ZIP 真启动、正式库前后只读零写入复核及真实 Ads 写入/刷新回读待运行；用户当前禁止这些动作 |
 | 正式八门 / bundle | `1.5.1` 尚未生成当前 readiness/bundle；旧 READY/NON_READY、旧哈希、旧 manifest 和旧 bundle 仅作历史记录 |
@@ -142,6 +145,20 @@ pnpm install
 pnpm dev
 ```
 
+直接运行已构建的 win-unpacked 包（无需重新打包）：
+
+```powershell
+run-unpacked.bat
+```
+
+此脚本直接启动 `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe`，不走 `pnpm dev` 流程。S7 安全门要求使用规范用户数据路径，不传自定义 `--user-data-dir`。
+
+如需重建后再启动：
+
+```powershell
+build-and-run-dev.bat
+```
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -238,7 +255,8 @@ pnpm --filter @amazon-ai-ops/desktop run build:win
 | 文档 | 用途 |
 |---|---|
 | `AGENTS.md` | 后续 AI 接手规则、生产交付链、提交边界和验证要求 |
-| `docs\amazon_ai_ops_desktop_prd_arch_dev_spec_v1_5_no_external.md` | v1.5 PRD / 架构 / 开发规格 |
+| `docs\amazon_ai_ops_desktop_prd_arch_dev_spec_v1_5_no_external.md` | v1.5 PRD / 架构 / 开发规格（历史与当前实现基线） |
+| `docs\amazon_ai_ops_agent_prd_v1_6_0.md` | v1.6.0 下一目标版本完整产品需求规格（Draft / Proposed，不代表已实现或已验收） |
 | `docs\MISSING_MODULES_MATRIX.md` | 缺失模块矩阵 |
 | `docs\V1_5_PROGRESS_REPORT.md` | 详细进度、历史增量、证据记录 |
 | `docs\V1_5_ACCEPTANCE_MATRIX.md` | 验收矩阵 |

@@ -35,6 +35,7 @@ import {
   type ResolveCanonicalKeywordInput,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
+import { MissionDomainRepository } from './mission-domain-repo';
 
 export type ExecutionAuthorityErrorCode =
   | 'INVALID_CONTEXT'
@@ -396,12 +397,14 @@ interface ProposalDecisionRow {
  */
 export class ExecutionAuthorityRepository {
   private readonly now: () => Date;
+  private readonly missionRepository: MissionDomainRepository;
 
   constructor(
     private readonly db: Database.Database,
     options: ExecutionAuthorityRepositoryOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
+    this.missionRepository = new MissionDomainRepository(db, { now: this.now });
   }
 
   registerCanonicalKeywordIdentity(
@@ -874,87 +877,25 @@ export class ExecutionAuthorityRepository {
     const context = normalizeContext(contextInput);
     return this.immediate(() => {
       this.assertContext(context);
-      const job = this.requireMutableJob(
-        context,
-        input.jobId,
-        input.expectedRevision,
-        ['intent_written', 'submitted', 'verifying'],
-        true,
-      );
-      const reasonCode = idOf(input.reasonCode, 'reasonCode');
-      const detail = input.detail === undefined
-        ? undefined
-        : safeProjectionText(input.detail, 'detail');
-      const updatedAt = this.timestamp();
-      const changed = this.db.prepare(`
-        UPDATE ad_execution_jobs SET status = 'unknown', revision = revision + 1,
-          updated_at = ?, terminal_at = COALESCE(terminal_at, ?)
-        WHERE store_id = ? AND id = ? AND revision = ?
-          AND status IN ('intent_written', 'submitted', 'verifying')
-      `).run(updatedAt, updatedAt, context.storeId, job.id, job.revision);
-      if (changed.changes !== 1) throw revisionConflict(`Execution job ${job.id} lost its UNKNOWN CAS transition.`);
-      this.insertEvent({
-        storeId: context.storeId,
-        batchId: job.batch_id,
-        jobId: job.id,
-        sequence: this.nextEventSequence(context.storeId, job.id),
-        eventType: 'unknown',
-        fromStatus: job.status,
-        toStatus: 'unknown',
-        actorId: 'executor',
-        reasonCode,
-        detail,
-        sessionGeneration: context.sessionGeneration,
-        createdAt: updatedAt,
-      });
+      return this.markUnknownInternal(context, input);
+    });
+  }
 
-      // UNKNOWN is a Mission-wide stop. Cancel every sibling that provably has
-      // not crossed submit intent before the batch itself becomes terminal.
-      const siblings = this.db.prepare(`
-        SELECT * FROM ad_execution_jobs
-        WHERE store_id = ? AND batch_id = ? AND id <> ?
-          AND status IN ('queued', 'preflight')
-        ORDER BY ordinal
-      `).all(context.storeId, job.batch_id, job.id) as JobRow[];
-      for (const sibling of siblings) {
-        const cancelled = this.db.prepare(`
-          UPDATE ad_execution_jobs SET status = 'cancelled', revision = revision + 1,
-            updated_at = ?, terminal_at = COALESCE(terminal_at, ?)
-          WHERE store_id = ? AND id = ? AND revision = ?
-            AND status IN ('queued', 'preflight')
-        `).run(updatedAt, updatedAt, context.storeId, sibling.id, sibling.revision);
-        if (cancelled.changes !== 1) {
-          throw revisionConflict(`Execution sibling ${sibling.id} lost its UNKNOWN-stop CAS transition.`);
-        }
-        this.insertEvent({
-          storeId: context.storeId,
-          batchId: sibling.batch_id,
-          jobId: sibling.id,
-          sequence: this.nextEventSequence(context.storeId, sibling.id),
-          eventType: 'cancelled',
-          fromStatus: sibling.status,
-          toStatus: 'cancelled',
-          actorId: 'executor',
-          reasonCode: 'batch_stopped_after_unknown',
-          detail: 'Mission batch stopped before this action entered submit intent.',
-          sessionGeneration: sibling.created_session_generation,
-          createdAt: updatedAt,
-        });
-      }
-      const batch = this.refreshBatchStatus(context.storeId, job.batch_id, updatedAt);
-      if (isTerminalAdExecutionStatus(batch.status)) {
-        this.ensureExecutionGrantTerminal(
-          context.storeId,
-          job.grant_id,
-          job.batch_id,
-          batch.status,
-          updatedAt,
-        );
-      }
-      const projection = this.requireProjection(context.storeId, job.batch_id);
-      const current = projection.jobs.find((candidate) => candidate.id === job.id);
-      if (!current) throw notFound(`Execution job ${job.id} disappeared after UNKNOWN transition.`);
-      return { job: current, batch, missionId: job.mission_id, grantId: job.grant_id };
+  /**
+   * A save click may tear down the Ads page and immediately downgrade the
+   * connection. Only the restrictive post-intent terminal transition may run
+   * without a ready Ads session; all write/evidence transitions remain behind
+   * assertContext.
+   */
+  terminalizePostIntentUnknownAfterAuthorityLoss(
+    contextInput: StoreContextEnvelope,
+    input: Omit<MarkAdExecutionTerminalRequest, 'context'>,
+  ): AdExecutionBatchProjection {
+    const context = normalizeContext(contextInput);
+    return this.immediate(() => {
+      this.assertStoreContext(context);
+      const result = this.markUnknownInternal(context, input);
+      return this.requireProjection(context.storeId, result.batch.id);
     });
   }
 
@@ -1457,6 +1398,93 @@ export class ExecutionAuthorityRepository {
     });
   }
 
+  private markUnknownInternal(
+    context: StoreContextEnvelope,
+    input: Omit<MarkAdExecutionTerminalRequest, 'context'>,
+  ): AdExecutionTransitionResult {
+    const job = this.requireMutableJob(
+      context,
+      input.jobId,
+      input.expectedRevision,
+      ['intent_written', 'submitted', 'verifying'],
+      true,
+    );
+    const reasonCode = idOf(input.reasonCode, 'reasonCode');
+    const detail = input.detail === undefined
+      ? undefined
+      : safeProjectionText(input.detail, 'detail');
+    const updatedAt = this.timestamp();
+    const changed = this.db.prepare(`
+      UPDATE ad_execution_jobs SET status = 'unknown', revision = revision + 1,
+        updated_at = ?, terminal_at = COALESCE(terminal_at, ?)
+      WHERE store_id = ? AND id = ? AND revision = ?
+        AND status IN ('intent_written', 'submitted', 'verifying')
+    `).run(updatedAt, updatedAt, context.storeId, job.id, job.revision);
+    if (changed.changes !== 1) throw revisionConflict(`Execution job ${job.id} lost its UNKNOWN CAS transition.`);
+    this.insertEvent({
+      storeId: context.storeId,
+      batchId: job.batch_id,
+      jobId: job.id,
+      sequence: this.nextEventSequence(context.storeId, job.id),
+      eventType: 'unknown',
+      fromStatus: job.status,
+      toStatus: 'unknown',
+      actorId: 'executor',
+      reasonCode,
+      detail,
+      sessionGeneration: context.sessionGeneration,
+      createdAt: updatedAt,
+    });
+
+    // UNKNOWN is a Mission-wide stop. Cancel every sibling that provably has
+    // not crossed submit intent before the batch itself becomes terminal.
+    const siblings = this.db.prepare(`
+      SELECT * FROM ad_execution_jobs
+      WHERE store_id = ? AND batch_id = ? AND id <> ?
+        AND status IN ('queued', 'preflight')
+      ORDER BY ordinal
+    `).all(context.storeId, job.batch_id, job.id) as JobRow[];
+    for (const sibling of siblings) {
+      const cancelled = this.db.prepare(`
+        UPDATE ad_execution_jobs SET status = 'cancelled', revision = revision + 1,
+          updated_at = ?, terminal_at = COALESCE(terminal_at, ?)
+        WHERE store_id = ? AND id = ? AND revision = ?
+          AND status IN ('queued', 'preflight')
+      `).run(updatedAt, updatedAt, context.storeId, sibling.id, sibling.revision);
+      if (cancelled.changes !== 1) {
+        throw revisionConflict(`Execution sibling ${sibling.id} lost its UNKNOWN-stop CAS transition.`);
+      }
+      this.insertEvent({
+        storeId: context.storeId,
+        batchId: sibling.batch_id,
+        jobId: sibling.id,
+        sequence: this.nextEventSequence(context.storeId, sibling.id),
+        eventType: 'cancelled',
+        fromStatus: sibling.status,
+        toStatus: 'cancelled',
+        actorId: 'executor',
+        reasonCode: 'batch_stopped_after_unknown',
+        detail: 'Mission batch stopped before this action entered submit intent.',
+        sessionGeneration: sibling.created_session_generation,
+        createdAt: updatedAt,
+      });
+    }
+    const batch = this.refreshBatchStatus(context.storeId, job.batch_id, updatedAt);
+    if (isTerminalAdExecutionStatus(batch.status)) {
+      this.ensureExecutionGrantTerminal(
+        context.storeId,
+        job.grant_id,
+        job.batch_id,
+        batch.status,
+        updatedAt,
+      );
+    }
+    const projection = this.requireProjection(context.storeId, job.batch_id);
+    const current = projection.jobs.find((candidate) => candidate.id === job.id);
+    if (!current) throw notFound(`Execution job ${job.id} disappeared after UNKNOWN transition.`);
+    return { job: current, batch, missionId: job.mission_id, grantId: job.grant_id };
+  }
+
   private transition(
     contextInput: StoreContextEnvelope,
     input: Omit<AdExecutionJobTransitionRequest, 'context'>,
@@ -1694,6 +1722,33 @@ export class ExecutionAuthorityRepository {
     }
     const rules = objectOf(parseJson(policy.rulesJson, 'policy rules'));
     if (rules.killSwitch === true) throw stateConflict('Execution policy kill switch is enabled.');
+    const actionTypes = uniqueStringArray(parseJson(row.allowed_action_types_json, 'grant action types'));
+    if (actionTypes.length !== 1 || actionTypes[0] !== AD_EXECUTION_ACTION_TYPE) {
+      throw stateConflict('Execution V1 grant must allow only set_keyword_bid.');
+    }
+    const entityIds = uniqueStringArray(parseJson(row.allowed_ad_entity_ids_json, 'grant entity ids'));
+    if (entityIds.length > MAX_AD_EXECUTION_ACTIONS_PER_BATCH) {
+      throw stateConflict(
+        `Execution V1 allows at most ${MAX_AD_EXECUTION_ACTIONS_PER_BATCH} actions per batch.`,
+      );
+    }
+    let effectivePolicyVersionId: string;
+    try {
+      effectivePolicyVersionId = this.missionRepository.resolveEffectivePolicyVersion(context, {
+        allowedActionTypes: [AD_EXECUTION_ACTION_TYPE],
+        allowedAdEntityIds: entityIds,
+        at: this.now().toISOString(),
+      }).id;
+    } catch (error) {
+      throw stateConflict(error instanceof Error
+        ? error.message
+        : 'Execution grant policy priority could not be resolved safely.');
+    }
+    if (effectivePolicyVersionId !== row.policy_version_id) {
+      throw stateConflict(
+        '授权绑定的策略不再是当前广告对象的最高优先级唯一匹配；请重新运行分析并签发新授权。',
+      );
+    }
     const runtime = this.db.prepare(`
       SELECT autonomy_mode AS autonomyMode, kill_switch AS killSwitch,
              circuit_breaker_state AS circuitBreakerState,
@@ -1703,7 +1758,7 @@ export class ExecutionAuthorityRepository {
       autonomyMode: string; killSwitch: number; circuitBreakerState: string; activePolicyVersionId: string | null;
     } | undefined;
     if (!runtime || runtime.killSwitch !== 0 || runtime.circuitBreakerState !== 'closed'
-      || runtime.activePolicyVersionId !== row.policy_version_id
+      || !runtime.activePolicyVersionId
       || (row.issuer_type === 'policy' && runtime.autonomyMode !== 'policy_auto')) {
       throw stateConflict('Execution policy runtime is not safe for this grant.');
     }

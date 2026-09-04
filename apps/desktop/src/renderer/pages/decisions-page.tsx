@@ -29,6 +29,7 @@ import { buildDecisionEvidenceSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { importedReportTypeCoverageCount, realReportCoverageCount } from '../report-coverage';
+import { localizeDecisionAction } from '@amazon-ai-ops/business-presenters';
 import type { BusinessDataPipeline, OperationScope, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 import {
@@ -253,29 +254,8 @@ export function buildDecisionsGenerationRequest(
   };
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  add_negative_broad: '添加广泛否定',
-  add_negative_exact: '添加精准否定',
-  add_negative_phrase: '添加词组否定',
-  archive_campaign: '归档广告活动',
-  create_campaign: '新建广告活动',
-  lower_bid: '降低出价',
-  raise_bid: '提高出价',
-  pause_keyword: '暂停关键词',
-  pause_target: '暂停投放对象',
-  resume_target: '恢复投放对象',
-  negative_keyword: '添加否定词',
-  add_negative_keyword: '添加否定词',
-  adjust_campaign_budget: '调整活动预算',
-  increase_campaign_budget: '提高活动预算',
-  decrease_campaign_budget: '降低活动预算',
-  enable_keyword: '启用关键词',
-};
-
 export function decisionActionLabel(actionType: unknown): string {
-  const normalized = String(actionType || '').trim();
-  if (!normalized) return '待确认动作';
-  return ACTION_LABELS[normalized] || normalized.replace(/_/g, ' ');
+  return localizeDecisionAction(actionType);
 }
 
 export type DecisionsPrimaryQueueTask = {

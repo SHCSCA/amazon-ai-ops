@@ -1,0 +1,231 @@
+{
+  "generatedAt": "2026-07-20T08:13:07.132Z",
+  "url": "http://127.0.0.1:4175/",
+  "passed": 39,
+  "total": 39,
+  "browserErrors": [],
+  "results": [
+    {
+      "name": "1440 桌面壳层",
+      "passed": true,
+      "detail": {
+        "horizontalFit": true,
+        "topbar": 52,
+        "sidebar": 184,
+        "mainScrollOwner": "auto"
+      }
+    },
+    {
+      "name": "1440 对象检查器内联",
+      "passed": true,
+      "detail": {
+        "width": 360,
+        "horizontalFit": true
+      }
+    },
+    {
+      "name": "1280 紧凑壳层",
+      "passed": true,
+      "detail": {
+        "horizontalFit": true,
+        "topbar": 82,
+        "sidebar": 176
+      }
+    },
+    {
+      "name": "1280 对象检查器抽屉",
+      "passed": true,
+      "detail": {
+        "width": 460,
+        "backdrop": true,
+        "horizontalFit": true
+      }
+    },
+    {
+      "name": "打开新增产品弹窗",
+      "passed": true,
+      "detail": "primary CRUD action is clickable"
+    },
+    {
+      "name": "填写产品 SKU",
+      "passed": true,
+      "detail": "field found"
+    },
+    {
+      "name": "填写产品 ASIN",
+      "passed": true,
+      "detail": "field found"
+    },
+    {
+      "name": "填写产品名称",
+      "passed": true,
+      "detail": "field found"
+    },
+    {
+      "name": "保存新增产品",
+      "passed": true,
+      "detail": "modal save enabled"
+    },
+    {
+      "name": "产品新增显示",
+      "passed": true,
+      "detail": "new product is visible in current store"
+    },
+    {
+      "name": "产品刷新持久化",
+      "passed": true,
+      "detail": "new product remains after reload"
+    },
+    {
+      "name": "打开产品编辑",
+      "passed": true,
+      "detail": "row edit action works"
+    },
+    {
+      "name": "修改产品名称",
+      "passed": true,
+      "detail": "controlled input accepts edit"
+    },
+    {
+      "name": "保存产品编辑",
+      "passed": true,
+      "detail": "edit persisted"
+    },
+    {
+      "name": "门店数据隔离",
+      "passed": true,
+      "detail": "SHC001 product is absent in LMX002"
+    },
+    {
+      "name": "切回门店恢复数据",
+      "passed": true,
+      "detail": "SHC001 product returns"
+    },
+    {
+      "name": "打开审批确认",
+      "passed": true,
+      "detail": "approval action is clickable"
+    },
+    {
+      "name": "填写审批理由",
+      "passed": true,
+      "detail": "reason field accepts text"
+    },
+    {
+      "name": "确认审批",
+      "passed": true,
+      "detail": "confirmation action works"
+    },
+    {
+      "name": "审批写入不可变账本",
+      "passed": true,
+      "detail": {
+        "approvedCount": 2
+      }
+    },
+    {
+      "name": "批准动作加入模拟队列",
+      "passed": true,
+      "detail": "enqueue action works"
+    },
+    {
+      "name": "存在待模拟执行 run",
+      "passed": true,
+      "detail": {
+        "queuedExecutionId": "SHC001-execution-mrsy667q-v73rp3"
+      }
+    },
+    {
+      "name": "开始模拟执行",
+      "passed": true,
+      "detail": "preflight passed and action is clickable"
+    },
+    {
+      "name": "附加 BEFORE 原型证据",
+      "passed": true,
+      "detail": "evidence slot is clickable"
+    },
+    {
+      "name": "附加 AFTER 原型证据",
+      "passed": true,
+      "detail": "evidence slot is clickable"
+    },
+    {
+      "name": "附加 RELOAD 原型证据",
+      "passed": true,
+      "detail": "evidence slot is clickable"
+    },
+    {
+      "name": "模拟回读已创建",
+      "passed": true,
+      "detail": {
+        "id": "SHC001-readback-mrsy66by-e59ylw",
+        "savedValue": 168
+      }
+    },
+    {
+      "name": "填写 reload 值",
+      "passed": true,
+      "detail": "reload field accepts saved value"
+    },
+    {
+      "name": "记录 reload 与身份",
+      "passed": true,
+      "detail": "readback identity action works"
+    },
+    {
+      "name": "验证模拟回读",
+      "passed": true,
+      "detail": "verification action works"
+    },
+    {
+      "name": "回读三证据仅限原型",
+      "passed": true,
+      "detail": {
+        "status": "verified",
+        "evidenceCount": 3,
+        "prototypeOnly": true
+      }
+    },
+    {
+      "name": "编辑 Listing 标题",
+      "passed": true,
+      "detail": "textarea value contract works"
+    },
+    {
+      "name": "保存 Listing 草稿",
+      "passed": true,
+      "detail": "draft save action works"
+    },
+    {
+      "name": "保存 Listing 版本",
+      "passed": true,
+      "detail": "immutable version action works"
+    },
+    {
+      "name": "打开新增定时任务",
+      "passed": true,
+      "detail": "scheduler CRUD action works"
+    },
+    {
+      "name": "填写任务名称",
+      "passed": true,
+      "detail": "field found"
+    },
+    {
+      "name": "填写触发规则",
+      "passed": true,
+      "detail": "field found"
+    },
+    {
+      "name": "保存定时任务",
+      "passed": true,
+      "detail": "schedule save works"
+    },
+    {
+      "name": "运行时无页面异常",
+      "passed": true,
+      "detail": []
+    }
+  ]
+}

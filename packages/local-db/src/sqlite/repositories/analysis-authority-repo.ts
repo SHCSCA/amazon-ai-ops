@@ -2,16 +2,19 @@ import { createHash } from 'crypto';
 import type Database from 'better-sqlite3';
 import {
   ANALYSIS_REQUIRED_REPORT_TYPES,
+  ANALYSIS_PROPOSAL_MATCH_TYPES,
   normalizeStoreContextEnvelope,
   validateAnalysisEvidencePackage,
   validateAnalysisProposalSnapshot,
   validateVerifiedAdEntityAuthority,
   type AnalysisActionBatchRecord,
+  type AnalysisProposalAuthorization,
   type AnalysisAuthorizationEligibility,
   type AnalysisEvidencePackageRecord,
   type AnalysisEvidenceSourceRef,
   type AnalysisProposalBlockerCode,
   type AnalysisProposalDecisionLinkRecord,
+  type AnalysisProposalMatchType,
   type AnalysisProposalSnapshotRecord,
   type AnalysisProposalSource,
   type CreateAnalysisProposalSnapshotInput,
@@ -21,6 +24,7 @@ import {
   type VerifiedAdEntityAuthorityRecord,
   type VerifiedAdEntityType,
 } from '@amazon-ai-ops/shared-types';
+import { MissionDomainRepository } from './mission-domain-repo';
 
 export type AnalysisAuthorityErrorCode =
   | 'INVALID_CONTEXT'
@@ -135,6 +139,10 @@ interface ProposalRow {
   created_at: string;
   created_session_generation: number;
 }
+
+type ProposalSnapshotJson = AnalysisProposalAuthorization & {
+  matchType?: AnalysisProposalMatchType;
+};
 
 interface ActionBatchRow {
   id: string;
@@ -671,6 +679,7 @@ export class AnalysisAuthorityRepository {
         );
       }
       const entityName = textOf(recommendation.entity_name, 'entityName', 500);
+      const matchType = recommendationMatchType(recommendationEvidence);
       const campaignName = textOf(recommendationEvidence.campaignName, 'campaignName', 500);
       const adGroupName = textOf(recommendationEvidence.adGroupName, 'adGroupName', 500);
       const authority = input.adEntityAuthorityId
@@ -737,6 +746,7 @@ export class AnalysisAuthorityRepository {
         legacyRecommendationId: recommendationId,
         actionType: 'set_keyword_bid',
         entityType,
+        matchType,
         entityName,
         campaignName,
         adGroupName,
@@ -780,7 +790,10 @@ export class AnalysisAuthorityRepository {
         adEntityAuthorityId: record.adEntityAuthorityId ?? null,
         adEntityId: record.adEntityId ?? null,
         adEntityRevision: record.adEntityRevision ?? null,
-        authorizationJson: JSON.stringify(record.authorization),
+        authorizationJson: JSON.stringify({
+          ...record.authorization,
+          ...(record.matchType ? { matchType: record.matchType } : {}),
+        } satisfies ProposalSnapshotJson),
       });
       return this.requireProposal(context, record.id);
     });
@@ -921,6 +934,21 @@ export class AnalysisAuthorityRepository {
     const policyBlockers = [...common];
     if (source === 'ai') policyBlockers.push('AI_ONLY_NOT_POLICY_AUTHORIZABLE');
     if (source === 'rule') policyBlockers.push('POLICY_REQUIRES_RULE_AI_ALIGNMENT');
+    if (authority) {
+      try {
+        const effectivePolicyVersion = new MissionDomainRepository(this.db, { now: this.now })
+          .resolveEffectivePolicyVersion(input.context, {
+            allowedActionTypes: ['set_keyword_bid'],
+            allowedAdEntityIds: [authority.adEntityId],
+            at: this.timestamp(),
+          });
+        if (effectivePolicyVersion.id !== input.policyVersionId) {
+          policyBlockers.push('POLICY_PRIORITY_MISMATCH');
+        }
+      } catch {
+        policyBlockers.push('POLICY_PRIORITY_MISMATCH');
+      }
+    }
     const runtime = this.db.prepare(`
       SELECT autonomy_mode AS autonomyMode, kill_switch AS killSwitch,
              circuit_breaker_state AS circuitBreakerState,
@@ -936,7 +964,7 @@ export class AnalysisAuthorityRepository {
       || runtime.autonomyMode !== 'policy_auto'
       || Number(runtime.killSwitch) !== 0
       || runtime.circuitBreakerState !== 'closed'
-      || runtime.activePolicyVersionId !== input.policyVersionId) {
+      || !runtime.activePolicyVersionId) {
       policyBlockers.push('POLICY_RUNTIME_BLOCKED');
     }
     return { human, policy: eligibility(policyBlockers) };
@@ -1128,6 +1156,7 @@ function mapAuthority(row: AuthorityRow): VerifiedAdEntityAuthorityRecord {
 }
 
 function mapProposal(row: ProposalRow): AnalysisProposalSnapshotRecord {
+  const snapshotJson = parseJson<ProposalSnapshotJson>(row.authorization_json);
   const record: AnalysisProposalSnapshotRecord = {
     id: row.id,
     storeId: row.store_id as AnalysisProposalSnapshotRecord['storeId'],
@@ -1147,6 +1176,7 @@ function mapProposal(row: ProposalRow): AnalysisProposalSnapshotRecord {
     legacyRecommendationId: row.legacy_recommendation_id,
     actionType: row.action_type,
     entityType: row.entity_type,
+    matchType: canonicalProposalMatchType(snapshotJson.matchType),
     entityName: row.entity_name,
     campaignName: row.campaign_name,
     adGroupName: row.ad_group_name,
@@ -1159,7 +1189,10 @@ function mapProposal(row: ProposalRow): AnalysisProposalSnapshotRecord {
     confidence: row.confidence,
     source: row.source,
     explanation: row.explanation,
-    authorization: parseJson(row.authorization_json),
+    authorization: {
+      human: snapshotJson.human,
+      policy: snapshotJson.policy,
+    },
     validUntil: row.valid_until,
     createdAt: row.created_at,
     createdSessionGeneration: row.created_session_generation,
@@ -1212,6 +1245,23 @@ function recommendationEntityType(
     'UNSUPPORTED_ACTION',
     `Recommendation entity type ${candidate || entityType || 'unknown'} is not a stable V1 writable target.`,
   );
+}
+
+function recommendationMatchType(
+  evidence: Record<string, unknown>,
+): AnalysisProposalMatchType | undefined {
+  return canonicalProposalMatchType(evidence.matchType);
+}
+
+function canonicalProposalMatchType(value: unknown): AnalysisProposalMatchType | undefined {
+  const candidate = String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-');
+  return ANALYSIS_PROPOSAL_MATCH_TYPES.includes(candidate as AnalysisProposalMatchType)
+    ? candidate as AnalysisProposalMatchType
+    : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

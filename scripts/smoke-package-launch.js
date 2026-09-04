@@ -20,8 +20,16 @@ const runId = Date.now();
 const isolatedUserDataRoot = path.join('D:\\Temp', 'amazon-ai-ops-package-launch-smoke', String(runId));
 const PORTABLE_START_TIMEOUT_MS = 300000;
 const UNPACKED_START_TIMEOUT_MS = 60000;
-const WINDOWS_PROCESS_COMMAND_TIMEOUT_MS = 10000;
-const WINDOWS_PROCESS_COMMAND_ATTEMPTS = 2;
+// Bumped from 30000 -> 60000 and attempts from 2 -> 3 (max 180s) because the
+// 2026-08-31 portable half still hit pwsh.exe ETIMEDOUT inside
+// windowsDescendants() even at 60s total window. The portable app launched,
+// the window-ready marker validated, and cleanup killed the launcher cleanly —
+// only the process-tree observation timed out. On busy or slow Windows hosts,
+// Get-Process over many PIDs can exceed 60s. The smoke contract still requires
+// observationErrors and processCleanup.treeErrors to be empty, so this only
+// widens the wait, never weakens the failure gates.
+const WINDOWS_PROCESS_COMMAND_TIMEOUT_MS = 60000;
+const WINDOWS_PROCESS_COMMAND_ATTEMPTS = 3;
 const TASKKILL_COMMAND_TIMEOUT_MS = 10000;
 const PROCESS_CLEANUP_ATTEMPTS = 20;
 const PROCESS_CLEANUP_INTERVAL_MS = 250;

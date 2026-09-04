@@ -268,6 +268,77 @@ function seedImportAuthority(
         'exact', 1000, 30, 40, 1, 60, 'USD', 0.6667, 1.49, 0.0333, ?, ?, ?)
     `).run(storeId, batchId, reportType, filePath, index + 2, NOW);
   });
+  seedProductionFullCollectionRoot(database, storeId, batchId, missingReportType);
+}
+
+function seedProductionFullCollectionRoot(
+  database: Database.Database,
+  storeId: string,
+  batchId: string,
+  missingReportType?: string,
+): void {
+  const requestId = `request-${storeId}`;
+  const profileId = storeId === 'store-one' ? 'profile-one' : 'profile-two';
+  const snapshot = {
+    jobId: batchId,
+    request: {
+      requestId,
+      storeContext: { storeId },
+      dateStart: '2026-07-22',
+      dateEnd: '2026-07-22',
+      mode: 'create-and-download',
+      reportTypes: ANALYSIS_REQUIRED_REPORT_TYPES as unknown as string[],
+    },
+    lineage: {
+      lineageId: batchId,
+      rootJobId: batchId,
+      expectedReportTypes: ANALYSIS_REQUIRED_REPORT_TYPES as unknown as string[],
+      purpose: 'production_full',
+    },
+    state: 'completed',
+    reports: ANALYSIS_REQUIRED_REPORT_TYPES.map((reportType) => ({
+      reportType,
+      state: 'downloaded',
+      attemptIndex: 0,
+      autoRetryCount: 0,
+      fileSizeBytes: 1024,
+      updatedAt: NOW,
+    })),
+    createdAt: NOW,
+    updatedAt: NOW,
+    completedAt: NOW,
+    importState: 'succeeded',
+    importAttemptedAt: NOW,
+    importCompletedAt: NOW,
+  };
+  database.prepare(`
+    INSERT INTO lingxing_collection_jobs (
+      store_id, job_id, request_id, browser_profile_id, marketplace, currency,
+      business_timezone, business_date, session_generation, date_start, date_end,
+      mode, report_types_json, state, snapshot_json, created_at, updated_at, completed_at
+    ) VALUES (?, ?, ?, ?, 'US', 'USD', 'America/Los_Angeles', '2026-07-22', 4,
+      '2026-07-22', '2026-07-22', 'create-and-download', ?, 'completed', ?, ?, ?, ?)
+  `).run(
+    storeId,
+    batchId,
+    requestId,
+    profileId,
+    JSON.stringify(ANALYSIS_REQUIRED_REPORT_TYPES),
+    JSON.stringify(snapshot),
+    NOW,
+    NOW,
+    NOW,
+  );
+  const insertCheckpoint = database.prepare(`
+    INSERT INTO lingxing_collection_report_checkpoints (
+      store_id, job_id, report_type, state, attempt_index, auto_retry_count,
+      file_size_bytes, updated_at
+    ) VALUES (?, ?, ?, 'downloaded', 0, 0, 1024, ?)
+  `);
+  ANALYSIS_REQUIRED_REPORT_TYPES.forEach((reportType) => {
+    if (reportType === missingReportType) return;
+    insertCheckpoint.run(storeId, batchId, reportType, NOW);
+  });
 }
 
 function seedBootstrapPolicyAuthority(input: {
@@ -679,6 +750,39 @@ describe('AnalysisAuthorityRepository', () => {
       decisionId: decision.id,
     });
     expect(link).toMatchObject({ proposalId: proposal.id, decisionId: decision.id });
+  });
+
+  it('preserves the recommendation match type in the immutable proposal projection', () => {
+    const harness = createHarness();
+    const evidence = seal(harness);
+    const authority = registerAuthority(harness, evidence.id);
+    const recommendationId = insertRecommendation(harness, { matchType: 'Exact' });
+    const actionBatch = harness.repository.createActionBatch(harness.context, {
+      id: 'analysis-batch-match-type',
+      missionId: harness.missionId,
+      evidencePackageId: evidence.id,
+      expectedMissionRevision: 1,
+    });
+
+    const created = harness.repository.createProposalSnapshot(harness.context, {
+      id: 'proposal-match-type',
+      missionId: harness.missionId,
+      evidencePackageId: evidence.id,
+      actionBatchId: actionBatch.id,
+      legacyRecommendationId: recommendationId,
+      adEntityAuthorityId: authority.authorityId,
+      validUntil: '2026-07-23T12:00:00.000Z',
+    });
+    const loaded = harness.repository.getProposalSnapshot(harness.context, created.id);
+    const projected = harness.repository.listProposalSnapshots(harness.context, harness.missionId);
+
+    expect(created.matchType).toBe('exact');
+    expect(loaded?.matchType).toBe('exact');
+    expect(projected).toContainEqual(expect.objectContaining({
+      id: created.id,
+      entityName: 'door lock',
+      matchType: 'exact',
+    }));
   });
 
   it('only marks an explicit aligned rule-AI decision without review as policy eligible', () => {

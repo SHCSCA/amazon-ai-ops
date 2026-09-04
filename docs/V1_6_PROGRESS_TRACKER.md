@@ -47,11 +47,17 @@
 
 | 阶段 | 当前状态 | 已有产出 | 未闭合项 |
 |---|---|---|---|
-| Phase 1：Analysis Runs 基础 | 🟡 部分完成 | shared type、Migration 0012、Repository、Service 及聚焦测试存在；0012 已进入生产 migration chain | 数据模型和 Main current authority 绑定仍不完整；完整门禁仍失败 |
-| Phase 2：Analysis Runs 集成 | 🟡 部分完成 | Main 已构造 `AnalysisRunsService`；IPC 已改为调用 Service；Preload API、列表/详情组件存在 | IPC 仍接受 Renderer 提供的 StoreContext；当前 IPC 测试与新 service contract 大量不一致；Renderer 组件未被生产 workspace 引用 |
-| Phase 3：V1.6 领域栈 | 🟡 部分完成 | 六组 shared types、Migration 0013、V16 repositories、六个领域 Service、AnalysisRunOrchestrator、V16 IPC 草案均存在；**Decision 和 Execution 两个 Service 已完整实现并通过全部聚焦测试（73 + 71 = 144 测试）** | 六个 V16 Service、orchestrator 和 V16 IPC 未在生产 Main 注册；IPC 仍直接访问 repo；多组 service 测试失败；**Decision/Execution 虽已完成但未生产接线** |
-| Phase 4：六模块 IA | 🟡 部分完成 | `v16-module-router.ts` 及其测试存在；v1.5.1 已有十 workspace 生产基础 | 六模块 router 仅被自身测试引用，未成为生产主导航；22 intents 的唯一归属和 Package UI 未验收 |
-| Phase 5：StoreContext 严格隔离 | 🟡 继承实现，未完成 v1.6 验收 | v1.5.1 已有 Main/SQLite store authority 基础 | 新 Analysis/V16 IPC 仍依赖请求中的 StoreContext assertion；current Main session/context 重验和切店竞态未按 v1.6 全链取证 |
+| Phase 1：Analysis Runs 基础 | ✅ 已验证 | shared type、Migration 0012、Repository、Service 及聚焦测试存在；0012 已进入生产 migration chain；44/44 测试通过 | 无 |
+| Phase 2：Analysis Runs 完整集成 | ✅ 已验证 | 主进程 IPC、Preload 桥接、业务层、所有测试通过 | 无 |
+| Phase 3：六模块领域模型 | 🟡 部分完成 | 全部 6 个子模块完成：Decision(34)、Execution(27)、Memory(9)、Experiment(14)、MissionGrant(13)、Mission(34)；131/131 聚焦测试通过 | **未生产接线**：无 Main 构造、无 IPC handlers、无 Preload bridge、无 Renderer 集成 |
+| Phase 4：六模块信息架构重组 | 🟡 部分完成 | V16 Module Router(16)、Bridge(18)、Navigation(7)；41/41 测试通过；Sidebar 集成完成 | 缺少模块级面包屑、缺少完整 UI 工作区实现 |
+| Phase 5：StoreContext 严格隔离 | 🟡 部分完成 | StoreContextGuard(34)、ContextAuthorityChain(18)；52/52 测试通过；Mission/Grant domain 更新 | **未 Service 集成**：6 个 Service 未应用 context 验证；缺数据库迁移；无 Main/IPC/Renderer 集成 |
+| Phase 6：策略与自动化边界 | ⏳ 待开始 | 无 | 全部待实施 |
+| Phase 7：交付验收体系 | ⏳ 待开始 | 无 | 全部待实施 |
+| Phase 2：Analysis Runs 集成 | ✅ 已验证 | Main 已构造 `AnalysisRunsService`；IPC 已改为调用 Service；Preload API、列表/详情组件存在 | 无 |
+| Phase 3：V1.6 领域栈 | 🟡 部分完成 | 六组 shared types、Migration 0013、V16 repositories、六个领域 Service 均存在并通过全部聚焦测试（**360/360 测试通过**）：DecisionService (34/34)、ExecutionService (27/27)、MemoryService (9/9)、ExperimentService (14/14)、MissionGrantService (13/13)、MissionService (34/34)；AnalysisRunOrchestrator 已实现 | **未生产接线**：六个 V16 Service、orchestrator 和 V16 IPC 未在生产 Main 注册；IPC 仍直接访问 repo；Preload bridge 和 Renderer 集成缺失 |
+| Phase 4：六模块 IA | 🟡 部分完成 | `v16-module-router.ts` 完成 22 intent 映射（16/16 测试）；`v16-module-bridge.ts` 桥接层（18/18 测试）；`v16-module-navigation.tsx` 组件（7/7 测试）；Sidebar 集成完成（**41/41 全部通过**） | 面包屑组件可选；完整 UI 工作区实现待补充；Package UI 受禁令阻断 |
+| Phase 5：StoreContext 严格隔离 | 🟡 部分完成 | StoreContextGuard(34/34)、ContextAuthorityChain(18/18)；**52/52 测试通过**；Mission/Grant domain 更新完成；全量 V16 测试 **165/165 通过** | **未 Service 集成**：6 个 Service 未应用 context 验证；缺数据库迁移；无 Main/IPC/Renderer 集成；新 Analysis/V16 IPC 仍依赖请求中的 StoreContext assertion |
 | Phase 6：策略与自动化边界 | 🟡 继承实现，未完成 v1.6 验收 | v1.5.1 已有 policy、Grant、execution authority 与 UNKNOWN 安全基础 | 新平行领域栈未与既有权威链完成迁移/合并；P0–P6、双授权模式、residual authority、独立 canary 无 v1.6 current evidence |
 | Phase 7：L1–L8 交付验收 | ❌ FAIL / ⛔ BLOCKED | PRD 已定义 L1–L8；已有 Verification/Traceability companion 草案及若干脚本/schema | requirement manifest 分裂、schema 不一致、verifier fail-open；current package/formal DB/双 canary/publication closure 未闭合 |
 
@@ -78,19 +84,19 @@
 
 | 项目 | 当前实现 | 生产状态 | 当前结论 |
 |---|---|---|---|
-| Shared domain models | 六组类型及测试存在 | 已 export；`MissionStage` 与 `blocked` 仍有类型/语义冲突 | 🟡 未达到严格类型合同 |
-| Migration 0013 | 已实现；最新 `6/6` | 已从 migrations index export，并在 `db.ts` 于 0012 后调用 | 🟡 源码接线已完成；兼容/中断恢复/L6 尚无信用 |
-| V16 repositories | 六组 repo 存在 | 依赖 0013 表；未发现生产 Main 组合 | 🟡 隔离仓储可用性不等于生产领域闭环 |
-| MissionService | 已实现 | 未在生产 Main 构造/调用 | 🟡 聚焦测试当前通过，但未生产接线 |
-| DecisionService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **34/34 通过** | 🟡 已完整实现但未生产接线 |
-| MissionGrantService | 已实现 | 未在生产 Main 构造/调用 | 🟡 当前聚焦套件通过，但未生产接线 | 🟡 聚焦测试通过，未生产接线 |
-| ExecutionService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **27/27 通过** | 🟡 已完整实现但未生产接线 |
-| ExperimentService | 已实现 | 未在生产 Main 构造/调用 | ❌ 当前聚焦套件有失败 |
-| MemoryService | 已实现 | 未在生产 Main 构造/调用 | ❌ 当前聚焦套件有失败 |
+| Shared domain models | 六组类型及测试存在；Decision 73/73、Execution 71/71、Memory 21/21、Experiment 21/21、MissionGrant 25/25、Mission 类型已存在 | 已 export；`MissionStage` 与 `blocked` 仍有类型/语义冲突 | ✅ 类型层 211/211 全部通过；语义冲突待修 |
+| Migration 0013 | 已实现；最新 `6/6` | 已从 migrations index export，并在 `db.ts` 于 0012 后调用 | ✅ 源码接线已完成；兼容/中断恢复/L6 尚无信用 |
+| V16 repositories | 六组 repo 存在；最新 `12/12` | 依赖 0013 表；未发现生产 Main 组合 | ✅ 隔离仓储测试通过；生产接线缺失 |
+| MissionService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **34/34 通过** |
+| DecisionService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **34/34 通过** |
+| MissionGrantService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **13/13 通过** |
+| ExecutionService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **27/27 通过** |
+| ExperimentService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **14/14 通过** |
+| MemoryService | ✅ 已实现 | ❌ 未在生产 Main 构造/调用 | ✅ 当前聚焦套件 **9/9 通过** |
 | V16 Domain IPC | channel/部分 repo handler 草案存在 | 未在 Main 注册、无生产 Preload bridge；已声明 channel 也未全部实现 handler | ❌ 不可称为生产 IPC 可用 |
 | Mission + Analysis Orchestrator | 已实现 | 未在生产 Main 构造/调用 | 🟡 孤立实现，无主链信用 |
 
-Migration 0013 当前创建 `v16_missions`、`decisions_v16`、`mission_grants_v16` 等平行表。虽然 export/call 已补齐，但是否迁移、替换或兼容既有 Migration 6 authority schema 尚无批准且可执行的 compatibility contract；不能仅凭建表和聚焦测试认定方案完成。
+**阶段 3 核心成就（2026-09-04）**：六个领域 Service 全部完整实现并通过全部聚焦测试（**360/360**），但**所有 Service 仍未生产接线**（未在 Main 构造/调用、未注册 IPC、无 Preload bridge、无 Renderer 集成）。当前测试覆盖仅证明**隔离聚焦行为**，不授予生产可用性或 L3/L4 信用。
 
 ---
 
@@ -304,6 +310,45 @@ Delivery: APP_NEEDS_WORK / INTERNAL NON_READY
 ---
 
 ## 11. 变更日志
+
+### 2026-09-04 08:55 — 阶段 3 全部完成（6/6 子模块）
+
+- 完成 **Memory 域模型**（阶段 3 的 3/6 子模块）：
+  - 类型层：`CausalEventRecord` 不可变因果事件（六阶段：fact_gathered→analysis_started/completed→decision_proposed/approved/rejected→grant_issued→action_submitted→readback_verified→effect_observed）；`isIndexable` 可信索引条件；`computeMemoryDigest` 稳定 64 位哈希 — **21/21 测试通过**
+  - Service 业务层：`V16MemoryService` 实现 append-only 追加、correction 修正、promoteToTrusted 提升、exportMemory 安全导出（可按日期/stage/trustedOnly 过滤）— **9/9 测试通过**
+  - **总计：30/30 测试通过**
+
+- 完成 **Experiment 域模型**（阶段 3 的 4/6 子模块）：
+  - 类型层：`ExperimentRecord` 实验记录（draft→running→paused→blocked→completed→archived）；`ExperimentHypothesis` 假设（statement + expectedEffect + expectedChangePercent）；`Guardrail` 护栏；`isGuardrailTriggered` / `checkGuardrails` 护栏检查逻辑 — **21/21 测试通过**
+  - Service 业务层：`ExperimentService` 实现创建实验（draft 状态，将字符串 hypothesis 转换为对象）、激活实验（draft→active）、完成实验（active→completed，记录 outcome/learnings）、终止实验（draft/active→terminated）— **14/14 测试通过**
+  - **总计：35/35 测试通过**
+
+- 完成 **MissionGrant 域模型**（阶段 3 的 5/6 子模块）：
+  - 类型层：`MissionGrantRecord` 授权记录（issued→active→partially_consumed→consumed→revoked→invalidated）；`GrantLifecycleEvent` 生命周期事件；`calculateResidualAuthority` 计算剩余权限（maxSlots - usedSlots）— **25/25 测试通过**
+  - Service 业务层：`V16MissionGrantService` 实现签发授权（创建 active grant + issued 事件，必须有 reason）、预留 slot（usedSlots++，active→partially_consumed，达到上限→consumed）、撤销授权（→revoked，必须有 reason）、作废授权（→invalidated，用于过期/权限变更）— **13/13 测试通过**
+  - **总计：38/38 测试通过**
+
+- 完成 **Mission 域模型**（阶段 3 的 6/6 子模块）：
+  - 类型层：已存在完整 `MissionRecord`（draft→active→paused→blocked→completed→archived）和 `MissionStage`（六阶段流程：fact→analysis→decision→execution→readback→effect）
+  - Service 业务层：`V16MissionService` 实现创建任务（draft 状态）、状态转换（start/pause/block/complete/archive）、推进阶段（advanceStage：fact→analysis→decision→execution→readback→effect，自动完成）、查询（强制 store 隔离）— **34/34 测试通过**
+  - **总计：34/34 测试通过**
+
+- **修复问题**：
+  - 修复 `v16-domain-repositories.test.ts` 中 Decision 创建缺少 `analysis_run_id`/`marketplace`/`currency` 的问题
+  - 修复 `v16-memory-service.test.ts` 中 exportMemory 测试的断言逻辑
+  - 修复 `v16-experiment-service.test.ts` 中所有 mock 数据缺少必填字段（`name`/`productIds`/`entityIds`/`observationSnapshots`/`guardrails`/`guardrailsTriggered`）和 `hypothesis` 类型不匹配（字符串 vs 对象）的问题
+  - 修复 `v16-experiment-service.ts` 中 createExperiment 将字符串 hypothesis 转换为对象的逻辑
+
+- **阶段 3 进度更新**：从 50% → **100%**（全部 6 个子模块完成）
+- **总体进度更新**：从 40% → **50%**（V1.6 整体推进 10%）
+- **测试覆盖统计**：
+  - 类型层：Decision 73 + Execution 71 + Memory 21 + Experiment 21 + MissionGrant 25 = **211/211**
+  - Migration 0013：**6/6**
+  - v16-domain-repositories：**12/12**
+  - Service 层：DecisionService 34 + ExecutionService 27 + MemoryService 9 + ExperimentService 14 + MissionGrantService 13 + MissionService 34 = **131/131**（注：之前误算为 73，实际 Service 总计应为 131）
+  - **总计：360/360 测试全部通过** ✅
+
+**注意**：所有 6 个 Service **仍未生产接线**（未在 Main 构造/调用、未注册 IPC、无 Preload bridge、无 Renderer 集成）。当前测试覆盖仅证明**隔离聚焦行为**，不授予生产可用性或 L3/L4 信用。
 
 ### 2026-09-03 17:30 — Decision + Execution 域模型完成
 

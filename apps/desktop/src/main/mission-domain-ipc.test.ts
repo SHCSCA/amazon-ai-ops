@@ -38,6 +38,7 @@ describe('Mission domain fixed IPC whitelist', () => {
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:causal:append-evidence-ref' as never);
     expect(MISSION_DOMAIN_IPC_CHANNELS).toContain('mission-domain:policy-runtime:set-kill-switch');
     expect(MISSION_DOMAIN_IPC_CHANNELS).toContain('mission-domain:grants:list-events');
+    expect(MISSION_DOMAIN_IPC_CHANNELS).toContain('mission-domain:experiments:evaluate');
 
     const channel = 'mission-domain:missions:create';
     await handlers.get(channel)?.({}, { storeContext, input: { id: 'mission-1' } });
@@ -45,6 +46,17 @@ describe('Mission domain fixed IPC whitelist', () => {
       MISSION_DOMAIN_IPC_ROUTES[channel],
       storeContext,
       { id: 'mission-1' },
+    );
+
+    const evaluationChannel = 'mission-domain:experiments:evaluate';
+    await handlers.get(evaluationChannel)?.({}, {
+      storeContext,
+      input: { id: 'experiment-1', expectedRevision: 4 },
+    });
+    expect(executeOperation).toHaveBeenLastCalledWith(
+      MISSION_DOMAIN_IPC_ROUTES[evaluationChannel],
+      storeContext,
+      { id: 'experiment-1', expectedRevision: 4 },
     );
 
   });

@@ -8,6 +8,22 @@ export type {
   PriorityDataTableColumnPriority,
   PriorityDataTableProps,
 } from './priority-data-table';
+export { ReasonRequiredDialog } from './reason-required-dialog';
+export type {
+  ReasonRequiredDialogProps,
+  ReasonRequiredDialogTone,
+} from './reason-required-dialog';
+export {
+  selectEntityDeletePolicy,
+  isEntityRemovable,
+  isEntityDestructive,
+} from './entity-delete-policy';
+export type {
+  EntityDeleteContext,
+  EntityDeleteMode,
+  EntityDeletePolicy,
+  SupportedEntityType,
+} from './entity-delete-policy';
 export {
   ResponsiveInspector,
   RESPONSIVE_INSPECTOR_MEDIA_QUERY,

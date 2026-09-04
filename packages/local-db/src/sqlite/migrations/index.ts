@@ -132,3 +132,23 @@ export {
 export type {
   StoreProviderIdentityAuthorityMigrationResult,
 } from './0011-store-provider-identity-authority';
+export {
+  ANALYSIS_RUNS_MIGRATION_CHECKSUM,
+  ANALYSIS_RUNS_MIGRATION_NAME,
+  ANALYSIS_RUNS_MIGRATION_VERSION,
+  ANALYSIS_RUNS_TABLES,
+  AnalysisRunsMigrationError,
+  runAnalysisRunsMigration,
+  verifyAnalysisRunsSchema,
+} from './0012-analysis-runs';
+export type { AnalysisRunsMigrationResult } from './0012-analysis-runs';
+export {
+  V16_DOMAIN_MIGRATION_CHECKSUM,
+  V16_DOMAIN_MIGRATION_NAME,
+  V16_DOMAIN_MIGRATION_VERSION,
+  V16_DOMAIN_TABLES,
+  V16DomainMigrationError,
+  runV16DomainMigration,
+  verifyV16DomainSchema,
+} from './0013-v16-domain';
+export type { V16DomainMigrationResult } from './0013-v16-domain';

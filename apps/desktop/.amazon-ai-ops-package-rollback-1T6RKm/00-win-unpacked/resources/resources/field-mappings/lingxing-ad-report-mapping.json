@@ -1,0 +1,12 @@
+{
+  "date": ["日期", "date"],
+  "campaignName": ["广告活动", "Campaign", "Campaign Name"],
+  "adGroupName": ["广告组", "Ad Group", "Ad Group Name"],
+  "targeting": ["关键词", "投放", "Targeting"],
+  "searchTerm": ["搜索词", "Search Term", "Customer Search Term"],
+  "impressions": ["曝光", "展现", "Impressions"],
+  "clicks": ["点击", "Clicks"],
+  "cost": ["花费", "Spend", "Cost"],
+  "orders": ["订单", "Orders", "Purchases"],
+  "sales": ["销售额", "Sales"]
+}

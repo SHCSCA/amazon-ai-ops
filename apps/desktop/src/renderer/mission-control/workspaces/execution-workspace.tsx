@@ -31,6 +31,8 @@ import {
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { WorkspaceState } from '../../components/workspace';
+import { ReadbackGateIndicator } from './execution-workspace-gate-indicator';
+import { selectExecutionReadbackGate } from './execution-workspace-gate';
 import { toUserFacingError } from '../../user-facing-error';
 import {
   assertExecutionProjectionBelongsToContext,
@@ -1185,6 +1187,11 @@ export function ExecutionWorkspace({
       </div>
 
       <section className="execution-inspector execution-inspector--tabs" aria-label="动作详情与三段回读">
+        {selected && selectedJob && (
+          <ReadbackGateIndicator
+            blockers={selectExecutionReadbackGate(selected, selectedJob.id, grantId ?? null).blockers}
+          />
+        )}
         <div className="execution-detail-tabs" role="tablist" aria-label="执行详情">
           {DETAIL_TABS.map((tab) => <button aria-selected={detailTab === tab.id} key={tab.id} onClick={() => setDetailTab(tab.id)} role="tab" type="button">{tab.label}</button>)}
         </div>

@@ -8,6 +8,7 @@ import {
   type StoreCollectionScheduleProjection,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
+import { localizeCollectionReportType } from '@amazon-ai-ops/business-presenters';
 import { DEFAULT_BUSINESS_REPORT_OPTIONS, useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -30,16 +31,6 @@ type RunningCollectionActionMode = CollectionActionMode | 'verify-page';
 type CollectionFeedbackActionGroup = 'repair' | 'refresh-ready';
 
 const SAFE_COLLECTION_REQUEST_PART = /[^A-Za-z0-9._:-]+/g;
-const COLLECTION_REPORT_LABELS: Record<string, string> = {
-  campaign: '广告活动报告',
-  ad_group: '广告组报告',
-  placement: '广告位报告',
-  advertised_product: '广告商品报告',
-  auto_targeting: '自动投放报告',
-  keyword: '关键词报告',
-  product_targeting: '商品投放报告',
-  user_search_term: '用户搜索词报告',
-};
 
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
@@ -69,6 +60,8 @@ export interface LastActionResult {
   parsedFiles: number;
   insertedRows: number;
   currentImportedRows: number;
+  actionImportState?: NonNullable<LingxingCollectionJobSnapshot['importState']> | 'mixed';
+  actionReportTypeCount?: number;
   productionReady?: boolean;
   downloadArtifactId?: string;
   manifestArtifactId?: string;
@@ -137,7 +130,7 @@ export interface CollectionJobLineagePresentation {
 export function buildCollectionJobLineagePresentation(
   job: LingxingCollectionJobSnapshot,
 ): CollectionJobLineagePresentation {
-  if (job.request.requestId.startsWith('canary:') || job.importState === 'not_applicable') {
+  if (job.request.requestId.startsWith('canary:')) {
     return {
       label: 'Canary 诊断链',
       detail: '不进入生产八报表 lineage',
@@ -172,12 +165,26 @@ export function buildCollectionJobLineagePresentation(
 export function buildCollectionImportPresentation(
   job: LingxingCollectionJobSnapshot,
 ): CollectionImportPresentation {
-  const canary = job.request.requestId.startsWith('canary:') || job.importState === 'not_applicable';
+  const canary = job.request.requestId.startsWith('canary:');
   if (canary) {
     return {
       state: 'not_applicable',
       label: 'Canary 不写生产指标',
       detail: '只验证采集链路，不计入生产 8/8，也不进入生产广告指标。',
+      tone: 'warning',
+      productionComplete: false,
+      canSupplement: false,
+    };
+  }
+  if (job.importState === 'not_applicable') {
+    const requestedCount = new Set(job.request.reportTypes).size;
+    const standalonePartial = requestedCount < 8;
+    return {
+      state: 'not_applicable',
+      label: standalonePartial ? '等待完整 8 类后入库' : '完整 8 类尚未入库',
+      detail: standalonePartial
+        ? '本次部分报表文件已下载，但未写生产指标；请继续原完整 8 类任务或重新获取完整 8 类，系统不会跨独立批次拼接。'
+        : '本次完整任务尚未形成 8 类全部成功下载的入库凭证；请继续原任务或重新获取完整 8 类。',
       tone: 'warning',
       productionComplete: false,
       canSupplement: false,
@@ -292,7 +299,7 @@ export function buildCollectionJobWorkspaceRow(
   currentContext?: StoreContextEnvelope | null,
 ): CollectionJobWorkspaceRow {
   const reports = Array.isArray(job.reports) ? job.reports : [];
-  const canary = job.request.requestId.startsWith('canary:') || job.importState === 'not_applicable';
+  const canary = job.request.requestId.startsWith('canary:');
   const importPresentation = buildCollectionImportPresentation(job);
   const requestedCount = Math.max(1, job.request.reportTypes.length);
   const downloadedCount = reports.filter((report) => report.state === 'downloaded').length;
@@ -361,6 +368,8 @@ export function buildCollectionJobWorkspaceRow(
       ? `${reconciledCreateFailures.map(reportDisplayName).join('、')}已确认没有可复用的创建记录；可先完成其余排队报表，重新创建缺失报表需单独确认。`
     : importPresentation.state === 'failed'
       ? importPresentation.detail
+      : importPresentation.state === 'not_applicable'
+        ? importPresentation.detail
       : importPresentation.state === 'legacy' && job.state === 'completed'
         ? importPresentation.detail
         : activeAuthorityChanged
@@ -388,7 +397,13 @@ export function buildCollectionJobWorkspaceRow(
     resolvedStatusTone = importPresentation.tone;
     if (importPresentation.state === 'pending') resolvedStatusLabel = '下载完成，正在导入';
     else if (importPresentation.state === 'succeeded') resolvedStatusLabel = '采集与入库完成';
-    else if (importPresentation.state === 'not_applicable') resolvedStatusLabel = 'Canary 完成（不入生产）';
+    else if (importPresentation.state === 'not_applicable') {
+      resolvedStatusLabel = canary
+        ? 'Canary 完成（不入生产）'
+        : requestedCount < 8
+          ? '部分报表已下载，等待完整 8 类'
+          : '完整 8 类尚未满足入库条件';
+    }
     else if (importPresentation.state === 'legacy') resolvedStatusLabel = '下载完成，入库待核对';
   }
   return {
@@ -552,7 +567,8 @@ function reportProgressLabel(report: LingxingCollectionReportCheckpoint): string
 }
 
 function reportDisplayName(report: LingxingCollectionReportCheckpoint): string {
-  return COLLECTION_REPORT_LABELS[report.reportType] || report.reportType;
+  const label = localizeCollectionReportType(report.reportType);
+  return label === '未知报表类型' ? String(report.reportType) : label;
 }
 
 export function buildCollectionProgressPresentation(
@@ -607,10 +623,13 @@ export function buildCollectionProgressPresentation(
       };
     }
     if (importPresentation.state === 'not_applicable') {
+      const canary = event.job.request.requestId.startsWith('canary:');
       return {
         tone: 'pending',
-        statusLabel: 'Canary 不入生产',
-        title: 'Canary 采集完成（不写生产指标）',
+        statusLabel: canary ? 'Canary 不入生产' : '等待完整 8 类',
+        title: canary
+          ? 'Canary 采集完成（不写生产指标）'
+          : '部分报表已下载，等待原完整 8 类任务',
         detail: importPresentation.detail,
         completedCount,
         totalCount,
@@ -754,8 +773,8 @@ function readinessStageLabel(status: string): string {
 
 function actionTitle(mode: CollectionActionMode): string {
   const labels: Record<CollectionActionMode, string> = {
-    'download-existing': '下载并导入已创建报表',
-    'recreate-selected': '重新创建、下载并导入已选报表',
+    'download-existing': '下载已创建报表',
+    'recreate-selected': '重新创建并下载已选报表',
     'recreate-full': '重新创建、下载并导入全部 8 类报表',
     import: '真实报表导入',
   };
@@ -775,8 +794,8 @@ function actionResultTitle(mode: CollectionActionMode, tone: LastActionResult['t
 
 function actionModeLabel(mode: RunningCollectionActionMode): string {
   const labels: Record<RunningCollectionActionMode, string> = {
-    'download-existing': '下载并导入已创建报表',
-    'recreate-selected': '重新创建、下载并导入已选报表',
+    'download-existing': '下载已创建报表',
+    'recreate-selected': '重新创建并下载已选报表',
     'recreate-full': '重新创建、下载并导入全部 8 类',
     import: '导入本地/已下载报表',
     'verify-page': '验证下载中心页面',
@@ -828,7 +847,7 @@ export function buildCollectionMonitorState(input: {
 
   if (input.lastActionResult) {
     const result = input.lastActionResult;
-    const isReady = result.tone === 'success' || result.currentImportedRows > 0;
+    const isReady = result.tone === 'success' && result.actionImportState !== 'not_applicable';
     return {
       tone: isReady ? 'ready' : 'pending',
       statusLabel: isReady ? '已返回' : '待补齐',
@@ -899,10 +918,12 @@ export function collectionActionButtonDetail(mode: CollectionActionMode): string
   return labels[mode];
 }
 
-export function collectionActionButtonBusyDetail(mode: CollectionActionMode): string {
+export function collectionActionButtonBusyDetail(mode: CollectionActionMode, selectedCount?: number): string {
   const labels: Record<CollectionActionMode, string> = {
-    'download-existing': '正在下载并导入已创建报表',
-    'recreate-selected': '正在重新创建、下载并导入已选报表',
+    'download-existing': Number(selectedCount || 0) === 8
+      ? '正在下载完整 8 类并等待生产入库'
+      : '正在下载已选报表（不写生产指标）',
+    'recreate-selected': '正在重新创建并下载已选报表（不写生产指标）',
     'recreate-full': '正在重新创建、下载并导入全部 8 类',
     import: '正在导入本地/已下载报表',
   };
@@ -930,7 +951,7 @@ export function collectionActionButtonView({
   const disabled = Boolean(runningAction) || (needsSelection && selectedCount === 0);
   return {
     label: isCurrentAction ? '处理中...' : collectionActionButtonLabel(mode),
-    detail: isCurrentAction ? collectionActionButtonBusyDetail(mode) : collectionActionButtonDetail(mode),
+    detail: isCurrentAction ? collectionActionButtonBusyDetail(mode, selectedCount) : collectionActionButtonDetail(mode),
     disabled,
     ariaBusy: isCurrentAction,
     className: [
@@ -1081,16 +1102,16 @@ export function buildDataCollectionTaskState({
 export function collectionActionGuide(mode: CollectionActionMode): CollectionActionGuide {
   const guides: Record<CollectionActionMode, CollectionActionGuide> = {
     'download-existing': {
-      title: '下载并导入已创建的已选报表',
+      title: '下载已创建的已选报表',
       whenToUse: '领星已经生成 ready 行时使用',
       taskEffect: '不会创建新任务',
-      result: '下载后自动写入 DB；无新增文件时打开当前真实报表目录确认',
+      result: '本次只下载已选真实文件；只有完整 8 类生产任务闭合后才会自动写入 DB，无新增文件时打开当前真实报表目录确认',
     },
     'recreate-selected': {
-      title: '重新创建、下载并导入已选报表',
+      title: '重新创建并下载已选报表',
       whenToUse: '只补当前已选报表时使用',
       taskEffect: '会创建当前勾选报表的新任务',
-      result: '生成完成后下载真实报表并自动写入 DB',
+      result: '生成完成后下载真实报表，部分任务不写生产指标，不会跨批次拼接',
     },
     'recreate-full': {
       title: '重新创建、下载并导入全部 8 类',
@@ -1108,11 +1129,11 @@ export function collectionActionGuide(mode: CollectionActionMode): CollectionAct
   return guides[mode];
 }
 
-function buildActionProgressSteps(mode: CollectionActionMode | null, result: LastActionResult | null): ActionProgressStep[] {
+export function buildActionProgressSteps(mode: CollectionActionMode | null, result: LastActionResult | null): ActionProgressStep[] {
   if (!mode && !result) return [];
   const completed = Boolean(result);
   const blocked = result?.tone === 'blocked';
-  const currentMode = mode || (result?.title.includes('下载') && result?.title.includes('已创建') ? 'download-existing'
+  const currentMode = mode || result?.mode || (result?.title.includes('下载') && result?.title.includes('已创建') ? 'download-existing'
     : result?.title.includes('重新创建') && result?.title.includes('全部') ? 'recreate-full'
       : result?.title.includes('重新创建') && result?.title.includes('已选') ? 'recreate-selected'
         : 'import');
@@ -1124,6 +1145,14 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
       { label: '3. 写入数据库', description: '形成每日广告事实，后续广告表现和 AI 只从数据库读取。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
     ];
   }
+  const waitingForFullEight = result?.actionImportState === 'not_applicable'
+    && Number(result.actionReportTypeCount || 0) > 0
+    && Number(result.actionReportTypeCount || 0) < 8;
+  const checkingFullEightEligibility = !result
+    && (currentMode === 'download-existing' || currentMode === 'recreate-selected');
+  const currentActionImported = result?.actionImportState === 'succeeded'
+    || Number(result?.parsedFiles || 0) > 0
+    || Number(result?.insertedRows || 0) > 0;
   return [
     {
       label: '1. 验证当前范围',
@@ -1143,9 +1172,17 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
       status: completed ? (blocked ? 'blocked' : 'ready') : 'pending',
     },
     {
-      label: '4. 自动导入广告指标',
-      description: '下载完成后会自动解析并写入 SQLite；已有表格未入库时可手动点击“导入已下载表格”。',
-      status: completed ? ((result?.currentImportedRows || 0) > 0 ? 'ready' : 'pending') : 'pending',
+      label: waitingForFullEight
+        ? '4. 等待完整 8 类生产任务'
+        : checkingFullEightEligibility
+          ? '4. 核对完整 8 类入库资格'
+          : '4. 自动导入广告指标',
+      description: waitingForFullEight
+        ? '本次部分报表只保留真实文件；继续原完整 8 类任务或重新获取完整 8 类，不会跨批次拼接。'
+        : checkingFullEightEligibility
+          ? '只有同一生产任务精确覆盖完整 8 类并全部校验通过才会入库；部分任务只保留真实文件。'
+        : '下载完成后会自动解析并写入 SQLite；已有表格未入库时可手动点击“导入已下载表格”。',
+      status: completed ? (blocked ? 'blocked' : currentActionImported ? 'ready' : 'pending') : 'pending',
     },
   ];
 }
@@ -1247,7 +1284,7 @@ export function collectionActionError(mode: Exclude<CollectionActionMode, 'impor
 
   if (/diagnostic_evidence_ready|diagnostic evidence|no matching download-center diagnostic/i.test(raw)) {
     return mode === 'download-existing'
-      ? '下载并导入已创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，确认日期、店铺、站点和领星页面一致后再下载。'
+      ? '下载已创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，确认日期、店铺、站点和领星页面一致后再下载。'
       : '重新创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，刷新截图、DOM 和页面模型证据后再创建。';
   }
 
@@ -1257,13 +1294,13 @@ export function collectionActionError(mode: Exclude<CollectionActionMode, 'impor
 
   if (/(missing|not found|缺少|没有|未找到|不存在)/i.test(raw) && /(report|file|path|batch|报表|文件|路径|批次)/i.test(raw)) {
     return mode === 'download-existing'
-      ? '当前范围没有可直接下载的已创建报表；本动作不会创建新任务。若你确认领星已经创建完成，请先点击“验证页面”刷新下载中心证据，并确认日期、店铺、站点一致；否则使用“重新创建、下载并导入”。'
+      ? '当前范围没有可直接下载的已创建报表；本动作不会创建新任务。若你确认领星已经创建完成，请先点击“验证页面”刷新下载中心证据，并确认日期、店铺、站点一致；否则使用“重新获取完整 8 类报表”。'
       : '重新创建后仍没有拿到可用的真实报表文件。请确认领星 Ads 下载中心可访问、页面模型已验证、日期/店铺/站点正确，再重新创建。';
   }
 
   if (/timeout|ready|wait/i.test(raw)) {
     return mode === 'download-existing'
-      ? '已找到下载流程但没有等到可下载状态。请在领星下载中心确认报表为“已创建/ready/可下载”，再点“下载并导入已创建”。'
+      ? '已找到下载流程但没有等到可下载状态。请在领星下载中心确认报表为“已创建/ready/可下载”，再点“下载已创建报表”。'
       : '报表任务已尝试创建，但没有等到生成完成。请稍后重试，或在领星下载中心确认任务状态。';
   }
 
@@ -1374,14 +1411,24 @@ export function collectionActionNextStep(input: {
   canEnterDiagnosis: boolean;
   failedWithoutFiles: boolean;
   hasImportedReceipt?: boolean;
+  actionImportState?: NonNullable<LingxingCollectionJobSnapshot['importState']> | 'mixed';
+  actionReportTypeCount?: number;
   importedRows: number;
   realFileCount: number;
 }): string {
   if (input.failedWithoutFiles) {
     return '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。';
   }
+  if (input.actionImportState === 'mixed') {
+    return '下一步：刷新当前店铺的采集任务，检查每类报表的入库状态；状态一致前保持生产阻断。';
+  }
   if (input.canEnterDiagnosis) {
     return '下一步：查看广告表现，复核 ACOS、花费和订单口径。';
+  }
+  if (input.actionImportState === 'not_applicable'
+    && Number(input.actionReportTypeCount || 0) > 0
+    && Number(input.actionReportTypeCount || 0) < 8) {
+    return '下一步：继续原完整 8 类任务，或重新获取当前范围的完整 8 类；不会跨批次拼接生产指标。';
   }
   if (input.importedRows > 0 || input.hasImportedReceipt) {
     return '下一步：刷新当前范围数据账本；只有完整 8 类逐类入库后才会放行正式诊断。';
@@ -1411,7 +1458,7 @@ function buildPipelineReadiness(
   });
 }
 
-function buildLastActionResult(
+export function buildLastActionResult(
   mode: CollectionActionMode,
   results: any[],
   realFileCount: number,
@@ -1420,6 +1467,21 @@ function buildLastActionResult(
   canEnterDiagnosis = false,
 ): LastActionResult {
   const files = results.flatMap((result) => Array.isArray(result?.files) ? result.files : []);
+  const actionImportStates = Array.from(new Set(results
+    .map((result) => result?.job?.importState ?? result?.importState)
+    .filter((state): state is NonNullable<LingxingCollectionJobSnapshot['importState']> => (
+      state === 'pending'
+      || state === 'succeeded'
+      || state === 'failed'
+      || state === 'not_applicable'
+    ))));
+  const actionImportState: LastActionResult['actionImportState'] = actionImportStates.length === 1
+    ? actionImportStates[0]
+    : actionImportStates.length > 1 ? 'mixed' : undefined;
+  const actionReportTypes = Array.from(new Set(results.flatMap((result) => (
+    Array.isArray(result?.job?.request?.reportTypes) ? result.job.request.reportTypes : []
+  )).map((reportType) => String(reportType || '').trim()).filter(Boolean)));
+  const actionReportTypeCount = actionReportTypes.length > 0 ? actionReportTypes.length : undefined;
   const batchIds = Array.from(new Set(results.map((result) => result?.batch?.id).filter(Boolean)));
   const fileFailures = files
     .filter((file) => file?.status === 'failed' || file?.errorMessage)
@@ -1455,19 +1517,29 @@ function buildLastActionResult(
     canEnterDiagnosis,
     failedWithoutFiles: failedFiles.length > 0 && actionDownloadedFiles.length === 0,
     hasImportedReceipt: parsedFiles > 0,
+    ...(actionImportState ? { actionImportState } : {}),
+    ...(actionReportTypeCount ? { actionReportTypeCount } : {}),
     importedRows,
     realFileCount,
   });
   const tone: LastActionResult['tone'] = failedCount > 0
+    || actionImportState === 'failed'
+    || actionImportState === 'mixed'
     ? 'blocked'
     : mode === 'import'
       ? parsedFiles > 0 ? 'success' : 'blocked'
       : actionRealDownloadCount > 0
-        ? importedRows > 0 || insertedRows > 0 || parsedFiles > 0 ? 'success' : 'warning'
+        ? actionImportState === 'succeeded' || insertedRows > 0 || parsedFiles > 0 ? 'success' : 'warning'
         : 'blocked';
+  const isStandalonePartialDownload = mode !== 'import'
+    && actionImportState === 'not_applicable'
+    && Number(actionReportTypeCount || 0) > 0
+    && Number(actionReportTypeCount || 0) < 8;
 
   return {
-    title: actionResultTitle(mode, tone),
+    title: isStandalonePartialDownload
+      ? '部分报表已下载，等待完整 8 类任务'
+      : actionResultTitle(mode, tone),
     tone,
     mode,
     batchIds,
@@ -1477,6 +1549,8 @@ function buildLastActionResult(
     parsedFiles,
     insertedRows,
     currentImportedRows: importedRows,
+    ...(actionImportState ? { actionImportState } : {}),
+    ...(actionReportTypeCount ? { actionReportTypeCount } : {}),
     productionReady: canEnterDiagnosis,
     downloadArtifactId: firstBatch?.downloadArtifactId || fallbackArtifacts?.downloadArtifactId,
     manifestArtifactId: firstBatch?.manifestArtifactId || fallbackArtifacts?.manifestArtifactId,
@@ -1499,11 +1573,29 @@ export function collectionCompletionNotice(result: LastActionResult): string {
   }
 
   const actionRealFileCount = result.actionDownloadedFiles.length;
-  if (actionRealFileCount > 0 && result.currentImportedRows > 0) {
+  if (result.actionImportState === 'mixed') {
+    return '本次报表的入库状态不一致，系统已保持生产阻断。请刷新当前店铺的采集任务，逐类检查失败原因和入库回执后重试。';
+  }
+  const isStandalonePartialDownload = result.actionImportState === 'not_applicable'
+    && Number(result.actionReportTypeCount || actionRealFileCount) > 0
+    && Number(result.actionReportTypeCount || actionRealFileCount) < 8;
+  if (actionRealFileCount > 0 && isStandalonePartialDownload) {
+    return `本次部分报表已下载，但未写入生产指标：新增 ${actionRealFileCount} 个真实原始报表文件。请继续原完整 8 类任务，或重新获取当前范围的完整 8 类；系统不会跨批次拼接。`;
+  }
+  const currentActionHasImportReceipt = result.actionImportState === 'succeeded'
+    || result.parsedFiles > 0
+    || result.insertedRows > 0;
+  if (actionRealFileCount > 0 && currentActionHasImportReceipt) {
+    if (result.insertedRows !== result.currentImportedRows) {
+      return `采集动作已完成：本次新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表，本次写入 ${result.insertedRows} 行广告指标，当前范围合计 ${result.currentImportedRows} 行。`;
+    }
     return `采集动作已完成：本次新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表，已自动导入 ${result.currentImportedRows} 行广告指标。`;
   }
   if (actionRealFileCount > 0) {
-    return `真实报表已下载，但自动导入未写入广告指标：本次新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表，导入指标 ${result.currentImportedRows} 行。请点击“导入已下载表格”，或检查解析错误。`;
+    const historicalRows = result.currentImportedRows > 0
+      ? `当前范围原有 ${result.currentImportedRows} 行指标只是历史数据，不代表本次已导入。`
+      : '当前范围尚无可量化指标。';
+    return `真实报表已下载，但本次未形成生产入库回执：新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表。${historicalRows}请检查当前任务的入库状态和解析错误。`;
   }
   if (result.downloadedCount > 0 && result.currentImportedRows > 0) {
     return `当前范围已有 ${result.downloadedCount}/8 类真实报表和 ${result.currentImportedRows} 行广告指标，但本次没有新增真实原始报表文件。请打开真实报表目录确认数据来源；不要把本次动作当成新的领星下载。`;
@@ -1512,6 +1604,15 @@ export function collectionCompletionNotice(result: LastActionResult): string {
     return `当前范围已有 ${result.downloadedCount}/8 类真实报表，但本次没有新增真实原始报表文件，且还没有可量化指标。请点击“导入已下载表格”或重新下载缺失报表。`;
   }
   return `采集动作返回，但当前范围仍未满足量化门槛：真实报表覆盖 ${result.downloadedCount}/8 类，导入指标 ${result.currentImportedRows} 行。没有 xlsx/xls/csv 或解析入库失败时不能进行广告表现。`;
+}
+
+export function collectionActionResultStatusLabel(result: LastActionResult): string {
+  if (result.actionImportState === 'not_applicable'
+    && Number(result.actionReportTypeCount || 0) > 0
+    && Number(result.actionReportTypeCount || 0) < 8) {
+    return '待完整 8 类';
+  }
+  return result.tone === 'success' ? '已完成' : result.tone === 'blocked' ? '未完成' : '待补导';
 }
 
 export function CollectionJobWorkspace({
@@ -1835,7 +1936,7 @@ export function DataCollectionPage() {
   const shouldShowVerifyAction = shouldOfferDownloadCenterVerification(actionError);
   const lastActionSummary = useMemo(() => lastActionResult ? {
     tone: lastActionResult.tone === 'success' ? 'ready' as const : lastActionResult.tone === 'blocked' ? 'blocked' as const : 'warning' as const,
-    statusLabel: lastActionResult.tone === 'success' ? '已完成' : lastActionResult.tone === 'blocked' ? '未完成' : '待补导',
+    statusLabel: collectionActionResultStatusLabel(lastActionResult),
     headline: collectionCompletionNotice(lastActionResult),
     facts: [
       `真实报表 ${lastActionResult.downloadedCount}/8`,
@@ -2358,7 +2459,7 @@ export function DataCollectionPage() {
       const evidenceText = evidenceAvailable ? ' 诊断证据已登记。' : '';
       if (diagnostic?.ready) {
         setActionNotice(manualReconciliationRequired
-          ? `页面验证通过，但创建结果仍需人工核对；确认领星已有任务后请使用“下载并导入已创建报表”。${evidenceText}`
+          ? `页面验证通过，但创建结果仍需人工核对；确认领星已有任务后请使用“下载已创建报表”。${evidenceText}`
           : `页面验证通过：当前范围、页面和关键控件已刷新，可以重新获取完整 8 类报表。${evidenceText}`);
         return;
       }
@@ -2384,7 +2485,7 @@ export function DataCollectionPage() {
     const api = (window as any).electronAPI;
     if (manualReconciliationRequired && mode !== 'download-existing') {
       setActionNotice('本批次仍需人工核对，未重新创建报表。');
-      setActionError('请先在领星下载中心按店铺、日期和报表类型核对创建结果；确认已有任务后使用“下载并导入已创建报表”。');
+      setActionError('请先在领星下载中心按店铺、日期和报表类型核对创建结果；确认已有任务后使用“下载已创建报表”。');
       setCollectionMonitorOpen(true);
       return;
     }
@@ -2407,9 +2508,13 @@ export function DataCollectionPage() {
     setRunningAction(mode);
     setCollectionMonitorOpen(true);
     if (mode === 'download-existing') {
-      setActionNotice(`正在下载并自动导入领星下载中心已创建完成的已选报表，不会创建新任务：${selectedLabels.join('、')}`);
+      setActionNotice(targetTypes.length === 8
+        ? `正在下载领星已创建完成的完整 8 类报表；同一任务全部下载并校验后才会尝试生产入库，不会创建新任务：${selectedLabels.join('、')}`
+        : `正在下载领星已创建完成的已选部分报表；本次只保留真实文件，不写生产指标，不会创建新任务：${selectedLabels.join('、')}`);
     } else {
-      setActionNotice(`${mode === 'recreate-full' ? '正在重新创建全部 8 类报表、下载并自动导入' : '正在重新创建已选报表、下载并自动导入'}：${selectedLabels.join('、')}`);
+      setActionNotice(`${mode === 'recreate-full'
+        ? '正在重新创建全部 8 类报表、下载并自动导入'
+        : '正在重新创建并下载已选部分报表；本次不写生产指标，不会跨批次拼接'}：${selectedLabels.join('、')}`);
     }
     try {
       const { actionResults } = await runCollectionDownloadAction({
@@ -2430,8 +2535,12 @@ export function DataCollectionPage() {
           if (!isCapturedAuthorityCurrent(authorityKey)) return;
           setRunningAction(mode);
           setActionNotice(mode === 'download-existing'
-            ? `页面验证通过，继续下载并自动导入已创建报表：${selectedLabels.join('、')}`
-            : `${mode === 'recreate-full' ? '页面验证通过，继续重新创建全部 8 类报表、下载并自动导入' : '页面验证通过，继续重新创建已选报表、下载并自动导入'}：${selectedLabels.join('、')}`);
+            ? targetTypes.length === 8
+              ? `页面验证通过，继续下载完整 8 类已创建报表并等待生产入库：${selectedLabels.join('、')}`
+              : `页面验证通过，继续下载已选部分报表；本次不写生产指标：${selectedLabels.join('、')}`
+            : `${mode === 'recreate-full'
+              ? '页面验证通过，继续重新创建全部 8 类报表、下载并自动导入'
+              : '页面验证通过，继续重新创建并下载已选部分报表；本次不写生产指标'}：${selectedLabels.join('、')}`);
         },
       });
       if (!isCapturedAuthorityCurrent(authorityKey)) return;
@@ -2457,7 +2566,7 @@ export function DataCollectionPage() {
       const message = collectionActionError(mode, caught);
       setActionError(message);
       setActionNotice(mode === 'download-existing'
-        ? '下载并导入已创建报表未完成。请先确认领星下载中心已有当前范围的已创建/可下载报表。'
+        ? '下载已创建报表未完成。请先确认领星下载中心已有当前范围的已创建/可下载报表。'
         : '创建并下载未完成。请根据错误处理登录、页面模型或报表范围后重试。');
     } finally {
       if (!isCapturedAuthorityCurrent(authorityKey)) return;
@@ -3360,7 +3469,7 @@ export function DataCollectionPage() {
               <div>
                 <span>广告表现入口</span>
                 <strong>{productionDataReady ? `${importedRowCount} 行 · 8/8 类已入库` : importedReportCount > 0 ? `${importedReportCount}/8 类已有入库回执` : '未导入'}</strong>
-                <p>{productionDataReady ? '完整生产血缘已闭合；0 行时会展示真实零数据状态。' : realReportCount > 0 ? '先确认表格存在；若缺少入库回执，再点击“导入已下载表格”。' : '先下载并导入已创建报表、重新创建下载并导入，或导入本地报表。'}</p>
+                <p>{productionDataReady ? '完整生产血缘已闭合；0 行时会展示真实零数据状态。' : realReportCount > 0 ? '先确认表格存在；部分报表只保留文件，请继续原完整 8 类任务或重新获取完整 8 类。' : '先重新获取完整 8 类报表，或导入本地报表；单类/部分下载不会单独写入生产指标。'}</p>
               </div>
             </div>
             <div className="action-row">
@@ -3394,7 +3503,7 @@ export function DataCollectionPage() {
                   )}
                 </div>
               ) : (
-                <p className="blocked-line">当前没有真实广告报表。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。</p>
+                <p className="blocked-line">当前没有真实广告报表。请先重新获取完整 8 类报表，或导入当前范围的本地真实报表；单类/部分下载不会单独写入生产指标，只有审计包时系统不能量化广告。</p>
               )}
             </div>
           </Panel>

@@ -1,6 +1,21 @@
 # v1.5 Acceptance Matrix
 
-## Current v1.5.1 checkpoint — 2026-08-26
+## Current v1.5.1 checkpoint — 2026-08-31
+
+| Requirement | Current Evidence | Status |
+|---|---|---|
+| Source version and status | Root, desktop, Main IPC, ZIP default and active v1.5 evidence gates are aligned to `1.5.1`; source authority hardening is committed. | `APP_NEEDS_WORK`; static Windows candidate |
+| Formal business baseline | Latest recorded run is 8/8 with 8 files / 1937 metrics / 8 reconciliations; enabled policy, active Mission and draft experiment exist. | Closed for the recorded business day |
+| Policy and Grant authority | Create/update/enable and Grant issuance revalidate exact current import/report evidence, latest Stage5, and required current Stage6 identity/session in an `IMMEDIATE` transaction. | `157/157` focused authority tests passed |
+| Keyword/canonical scope | `match_type`, exact source-row cardinality and proof/revision/session are required; campaign/ad-group use canonical IDs without exposing them in ordinary UI. | Fail-closed unit contract passed |
+| Execution context | Selected batch/job/slot, three-stage evidence and progress events share exact store/batch/job/grant context; stale async results are discarded. | A→B→A regression passed |
+| Full source unit gate | `285/285` files, `3584/3584` tests; scripts `12/12`; no `.skip/.todo/skipIf/context.skip`. | Passed |
+| Static Windows build | 2026-08-31 14:01:50 seven steps passed with `freshCurrentRun=true` (build log `output\build-win-20260831-135557.log`); installer `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B`, portable `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944`, folder ZIP `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796`, blockmap `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` (byte-identical to the 2026-07-17 external-security P1 candidate because the B1–B7 console-refactor plan only changes `resources/app.asar` and forbids touching main/preload/SQLite/IPC), Main bundle `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF`; `s is not defined` is 0. | Static candidate built |
+| Dynamic package gates | Typecheck, 7-flow business smoke, Package UI 100%/125%/wide, folder-ZIP launch and formal-DB pre/post verification are prohibited for this round. Historical `operator-core-20260826-91` cannot credit `1.5.1`. | Blocked by operator test boundary |
+| Task 8B | Requires unique current object/bid, current `lower_bid` within 10%, exact approval, one write and reload proof; no Ads write occurred this round. | Blocked pending dynamic authority and approval |
+| Production decision | No current `1.5.1` readiness aggregate or bundle exists for this build. | `APP_NEEDS_WORK / INTERNAL NON_READY` |
+
+## Historical v1.5.1 checkpoint — 2026-08-26
 
 | Requirement | Current Evidence | Status |
 |---|---|---|

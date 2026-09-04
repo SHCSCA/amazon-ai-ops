@@ -14,7 +14,7 @@ export interface MissionDomainPreloadApi {
   readonly grants: Readonly<Record<'get' | 'list' | 'listEvents' | 'revokeHuman', ScopedCall>>;
   readonly decisions: Readonly<Record<'create' | 'get' | 'list' | 'revise' | 'resolveHuman' | 'history', ScopedCall>>;
   readonly experiments: Readonly<Record<
-    'create' | 'get' | 'list' | 'update' | 'transition' | 'archive' | 'restore'
+    'create' | 'get' | 'list' | 'update' | 'transition' | 'evaluate' | 'archive' | 'restore'
     | 'listObservations' | 'listMetricSnapshots' | 'appendObservation',
     ScopedCall
   >>;
@@ -80,6 +80,7 @@ export function createMissionDomainPreloadApi(ipc: MissionDomainIpcInvoker): Mis
       list: call('mission-domain:experiments:list'),
       update: call('mission-domain:experiments:update'),
       transition: call('mission-domain:experiments:transition'),
+      evaluate: call('mission-domain:experiments:evaluate'),
       archive: call('mission-domain:experiments:archive'),
       restore: call('mission-domain:experiments:restore'),
       listObservations: call('mission-domain:experiments:list-observations'),

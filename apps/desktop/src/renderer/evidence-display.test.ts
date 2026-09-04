@@ -136,7 +136,7 @@ describe('formatEvidenceRefSummary', () => {
     const summary = buildAdQuantDiagnosisSummary(adDiagnosis({
       source: 'ai',
       lifecycleStage: 'keyword_exploration',
-      lifecycleStageReason: '搜索词花费、低订单和 Coupon 事件显示仍处于测词阶段。',
+      lifecycleStageReason: '搜索词花费、低订单和 Coupon 事件显示仍处于关键词探索阶段。',
       lifecycleStageEvidenceRefs: ['timeline_1', 'event_1'],
       evidenceSufficiency: {
         level: 'medium',
@@ -171,8 +171,8 @@ describe('formatEvidenceRefSummary', () => {
 
     expect(summary.statusLabel).toBe('AI 阶段诊断');
     expect(summary.tone).toBe('ready');
-    expect(summary.headline).toContain('测词');
-    expect(summary.reasons).toContain('搜索词花费、低订单和 Coupon 事件显示仍处于测词阶段。');
+    expect(summary.headline).toContain('关键词探索');
+    expect(summary.reasons).toContain('搜索词花费、低订单和 Coupon 事件显示仍处于关键词探索阶段。');
     expect(summary.evidenceSummary).toContain('对象时间线');
     expect(summary.evidenceSummary).toContain('运营事件');
     expect(summary.evidenceStats).toContain('12 条指标证据');
@@ -183,7 +183,7 @@ describe('formatEvidenceRefSummary', () => {
     const summary = buildAdQuantDiagnosisSummary(adDiagnosis({
       source: 'ai',
       lifecycleStage: 'keyword_exploration',
-      lifecycleStageReason: 'AI 判断仍处于测词期。',
+      lifecycleStageReason: 'AI 判断仍处于关键词探索期。',
       lifecycleStageEvidenceRefs: ['metric_missing'],
       evidenceSufficiency: {
         level: 'high',
@@ -259,7 +259,7 @@ describe('formatEvidenceRefSummary', () => {
     const summary = buildAdQuantDiagnosisSummary(adDiagnosis({
       source: 'ai',
       lifecycleStage: 'keyword_exploration',
-      lifecycleStageReason: 'AI 认为当前仍处于测词阶段。',
+      lifecycleStageReason: 'AI 认为当前仍处于关键词探索阶段。',
       lifecycleStageEvidenceRefs: ['metric_1'],
       evidenceSufficiency: {
         level: 'low',
@@ -288,7 +288,7 @@ describe('formatEvidenceRefSummary', () => {
     expect(summary.statusLabel).toBe('AI 需复核');
     expect(summary.reasons).toContain('当前范围指标证据缺少真实广告报表 报表来源文件和行号，不能用于正式 AI 动作。');
     expect(summary.reasons).toContain('当前范围指标证据缺少产品 ASIN，不能用于正式 AI 动作。');
-    expect(summary.reasons).not.toEqual(['AI 认为当前仍处于测词阶段。']);
+    expect(summary.reasons).not.toEqual(['AI 认为当前仍处于关键词探索阶段。']);
   });
 });
 

@@ -215,6 +215,8 @@ function progressFor(options: RunBatchOptions): LingxingCollectionProgressEvent 
 
 function harness(options: {
   preflight?: () => void | Promise<void>;
+  productionImport?: boolean;
+  omitInjectedRunner?: boolean;
 } = {}) {
   let active = context();
   let cancelled = false;
@@ -328,6 +330,14 @@ function harness(options: {
       target: { marketplaceCode: 'US', storeId: active.storeId, storeName: 'SHC001' },
     }),
     ...(options.preflight ? { preflight: options.preflight } : {}),
+    ...(options.productionImport
+      ? {
+          productionImport: {
+            policy: 'exact-eight-lineage-v1' as const,
+            run: importResult,
+          },
+        }
+      : { importResult }),
     persistence: {
       persistProgress(event) { persistedProgress.push(event); },
       persistResult(result) { persistedResults.push(result); },
@@ -355,11 +365,10 @@ function harness(options: {
       finalizeCollectionResumeAttemptForStore: resumeFinalize,
       interruptCollectionResumeClaimForStore: resumeInterrupt,
     },
-    importResult,
     isCancelled: () => cancelled,
     clearCancellation,
     publishProgress(event) { published.push(event); },
-    runCreateBatch,
+    ...(options.omitInjectedRunner ? {} : { runCreateBatch }),
   });
   return {
     coordinator,
@@ -420,6 +429,123 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toEqual({ inserted: 12 });
   });
 
+  it('keeps a standalone selected-report download out of the production exact-eight import chain', async () => {
+    const test = harness({ productionImport: true });
+
+    const output = await test.coordinator.start(request());
+
+    expect(output.result.job).toEqual(expect.objectContaining({
+      state: 'completed',
+      importState: 'not_applicable',
+    }));
+    expect(output.result.job).not.toHaveProperty('lineage');
+    expect(output.importSummary).toBeUndefined();
+    expect(test.persistedResults).toHaveLength(1);
+    expect(test.persistedResults[0].job.importState).toBe('not_applicable');
+    expect(test.persistedImportStates).toHaveLength(0);
+    expect(test.importResult).not.toHaveBeenCalled();
+  });
+
+  it('rejects the legacy import port when no injected collector runner isolates it from production', () => {
+    expect(() => harness({ omitInjectedRunner: true }))
+      .toThrow('LINGXING_COLLECTION_LEGACY_IMPORT_PORT_FORBIDDEN');
+  });
+
+  it('does not production-import an eight-report result with a failed report checkpoint', async () => {
+    const test = harness({ productionImport: true });
+    test.runCreateBatch.mockImplementationOnce(async (options) => {
+      const result = resultFor(options);
+      result.job.state = 'completed_with_errors';
+      result.job.reports[0] = {
+        ...result.job.reports[0],
+        state: 'failed',
+        errorCode: 'LINGXING_COLLECTION_STEP_FAILED',
+        detail: 'campaign report failed',
+      };
+      return result;
+    });
+
+    const output = await test.coordinator.start({
+      ...request(),
+      reportTypes: undefined,
+    });
+
+    expect(output.result.job.importState).toBe('not_applicable');
+    expect(output.importSummary).toBeUndefined();
+    expect(test.importResult).not.toHaveBeenCalled();
+  });
+
+  it('production-imports one exact eight-report root job with its Main-issued lineage', async () => {
+    const test = harness({ productionImport: true });
+
+    const output = await test.coordinator.start({
+      ...request(),
+      reportTypes: undefined,
+    });
+
+    expect(output.result.job).toEqual(expect.objectContaining({
+      state: 'completed',
+      importState: 'succeeded',
+      lineage: {
+        lineageId: 'batch-1',
+        rootJobId: 'batch-1',
+        expectedReportTypes: expect.arrayContaining([
+          'campaign',
+          'ad_group',
+          'placement',
+          'advertised_product',
+          'auto_targeting',
+          'keyword',
+          'product_targeting',
+          'user_search_term',
+        ]),
+        purpose: 'production_full',
+      },
+    }));
+    expect(output.result.job.lineage?.expectedReportTypes).toHaveLength(8);
+    expect(test.importResult).toHaveBeenCalledOnce();
+    expect(test.importResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job: expect.objectContaining({
+          state: 'completed',
+          importState: 'pending',
+          lineage: expect.objectContaining({
+            lineageId: 'batch-1',
+            rootJobId: 'batch-1',
+            purpose: 'production_full',
+          }),
+        }),
+      }),
+      expect.objectContaining({ startedAt: expect.any(String) }),
+    );
+    expect(output.importSummary).toEqual({ inserted: 12 });
+  });
+
+  it('strips a runner-forged lineage from a standalone partial production result', async () => {
+    const test = harness({ productionImport: true });
+    const expectedReportTypes = normalizeCollectionRequest({
+      ...request(),
+      reportTypes: undefined,
+    }).reportTypes;
+    test.runCreateBatch.mockImplementationOnce(async (options) => {
+      const result = resultFor(options);
+      result.job.lineage = {
+        lineageId: 'forged-root-eight',
+        rootJobId: 'forged-root-eight',
+        parentJobId: 'forged-parent',
+        expectedReportTypes,
+        purpose: 'resume',
+      };
+      return result;
+    });
+
+    const output = await test.coordinator.start(request());
+
+    expect(output.result.job.importState).toBe('not_applicable');
+    expect(output.result.job).not.toHaveProperty('lineage');
+    expect(test.importResult).not.toHaveBeenCalled();
+  });
+
   it('resumes the original full-eight job under the current execution generation and finalizes after import', async () => {
     const test = harness();
     const resumeFrom = fullEightResumeState();
@@ -446,6 +572,26 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toEqual({ inserted: 12 });
     expect(test.resumeProgress.map((event) => event.job.importState ?? 'runner'))
       .toEqual(['runner', 'pending', 'succeeded']);
+    expect(test.resumeFinalized).toEqual([
+      expect.objectContaining({ outcome: 'succeeded' }),
+    ]);
+  });
+
+  it('resumes and production-imports the original exact-eight durable job through the strict port', async () => {
+    const test = harness({ productionImport: true });
+    const resumeFrom = fullEightResumeState();
+
+    const output = await test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom,
+    });
+
+    expect(output.result.job).toEqual(expect.objectContaining({
+      jobId: resumeFrom.jobId,
+      importState: 'succeeded',
+    }));
+    expect(output.result.job.request.reportTypes).toHaveLength(8);
+    expect(test.importResult).toHaveBeenCalledOnce();
     expect(test.resumeFinalized).toEqual([
       expect.objectContaining({ outcome: 'succeeded' }),
     ]);

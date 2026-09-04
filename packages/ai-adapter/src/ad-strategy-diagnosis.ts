@@ -308,6 +308,10 @@ export interface AdStrategyDiagnoserOptions {
   maxTokens?: number;
 }
 
+export interface AdStrategyDiagnosisRequestOptions {
+  signal?: AbortSignal | undefined;
+}
+
 const DEFAULT_OUTPUT_LANGUAGE = '简体中文';
 const DEFAULT_PERSONA = [
   '你是中文亚马逊广告运营顾问，擅长用真实广告数据、产品阶段、成本结构和运营事件做量化诊断。',
@@ -335,7 +339,11 @@ export class AdStrategyDiagnoser {
     private readonly options: AdStrategyDiagnoserOptions = {},
   ) {}
 
-  async diagnose(input: AdStrategyDiagnosisInput): Promise<AdStrategyDiagnosisOutput> {
+  async diagnose(
+    input: AdStrategyDiagnosisInput,
+    requestOptions: AdStrategyDiagnosisRequestOptions = {},
+  ): Promise<AdStrategyDiagnosisOutput> {
+    requestOptions.signal?.throwIfAborted();
     try {
       const response = await this.provider.chat(
         [
@@ -354,15 +362,25 @@ export class AdStrategyDiagnoser {
             content: this.buildPrompt(input),
           },
         ],
-        { temperature: 0.2, responseFormat: 'json_object', maxTokens: this.maxTokens() },
+        {
+          temperature: 0.2,
+          responseFormat: 'json_object',
+          maxTokens: this.maxTokens(),
+          signal: requestOptions.signal,
+        },
       );
+      requestOptions.signal?.throwIfAborted();
 
       if (!response.success) {
         return this.fallback(input, response.error ? `AI 服务调用失败：${response.error}` : 'AI 服务调用失败，当前使用规则引擎兜底。');
       }
 
-      return this.normalizeOutput(await this.parseOrRepairJson(response.content || '', input), input);
+      return this.normalizeOutput(
+        await this.parseOrRepairJson(response.content || '', input, requestOptions),
+        input,
+      );
     } catch (error) {
+      requestOptions.signal?.throwIfAborted();
       if (isJsonParseFailure(error)) {
         return this.fallback(input, AI_JSON_FORMAT_FALLBACK_REASON);
       }
@@ -370,7 +388,12 @@ export class AdStrategyDiagnoser {
     }
   }
 
-  private async parseOrRepairJson(content: string, input: AdStrategyDiagnosisInput): Promise<unknown> {
+  private async parseOrRepairJson(
+    content: string,
+    input: AdStrategyDiagnosisInput,
+    requestOptions: AdStrategyDiagnosisRequestOptions,
+  ): Promise<unknown> {
+    requestOptions.signal?.throwIfAborted();
     try {
       return parseJsonObject(content);
     } catch (error) {
@@ -400,8 +423,14 @@ export class AdStrategyDiagnoser {
             ].join('\n\n'),
           },
         ],
-        { temperature: 0, responseFormat: 'json_object', maxTokens: this.maxTokens() },
+        {
+          temperature: 0,
+          responseFormat: 'json_object',
+          maxTokens: this.maxTokens(),
+          signal: requestOptions.signal,
+        },
       );
+      requestOptions.signal?.throwIfAborted();
 
       if (!repairResponse.success) {
         throw new AiJsonParseError(AI_JSON_FORMAT_FALLBACK_REASON);

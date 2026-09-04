@@ -20,6 +20,7 @@ import {
   PriorityDataTable,
   WorkbenchPanel,
   WorkspaceState,
+  selectEntityDeletePolicy,
   type PriorityDataTableColumn,
 } from '../../components/workspace';
 import './store-scoped-ad-listing-panel.css';
@@ -556,11 +557,17 @@ type ListingRowActionsProps = {
 
 export function ListingRowActions({ row, pending, onHistory, onEdit, onDelete }: ListingRowActionsProps) {
   const readOnly = row.asinValid === false;
+  const policy = selectEntityDeletePolicy('listing-version', {
+    buttonLabelOverride: '删除',
+    reasonOverride: readOnly ? '历史 ASIN 无效，仅供对账，禁止删除' : undefined,
+  });
+  const deleteDisabled = pending || readOnly;
+  const deleteAriaLabel = `${policy.buttonLabel} ${row.asin}`;
   return (
     <span className="store-fact-row-actions">
       <button aria-label={`查看 ${row.asin} 版本历史`} className="workspace-button workspace-button--secondary" disabled={pending} onClick={onHistory} type="button"><ClockCounterClockwise aria-hidden="true" size={15} />版本</button>
       <button aria-label={`编辑 ${row.asin}`} className="workspace-button workspace-button--secondary" disabled={pending || readOnly} onClick={onEdit} title={readOnly ? '历史 ASIN 无效，需先完成数据对账' : undefined} type="button"><NotePencil aria-hidden="true" size={15} />编辑</button>
-      <button aria-label={`删除 ${row.asin}`} className="workspace-button workspace-button--danger" disabled={pending || readOnly} onClick={onDelete} title={readOnly ? '历史 ASIN 无效，仅供对账，禁止删除' : undefined} type="button"><Trash aria-hidden="true" size={15} />删除</button>
+      <button aria-label={deleteAriaLabel} className="workspace-button workspace-button--danger" disabled={deleteDisabled} onClick={onDelete} title={policy.reason} type="button"><Trash aria-hidden="true" size={15} />删除</button>
       {readOnly && <small aria-label={`${row.asin} 只读原因`}>非法 ASIN · 只读</small>}
     </span>
   );

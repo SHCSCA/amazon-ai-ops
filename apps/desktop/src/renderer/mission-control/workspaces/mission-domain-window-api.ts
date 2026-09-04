@@ -54,6 +54,7 @@ export type MissionLineageProjection = {
   mission: MissionRecord;
   checkpoints: MissionCheckpointRecord[];
   links: MissionLinkRecord[];
+  causalEvents: CausalEventRecord[];
 };
 
 export interface MissionDomainRendererApi {
@@ -166,6 +167,11 @@ export type TransitionExperimentInput = {
   reason?: string;
 };
 
+export type EvaluateExperimentInput = {
+  id: string;
+  expectedRevision: number;
+};
+
 export type ExperimentArchiveInput = {
   id: string;
   expectedRevision: number;
@@ -197,6 +203,7 @@ export interface ExperimentDomainRendererApi {
   createExperiment(context: StoreContextEnvelope, input: CreateExperimentInput): Promise<ExperimentRecord>;
   updateExperiment(context: StoreContextEnvelope, input: UpdateExperimentInput): Promise<ExperimentRecord>;
   transitionExperiment(context: StoreContextEnvelope, input: TransitionExperimentInput): Promise<ExperimentRecord>;
+  evaluateExperiment(context: StoreContextEnvelope, input: EvaluateExperimentInput): Promise<ExperimentRecord>;
   archiveExperiment(context: StoreContextEnvelope, input: ExperimentArchiveInput): Promise<ExperimentRecord>;
   restoreExperiment(context: StoreContextEnvelope, input: ExperimentArchiveInput): Promise<ExperimentRecord>;
   appendExperimentObservation(
@@ -234,7 +241,7 @@ export interface MissionDomainWindowSurface {
   policies?: Readonly<Record<'create' | 'list' | 'update' | 'disable' | 'archive' | 'restore', MissionScopedCall>>;
   policyVersions?: Readonly<Record<'create' | 'list' | 'updateDraft' | 'enable', MissionScopedCall>>;
   policyRuntime?: Readonly<Record<'get' | 'setAutonomyMode' | 'setKillSwitch', MissionScopedCall>>;
-  experiments?: Readonly<Record<'create' | 'list' | 'update' | 'transition' | 'archive' | 'restore' | 'listObservations' | 'listMetricSnapshots' | 'appendObservation', MissionScopedCall>>;
+  experiments?: Readonly<Record<'create' | 'list' | 'update' | 'transition' | 'evaluate' | 'archive' | 'restore' | 'listObservations' | 'listMetricSnapshots' | 'appendObservation', MissionScopedCall>>;
   causal?: Readonly<Record<'listEvents' | 'appendEvent', MissionScopedCall>>;
 }
 
@@ -311,6 +318,7 @@ export function createMissionDomainWindowSurface(
       list: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.listExperiments(context, input),
       update: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.updateExperiment(context, input as unknown as UpdateExperimentInput),
       transition: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.transitionExperiment(context, input as unknown as TransitionExperimentInput),
+      evaluate: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.evaluateExperiment(context, input as unknown as EvaluateExperimentInput),
       archive: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.archiveExperiment(context, input as unknown as ExperimentArchiveInput),
       restore: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.restoreExperiment(context, input as unknown as ExperimentArchiveInput),
       listObservations: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => experimentApi.listExperimentObservations(context, String(input.experimentId ?? '')),
@@ -412,7 +420,7 @@ export function readPolicyDomainWindowApi(target?: unknown): PolicyDomainRendere
 }
 
 const EXPERIMENT_METHODS = [
-  'create', 'list', 'update', 'transition', 'archive', 'restore',
+  'create', 'list', 'update', 'transition', 'evaluate', 'archive', 'restore',
   'listObservations', 'listMetricSnapshots', 'appendObservation',
 ] as const;
 const CAUSAL_METHODS = ['listEvents', 'appendEvent'] as const;
@@ -432,6 +440,7 @@ export function readExperimentDomainWindowApi(target?: unknown): ExperimentDomai
     createExperiment: async (context, input) => experiments.create(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
     updateExperiment: async (context, input) => experiments.update(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
     transitionExperiment: async (context, input) => experiments.transition(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
+    evaluateExperiment: async (context, input) => experiments.evaluate(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
     archiveExperiment: async (context, input) => experiments.archive(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
     restoreExperiment: async (context, input) => experiments.restore(context, input as unknown as Record<string, unknown>) as Promise<ExperimentRecord>,
     appendExperimentObservation: async (context, input) => experiments.appendObservation(context, input as unknown as Record<string, unknown>) as Promise<ExperimentObservationRecord>,
@@ -742,6 +751,25 @@ export function createPreviewMissionDomainApi(): MissionDomainRendererApi {
         throw new Error('已归档或已完成 Mission 不能编辑。');
       }
       const patch = input.patch;
+      const allowedPatchKeys = new Set([
+        'title',
+        'objective',
+        'priority',
+        'productId',
+        'observationStartsAt',
+        'observationEndsAt',
+        'successCriteria',
+        'guardrails',
+      ]);
+      const unknownPatchKeys = Object.keys(patch).filter((key) => !allowedPatchKeys.has(key));
+      if (unknownPatchKeys.length > 0) {
+        throw new Error(`Mission 修改包含不支持的字段：${unknownPatchKeys.join('、')}。`);
+      }
+      const authorityPatchKeys = Object.keys(patch).filter((key) => key !== 'title');
+      if (authorityPatchKeys.length > 0
+        && ['decision', 'action', 'readback', 'effect'].includes(current.phase)) {
+        throw new Error('运营任务进入决策阶段后经营定义已锁定；只能重命名标题，如需改变范围或目标，请重新创建任务。');
+      }
       const updated: MissionRecord = {
         ...current,
         ...patch,
@@ -765,10 +793,15 @@ export function createPreviewMissionDomainApi(): MissionDomainRendererApi {
       if (current.status === 'archived' || current.status === 'completed') {
         throw new Error('已归档或已完成 Mission 不能改变运行状态。');
       }
+      const phase = input.phase ?? current.phase;
+      const phaseSequence: readonly MissionPhase[] = ['fact', 'analysis', 'decision', 'action', 'readback', 'effect'];
+      if (phaseSequence.indexOf(phase) < phaseSequence.indexOf(current.phase)) {
+        throw new Error('运营任务阶段不能回退；如需改变已绑定的经营定义，请重新创建任务。');
+      }
       return replaceMission(state, {
         ...current,
         status: input.status,
-        phase: input.phase ?? current.phase,
+        phase,
         revision: current.revision + 1,
         updatedAt: nowAfter(current.updatedAt),
       });
@@ -809,6 +842,7 @@ export function createPreviewMissionDomainApi(): MissionDomainRendererApi {
         mission,
         checkpoints: state.checkpoints.filter((checkpoint) => checkpoint.missionId === missionId),
         links: state.links.filter((link) => link.missionId === missionId),
+        causalEvents: [],
       });
     },
   };
@@ -1574,25 +1608,50 @@ export function createPreviewExperimentMemoryDomainSuite(): {
       const state = stateFor(context);
       const current = experimentFor(state, input.id);
       assertExperimentRevision(current.revision, input.expectedRevision);
+      if (input.status === 'completed') {
+        throw new Error('经营实验只能由系统根据指标判定；人工文字不能直接完成实验。');
+      }
       if (!allowedExperimentTransition(current.status, input.status)) {
         throw new Error(`Experiment 不允许从 ${current.status} 转换到 ${input.status}。`);
       }
       const updated: ExperimentRecord = {
         ...current,
         status: input.status,
-        ...(input.status === 'completed' && input.reason?.trim() ? { conclusion: input.reason.trim() } : {}),
         revision: current.revision + 1,
         updatedAt: nowAfter(current.updatedAt),
       };
       const saved = replaceExperiment(state, updated);
       appendCausal(context, state, {
         id: `causal:experiment:${updated.id}:r${updated.revision}`,
-        stage: input.status === 'completed' ? 'EFFECT' : 'ANALYSIS',
+        stage: 'ANALYSIS',
         eventType: `experiment_${input.status}`, entityType: 'experiment', entityId: updated.id,
         missionId: updated.missionId, title: updated.name,
-        ...(input.status === 'completed' ? { observedEffect: updated.conclusion } : {}),
         status: updated.status, source: 'mission-domain', actorId: input.actorId,
       }, updated.updatedAt);
+      return saved;
+    },
+    async evaluateExperiment(context, input) {
+      const state = stateFor(context);
+      const current = experimentFor(state, input.id);
+      assertExperimentRevision(current.revision, input.expectedRevision);
+      if (!['running', 'paused'].includes(current.status)) {
+        throw new Error('只有观察中或已暂停的经营实验可以由系统判定。');
+      }
+      const updatedAt = nowAfter(current.updatedAt);
+      const updated: ExperimentRecord = {
+        ...current,
+        status: 'completed',
+        conclusion: `系统已根据指标快照完成判定：${current.primaryMetric} 达到预期，守护栏未触发。`,
+        revision: current.revision + 1,
+        updatedAt,
+      };
+      const saved = replaceExperiment(state, updated);
+      appendCausal(context, state, {
+        id: `causal:experiment:${updated.id}:r${updated.revision}`,
+        stage: 'EFFECT', eventType: 'experiment_completed', entityType: 'experiment', entityId: updated.id,
+        missionId: updated.missionId, title: updated.name, observedEffect: updated.conclusion,
+        status: updated.status, source: 'preview-metric-evaluator', actorId: 'experiment-evaluator',
+      }, updatedAt);
       return saved;
     },
     async archiveExperiment(context, input) {

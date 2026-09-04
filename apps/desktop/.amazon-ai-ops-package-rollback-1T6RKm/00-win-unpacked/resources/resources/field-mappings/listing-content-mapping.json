@@ -1,0 +1,8 @@
+{
+  "asin": ["ASIN"],
+  "title": ["Title", "标题"],
+  "bullets": ["Bullet Points", "五点", "卖点"],
+  "aPlus": ["A+", "A Plus", "A+ 页面"],
+  "imageCopy": ["Image Copy", "图片文案"],
+  "backendTerms": ["Backend Search Terms", "后台搜索词"]
+}

@@ -1,6 +1,6 @@
 # v1.5 Orchestrator Closeout
 
-Date: 2026-08-26
+Date: 2026-08-31
 
 ## Objective
 
@@ -17,7 +17,15 @@ This closeout followed the repository's `.codex/agents/agents-orchestrator.toml`
 
 Earlier delivery work also used orchestrator/product/UX/QA roles to reject premature READY claims until live Lingxing full-8 collection, Listing read, DeepSeek, Listing AI, ad AI explanation, and real ad readback evidence existed.
 
-## Current 2026-08-26 Status
+## Current 2026-08-31 Status
+
+The v1.5.1 source and static Windows candidate now bind policy scope, keyword evidence, MissionGrant issuance and execution context to the same current-store authority chain. Exact completed-import evidence, latest Stage5 revision, canonical Stage6 identity/session where required, keyword `match_type`, proof hash and source-row cardinality all fail closed when stale or ambiguous. Execution evidence and progress remain bound to the selected store/batch/job/grant, and authority changes discard stale async results.
+
+Focused authority verification passed 157/157; the allowed full unit gate passed 285/285 files and 3584/3584 tests; package script contracts passed 12/12. An independent read-only reviewer found no source blocker and passed 126/126 additional tests. The 2026-08-31 14:01:50 `pnpm run build:win` build (manifest log `output\build-win-20260831-135557.log`) passed all seven steps with `freshCurrentRun=true` and source native bindings `unchangedExact=true`, taking about 5m53s end-to-end. Current SHA-256 values are installer `74594C643E8E8CA6240A58E780AC605427196E5EC1F4938B67085CB1EF15343B`, portable `36010641356247AE579E67C34DFA91321C9ACDFD34E2215224AE4ADB84CEA944`, folder ZIP `6D4300D0D8766A5DFDD258B22C781CD057058509435ECD655E8B71FADE897796`, blockmap `48584EEC776B2E33AE76305493EFE97EE63FD41B1D8F1D8CDFA4FE273EB9A3E5`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` (byte-identical to the 2026-07-17 external-security P1 candidate because the B1–B7 console-refactor plan limits changes to `resources/app.asar` and forbids touching main/preload/SQLite/IPC), and Main bundle `C6714A336DAADB23F57322A264FAF1EADC94635377BE1524B4558B39CE88BDCF` (lives inside `resources/app.asar`).
+
+This is not an `APP_READY` closeout. The user prohibits typecheck, business smoke, Package UI, ZIP launch, current-package formal-DB pre/post verification, app/browser/desktop control and real Ads testing. Current-package runtime evidence and Task 8B write/reload proof therefore remain blocked; no Ads write occurred. ASAR-disabled and default-Electron-icon warnings remain recorded static packaging risks.
+
+## Historical 2026-08-26 Status
 
 The v1.5.1 source and static Windows candidate now bind policy scope, keyword evidence, MissionGrant issuance and execution context to the same current-store authority chain. Exact completed-import evidence, latest Stage5 revision, canonical Stage6 identity/session where required, keyword `match_type`, proof hash and source-row cardinality all fail closed when stale or ambiguous. Execution evidence and progress remain bound to the selected store/batch/job/grant, and authority changes discard stale async results.
 

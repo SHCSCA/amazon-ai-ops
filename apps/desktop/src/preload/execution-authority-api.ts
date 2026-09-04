@@ -33,6 +33,10 @@ export interface DiscoverRecommendationTargetRequest {
 export interface DiscoveredRecommendationTargetResult {
   recommendationId: number;
   recommendationRevision: number;
+  /** Main-only recommendation lookup projected for exact product binding. */
+  recommendationAsin: string;
+  /** Main-only recommendation evidence projected for exact keyword-row matching. */
+  recommendationMatchType: string;
   pageIdentity: {
     adsAccountId: string;
     campaignId: string;
