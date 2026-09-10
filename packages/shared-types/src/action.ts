@@ -30,7 +30,7 @@ export interface ActionRecommendation {
   evidence: ActionEvidence;
   confidence: number;             // 0-1
   riskLevel: RiskLevel;
-  status: 'pending' | 'needs_review' | 'approved' | 'rejected' | 'executed' | 'expired';
+  status: 'pending' | 'verified' | 'needs_review' | 'approved' | 'rejected' | 'executed' | 'expired';
   revision?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -169,7 +169,8 @@ export interface BindRecommendationWritableTargetRequest {
 export interface BindRecommendationWritableTargetResult {
   ok: true;
   recommendationId: number;
-  status: 'pending';
+  /** Successful bind exits 待核验 / pending-verify. Recommendation stays approval-eligible as verified. */
+  status: 'verified';
   revision: number;
   boundAt: string;
 }

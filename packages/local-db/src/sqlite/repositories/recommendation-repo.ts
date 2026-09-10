@@ -168,7 +168,7 @@ export class RecommendationRepository {
         AND entity_id = ?
         AND action_type = ?
         AND COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), '') = ?
-        AND status IN ('pending', 'needs_review', 'approved', 'rejected', 'executed')
+        AND status IN ('pending', 'verified', 'needs_review', 'approved', 'rejected', 'executed')
       ORDER BY created_at DESC
       LIMIT 1
     `).get(
@@ -196,7 +196,7 @@ export class RecommendationRepository {
         AND action_type = ?
         AND COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), '') = ?
         ${withinGeneration ? 'AND task_id = ?' : ''}
-        AND status IN ('pending', 'needs_review', 'approved', 'rejected', 'executed')
+        AND status IN ('pending', 'verified', 'needs_review', 'approved', 'rejected', 'executed')
       ORDER BY created_at DESC
       LIMIT 1
     `).get(storeId, rec.asin, rec.entityId, rec.actionType, evidenceDate,
@@ -465,7 +465,7 @@ export class RecommendationRepository {
       };
       const result = this.db.prepare(`
         UPDATE action_recommendations
-        SET status = 'pending',
+        SET status = 'verified',
             evidence_json = ?,
             revision = revision + 1,
             updated_at = datetime('now')
@@ -504,7 +504,7 @@ export class RecommendationRepository {
       });
       const result = this.db.prepare(`
         UPDATE action_recommendations
-        SET status = 'pending', evidence_json = ?, revision = revision + 1, updated_at = datetime('now')
+        SET status = 'verified', evidence_json = ?, revision = revision + 1, updated_at = datetime('now')
         WHERE id = ?
           AND store_id = ?
           AND status = 'pending'

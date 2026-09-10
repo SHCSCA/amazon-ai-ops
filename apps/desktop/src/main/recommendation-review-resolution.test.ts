@@ -230,7 +230,8 @@ describe('recommendation review resolution', () => {
       source.indexOf('function handleResolveRecommendationReview'),
       source.indexOf('async function handleApproveRecommendation'),
     );
-    expect(handler).toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
+    expect(handler).toContain('resolveLockedRecommendationBatchScope');
+    expect(handler).not.toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
     expect(handler).toContain('findByIdForStore(context.storeId, request.recommendationId)');
     expect(handler).toContain('storeId: context.storeId');
     expect(handler).toContain('assertRecommendationMetricSourceAuthority(state.db');

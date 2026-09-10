@@ -12,6 +12,10 @@ export const ANALYSIS_AUTHORITY_IPC_CHANNELS = Object.freeze([
   'analysis-authority:authorize-proposal-batch',
 ] as const);
 
+export const ANALYSIS_AUTHORITY_IPC_EVENTS = Object.freeze([
+  'analysis-authority:analysis-completed',
+] as const);
+
 export interface AnalysisAuthorityIpcRegistrar {
   handle(channel: string, listener: (event: unknown, request?: unknown) => unknown): void;
 }

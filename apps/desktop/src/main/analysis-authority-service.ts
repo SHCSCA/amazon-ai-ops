@@ -12,11 +12,14 @@ import {
 } from '@amazon-ai-ops/local-db';
 import {
   type ActionRecommendation,
+  type AnalysisAuthorizationBlocker,
+  type AnalysisAuthorizationBlockerCode,
   type AnalysisEvidencePackageRecord,
   type AnalysisProposalSnapshotRecord,
   type AuthorizeAnalysisProposalBatchRequest,
   type AuthorizeAnalysisProposalBatchResult,
   type MissionGrantRecord,
+  type MissionAnalysisRunProjection,
   type MissionAnalysisProjection,
   type PolicyVersionRules,
   type RunMissionAnalysisRequest,
@@ -29,6 +32,11 @@ import type { StoreCoordinator } from './store-coordinator';
 import { createAnalysisRunsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-runs-repo';
 import type { AnalysisRunRecord } from '@amazon-ai-ops/shared-types';
 import { assertCurrentWritableAdTargetAuthority } from './writable-ad-target-resolution';
+import {
+  analysisBlocker,
+  analysisErrorCode,
+  uniqueAnalysisBlockers,
+} from './analysis-authority-blockers';
 
 export interface RecommendationGenerationResultForAnalysis {
   generated: number;
@@ -107,6 +115,7 @@ export interface AnalysisAuthorityServiceOptions {
     context: StoreContextEnvelope,
     grant: MissionGrantRecord,
   ) => void;
+  onAnalysisRunCompleted?: (run: MissionAnalysisRunProjection) => void;
   /** Main-only deadline for one recommendation-generation attempt. */
   generationTimeoutMs?: number | undefined;
   now?: () => Date;
@@ -134,6 +143,7 @@ export class AnalysisAuthorityService {
   private readonly currentModelRevision: AnalysisAuthorityServiceOptions['currentModelRevision'];
   private readonly allowedProofRoots: AnalysisAuthorityServiceOptions['allowedProofRoots'];
   private readonly onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
+  private readonly onAnalysisRunCompleted?: AnalysisAuthorityServiceOptions['onAnalysisRunCompleted'];
   private readonly generationTimeoutMs: number;
   private readonly now: () => Date;
 
@@ -154,6 +164,7 @@ export class AnalysisAuthorityService {
     this.currentModelRevision = options.currentModelRevision;
     this.allowedProofRoots = options.allowedProofRoots;
     this.onAutomaticGrantIssued = options.onAutomaticGrantIssued;
+    this.onAnalysisRunCompleted = options.onAnalysisRunCompleted;
     this.generationTimeoutMs = validatedAnalysisGenerationTimeout(
       options.generationTimeoutMs ?? DEFAULT_ANALYSIS_GENERATION_TIMEOUT_MS,
     );
@@ -483,7 +494,13 @@ export class AnalysisAuthorityService {
           : 'rule_fallback',
         detail: safeAiAnalysisDetail(generation.aiExplanation),
       },
+      analysisRun: {
+        status: 'done',
+        missionId: mission.id,
+        evidencePackageId: evidencePackage.id,
+      },
     };
+    this.onAnalysisRunCompleted?.(result.analysisRun);
     if (proposals.length > 0
       && policyRuntime.autonomyMode === 'policy_auto') {
       result.automaticAuthorization = this.authorizeProposalBatch({
@@ -503,6 +520,11 @@ export class AnalysisAuthorityService {
           this.assertContext(context);
           this.analysisRuns.update(analysisRunId, { status: 'failed', completedAt: this.now().toISOString(), blockedReason: analysisRunFailureOperatorReason(error) });
         } catch { /* The original store/session receipt remains interrupted and read-only. */ }
+        this.onAnalysisRunCompleted?.({
+          status: 'retryable',
+          missionId: mission.id,
+          blockerCodes: [analysisErrorCode(error)],
+        });
       }
       throw error;
     } finally {
@@ -617,12 +639,17 @@ export class AnalysisAuthorityService {
   ): MissionAnalysisProjection {
     const context = this.assertContext(contextInput);
     const missionId = requiredId(missionIdInput, 'missionId');
-    const projection = {
+    const projection: MissionAnalysisProjection = {
       evidencePackages: this.repository.listEvidencePackages(context, missionId),
       actionBatches: this.repository.listActionBatches(context, missionId),
       proposals: this.repository.listProposalSnapshots(context, missionId),
       decisionLinks: this.repository.listProposalDecisionLinks(context, missionId),
     };
+    const latestRun = this.analysisRuns.findByMissionId(missionId)
+      .find((run) => run.storeId === context.storeId);
+    if (latestRun) {
+      projection.analysisRun = projectMissionAnalysisRun(latestRun, missionId);
+    }
     this.assertContext(context);
     return projection;
   }
@@ -1071,19 +1098,49 @@ export class AnalysisAuthorityService {
   }
 }
 
+function projectMissionAnalysisRun(
+  run: AnalysisRunRecord,
+  missionId: string,
+): MissionAnalysisRunProjection {
+  if (run.status === 'completed') {
+    return {
+      status: 'done',
+      missionId,
+      evidencePackageId: typeof run.metadata?.evidencePackageId === 'string'
+        ? run.metadata.evidencePackageId
+        : undefined,
+    };
+  }
+  if (run.status === 'analyzing') return { status: 'running', missionId };
+  return {
+    status: 'retryable',
+    missionId,
+    blockerCodes: [analysisErrorCode(new Error(run.blockedReason ?? ''))],
+  };
+}
+
 function blockedResult(
   mode: AuthorizeAnalysisProposalBatchResult['mode'],
   proposalIds: readonly string[],
   decisionIds: readonly string[],
-  ...blockers: string[]
+  ...blockers: Array<AnalysisAuthorizationBlocker | string>
 ): AuthorizeAnalysisProposalBatchResult {
   return {
     mode,
     proposalIds,
     decisionIds,
     authorized: false,
-    blockers: [...new Set(blockers.filter(Boolean))],
+    blockers: uniqueAnalysisBlockers(blockers.map(normalizeAnalysisBlocker)),
   };
+}
+
+function normalizeAnalysisBlocker(
+  blocker: AnalysisAuthorizationBlocker | string,
+): AnalysisAuthorizationBlocker {
+  if (typeof blocker !== 'string') return blocker;
+  const match = blocker.match(/\b([A-Z][A-Z0-9_]+)\b/);
+  const code = (match?.[1] ?? 'ANALYSIS_INTERRUPTED') as AnalysisAuthorizationBlockerCode;
+  return analysisBlocker(code, blocker);
 }
 
 function proposalValidUntil(now: Date, evidenceFreshUntil: string, missionObservationEnd: string): string {

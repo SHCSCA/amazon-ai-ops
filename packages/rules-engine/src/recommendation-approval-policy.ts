@@ -80,10 +80,10 @@ export function assertRecommendationDecisionTransition(
   targetStatus: RecommendationDecisionStatus,
   decision: RecommendationDecisionInput,
 ): void {
-  if (targetStatus === 'approved' && recommendation.status !== 'pending') {
+  if (targetStatus === 'approved' && recommendation.status !== 'pending' && recommendation.status !== 'verified') {
     throw new Error(`审批被阻断：建议当前状态 ${recommendation.status} 不允许转为 ${targetStatus}。`);
   }
-  if (targetStatus === 'rejected' && recommendation.status !== 'pending' && recommendation.status !== 'needs_review') {
+  if (targetStatus === 'rejected' && recommendation.status !== 'pending' && recommendation.status !== 'verified' && recommendation.status !== 'needs_review') {
     throw new Error(`审批被阻断：建议当前状态 ${recommendation.status} 不允许转为 ${targetStatus}。`);
   }
   if (targetStatus === 'approved' && !nonEmpty(decision.approvedBy)) {
