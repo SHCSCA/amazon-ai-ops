@@ -14,9 +14,12 @@ import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-a
 import {
   MissionsWorkspace,
   MissionAnalysisRunHistory,
+  boundAdsObjectsForMission,
   buildCreateMissionInput,
   buildUpdateMissionInput,
   buildMissionProductOptions,
+  extractKnownAnalysisFailureCodes,
+  latestEvidencePackageForMission,
   missionAnalysisBlockerLabel,
   missionAnalysisRunReceipts,
   missionDefinitionEditBlocker,
@@ -24,10 +27,13 @@ import {
   missionFlightPlanRows,
   missionGuardrailLabel,
   missionLineageLinkLabel,
+  missionPathFailureText,
   latestMissionAnalysisResult,
   missionRecommendationSummaryLabel,
   missionRestoreFeedback,
   missionTransitionActionLabel,
+  previousStepEvidenceLabel,
+  projectMissionAnalysisRun,
   refreshMissionAnalysisReceipt,
   refreshMissionAnalysisFailureReceipt,
   responseMatchesMissionAuthority,
@@ -317,9 +323,24 @@ describe('MissionsWorkspace contracts', () => {
     expect(label).toContain('重试');
     expect(label).not.toMatch(/Main|StoreContext|Authority|revision|POLICY_/i);
     expect(missionAnalysisBlockerLabel('证据尚未满足自动授权条件')).toBe('证据尚未满足自动授权条件');
-    expect(missionAnalysisBlockerLabel('MISSING_STABLE_AD_ENTITY')).toBe('缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试');
-    expect(missionAnalysisBlockerLabel('CHANGE_LIMIT_EXCEEDED')).toBe('建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试');
-    expect(missionAnalysisBlockerLabel('POLICY_PRIORITY_MISMATCH')).toBe('当前建议未命中数字最小的优先策略，请重新运行分析后再授权');
+    expect(missionAnalysisBlockerLabel('MISSING_STABLE_AD_ENTITY')).toBe('MISSING_STABLE_AD_ENTITY · 缺少可稳定回读的广告对象，请先从当前 Ads 页面识别并绑定后重试');
+    expect(missionAnalysisBlockerLabel('CHANGE_LIMIT_EXCEEDED')).toBe('CHANGE_LIMIT_EXCEEDED · 建议变化超过策略上限，请刷新数据或调整为策略允许范围后再试');
+    expect(missionAnalysisBlockerLabel('POLICY_PRIORITY_MISMATCH')).toBe('POLICY_PRIORITY_MISMATCH · 当前建议未命中数字最小的优先策略，请重新运行分析后再授权');
+    expect(extractKnownAnalysisFailureCodes('blocked CHANGE_LIMIT_EXCEEDED for bid')).toEqual(['CHANGE_LIMIT_EXCEEDED']);
+    expect(missionPathFailureText(new Error('Mission analysis blocked: CHANGE_LIMIT_EXCEEDED'))).toContain('CHANGE_LIMIT_EXCEEDED');
+    expect(missionPathFailureText(new Error('失败'))).not.toBe('失败');
+  });
+
+  it('binds Ads objects and analysis status to the selected Mission evidence package', async () => {
+    const missionApi = createPreviewMissionDomainApi();
+    const analysisApi = createPreviewAnalysisAuthorityApi();
+    const mission = (await missionApi.listMissions(context, { includeArchived: false }))[0];
+    const projection = await analysisApi.getMissionProjection(context, mission.id);
+    const evidence = latestEvidencePackageForMission(projection.evidencePackages, mission.id, String(context.storeId));
+    const proposals = projection.proposals.filter((proposal) => proposal.evidencePackageId === evidence?.id);
+    expect(boundAdsObjectsForMission(mission.id, String(context.storeId), evidence, proposals).every((item) => item.status === '待核验')).toBe(true);
+    expect(projectMissionAnalysisRun({ mission, storeId: String(context.storeId), pendingAnalysis: true, analysisError: null, evidence, proposals }).status).toBe('running');
+    expect(previousStepEvidenceLabel(mission, null, evidence)).toBe('尚无上一步证据');
   });
 
   it('reports the restored task status returned by Main without downgrading a completed effect chain', () => {
