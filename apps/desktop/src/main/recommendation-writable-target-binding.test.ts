@@ -176,7 +176,8 @@ describe('pending recommendation writable target binding', () => {
       persist,
     });
     expect(result.status).toBe('verified');
-    expect(persist.mock.calls[0][0].writableTargetBinding.scope).toMatchObject(lockedBatch);
+    const persisted = (persist.mock.calls as unknown[][])[0]?.[0] as { writableTargetBinding?: { scope?: unknown } } | undefined;
+    expect(persisted?.writableTargetBinding?.scope).toMatchObject(lockedBatch);
   });
 
   it('fails closed when renderer dates disagree with the locked evidence batch', () => {

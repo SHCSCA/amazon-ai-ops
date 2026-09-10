@@ -17,7 +17,15 @@ export * from './mission-control';
 export * from './lingxing-collection';
 export * from './asin';
 export * from './analysis-authority';
-export * from './analysis-runs';
+export type {
+  AnalysisRunRecord,
+  AnalysisRunMetadata,
+  AnalysisRunsApi,
+  CreateAnalysisRunInput,
+  UpdateAnalysisRunInput,
+  AnalysisRunProjection,
+} from './analysis-runs';
+export { validateAnalysisRunRecord, validateAnalysisRunMetadata } from './analysis-runs';
 export * from './execution-authority';
 export * from './store-runtime-config';
 export * from './store-collection-schedule';

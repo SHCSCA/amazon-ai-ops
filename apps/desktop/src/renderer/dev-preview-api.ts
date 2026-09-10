@@ -3725,7 +3725,7 @@ export function createBrowserPreviewElectronApi(
       return clonePreviewSnapshot({
         ok: true,
         recommendationId: recommendation.id,
-        status: 'pending',
+        status: 'verified',
         revision: recommendation.revision,
         boundAt,
       });

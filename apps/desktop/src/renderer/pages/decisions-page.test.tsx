@@ -625,7 +625,7 @@ describe('decision safety summaries', () => {
       },
     };
 
-    const result = { ok: true as const, recommendationId: 303, status: 'pending' as const, revision: 13, boundAt: '2026-07-16T04:30:00.000Z' };
+    const result = { ok: true as const, recommendationId: 303, status: 'verified' as const, revision: 13, boundAt: '2026-07-16T04:30:00.000Z' };
     expect(isConfirmedDecisionsTargetBinding(row, result, request)).toBe(true);
     expect(isConfirmedDecisionsTargetBinding({ ...row, revision: 12 }, result, request)).toBe(false);
     expect(isConfirmedDecisionsTargetBinding(row, result, {

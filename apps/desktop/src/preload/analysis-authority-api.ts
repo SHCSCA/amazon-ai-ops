@@ -41,7 +41,7 @@ export function createAnalysisAuthorityPreloadApi(
       'analysis-authority:authorize-proposal-batch',
       input,
     ) as Promise<AuthorizeAnalysisProposalBatchResult>,
-    onAnalysisCompleted: (listener) => {
+    onAnalysisCompleted: (listener: (payload: unknown) => void) => {
       ipc.on?.('analysis-authority:analysis-completed', (...args: unknown[]) => {
         listener(args.length > 1 ? args[1] : args[0]);
       });

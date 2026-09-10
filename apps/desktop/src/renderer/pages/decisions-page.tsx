@@ -1062,7 +1062,7 @@ export function isConfirmedDecisionsTargetBinding(
   const target = row?.evidence?.writableTarget;
   if (!row || !binding || !target) return false;
   return result.ok === true
-    && result.status === 'pending'
+    && result.status === 'verified'
     && request.recommendationId === result.recommendationId
     && row.id === result.recommendationId
     && row.status === 'pending'
