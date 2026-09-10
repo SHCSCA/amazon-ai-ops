@@ -455,14 +455,10 @@ describe('LingxingCollectionCoordinator', () => {
     const test = harness({ productionImport: true });
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       const result = resultFor(options);
-      result.job.state = 'completed_with_errors';
-      result.job.reports[0] = {
-        ...result.job.reports[0],
-        state: 'failed',
-        errorCode: 'LINGXING_COLLECTION_STEP_FAILED',
-        detail: 'campaign report failed',
-      };
-      return result;
+      return { ...result, job: { ...result.job, state: 'completed_with_errors', reports: [
+        { ...result.job.reports[0]!, state: 'failed', errorCode: 'LINGXING_COLLECTION_STEP_FAILED', detail: 'campaign report failed' },
+        ...result.job.reports.slice(1),
+      ] } };
     });
 
     const output = await test.coordinator.start({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DailyReportGenerator } from './daily-report';
 import type { AIProvider, ChatMessage, ChatOptions, CompleteOptions } from './provider';
 import type { AIResponse, DailyReportSummaryInput } from './types';
@@ -23,6 +23,23 @@ class FakeProvider implements AIProvider {
 }
 
 describe('DailyReportGenerator', () => {
+  it.each(['not json', '{"summary":"missing required fields"}', JSON.stringify({ title: '2026-06-12 日报', summary: '花费 CNY 10 元',
+    highlights: [], concerns: [], tomorrowFocus: [], generatedBy: 'AI' })])('audits malformed/invalid structured output and falls back: %s', async content => {
+    const reportOutput = vi.fn();
+    const generated = await new DailyReportGenerator(new FakeProvider({ success: true, content, reportOutput })).generate(sampleInput());
+    expect(JSON.parse(generated).generatedBy).toBe('规则引擎');
+    expect(reportOutput).toHaveBeenCalledTimes(1);
+    expect(reportOutput).toHaveBeenCalledWith('invalid');
+  });
+  it('records validated JSON without retaining unexpected fields', async () => {
+    const reportOutput = vi.fn();
+    const report = { title: '2026-06-12 日报', summary: '广告花费已下降，需要继续观察。', highlights: ['花费为 USD 42.50'],
+      concerns: [], tomorrowFocus: ['观察订单变化'], generatedBy: 'AI' };
+    const generated = await new DailyReportGenerator(new FakeProvider({ success: true, content: JSON.stringify({ ...report, unexpected: 'not part of this contract' }), reportOutput })).generate(sampleInput());
+    expect(JSON.parse(generated)).toEqual(report);
+    expect(reportOutput).toHaveBeenCalledTimes(1);
+    expect(reportOutput).toHaveBeenCalledWith('accepted');
+  });
   it('uses USD in prompts and fallback reports', async () => {
     const provider = new FakeProvider({ success: false, error: 'unavailable' });
     const generator = new DailyReportGenerator(provider);

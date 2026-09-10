@@ -145,6 +145,7 @@ type ProposalSnapshotJson = AnalysisProposalAuthorization & {
 };
 
 interface ActionBatchRow {
+  authority_json: string | null;
   id: string;
   store_id: string;
   mission_id: string;
@@ -175,6 +176,7 @@ export class AnalysisAuthorityRepository {
     const operation = this.db.transaction(() => {
       this.assertContext(context);
       const mission = this.requireMission(context, input.missionId);
+      new MissionDomainRepository(this.db).assertMissionMayCreateAuthority(context, mission.id);
       const dateFrom = dateOf(input.dateFrom, 'dateFrom');
       const dateTo = dateOf(input.dateTo, 'dateTo');
       if (dateFrom > dateTo) throw invalid('Analysis evidence date range is inverted.');
@@ -419,6 +421,7 @@ export class AnalysisAuthorityRepository {
     const operation = this.db.transaction(() => {
       this.assertContext(context);
       const mission = this.requireMission(context, input.missionId);
+      new MissionDomainRepository(this.db).assertMissionMayCreateAuthority(context, mission.id);
       if (!Number.isSafeInteger(input.expectedMissionRevision)
         || input.expectedMissionRevision <= 0
         || mission.revision !== input.expectedMissionRevision) {
@@ -440,10 +443,12 @@ export class AnalysisAuthorityRepository {
           || existing.model_revision !== evidence.modelRevision) {
           throw referenceConflict('Analysis action batch id belongs to another Mission or evidence package.');
         }
+        new MissionDomainRepository(this.db).assertWriteAuthority(context, mapActionBatch(existing).authority);
         return mapActionBatch(existing);
       }
       const maximum = this.maximumActionRevision(context.storeId, mission.id);
       const record: AnalysisActionBatchRecord = {
+        authority: new MissionDomainRepository(this.db).captureWriteAuthority(context),
         id: requestedId,
         storeId: context.storeId,
         missionId: mission.id,
@@ -459,12 +464,13 @@ export class AnalysisAuthorityRepository {
         INSERT INTO analysis_action_batches (
           id, store_id, mission_id, mission_revision, evidence_package_id,
           rule_revision, model_revision, action_revision,
-          created_at, created_session_generation
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, created_session_generation, authority_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         record.id, record.storeId, record.missionId, record.missionRevision,
         record.evidencePackageId, record.ruleRevision, record.modelRevision,
         record.actionRevision, record.createdAt, record.createdSessionGeneration,
+        JSON.stringify(record.authority),
       );
       return this.requireActionBatch(context, record.id);
     });
@@ -632,6 +638,7 @@ export class AnalysisAuthorityRepository {
     const operation = this.db.transaction(() => {
       this.assertContext(context);
       const mission = this.requireMission(context, input.missionId);
+      new MissionDomainRepository(this.db).assertMissionMayCreateAuthority(context, mission.id);
       const evidence = this.requireEvidence(context, input.evidencePackageId);
       const actionBatch = this.requireActionBatch(context, input.actionBatchId);
       if (evidence.missionId !== mission.id || actionBatch.missionId !== mission.id
@@ -711,7 +718,7 @@ export class AnalysisAuthorityRepository {
       }
       const policyRules = parseJson<Record<string, unknown>>(policyVersion.rulesJson);
       const source = proposalSource(recommendationEvidence);
-      const changePct = round(((proposedBidCents - currentBidCents) / currentBidCents) * 100, 4);
+      const changePct = ((proposedBidCents - currentBidCents) / currentBidCents) * 100;
       const validUntil = timestampOf(input.validUntil, 'validUntil');
       if (Date.parse(validUntil) <= Date.parse(this.timestamp())) {
         throw invalid('Proposal validUntil must be in the future.');
@@ -1118,6 +1125,7 @@ function mapEvidence(row: EvidenceRow): AnalysisEvidencePackageRecord {
 
 function mapActionBatch(row: ActionBatchRow): AnalysisActionBatchRecord {
   return {
+    authority: row.authority_json ? parseJson(row.authority_json) : undefined,
     id: row.id,
     storeId: row.store_id as AnalysisActionBatchRecord['storeId'],
     missionId: row.mission_id,

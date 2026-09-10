@@ -390,7 +390,8 @@ export function createPreviewExecutionAuthorityApi(): ExecutionAuthorityRenderer
       const now = new Date().toISOString();
       emit(input.context, state, input.batchId, job.id, 'readback', 'unknown', '只读对账命中目标值；预览不会重试保存。');
       return {
-        status: 'CONFIRMED_TARGET',
+        status: 'target_stably_observed',
+        caseId: `preview-reconciliation:${job.id}`,
         batchId: input.batchId,
         jobId: job.id,
         originalStatus: 'unknown',

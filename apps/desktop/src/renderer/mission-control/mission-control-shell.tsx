@@ -313,7 +313,7 @@ export function MissionControlShell({
                   className="mission-control-mode-feedback__action"
                   onClick={() => {
                     setModeFeedback('');
-                    onNavigate(OPERATOR_MODULES.find((item) => item.id === 'policy-automation')!.defaultIntent);
+                    onNavigate({ workspace: 'policy', subview: 'rules' });
                   }}
                   type="button"
                 >
@@ -528,6 +528,7 @@ export function MissionControlShell({
       {modeChangeConfirm && (
         <ReasonRequiredDialog
           eyebrow="模式切换"
+          title="切换执行模式"
           confirmLabel={`确认切换为${autonomyModeLabel(modeChangeConfirm.mode)}`}
           description="切换执行模式影响整店的 AI 自动执行边界。请说明这次操作的业务依据，记录后生效。"
           reasonLabel="切换原因 *"

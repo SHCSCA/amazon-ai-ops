@@ -131,10 +131,11 @@ export class RecommendationRepository {
   insertIfNoDuplicateForStore(
     storeId: StoreId,
     rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>,
+    withinGeneration = false,
   ): { id: number; inserted: boolean; updated?: boolean } {
     this.assertRecommendationStoreIdentity(storeId, rec);
     const insertOrRefresh = this.db.transaction(() => {
-      const duplicate = this.findDuplicateForStore(storeId, rec);
+      const duplicate = this.findDuplicateForStore(storeId, rec, withinGeneration);
       if (duplicate?.id) {
         if (shouldReplaceIncompleteDuplicate(duplicate, rec)) {
           const updated = this.updateDuplicateRecommendationForStore(
@@ -184,6 +185,7 @@ export class RecommendationRepository {
   findDuplicateForStore(
     storeId: StoreId,
     rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>,
+    withinGeneration = false,
   ): StoreScopedActionRecommendation | undefined {
     const evidenceDate = rec.evidence?.date || '';
     const row = this.db.prepare(`
@@ -193,10 +195,12 @@ export class RecommendationRepository {
         AND entity_id = ?
         AND action_type = ?
         AND COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), '') = ?
+        ${withinGeneration ? 'AND task_id = ?' : ''}
         AND status IN ('pending', 'needs_review', 'approved', 'rejected', 'executed')
       ORDER BY created_at DESC
       LIMIT 1
-    `).get(storeId, rec.asin, rec.entityId, rec.actionType, evidenceDate) as any;
+    `).get(storeId, rec.asin, rec.entityId, rec.actionType, evidenceDate,
+      ...(withinGeneration ? [rec.taskId] : [])) as any;
     return row ? this.mapStoreScopedRow(row) : undefined;
   }
 
@@ -789,6 +793,9 @@ function shouldReplaceIncompleteDuplicate(
     (!hasExecutionTraceability(existing) && hasExecutionTraceability(incoming))
     || hasBetterAiEvidence(existing, incoming)
     || isSaferPendingBidCorrection(existing, incoming)
+    || (incoming.evidence.currentValueSource === 'ads_ui'
+      && existing.evidence.currentValueSource !== 'ads_ui'
+      && hasExecutionTraceability(incoming))
   );
 }
 

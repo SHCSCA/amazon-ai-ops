@@ -21,6 +21,17 @@
 
 ## Current Delivery State
 
+- 2026-09-08 active scope: the user approved one existing real US store, independent manual_approval and policy_auto real main flows, real AI success, and two seven-completed-US-day experiments ending in system conclusions/memory. Reuse existing download/import/services; fix only observed main-flow blockers. No broad optimization, speculative bug audit, full 172-MUST mapping or L4-L8 platform work this round. Full V1.6 APP_READY remains separately unverified. User participates only in login/CAPTCHA, concrete AI cost cap, and candidate-specific manual approval. Follow PROGRESS.md / BLOCKED.md for current results.
+
+- 2026-09-07: implementing the user-approved complete V1.6 production delivery plan. Source baseline is master / 51821bbdcc4b59fb14eb78f6b5dcfb170e7b330d with 113 preserved modified/untracked files; initial backup and measured failures are in output/v16-evidence/implementation-2026-09-07T07-15-05-786Z/.
+- Status remains APP_NEEDS_WORK / INTERNAL NON_READY. All 172 PRD MUST requirements and L1-L8 need current, matching evidence; historic percentages, test counts and package hashes provide no current acceptance credit. PROGRESS.md holds verified facts; BLOCKED.md holds outstanding conditions.
+- The user explicitly lifted all previous validation restrictions for this task: typecheck, builds, app/browser/desktop control, package/UI/ZIP smoke, formal-DB verification and real Ads validation are authorized. Preserve formal data and verify isolated migration and WAL-safe backup before upgrade.
+- Full acceptance includes two real US stores with independent profiles/sessions, seven completed US business days each, and independent manual_approval and policy_auto canaries. The user supplies second-store login/identity verification, candidate-specific product approval for manual mode, and measured budget approval. Policy mode uses the enabled policy without human re-signing. Never synthesize candidates, authorization or evidence.
+
+### Superseded 2026-08-26 snapshot
+
+The following records are historical, including the former validation restrictions. The current task authorization above supersedes those restrictions.
+
 - As of 2026-08-26 the candidate is `1.5.1 / APP_NEEDS_WORK / INTERNAL NON_READY`. Policy create/update/enable and MissionGrant issuance now revalidate the current store's exact completed import, bound report snapshot, latest Stage5 revision, and, for campaign/ad-group scope, current Stage6 canonical identity/session in one `IMMEDIATE` transaction. Keyword authority includes `match_type`, exact source-row cardinality, proof hash, revision and session; name-only or stale authority fails closed.
 - Execution selection, evidence and progress events are bound to the same store/batch/job/grant. Authority changes invalidate pending async results, including A→B→A races. Canonical campaign/ad-group tokens preserve same-name/different-ID objects while ordinary UI hides internal IDs.
 - Current unit evidence is `157/157` focused authority tests plus `285/285` files and `3584/3584` allowed unit tests; package script contracts are `12/12`, with no `.skip`, `.todo`, `skipIf`, or `context.skip`. Independent read-only review found `NO BLOCKER` and passed another `126/126` tests.

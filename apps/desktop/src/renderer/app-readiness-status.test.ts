@@ -35,12 +35,25 @@ describe('headerSessionStatusLabel', () => {
   it('keeps the top bar session text compact while the full detail can live in the tooltip', () => {
     expect(headerSessionStatusLabel({
       erpSessionReused: true,
+      erpSessionReady: true,
+      sessionIdentityVerified: true,
+      adsSessionReady: true,
       adsTitle: 'Amazon Ads Console - Sponsored Products Dashboard',
     })).toBe('ERP/Ads 已连接');
   });
 
   it('does not show long browser state text before login state is confirmed', () => {
     expect(headerSessionStatusLabel(null)).toBe('会话待确认');
+  });
+
+  it('does not infer a verified connection from a reused session or browser page title', () => {
+    const legacy = { erpSessionReused: true, adsTitle: 'Amazon Ads Console' };
+    expect(headerSessionStatusLabel(legacy)).toBe('会话确认中');
+    expect(describeLoginSession(legacy)).toBe('ERP 会话待确认；Ads 会话待确认');
+    expect(headerSessionStatusLabel({ erpSessionReady: true, adsSessionReady: true }))
+      .toBe('ERP/Ads 身份待确认');
+    expect(describeLoginSession({ erpSessionReady: true, adsSessionReady: true, sessionIdentityVerified: true }))
+      .toBe('ERP 已完成登录；Ads 已连接');
   });
 
   it('shows Lingxing ready separately while Ads authorization remains blocked', () => {
@@ -99,8 +112,10 @@ describe('headerSessionStatusLabel', () => {
     expect(source).toContain('aria-label={describeLoginSession(loginSession)}');
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('role="status"');
-    expect(source).toContain("loginSession?.adsSessionReady === false ? ' session-line-warning' : ''");
-    expect(source).toContain('loginSession?.adsSessionReady === false ? 0 : undefined}');
+    expect(source).toContain("sessionConfirmed ? '' : ' session-line-warning'");
+    expect(source).toContain('sessionConfirmed ? undefined : 0}');
+    expect(source).toContain('loginSession?.sessionIdentityVerified === true');
+    expect(source).toContain('loginSession.erpSessionReady === true && loginSession.adsSessionReady === true');
     expect(source).toContain("session-line-warning");
     expect(css).toContain('.session-line-warning');
     expect(css).toMatch(/\.session-line-warning:focus-visible\s*\{/);

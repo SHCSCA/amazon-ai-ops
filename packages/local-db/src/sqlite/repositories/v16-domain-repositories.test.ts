@@ -1,586 +1,209 @@
 /**
- * V1.6 Domain Repositories Tests
+ * Policy Version Repository Tests (Phase 6)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { runStoreAuthorityMigrations } from '../migrations/0001-store-authority';
-import { runMissionDomainMigration } from '../migrations/0006-mission-domain';
-import { runAnalysisRunsMigration } from '../migrations/0012-analysis-runs';
-import { runV16DomainMigration } from '../migrations/0013-v16-domain';
+import { initSqlite, closeSqlite } from '../db';
+import { runPolicyAuthorityMigration } from '../migrations/0015-v16-policy-authority';
 import {
-  MissionRepository,
-  DecisionRepository,
-  MissionGrantRepository,
-  ExecutionRepository,
-  ExperimentRepository,
-  MemoryRepository,
+  PolicyVersionRepository,
+  ModeChangeLogRow,
+  AuthorityInvalidationRow,
 } from './v16-domain-repositories';
 
-function setupDatabase(): Database.Database {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-
-  runStoreAuthorityMigrations(db);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS lingxing_report_batches (
-      id TEXT PRIMARY KEY,
-      store_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (store_id) REFERENCES stores(store_id)
-    );
-  `);
-
-  for (let v = 2; v <= 5; v++) {
-    db.prepare(`
-      INSERT INTO schema_migrations (version, name, checksum, status, started_at, applied_at, manifest_json, result_json)
-      VALUES (?, ?, ?, 'applied', datetime('now'), datetime('now'), '{}', '{}')
-    `).run(v, `migration-${v}`, `checksum-${v}`);
-  }
-
-  runMissionDomainMigration(db);
-
-  for (let v = 7; v <= 11; v++) {
-    db.prepare(`
-      INSERT INTO schema_migrations (version, name, checksum, status, started_at, applied_at, manifest_json, result_json)
-      VALUES (?, ?, ?, 'applied', datetime('now'), datetime('now'), '{}', '{}')
-    `).run(v, `migration-${v}`, `checksum-${v}`);
-  }
-
-  runAnalysisRunsMigration(db);
-  runV16DomainMigration(db);
-
-  // Insert test store
-  db.prepare(`
-    INSERT INTO stores (
-      store_id, browser_profile_id, marketplace, currency, display_name, status, business_timezone, created_at, updated_at
-    ) VALUES (?, ?, 'US', 'USD', ?, 'active', 'America/Los_Angeles', ?, ?)
-  `).run('store-a', 'profile-a', 'Test Store', new Date().toISOString(), new Date().toISOString());
-
-  return db;
-}
-
-describe('V16DomainRepositories', () => {
+describe('PolicyVersionRepository', () => {
   let db: Database.Database;
+  let repo: PolicyVersionRepository;
 
   beforeEach(() => {
-    db = setupDatabase();
+    db = initSqlite(':memory:');
+    runPolicyAuthorityMigration(db);
+    repo = new PolicyVersionRepository(db);
   });
 
   afterEach(() => {
-    db.close();
+    closeSqlite();
   });
 
-  describe('MissionRepository', () => {
-    it('creates and retrieves a mission', () => {
-      const repo = new MissionRepository(db);
-      const now = new Date().toISOString();
-      const mission = repo.create({
-        mission_id: 'mission-1',
-        store_id: 'store-a',
-        mission_name: 'Test mission',
-        description: 'Test description',
-        product_ids: '["product-1"]',
-        report_snapshot_id: 'snapshot-1',
-        observation_window_start: null,
-        observation_window_end: null,
-        policy_version_id: 'policy-1',
-        policy_revision: '1',
-        stage: 'analysis',
-        status: 'active',
-        created_at: now,
-        started_at: null,
-        completed_at: null,
-        created_by: 'operator-1',
-        last_modified_by: null,
-        reason: null,
-        metadata: null,
-      });
-
-      expect(mission.mission_id).toBe('mission-1');
-      expect(mission.revision).toBe(1);
-
-      const fetched = repo.findById('mission-1');
-      expect(fetched).toEqual(mission);
+  describe('upsertPolicyVersion / findById', () => {
+    it('inserts and retrieves a policy version', () => {
+      const row = makePolicyRow('p1', 'store-a', 'policy_auto', 'enabled', 1);
+      repo.upsertPolicyVersion(row);
+      const found = repo.findById('p1');
+      expect(found?.policy_version_id).toBe('p1');
+      expect(found?.status).toBe('enabled');
+      expect(found?.revision).toBe(1);
     });
 
-    it('finds missions by store', () => {
-      const repo = new MissionRepository(db);
-      const now = new Date().toISOString();
-
-      repo.create({
-        mission_id: 'mission-1',
-        store_id: 'store-a',
-        mission_name: 'Mission 1',
-        description: null,
-        product_ids: '[]',
-        report_snapshot_id: null,
-        observation_window_start: null,
-        observation_window_end: null,
-        policy_version_id: null,
-        policy_revision: null,
-        stage: 'analysis',
-        status: 'active',
-        created_at: now,
-        started_at: null,
-        completed_at: null,
-        created_by: null,
-        last_modified_by: null,
-        reason: null,
-        metadata: null,
-      });
-
-      repo.create({
-        mission_id: 'mission-2',
-        store_id: 'store-a',
-        mission_name: 'Mission 2',
-        description: null,
-        product_ids: '[]',
-        report_snapshot_id: null,
-        observation_window_start: null,
-        observation_window_end: null,
-        policy_version_id: null,
-        policy_revision: null,
-        stage: 'analysis',
-        status: 'paused',
-        created_at: now,
-        started_at: null,
-        completed_at: null,
-        created_by: null,
-        last_modified_by: null,
-        reason: null,
-        metadata: null,
-      });
-
-      expect(repo.findByStoreId('store-a')).toHaveLength(2);
-      expect(repo.findByStatus('store-a', 'active')).toHaveLength(1);
+    it('upsert updates existing row', () => {
+      const row = makePolicyRow('p1', 'store-a', 'policy_auto', 'enabled', 1);
+      repo.upsertPolicyVersion(row);
+      const updated = { ...row, status: 'superseded' as const };
+      repo.upsertPolicyVersion(updated);
+      const found = repo.findById('p1');
+      expect(found?.status).toBe('superseded');
     });
 
-    it('updates a mission', () => {
-      const repo = new MissionRepository(db);
-      const now = new Date().toISOString();
-      repo.create({
-        mission_id: 'mission-1',
-        store_id: 'store-a',
-        mission_name: 'Test',
-        description: null,
-        product_ids: '[]',
-        report_snapshot_id: null,
-        observation_window_start: null,
-        observation_window_end: null,
-        policy_version_id: null,
-        policy_revision: null,
-        stage: 'analysis',
-        status: 'active',
-        created_at: now,
-        started_at: null,
-        completed_at: null,
-        created_by: null,
-        last_modified_by: null,
-        reason: null,
-        metadata: null,
-      });
-
-      const updated = repo.update('mission-1', { status: 'completed', stage: 'effect' });
-      expect(updated?.status).toBe('completed');
-      expect(updated?.stage).toBe('effect');
+    it('findById returns null for unknown', () => {
+      expect(repo.findById('nonexistent')).toBeNull();
     });
   });
 
-  describe('DecisionRepository', () => {
-    it('creates a decision and appends history', () => {
-      const repo = new DecisionRepository(db);
-      const now = new Date().toISOString();
-      const decision = repo.create({
-        decision_id: 'dec-1',
-        store_id: 'store-a',
-        marketplace: 'US',
-        currency: 'USD',
-        mission_id: 'mission-1',
-        mission_revision: 1,
-        analysis_run_id: 'run-1',
-        batch_id: 'batch-1',
-        recommendation_id: 'rec-1',
-        action_type: 'adjust_keyword_bid',
-        entity_type: 'keyword',
-        entity_id: 'kw-1',
-        current_value: '1.00',
-        target_value: '0.90',
-        change_reason: 'lower bid',
-        status: 'proposed',
-        issuer: 'human_operator',
-        approved_at: null,
-        approved_by: null,
-        rejection_reason: null,
-        superseded_by: null,
-        supersedes: null,
-        executed_at: null,
-        execution_evidence: null,
-        verified_at: null,
-        verification_result: null,
-        created_at: now,
-        metadata: null,
-      });
-
-      expect(decision.decision_id).toBe('dec-1');
-
-      repo.appendHistory({
-        entry_id: 'h-1',
-        decision_id: 'dec-1',
-        from_status: 'proposed',
-        to_status: 'approved',
-        timestamp: now,
-        reason: 'approved by operator',
-        triggered_by: 'operator',
-      });
-
-      const history = repo.getHistory('dec-1');
-      expect(history).toHaveLength(1);
-      expect(history[0].from_status).toBe('proposed');
-      expect(history[0].to_status).toBe('approved');
+  describe('findByStore', () => {
+    it('returns policies for a store', () => {
+      repo.upsertPolicyVersion(makePolicyRow('p1', 'store-a', 'policy_auto', 'enabled', 1));
+      repo.upsertPolicyVersion(makePolicyRow('p2', 'store-a', 'manual_approval', 'draft', 1));
+      repo.upsertPolicyVersion(makePolicyRow('p3', 'store-b', 'policy_auto', 'enabled', 1));
+      const rows = repo.findByStore('store-a');
+      expect(rows.length).toBe(2);
     });
 
-    it('updates decision status', () => {
-      const repo = new DecisionRepository(db);
-      const now = new Date().toISOString();
-      repo.create({
-        decision_id: 'dec-1',
-        store_id: 'store-a',
-        marketplace: 'US',
-        currency: 'USD',
-        mission_id: 'mission-1',
-        mission_revision: 1,
-        analysis_run_id: 'run-1',
-        batch_id: 'batch-1',
-        recommendation_id: 'rec-1',
-        action_type: 'adjust_keyword_bid',
-        entity_type: 'keyword',
-        entity_id: 'kw-1',
-        current_value: null,
-        target_value: null,
-        change_reason: null,
-        status: 'proposed',
-        issuer: 'human_operator',
-        approved_at: null,
-        approved_by: null,
-        rejection_reason: null,
-        superseded_by: null,
-        supersedes: null,
-        executed_at: null,
-        execution_evidence: null,
-        verified_at: null,
-        verification_result: null,
-        created_at: now,
-        metadata: null,
-      });
-
-      const updated = repo.update('dec-1', {
-        status: 'approved',
-        approved_at: now,
-        approved_by: 'operator-1',
-      });
-      expect(updated?.status).toBe('approved');
+    it('respects limit', () => {
+      for (let i = 0; i < 5; i++) {
+        repo.upsertPolicyVersion(makePolicyRow(`p${i}`, 'store-a', 'policy_auto', 'enabled', 1));
+      }
+      const rows = repo.findByStore('store-a', 3);
+      expect(rows.length).toBe(3);
     });
   });
 
-  describe('MissionGrantRepository', () => {
-    it('creates a grant and appends lifecycle events', () => {
-      const repo = new MissionGrantRepository(db);
-      const now = new Date().toISOString();
-      repo.create({
-        grant_id: 'grant-1',
-        store_id: 'store-a',
-        mission_id: 'mission-1',
-        mission_revision: 1,
-        decision_ids: '["dec-1"]',
-        issuer: 'human_operator',
-        issued_at: now,
-        expires_at: null,
-        issued_by: 'operator-1',
-        scope_json: '{"actionType":"adjust_keyword_bid"}',
-        limits_json: '{"maxSlots":5}',
-        evidence_json: '{"requiresBeforeScreenshot":true}',
-        session_generation: 1,
-        ads_account_id: 'acct-1',
-        status: 'active',
-        used_slots: 0,
-        consumed_at: null,
-        revoked_at: null,
-        revoked_by: null,
-        revocation_reason: null,
-        created_at: now,
-        updated_at: now,
-        reason: 'test grant',
-        metadata: null,
-      });
-
-      repo.appendLifecycleEvent({
-        event_id: 'evt-1',
-        grant_id: 'grant-1',
-        event_type: 'issued',
-        timestamp: now,
-      });
-
-      const events = repo.getLifecycleEvents('grant-1');
-      expect(events).toHaveLength(1);
+  describe('findEnabledByStore', () => {
+    it('returns the enabled policy with highest revision', () => {
+      repo.upsertPolicyVersion(makePolicyRow('p1', 'store-a', 'policy_auto', 'enabled', 1));
+      repo.upsertPolicyVersion(makePolicyRow('p2', 'store-a', 'policy_auto', 'enabled', 2));
+      repo.upsertPolicyVersion(makePolicyRow('p3', 'store-a', 'policy_auto', 'draft', 3));
+      const found = repo.findEnabledByStore('store-a');
+      expect(found?.policy_version_id).toBe('p2');
     });
 
-    it('finds active grants by store', () => {
-      const repo = new MissionGrantRepository(db);
-      const now = new Date().toISOString();
-      repo.create({
-        grant_id: 'grant-1',
-        store_id: 'store-a',
-        mission_id: 'mission-1',
-        mission_revision: 1,
-        decision_ids: '[]',
-        issuer: 'human_operator',
-        issued_at: now,
-        expires_at: null,
-        issued_by: 'op',
-        scope_json: '{}',
-        limits_json: '{}',
-        evidence_json: '{}',
-        session_generation: 1,
-        ads_account_id: null,
-        status: 'active',
-        used_slots: 0,
-        consumed_at: null,
-        revoked_at: null,
-        revoked_by: null,
-        revocation_reason: null,
-        created_at: now,
-        updated_at: now,
-        reason: '',
-        metadata: null,
-      });
-
-      repo.create({
-        grant_id: 'grant-2',
-        store_id: 'store-a',
-        mission_id: 'mission-1',
-        mission_revision: 1,
-        decision_ids: '[]',
-        issuer: 'human_operator',
-        issued_at: now,
-        expires_at: null,
-        issued_by: 'op',
-        scope_json: '{}',
-        limits_json: '{}',
-        evidence_json: '{}',
-        session_generation: 1,
-        ads_account_id: null,
-        status: 'revoked',
-        used_slots: 0,
-        consumed_at: null,
-        revoked_at: now,
-        revoked_by: 'op',
-        revocation_reason: 'test',
-        created_at: now,
-        updated_at: now,
-        reason: '',
-        metadata: null,
-      });
-
-      const active = repo.findActiveByStore('store-a');
-      expect(active).toHaveLength(1);
-      expect(active[0].grant_id).toBe('grant-1');
+    it('returns null when no enabled policy', () => {
+      repo.upsertPolicyVersion(makePolicyRow('p1', 'store-a', 'policy_auto', 'draft', 1));
+      expect(repo.findEnabledByStore('store-a')).toBeNull();
     });
   });
 
-  describe('ExecutionRepository', () => {
-    it('creates slot and batch', () => {
-      const repo = new ExecutionRepository(db);
-      const now = new Date().toISOString();
-
-      const batch = repo.createBatch({
-        batch_id: 'batch-1',
-        grant_id: 'grant-1',
-        mission_id: 'mission-1',
-        store_id: 'store-a',
-        slot_ids: '["slot-1"]',
-        status: 'running',
-        pending_count: 1,
-        submitted_count: 0,
-        verified_count: 0,
-        failed_count: 0,
-        unknown_count: 0,
-        created_at: now,
-        updated_at: now,
-        completed_at: null,
-      });
-
-      repo.createSlot({
-        slot_id: 'slot-1',
-        grant_id: 'grant-1',
-        decision_id: 'dec-1',
-        batch_id: 'batch-1',
-        store_id: 'store-a',
-        intent_json: '{"action":"adjust_keyword_bid"}',
-        status: 'pending',
-        expected_before: '1.00',
-        expected_after: '0.90',
-        expected_change_percent: -10,
-        before_evidence_path: null,
-        after_evidence_path: null,
-        reload_evidence_path: null,
-        readback_before_value: null,
-        readback_after_value: null,
-        readback_reload_value: null,
-        verified_at: null,
-        verification_result: null,
-        reconciliation_case_id: null,
-        reconciliation_outcome: null,
-        created_at: now,
-        updated_at: now,
-        submitted_at: null,
-      });
-
-      expect(batch.batch_id).toBe('batch-1');
-      expect(repo.findSlotsByBatchId('batch-1')).toHaveLength(1);
+  describe('insertModeChangeLog / getModeChangeLog', () => {
+    it('inserts and retrieves audit rows in order', () => {
+      const log1 = makeLogRow('audit1', 'store-a', null, 'manual_approval', 0, 1);
+      const log2 = makeLogRow('audit2', 'store-a', 'manual_approval', 'policy_auto', 1, 2);
+      repo.insertModeChangeLog(log1);
+      repo.insertModeChangeLog(log2);
+      const logs = repo.getModeChangeLog('store-a');
+      expect(logs.length).toBe(2);
+      expect(logs[0].audit_id).toBe('audit1');
+      expect(logs[1].authority_mode_revision_after).toBe(2);
     });
 
-    it('updates slot status', () => {
-      const repo = new ExecutionRepository(db);
-      const now = new Date().toISOString();
-
-      repo.createSlot({
-        slot_id: 'slot-1',
-        grant_id: 'grant-1',
-        decision_id: 'dec-1',
-        batch_id: 'batch-1',
-        store_id: 'store-a',
-        intent_json: '{}',
-        status: 'pending',
-        expected_before: '1.00',
-        expected_after: '0.90',
-        expected_change_percent: null,
-        before_evidence_path: null,
-        after_evidence_path: null,
-        reload_evidence_path: null,
-        readback_before_value: null,
-        readback_after_value: null,
-        readback_reload_value: null,
-        verified_at: null,
-        verification_result: null,
-        reconciliation_case_id: null,
-        reconciliation_outcome: null,
-        created_at: now,
-        updated_at: now,
-        submitted_at: null,
-      });
-
-      const updated = repo.updateSlot('slot-1', { status: 'submitted', submitted_at: now });
-      expect(updated?.status).toBe('submitted');
+    it('getModeChangeLog returns empty for unknown store', () => {
+      expect(repo.getModeChangeLog('unknown-store')).toEqual([]);
     });
   });
 
-  describe('ExperimentRepository', () => {
-    it('creates and retrieves experiment', () => {
-      const repo = new ExperimentRepository(db);
-      const now = new Date().toISOString();
-      const exp = repo.create({
-        experiment_id: 'exp-1',
-        store_id: 'store-a',
-        mission_id: 'mission-1',
-        decision_id: 'dec-1',
-        name: 'Test experiment',
-        description: 'Test',
-        hypothesis_json: '{"statement":"test","expectedEffect":"+10%"}',
-        product_ids: '["product-1"]',
-        entity_ids: '["kw-1"]',
-        baseline_snapshot_id: null,
-        observation_window_start: now,
-        observation_window_end: now,
-        observation_snapshots: '[]',
-        guardrails_json: '[]',
-        conclusion_id: null,
-        guardrails_triggered: '[]',
-        status: 'running',
-        created_at: now,
-        started_at: now,
-        completed_at: null,
-        metadata: null,
-      });
+  describe('insertAuthorityInvalidation / getAuthorityInvalidations', () => {
+    it('inserts and retrieves invalidation records', () => {
+      const inv = makeInvalidationRow('inv1', 'store-a', 2, ['grant-1'], ['batch-1'], ['slot-1']);
+      repo.insertAuthorityInvalidation(inv);
+      const rows = repo.getAuthorityInvalidations('store-a');
+      expect(rows.length).toBe(1);
+      expect(rows[0].authority_mode_revision).toBe(2);
+      expect(JSON.parse(rows[0].invalidates_grant_ids_json)).toEqual(['grant-1']);
+    });
 
-      expect(exp.experiment_id).toBe('exp-1');
-      expect(repo.findById('exp-1')).toEqual(exp);
+    it('getAuthorityInvalidations returns empty for unknown store', () => {
+      expect(repo.getAuthorityInvalidations('unknown-store')).toEqual([]);
     });
   });
 
-  describe('MemoryRepository', () => {
-    it('appends and finds events', () => {
-      const repo = new MemoryRepository(db);
-      const now = new Date().toISOString();
-      repo.append({
-        event_id: 'evt-1',
-        store_id: 'store-a',
-        stage: 'effect',
-        mission_id: 'mission-1',
-        decision_id: null,
-        grant_id: null,
-        execution_id: null,
-        experiment_id: null,
-        analysis_run_id: null,
-        entity_id: 'kw-1',
-        product_id: 'product-1',
-        business_date: '2026-09-03',
-        event_type: 'effect_observed',
-        session_generation: 1,
-        proof_hash: 'a'.repeat(64),
-        evidence_refs_json: '[]',
-        summary: 'test event',
-        details_json: null,
-        status: 'trusted',
-        memory_digest: 'abcd1234',
-        created_at: now,
-        correction_of: null,
-        corrected_by: null,
-        metadata: null,
-      });
-
-      const events = repo.findByStore('store-a');
-      expect(events).toHaveLength(1);
-
-      const trusted = repo.findTrustedByStore('store-a');
-      expect(trusted).toHaveLength(1);
-
-      expect(repo.countByStore('store-a')).toBe(1);
+  describe('getCurrentAuthorityRevision', () => {
+    it('returns 0 when no log entries', () => {
+      expect(repo.getCurrentAuthorityRevision('store-a')).toBe(0);
     });
 
-    it('does not return non-trusted events from findTrustedByStore', () => {
-      const repo = new MemoryRepository(db);
-      const now = new Date().toISOString();
-      repo.append({
-        event_id: 'evt-1',
-        store_id: 'store-a',
-        stage: 'analysis', // Not in 'readback' or 'effect'
-        mission_id: 'mission-1',
-        decision_id: null,
-        grant_id: null,
-        execution_id: null,
-        experiment_id: null,
-        analysis_run_id: null,
-        entity_id: null,
-        product_id: null,
-        business_date: '2026-09-03',
-        event_type: 'analysis_started',
-        session_generation: 1,
-        proof_hash: 'a'.repeat(64),
-        evidence_refs_json: '[]',
-        summary: 'analysis started',
-        details_json: null,
-        status: 'trusted',
-        memory_digest: null,
-        created_at: now,
-        correction_of: null,
-        corrected_by: null,
-        metadata: null,
-      });
-
-      const trusted = repo.findTrustedByStore('store-a');
-      expect(trusted).toHaveLength(0);
+    it('returns latest revision from log', () => {
+      repo.insertModeChangeLog(makeLogRow('a1', 'store-a', null, 'manual_approval', 0, 1));
+      repo.insertModeChangeLog(makeLogRow('a2', 'store-a', 'manual_approval', 'policy_auto', 1, 2));
+      expect(repo.getCurrentAuthorityRevision('store-a')).toBe(2);
     });
   });
 });
+
+// ─── Test helpers ─────────────────────────────────────────────────────────
+
+function makePolicyRow(
+  id: string,
+  storeId: string,
+  mode: string,
+  status: string,
+  revision: number,
+) {
+  return {
+    policy_version_id: id,
+    store_id: storeId,
+    mode,
+    status,
+    revision,
+    scope_json: JSON.stringify({ actionTypes: ['adjust_keyword_bid'] }),
+    limits_json: JSON.stringify({ maxChangePercent: 10, maxSlotsPerGrant: 3, maxDailyCount: 50, cooldownMinutes: 5 }),
+    window_json: JSON.stringify({ activeFrom: '2026-09-01T00:00:00Z', businessHoursOnly: false, timezone: 'America/Los_Angeles' }),
+    evidence_json: JSON.stringify({
+      requiresBeforeScreenshot: true,
+      requiresAfterScreenshot: true,
+      requiresReloadScreenshot: true,
+      requiresValueReadback: true,
+      requiresOperatorNote: false,
+    }),
+    stops_json: JSON.stringify({ killSwitchOn: false, circuitBreakerTriggered: false }),
+    created_at: '2026-09-04T00:00:00Z',
+    enabled_at: status === 'enabled' ? '2026-09-04T00:00:00Z' : null,
+    disabled_at: null,
+    enabled_by: status === 'enabled' ? 'operator' : null,
+    reason: 'test',
+    supersedes_policy_version_id: null,
+  };
+}
+
+function makeLogRow(
+  id: string,
+  storeId: string,
+  fromMode: string | null,
+  toMode: string,
+  revBefore: number,
+  revAfter: number,
+): ModeChangeLogRow {
+  return {
+    audit_id: id,
+    store_id: storeId,
+    from_mode: fromMode,
+    to_mode: toMode,
+    authority_mode_revision_before: revBefore,
+    authority_mode_revision_after: revAfter,
+    previous_policy_version_id: null,
+    active_policy_version_id: null,
+    reason: 'test',
+    actor: 'operator',
+    changed_at: new Date().toISOString(),
+    context_snapshot_json: JSON.stringify({ storeId, marketplace: 'US', currency: 'USD', businessDate: '2026-09-04', sessionGeneration: 1 }),
+  };
+}
+
+function makeInvalidationRow(
+  id: string,
+  storeId: string,
+  rev: number,
+  grantIds: string[],
+  batchIds: string[],
+  slotIds: string[],
+): AuthorityInvalidationRow {
+  return {
+    invalidation_id: id,
+    store_id: storeId,
+    authority_mode_revision: rev,
+    invalidates_grant_ids_json: JSON.stringify(grantIds),
+    invalidates_batch_ids_json: JSON.stringify(batchIds),
+    invalidates_slot_ids_json: JSON.stringify(slotIds),
+    reason: 'test',
+    created_at: new Date().toISOString(),
+    terminal: 1,
+  };
+}

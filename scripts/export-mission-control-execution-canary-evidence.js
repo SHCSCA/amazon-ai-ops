@@ -9,6 +9,7 @@ const {
   deterministicExecutionArtifactPath,
   deterministicExecutionArtifactRef,
   validateExecutionCanary,
+  verifyExecutionCanaryLineage,
 } = require('./verify-mission-control-production-readiness');
 const {
   loadAuthoritySnapshotManifest,
@@ -772,7 +773,7 @@ function validateAuthorityRows(
   assertCondition(
     issuedEvents.length === 1
       && consumedEvents.length === 1
-      && !grantEvents.some((event) => event.eventType === 'revoked' || event.eventType === 'expired')
+      && !grantEvents.some((event) => ['invalidated', 'revoked', 'expired'].includes(event.eventType))
       && validTimestamp(issuedEvents[0].createdAt)
       && validTimestamp(consumedEvents[0].createdAt)
       && Date.parse(issuedEvents[0].createdAt) < Date.parse(consumedEvents[0].createdAt),
@@ -784,7 +785,7 @@ function validateAuthorityRows(
       && mission.storeId === store.storeId
       && mission.marketplace === 'US'
       && mission.currency === 'USD'
-      && mission.revision === grant.missionRevision
+      && mission.revision >= grant.missionRevision
       && mission.policyVersionId === grant.policyVersionId
       && ['active', 'completed'].includes(mission.status),
     'Mission revision/policy binding does not match the canary execution.',
@@ -816,8 +817,8 @@ function validateAuthorityRows(
       && decision.actionRevision === grant.actionRevision
       && decision.actionType === 'set_keyword_bid'
       && decision.adEntityId === job.adEntityId
-      && decision.revision === job.decisionRevision
-      && ['approved', 'executed', 'verified'].includes(decision.status),
+      && decision.revision === job.decisionRevision + 2
+      && decision.status === 'verified',
     'Decision revision/action/entity/policy binding does not match the execution job.',
   );
   const proposalAuthorization = parseJsonObject(proposal.authorizationJson, 'Proposal authorization');
@@ -829,7 +830,7 @@ function validateAuthorityRows(
       && proposal.marketplace === 'US'
       && proposal.currency === 'USD'
       && proposal.missionId === mission.id
-      && proposal.missionRevision === mission.revision
+      && proposal.missionRevision === grant.missionRevision
       && proposal.policyVersionId === policy.id
       && proposal.policyRevision === policy.revision
       && proposal.actionRevision === grant.actionRevision
@@ -1053,14 +1054,16 @@ function validateAuthorityRows(
       && jobTerminalAtMs <= jobUpdatedAtMs
       && jobTerminalAtMs <= batchTerminalAtMs
       && batchTerminalAtMs <= batchUpdatedAtMs
-      && Math.max(jobUpdatedAtMs, batchUpdatedAtMs) <= consumedAtMs
+      && submittedAtMs <= consumedAtMs
+      && consumedAtMs <= afterCapturedAtMs
+      && Math.max(jobUpdatedAtMs, batchUpdatedAtMs) <= snapshotExportedAtMs
       && consumedAtMs <= snapshotExportedAtMs
       && decisionUpdatedAtMs <= snapshotExportedAtMs
       && snapshotExportedAtMs <= exporterNowMs + MAX_FUTURE_SKEW_MS
-      && timestampMs(grant.expiresAt, 'MissionGrant expiresAt') >= reloadCapturedAtMs
+      && timestampMs(grant.expiresAt, 'MissionGrant expiresAt') > submittedAtMs
       && (!decision.validUntil
-        || timestampMs(decision.validUntil, 'Decision validUntil') >= reloadCapturedAtMs)
-      && timestampMs(proposal.validUntil, 'Proposal validUntil') >= reloadCapturedAtMs,
+        || timestampMs(decision.validUntil, 'Decision validUntil') > submittedAtMs)
+      && timestampMs(proposal.validUntil, 'Proposal validUntil') > submittedAtMs,
     'Package/identity/proposal/decision/grant/job/capture/terminal/snapshot timestamps are stale or not causally closed.',
   );
 }
@@ -1325,6 +1328,8 @@ function buildExecutionCanaryEvidence(rawOptions, injectedContext = {}) {
       packageBefore.builtAtMs,
       nowBeforeMs,
     );
+    const lineage = verifyExecutionCanaryLineage(database, options);
+    assertCondition(lineage.passed, lineage.reasons.join(' '));
     queryExecutedAt = context.now().toISOString();
     assertCondition(
       Date.parse(queryExecutedAt) >= snapshotExportedAtMs,

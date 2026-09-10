@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const TARGET_VERSION = 11;
+const TARGET_VERSION = 20;
 const SCRIPT_SCHEMA_VERSION = 1;
 const INSPECTION_TEMP_PREFIX = `amazon-ai-ops-s7-inspection-${process.pid}-`;
 const OFFLINE_MIGRATION_USAGE = `Usage:

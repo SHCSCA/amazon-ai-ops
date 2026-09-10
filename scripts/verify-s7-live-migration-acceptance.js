@@ -314,6 +314,20 @@ function sameFileArtifact(left, right) {
     && left.mtimeMs === right.mtimeMs;
 }
 
+function openOfflineReadOnly(Database, databasePath) {
+  assertOfflineSidecarsAbsent(databasePath, 'Offline database');
+  const bytes = fs.readFileSync(databasePath);
+  if (bytes[18] === 2 && bytes[19] === 2) {
+    // A checkpointed WAL file opened readonly can itself create WAL/SHM files.
+    // SQLite deserialization requires rollback-mode header bytes; change only
+    // this private memory image, retaining the on-disk artifact and its hash.
+    bytes[18] = 1;
+    bytes[19] = 1;
+    return new Database(bytes, { readonly: true });
+  }
+  return new Database(databasePath, { readonly: true, fileMustExist: true });
+}
+
 function assertOfflineSidecarsAbsent(databasePath, label) {
   const present = OFFLINE_SIDECAR_SUFFIXES
     .map((suffix) => `${databasePath}${suffix}`)
@@ -1015,10 +1029,7 @@ function verifyOfflineMigrationArtifacts(manifest, context, checks) {
     'current restored database SHA-256 must match the offline manifest',
   );
 
-  const working = new context.Database(
-    workingArtifactForOpen.realPath,
-    { readonly: true, fileMustExist: true },
-  );
+  const working = openOfflineReadOnly(context.Database, workingArtifactForOpen.realPath);
   let workingSummary;
   try {
     const workingArtifactAfterOpen = fileArtifact(
@@ -1134,10 +1145,7 @@ function verifyOfflineMigrationArtifacts(manifest, context, checks) {
     sidecarsAbsentBeforeAndAfter: true,
   };
 
-  const restored = new context.Database(
-    restoreArtifactForOpen.realPath,
-    { readonly: true, fileMustExist: true },
-  );
+  const restored = openOfflineReadOnly(context.Database, restoreArtifactForOpen.realPath);
   let restoreSummary;
   try {
     const restoreArtifactAfterOpen = fileArtifact(
@@ -1976,6 +1984,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  openOfflineReadOnly,
   KIND,
   LIVE_MIGRATION_ACCEPTANCE_USAGE,
   REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES,

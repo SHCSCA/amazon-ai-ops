@@ -1,4 +1,5 @@
 import type {
+  AdExecutionBatchRecord,
   LingxingCollectionJobSnapshot,
   LingxingReportType,
   MissionControlTodayProjection,
@@ -49,6 +50,7 @@ export interface BuildMissionControlTodayProjectionInput {
   latestMetricDate?: string;
   operationEventsToday: number;
   browserSessionReady: boolean;
+  executionBatches: readonly Pick<AdExecutionBatchRecord, 'storeId' | 'marketplace' | 'currency' | 'status'>[];
   now?: Date;
 }
 
@@ -188,8 +190,20 @@ export function buildMissionControlTodayProjection(
   const attentionItems = readiness
     .filter((item) => item.state === 'attention')
     .map((item) => `${item.label}：${item.detail}`);
+  const unknownCount = input.executionBatches.filter(batch => (
+    batch.storeId === input.context.storeId && batch.marketplace === 'US'
+    && batch.currency === 'USD' && batch.status === 'unknown'
+  )).length;
   let nextAction: MissionControlTodayProjection['nextAction'];
-  if (products.length === 0 || configuredProductCount !== products.length) {
+  if (unknownCount > 0) {
+    const detail = `当前店铺有 ${unknownCount} 个执行批次结果不确定；请进入执行工作台查看记录或进行只读双次对账，不得重试保存。`;
+    blockers.unshift(detail);
+    nextAction = {
+      id: 'reconcile-unknown-execution', label: '查看执行结果并只读对账', detail,
+      targetView: 'execution/live', requiredCapabilityId: 'execution.queue.view',
+      available: false, blockerCode: 'TARGET_CAPABILITY_NOT_AUTHORIZED',
+    };
+  } else if (products.length === 0 || configuredProductCount !== products.length) {
     nextAction = {
       id: 'configure-products',
       label: products.length === 0 ? '建立产品对象' : '补齐产品经营目标',

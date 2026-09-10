@@ -1,8 +1,7 @@
 {
   "name": "@amazon-ai-ops/root",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "pnpm --filter @amazon-ai-ops/desktop run dev",
     "build": "pnpm --filter @amazon-ai-ops/desktop run build",
@@ -65,11 +64,12 @@
     "verify:s7-non-ready-safety": "node scripts/verify-s7-non-ready-safety.js",
     "verify:s7-ready-safety": "node scripts/verify-s7-ready-safety.js",
     "gate:s8": "node scripts/stage8-gate-operator.js",
-    "verify:v16-required-tests": "node scripts/verify-v16-required-test-manifest.js --manifest output/v16-evidence/v16_required_test_manifest.json",
-    "verify:v16-trace-closure": "node scripts/verify-v16-trace-closure.js --requirements docs/v16_requirements_index.json --manifest output/v16-evidence/v16_required_test_manifest.json",
-    "verify:v16-readiness": "node scripts/verify-v16-readiness-aggregation.js --manifest output/v16-evidence/v16_required_test_manifest.json --out output/v16-evidence/v16_l8_readiness.json",
+    "verify:v16-required-tests": "node scripts/verify-v16-required-test-manifest.js --manifest output/v16-evidence/current/manifest.json",
+    "verify:v16-trace-closure": "node scripts/verify-v16-trace-closure.js --requirements docs/v16_requirements_index.json --manifest output/v16-evidence/current/manifest.json",
+    "verify:v16-readiness": "node scripts/verify-v16-readiness-aggregation.js --manifest output/v16-evidence/current/manifest.json --out output/v16-evidence/v16_l8_readiness.json",
     "verify:v16-services-contract": "node scripts/verify-v16-services-contract.mjs",
-    "verify:v16-full": "pnpm run verify:v16-required-tests && pnpm run verify:v16-trace-closure && pnpm run verify:v16-readiness && pnpm run verify:v16-services-contract"
+    "verify:v16-full": "pnpm run verify:v16-required-tests && pnpm run verify:v16-trace-closure && pnpm run verify:v16-readiness && pnpm run verify:v16-services-contract",
+    "test:v16:evidence": "node scripts/generate-v16-l1-evidence.mjs --out-dir output/v16-evidence/current"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

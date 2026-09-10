@@ -452,7 +452,7 @@ describe('package launch smoke isolated runtime contract', () => {
   it('uses bounded PowerShell process inspection without CIM and bounds taskkill too', () => {
     const source = readFileSync('scripts/smoke-package-launch.js', 'utf8');
     expect(WINDOWS_PROCESS_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
-    expect(WINDOWS_PROCESS_COMMAND_ATTEMPTS).toBe(2);
+    expect(WINDOWS_PROCESS_COMMAND_ATTEMPTS).toBe(3);
     expect(TASKKILL_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
     expect(source.match(/spawnSync\(POWERSHELL_EXECUTABLE/g)).toHaveLength(1);
     expect(source).toContain('timeout: WINDOWS_PROCESS_COMMAND_TIMEOUT_MS');

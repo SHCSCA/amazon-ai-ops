@@ -81,6 +81,7 @@ class FakeLocator implements PlaywrightKeywordBidLocatorLike {
     return this.kind === 'bid' ? this.page.bidValue : '';
   }
   async fill(value: string): Promise<void> { if (this.kind === 'bid') this.page.bidValue = value; }
+  async hover(): Promise<void> {}
 
   async click(): Promise<void> {
     if (this.kind !== 'save') return;
@@ -593,13 +594,13 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     })]);
     expect(harness.page.clickCount).toBe(1);
     expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
-      .toEqual(expect.objectContaining({ eventType: 'revoked' }));
+      .toEqual(expect.objectContaining({ eventType: 'invalidated' }));
     expect(harness.missionRepository.getDecision(harness.context, 'decision-1'))
       .toEqual(expect.objectContaining({ status: 'approved' }));
     expect(harness.database.prepare(`
       SELECT evidence_type AS evidenceType, evidence_ref AS evidenceRef
       FROM evidence_refs
-      WHERE store_id = 'store-one' AND event_id = 'causal:grant:grant-1:revoked'
+      WHERE store_id = 'store-one' AND event_id = 'causal:grant:grant-1:invalidated'
     `).all()).toEqual([
       { evidenceType: 'ad_execution_before', evidenceRef: expect.any(String) },
     ]);
@@ -644,9 +645,13 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     ]));
     expect(harness.page.clickCount).toBe(1);
     expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
-      .toEqual(expect.objectContaining({ eventType: 'revoked' }));
+      .toEqual(expect.objectContaining({ eventType: 'invalidated' }));
     expect(harness.missionRepository.getMission(harness.context, 'mission-1'))
       .toEqual(expect.objectContaining({ status: 'blocked', phase: 'action' }));
+    const changesBeforeHistory = harness.database.prepare('SELECT total_changes() AS total').get();
+    expect(harness.service.listBatches(harness.context)).toEqual([projection]);
+    expect(harness.database.prepare('SELECT total_changes() AS total').get()).toEqual(changesBeforeHistory);
+    expect(harness.page.clickCount).toBe(1);
   });
 
   it('reconciles an UNKNOWN batch with two read-only page observations without retrying save', async () => {
@@ -667,12 +672,15 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'CONFIRMED_ORIGINAL',
+      status: 'original_stably_observed',
       batchId: harness.batchId,
       observedBidCents: 149,
       originalStatus: 'unknown',
     });
     expect(harness.page.clickCount).toBe(1);
+    const screenshots = vi.spyOn(harness.page, 'screenshot');
+    expect(await harness.service.reconcileUnknownBatch({ context: harness.context, batchId: harness.batchId })).toEqual(result);
+    expect(screenshots).not.toHaveBeenCalled();
     expect(harness.executionRepository.getExecutionBatch(harness.context, harness.batchId))
       .toEqual(expect.objectContaining({ batch: expect.objectContaining({ status: 'unknown' }) }));
     expect(harness.missionRepository.listCausalEvents(harness.context, { missionId: 'mission-1' }))
@@ -681,7 +689,7 @@ describe('ExecutionAuthorityService safety orchestration', () => {
           stage: 'READBACK',
           eventType: 'execution_unknown_reconciled',
           entityId: harness.batchId,
-          status: 'confirmed_original',
+          status: 'original_stably_observed',
         }),
       ]));
     expect(harness.database.prepare(`
@@ -694,6 +702,67 @@ describe('ExecutionAuthorityService safety orchestration', () => {
       { evidenceType: 'ad_execution_reconciliation_first' },
       { evidenceType: 'ad_execution_reconciliation_reload' },
     ]);
+  });
+
+  it.each([
+    ['target_stably_observed', 'target', false],
+    ['original_stably_observed', 'original', false],
+    ['other_value_stably_observed', 'other', false],
+    ['inconclusive_permanent', 'original', true],
+  ] as const)('persists %s once without restoring the invalidated Grant', async (outcome, value, drift) => {
+    const h = createHarness();
+    h.page.clickError = new Error('disconnected after submit intent');
+    const unknown = await h.service.startBatch({ context: h.context, batchId: h.batchId });
+    const job = unknown.jobs[0];
+    const before = h.database.prepare("SELECT * FROM mission_grant_events WHERE grant_id='grant-1' ORDER BY id").all();
+    h.page.allowAfterScreenshot();
+    const bid = value === 'target' ? job.targetBidCents : value === 'original' ? job.expectedBidCents : 170;
+    vi.spyOn(h.page, 'selectCampaign').mockImplementation(() => { h.page.bidValue = (bid / 100).toFixed(2); });
+    const reload = vi.spyOn(h.page, 'reload').mockImplementation(async () => { if (drift) h.page.bidValue = '1.71'; });
+    // Emergency stop prevents new writes, not this separate read-only observation.
+    h.database.prepare("UPDATE policy_runtime SET kill_switch=1 WHERE store_id='store-one'").run();
+    const result = await h.service.reconcileUnknownBatch({ context: h.context, batchId: h.batchId });
+    expect(result.status).toBe(outcome);
+    expect(reload).toHaveBeenCalledOnce();
+    expect(await h.service.reconcileUnknownBatch({ context: h.context, batchId: h.batchId })).toEqual(result);
+    expect(reload).toHaveBeenCalledOnce();
+    expect(h.page.clickCount).toBe(1);
+    expect(h.database.prepare("SELECT * FROM mission_grant_events WHERE grant_id='grant-1' ORDER BY id").all()).toEqual(before);
+    const projection = h.executionRepository.getExecutionBatch(h.context, h.batchId)!;
+    expect(projection.batch).toEqual(unknown.batch);
+    expect(projection.jobs).toEqual(unknown.jobs);
+    expect(projection.reconciliation).toMatchObject({ outcome, context: h.context, first: { observedBidCents: bid }, reload: { observedBidCents: drift ? 171 : bid } });
+    expect(h.database.prepare('SELECT COUNT(*) AS count FROM ad_execution_reconciliation_cases').get()).toEqual({ count: 1 });
+    expect(() => h.database.prepare("UPDATE ad_execution_reconciliation_cases SET outcome='target_stably_observed'").run()).toThrow(/immutable/);
+    expect(() => h.database.prepare('DELETE FROM ad_execution_reconciliation_cases').run()).toThrow(/cannot be deleted/);
+  });
+
+  it.each(['first-proof', 'reload', 'process-restart'] as const)('permanently closes an interrupted %s without an additional observation', async failure => {
+    const h = createHarness();
+    h.page.clickError = new Error('disconnected');
+    const unknown = await h.service.startBatch({ context: h.context, batchId: h.batchId });
+    h.page.allowAfterScreenshot();
+    const screenshot = vi.spyOn(h.page, 'screenshot');
+    const reload = vi.spyOn(h.page, 'reload');
+    if (failure === 'process-restart') {
+      h.executionRepository.beginUnknownReconciliation(h.context, unknown.jobs[0].id);
+      // A new repository represents process recovery; no in-memory ticket can revive the case.
+      new ExecutionAuthorityRepository(h.database).recoverInterruptedExecutions();
+    } else if (failure === 'first-proof') {
+      screenshot.mockRejectedValue(new Error('screenshot missing'));
+    } else reload.mockRejectedValue(new Error('reload disconnected'));
+    const result = await h.service.reconcileUnknownBatch({ context: h.context, batchId: h.batchId });
+    expect(result.status).toBe('inconclusive_permanent');
+    const screenshots = screenshot.mock.calls.length;
+    const reloads = reload.mock.calls.length;
+    expect(await h.service.reconcileUnknownBatch({ context: h.context, batchId: h.batchId })).toEqual(result);
+    expect(screenshot).toHaveBeenCalledTimes(screenshots);
+    expect(reload).toHaveBeenCalledTimes(reloads);
+    expect(h.page.clickCount).toBe(1);
+    const record = h.executionRepository.getExecutionBatch(h.context, h.batchId)!.reconciliation!;
+    expect(record.reload).toBeNull();
+    if (failure !== 'reload') expect(record.first).toBeNull();
+    expect(h.missionRepository.listCausalEvents(h.context).filter(e => e.eventType === 'execution_unknown_reconciled')).toHaveLength(1);
   });
 
   it('revalidates the kill switch after the final save control is resolved and before click', async () => {
@@ -747,13 +816,15 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     `).get(harness.batchId)).toEqual({ batchStatus: 'unknown', evidenceRefCount: 1 });
   });
 
-  it('consumes the grant only after the complete batch passes after and reload evidence', async () => {
+  it('consumes submitted authority before readback and records execution success independently', async () => {
     const harness = createHarness();
     const running = harness.service.startBatch({ context: harness.context, batchId: harness.batchId });
     await harness.page.afterScreenshotStarted;
 
     expect(harness.page.clickCount).toBe(1);
-    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1')).toBeUndefined();
+    expect(harness.missionRepository.getMissionGrant(harness.context, 'grant-1')?.usage)
+      .toMatchObject({ status: 'consumed', spentSlots: 1, residualSlots: 0 });
+    expect(harness.executionRepository.getExecutionBatch(harness.context, harness.batchId)?.jobs[0].status).toBe('submitted');
 
     harness.page.allowAfterScreenshot();
     const projection = await running;
@@ -1961,14 +2032,14 @@ function seedSecondSameStorePolicyGrant(database: Database.Database): void {
       allowed_ad_entity_ids_json, max_change_pct, total_impact_budget, expires_at,
       policy_version_id, policy_revision, required_evidence_json,
       stop_conditions_json, issuer_type, issuer_actor_id, issued_at,
-      created_session_generation
+      created_session_generation, authority_json
     )
     SELECT 'grant-2', store_id, marketplace, currency, 'mission-2',
       mission_revision, '["decision-mission-2"]', action_revision,
       allowed_action_types_json, '["opaque-keyword-2"]', max_change_pct,
       total_impact_budget, expires_at, 'policy-version-2', 1,
       required_evidence_json, stop_conditions_json, 'policy', 'policy-engine',
-      issued_at, created_session_generation
+      issued_at, created_session_generation, authority_json
     FROM mission_grants
     WHERE store_id = 'store-one' AND id = 'grant-1'
   `).run();
@@ -2234,11 +2305,11 @@ function seedAuthority(
     decision_ids_json, action_revision, allowed_action_types_json,
     allowed_ad_entity_ids_json, max_change_pct, total_impact_budget, expires_at,
     policy_version_id, policy_revision, required_evidence_json, stop_conditions_json,
-    issuer_type, issuer_actor_id, issued_at, created_session_generation
+    issuer_type, issuer_actor_id, issued_at, created_session_generation, authority_json
   ) VALUES ('grant-1', 'store-one', 'US', 'USD', 'mission-1', 1,
     ?, 1, '["set_keyword_bid"]', ?,
     10, 10, '2026-07-24T00:00:00.000Z', 'policy-version-1', 1, ?, ?,
-    ?, ?, ?, 4)`
+    ?, ?, ?, 4, ?)`
   ).run(
     decisionIds,
     adEntityIds,
@@ -2247,6 +2318,10 @@ function seedAuthority(
     issuerType,
     issuerType === 'policy' ? 'policy-engine' : 'operator',
     NOW,
+    JSON.stringify(new MissionDomainRepository(database).captureWriteAuthority(normalizeStoreContextEnvelope({
+      storeId: 'store-one', browserProfileId: 'profile-one', marketplace: 'US', currency: 'USD',
+      businessTimezone: 'America/Los_Angeles', businessDate: '2026-07-22', sessionGeneration: 4,
+    }))),
   );
   database.prepare(`INSERT INTO mission_grant_events (
     id, store_id, grant_id, event_type, actor_id, created_at

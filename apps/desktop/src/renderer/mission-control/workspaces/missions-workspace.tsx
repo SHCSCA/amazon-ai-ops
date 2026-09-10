@@ -1,3 +1,5 @@
+import { AnalysisRunsListView } from '../../components/workspace/analysis-runs-list-view';
+import { AnalysisRunDetailView } from '../../components/workspace/analysis-run-detail-view';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
@@ -56,6 +58,7 @@ import {
   readAnalysisAuthorityWindowApi,
   type AnalysisAuthorityRendererApi,
 } from './analysis-authority-window-api';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './missions-workspace.css';
 
 const PAGE_SIZE = 6;
@@ -320,7 +323,7 @@ export function missionAnalysisRunReceipts(
       grouped.push(event);
       byRun.set(event.entityId, grouped);
     });
-  return [...byRun.entries()].flatMap(([id, grouped]) => {
+  return [...byRun.entries()].flatMap<MissionAnalysisRunReceipt>(([id, grouped]) => {
     const ordered = [...grouped].sort((left, right) => left.sequence - right.sequence);
     const started = ordered.find((event) => event.eventType === 'analysis_run_started');
     const terminal = [...ordered].reverse().find((event) => (
@@ -626,12 +629,15 @@ function MissionEditor({
   onNavigate: (target: unknown) => void;
   onSave: () => void;
 }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onCancel, dismissDisabled: busy,
+  });
   const update = <K extends keyof MissionDraft>(key: K, value: MissionDraft[K]) => {
     onChange({ ...editor.draft, [key]: value });
   };
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="mission-editor-title" aria-modal="true" className="mission-control-dialog mission-domain-editor" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="mission-editor-title" aria-modal="true" className="mission-control-dialog mission-domain-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header>
           <div>
             <span>运营任务 · Amazon 美国站 / USD</span>
@@ -646,7 +652,7 @@ function MissionEditor({
           {!dependencies.products.length && <p><span>当前店铺没有可用产品。</span><button onClick={() => onNavigate('product-management')} type="button">先添加产品</button></p>}
         </div>
         <div className="mission-domain-form">
-          <label className="mission-domain-form__wide"><span>任务标题 *</span><input autoFocus onChange={(event) => update('title', event.target.value)} placeholder="例如：控制核心词浪费并稳定订单" value={editor.draft.title} /></label>
+          <label className="mission-domain-form__wide"><span>任务标题 *</span><input data-overlay-initial-focus onChange={(event) => update('title', event.target.value)} placeholder="例如：控制核心词浪费并稳定订单" value={editor.draft.title} /></label>
           <label className="mission-domain-form__wide"><span>经营目标 *</span><textarea onChange={(event) => update('objective', event.target.value)} placeholder="写明希望改善的指标、范围和结果" rows={3} value={editor.draft.objective} /></label>
           <label><span>已完成数据批次 *</span><select disabled={Boolean(editor.mission) || dependencies.loading || !dependencies.batches.length} onChange={(event) => update('dataBatchId', event.target.value)} value={editor.draft.dataBatchId}><option value="">请选择已完成批次</option>{dependencies.batches.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <label><span>已启用策略 *</span><select disabled={Boolean(editor.mission) || dependencies.loading || !dependencies.policyVersions.length} onChange={(event) => update('policyVersionId', event.target.value)} value={editor.draft.policyVersionId}><option value="">请选择已启用策略</option>{dependencies.policyVersions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
@@ -676,13 +682,16 @@ function CheckpointEditor({
   onChange: (draft: CheckpointDraft) => void;
   onSave: () => void;
 }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onCancel, dismissDisabled: busy,
+  });
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="checkpoint-editor-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="checkpoint-editor-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header><div><span>只追加的任务检查点</span><h2 id="checkpoint-editor-title">记录运营任务检查点</h2><p>检查点只追加，不覆盖已有因果证据。</p></div></header>
         <div className="mission-domain-checkpoint-form">
           <label><span>阶段</span><select onChange={(event) => onChange({ ...draft, stage: event.target.value as CheckpointDraft['stage'] })} value={draft.stage}><option value="FACT">事实</option><option value="ANALYSIS">分析</option></select><small>界面只能追加事实与分析；决策、动作和回读由系统写入。</small></label>
-          <label><span>标题</span><input autoFocus onChange={(event) => onChange({ ...draft, title: event.target.value })} value={draft.title} /></label>
+          <label><span>标题</span><input data-overlay-initial-focus onChange={(event) => onChange({ ...draft, title: event.target.value })} value={draft.title} /></label>
           <label><span>状态</span><select onChange={(event) => onChange({ ...draft, status: event.target.value })} value={draft.status}><option value="completed">已完成</option><option value="active">当前</option><option value="pending">等待</option><option value="blocked">已阻断</option></select></label>
           <label><span>证据数量</span><input min="0" onChange={(event) => onChange({ ...draft, evidenceCount: event.target.value })} type="number" value={draft.evidenceCount} /></label>
         </div>
@@ -704,6 +713,7 @@ export function MissionsWorkspace({
 }: MissionsWorkspaceProps) {
   const [missions, setMissions] = useState<MissionRecord[]>([]);
   const [selectedId, setSelectedId] = useState('');
+  const [selectedRun, setSelectedRun] = useState<{ missionId: string; runId: string } | null>(null);
   const [lineage, setLineage] = useState<MissionLineageProjection | null>(null);
   const [analysis, setAnalysis] = useState<MissionAnalysisProjection | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -1050,7 +1060,7 @@ export function MissionsWorkspace({
         ? automatic.authorized
           ? `分析完成：8/8 领星证据已封存，策略自动已整批签发 ${automatic.proposalIds.length} 条建议；尚未执行 Ads。${recommendationSummary}结果进入决策中心，任务进度已自动记录事实与分析检查点。`
           : `分析完成：形成 ${result.proposals.length} 条不可变建议，但策略自动授权被阻断：${[...new Set(automatic.blockers.map(missionAnalysisBlockerLabel))].join('；')}。${recommendationSummary}结果进入决策中心，任务进度已自动记录事实与分析检查点。`
-        : `分析完成：8/8 领星证据已封存，形成 ${result.proposals.length} 条不可变建议快照，等待一次人工整批授权。${recommendationSummary}结果进入决策中心，任务进度已自动记录事实与分析检查点。`);
+        : `分析完成：8/8 领星证据已封存，形成 ${result.proposals.length} 条不可变建议快照。请逐条审批并填写原因，再整批签发授权。${recommendationSummary}结果进入决策中心，任务进度已自动记录事实与分析检查点。`);
     } catch (analysisError) {
       if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
       try {
@@ -1080,6 +1090,9 @@ export function MissionsWorkspace({
   const currentFlightPlanRow = flightPlan.find((row) => row.state === 'current' || row.state === 'blocked');
   const blocked = phase === 'blocked' || phase === 'error';
   const busy = pending !== null;
+  const archiveFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: Boolean(archiveConfirm), onDismiss: () => setArchiveConfirm(null), dismissDisabled: busy,
+  });
   const latestAnalysisResult = analysis
     ? latestMissionAnalysisResult(analysis, selected?.revision)
     : { actionBatch: null, evidence: null, proposals: [], stale: false };
@@ -1204,6 +1217,9 @@ export function MissionsWorkspace({
                 <section className="mission-domain-analysis-authority" aria-label="运营任务分析权威">
                   <header><div><span>真实分析 · 美国站 / USD</span><h3>真实分析与不可变建议批次</h3><p>范围由系统从已完成数据批次推导；界面不能提交路径、规则版本或授权限额。</p></div><b data-ready={latestEvidence ? 'true' : 'false'}>{latestEvidence ? '已封存' : '等待分析'}</b></header>
                   <MissionAnalysisRunHistory receipts={analysisRunHistory} />
+                  {storeContext && (selectedRun?.missionId === selected.id
+                    ? <AnalysisRunDetailView key={authorityKey + selectedRun.runId} storeContext={storeContext} runId={selectedRun.runId} onBack={() => setSelectedRun(null)} onStartAnalysis={() => { setSelectedRun(null); void runAnalysis(); }} onViewRecommendations={() => navigate({ workspace: 'decisions', subview: 'approval' })} />
+                    : <AnalysisRunsListView key={authorityKey + selected.id} storeContext={storeContext} missionId={selected.id} refreshToken={analysis} onRunSelect={runId => setSelectedRun({ missionId: selected.id, runId })} />)}
                   {latestEvidence ? <>
                     <dl><div><dt>领星报告</dt><dd>{latestEvidence.reportTypes.length}/8</dd></div><div><dt>指标行</dt><dd>{latestEvidence.metricRowCount}</dd></div><div><dt>数据区间</dt><dd>{latestEvidence.dateFrom} → {latestEvidence.dateTo}</dd></div><div><dt>有效至</dt><dd>{latestEvidence.freshUntil.slice(0, 16).replace('T', ' ')}</dd></div></dl>
                     <div className="mission-domain-proposal-strip" role="list">{latestProposals.map((proposal) => <article key={proposal.id} role="listitem" data-authorizable={proposal.authorization.human.eligible || undefined}><div><strong>{proposal.entityName}</strong><small>{proposal.campaignName} / {proposal.adGroupName}</small></div><b>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</b><span>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : proposal.source === 'ai' ? '仅 AI / 人工审批' : proposal.source === 'rule_fallback' ? 'AI 降级 / 不可授权' : '规则建议'}</span><em>{proposal.authorization.human.eligible ? '可进入人工审批' : [...new Set(proposal.authorization.human.blockers.map(missionAnalysisBlockerLabel))].join(' · ')}</em></article>)}</div>
@@ -1255,7 +1271,7 @@ export function MissionsWorkspace({
 
       {editor && <MissionEditor busy={pending === 'save'} dependencies={dependencies} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onNavigate={navigate} onSave={() => void saveMission()} />}
       {checkpointEditor && <CheckpointEditor busy={pending === 'checkpoint'} draft={checkpointEditor} onCancel={() => setCheckpointEditor(null)} onChange={setCheckpointEditor} onSave={() => void appendCheckpoint()} />}
-      {archiveConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="mission-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档运营任务</span><h2 id="mission-archive-title">归档“{archiveConfirm.title}”？</h2><p>任务会退出默认队列，但检查点、决策、执行与因果链仍永久保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveMission()} type="button"><Archive size={15} />确认归档</button></footer></section></div>}
+      {archiveConfirm && <div className="mission-control-dialog-backdrop" ref={archiveFocus.overlayRootRef}><section aria-labelledby="mission-archive-title" ref={archiveFocus.surfaceRef} tabIndex={-1} aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档运营任务</span><h2 id="mission-archive-title">归档“{archiveConfirm.title}”？</h2><p>任务会退出默认队列，但检查点、决策、执行与因果链仍永久保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveMission()} type="button"><Archive size={15} />确认归档</button></footer></section></div>}
     </div>
   );
 }

@@ -1,0 +1,4 @@
+{
+  "supersededBy": "docs/v16_required_test_manifest.json",
+  "reason": "不再维护第二套必需测试及手写完成计数。"
+}

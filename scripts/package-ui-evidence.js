@@ -53,7 +53,7 @@ const DEFAULT_APP_CONTENT_PATH = path.join(
 );
 const EXPECTED_RENDERER_ENTRY_PATH = path.join(DEFAULT_APP_CONTENT_PATH, 'dist', 'renderer', 'index.html');
 const DEFAULT_OUTPUT_DIR = 'output/codex-evidence/package-ui-evidence';
-const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 8;
+const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 9;
 const PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION = 'package-ui-run-group/v2';
 const PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION = 'package-ui-profile-checkpoint/v2';
 const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v3';
@@ -109,7 +109,7 @@ const REQUIRED_APP_CONTENT_ENTRIES = Object.freeze([
   'dist/renderer/index.html',
   'playwright-browsers/chrome-win64/chrome.exe',
 ]);
-const PACKAGE_UI_VIEWPORT = Object.freeze({ width: 1200, height: 700 });
+const PACKAGE_UI_VIEWPORT = Object.freeze({ width: 1366, height: 768 });
 const PACKAGE_UI_VIEWPORT_TOLERANCE = Object.freeze({ width: 2, height: 2, deviceScaleFactor: 0.02 });
 const EXPECTED_PACKAGE_UI_SCALES = Object.freeze([
   Object.freeze({ scalePercent: 100, deviceScaleFactor: 1 }),
@@ -127,10 +127,34 @@ const EXPECTED_PACKAGE_UI_WORKSPACES = Object.freeze([
   Object.freeze({ workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: Object.freeze(['rules']) }),
   Object.freeze({ workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: Object.freeze(['ai-and-local', 'scheduler', 'delivery']) }),
 ]);
-const PACKAGE_UI_WIDE_WORKSPACES = Object.freeze([
-  EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'decisions'),
-  EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'objects'),
+const EXPECTED_PACKAGE_UI_MODULES = Object.freeze([
+  { id: 'today', workspaces: ['today'] },
+  { id: 'operations-assets', workspaces: ['objects', 'collection'] },
+  { id: 'decision-center', workspaces: ['missions', 'decisions'] },
+  { id: 'execution-experiments', workspaces: ['execution', 'experiments'] },
+  { id: 'operating-memory', workspaces: ['memory'] },
+  { id: 'system-settings', workspaces: ['policy', 'settings'] },
 ]);
+const PACKAGE_UI_SUBVIEW_HEADINGS = Object.freeze({
+  'today/events': '运营事件',
+  'missions/facts': '运营任务事实链',
+  'execution/evidence': '结果核对',
+  'objects/targets': '广告对象事实',
+  'objects/keywords': '关键词事实与机会',
+  'objects/listing': '商品详情内容库',
+  'collection/reports': '报表采集',
+  'collection/import-check': '导入检查',
+  'settings/scheduler': '当前店铺自动化',
+  'settings/delivery': '交付验收',
+});
+const EXPECTED_PACKAGE_UI_ENTRIES = Object.freeze(EXPECTED_PACKAGE_UI_WORKSPACES.flatMap(
+  (workspace) => workspace.tabs.map((subview) => Object.freeze({
+    ...workspace,
+    subview,
+    heading: PACKAGE_UI_SUBVIEW_HEADINGS[`${workspace.workspace}/${subview}`] || workspace.heading,
+  })),
+));
+const PACKAGE_UI_WIDE_WORKSPACES = EXPECTED_PACKAGE_UI_ENTRIES;
 const EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS = Object.freeze([
   Object.freeze({
     workspace: 'settings',
@@ -161,7 +185,7 @@ const EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS = Object.freeze([
   }),
 ]);
 // The retired Product/Diagnosis queue probes remain available as helpers, but
-// Stage 7 package truth is the canonical ten-workspace matrix. Large-table
+// Current package truth covers all 22 entries in the six-module navigation. Large-table
 // capacity is proved independently by verify-mission-control-large-table.js.
 const PACKAGE_OBJECT_WORKSPACES = Object.freeze([]);
 const PACKAGE_OBJECT_EXPERIENCE_CONTRACTS = Object.freeze({
@@ -210,7 +234,7 @@ const READ_ONLY_INTERACTION_PLAN = Object.freeze([
   Object.freeze({
     id: 'workspace-navigation',
     kind: 'navigation',
-    targets: EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => item.label),
+    targets: EXPECTED_PACKAGE_UI_ENTRIES.map((item) => `${item.workspace}/${item.subview}`),
   }),
   Object.freeze({
     id: 'workspace-tab-keyboard-navigation',
@@ -507,7 +531,7 @@ function parsePackageUiEvidenceArgs(argv) {
     fail('--resume-inspection-receipt may be used only with --resume-run-group.');
   }
   if (!values.allowInteractiveLogin) {
-    fail('Package UI schema v8 requires --allow-interactive-login; saved-login or existing-session-only capture is historical and unsupported.');
+    fail('Package UI schema v9 requires --allow-interactive-login; saved-login or existing-session-only capture is historical and unsupported.');
   }
   values.executablePath = path.resolve(values.executablePath);
   values.appContentPath = path.resolve(values.appContentPath);
@@ -518,7 +542,7 @@ function parsePackageUiEvidenceArgs(argv) {
 function assertPackageUiRuntimeLoginBoundary(options) {
   if (options?.allowInteractiveLogin !== true || options?.allowSavedLogin === true) {
     fail(
-      'Package UI schema v8 runtime requires the visible secret-blind interactive login boundary; saved-login automation is forbidden.',
+      'Package UI schema v9 runtime requires the visible secret-blind interactive login boundary; saved-login automation is forbidden.',
     );
   }
   return true;
@@ -3409,10 +3433,18 @@ function validateWorkspaceRuntimeMetrics(metrics, expected, requestedViewport = 
   if (metrics.primaryAction?.count !== 1) {
     violations.push(violation('PRIMARY_ACTION_CONTRACT', 'The first viewport must expose exactly one visible primary action.', metrics.primaryAction));
   }
-  if (metrics.activeNavigation?.count !== 1 || !String(metrics.activeNavigation?.label || '').includes(expected.label)) {
-    violations.push(violation('ACTIVE_NAVIGATION_CONTRACT', 'Exactly one sidebar item must be active and match the clicked workspace.', {
+  const module = EXPECTED_PACKAGE_UI_MODULES.find((item) => item.workspaces.includes(expected.workspace));
+  const entries = module?.workspaces.flatMap((workspace) => EXPECTED_PACKAGE_UI_ENTRIES
+    .filter((item) => item.workspace === workspace).map((item) => `${workspace}/${item.subview}`));
+  if (!module
+    || metrics.activeNavigation?.count !== 1
+    || metrics.activeNavigation?.view !== `${expected.workspace}/${expected.subview}`
+    || canonicalJson(metrics.activeNavigation?.moduleIds) !== canonicalJson(EXPECTED_PACKAGE_UI_MODULES.map((item) => item.id))
+    || canonicalJson(metrics.activeNavigation?.activeModuleIds) !== canonicalJson([module.id])
+    || canonicalJson(metrics.activeNavigation?.entryIds) !== canonicalJson(entries)) {
+    violations.push(violation('ACTIVE_NAVIGATION_CONTRACT', 'The six modules and selected module entries must match exactly, with only the clicked entry active.', {
       actual: metrics.activeNavigation,
-      expected: expected.label,
+      expected: { module: module?.id, view: `${expected.workspace}/${expected.subview}`, entries },
     }));
   }
   if ((metrics.horizontalOverflow?.violations || []).length > 0) {
@@ -3472,7 +3504,7 @@ function validateWorkspaceRuntimeMetrics(metrics, expected, requestedViewport = 
     requested: requestedViewport,
   });
   if (viewportContract.violations.some((item) => item.code === 'VIEWPORT_DIMENSION_DELTA')) {
-    violations.push(violation('VIEWPORT_MISMATCH', 'The packaged UI viewport exceeds the strict 1200x700 Windows DPI rounding tolerance.', viewportContract));
+    violations.push(violation('VIEWPORT_MISMATCH', 'The packaged UI viewport exceeds the requested dimensions and Windows DPI rounding tolerance.', viewportContract));
   }
   let rendererUrl;
   try {
@@ -3482,6 +3514,43 @@ function validateWorkspaceRuntimeMetrics(metrics, expected, requestedViewport = 
   }
   if (!rendererUrl || rendererUrl.protocol !== 'file:' || rendererUrl.searchParams.get('preview') === '1') {
     violations.push(violation('WORKSPACE_RENDERER_IDENTITY', 'Workspace metrics did not come from the packaged file renderer.', metrics.rendererUrl));
+  }
+  return { passed: violations.length === 0, violations };
+}
+
+function validatePackageMinimumWindow(input) {
+  const violations = [];
+  const native = input?.nativeWindow;
+  if (native?.minimum?.width !== 1200 || native?.minimum?.height !== 700
+    || native?.attempted?.width !== 1199 || native?.attempted?.height !== 699
+    || Math.abs(Number(native?.bounds?.width) - 1200) > 2
+    || Math.abs(Number(native?.bounds?.height) - 700) > 2
+    || !Number.isFinite(native?.bounds?.width) || !Number.isFinite(native?.bounds?.height)
+    || native?.maximized !== false || native?.fullScreen !== false
+    || !(native?.content?.width > 0 && native.content.width <= native.bounds.width)
+    || !(native?.content?.height > 0 && native.content.height <= native.bounds.height)
+    || Math.abs(Number(input?.viewport?.width) - native.content.width) > 2
+    || Math.abs(Number(input?.viewport?.height) - native.content.height) > 2
+    || !Number.isFinite(input?.viewport?.width) || !Number.isFinite(input?.viewport?.height)
+    || input?.viewport?.deviceScaleFactor !== 1) {
+    violations.push(violation('MINIMUM_WINDOW_BOUNDS', 'Minimum-window evidence must prove the native 1200x700 clamp and its actual renderer content size at 100%.', native));
+  }
+  const keys = EXPECTED_PACKAGE_UI_ENTRIES.map((item) => `${item.workspace}/${item.subview}`);
+  for (const field of ['workspaceChecks', 'screenshots']) {
+    const exact = exactPackageUiCollection(input?.[field], keys, (item) => `${item?.workspace}/${item?.subview}`);
+    if (!exact.passed) violations.push(violation('MINIMUM_WINDOW_ENTRIES_NOT_EXACT', `Minimum-window ${field} must cover all 22 entries exactly once.`, exact));
+  }
+  for (const expected of EXPECTED_PACKAGE_UI_ENTRIES) {
+    const check = input?.workspaceChecks?.find((item) => item.workspace === expected.workspace && item.subview === expected.subview);
+    const screenshot = input?.screenshots?.find((item) => item.workspace === expected.workspace && item.subview === expected.subview);
+    if (check?.passed !== true || check?.settleEvidence?.passed !== true || check?.compositeEvidence?.passed !== true
+      || screenshot?.profileId !== '100-compact' || screenshot?.scalePercent !== 100
+      || canonicalJson(screenshotFileTuple(check?.screenshot)) !== canonicalJson(screenshotFileTuple(screenshot))
+      || !currentFileRecordMatches(screenshot)) {
+      violations.push(violation('MINIMUM_WINDOW_CAPTURE_INVALID', 'Minimum-window capture must bind the settled entry to current screenshot bytes.', `${expected.workspace}/${expected.subview}`));
+    }
+    violations.push(...validateWorkspaceRuntimeMetrics(check?.metrics || {}, expected, input?.viewport || {}).violations);
+    violations.push(...validateWorkspaceTabKeyboardEvidence(check?.keyboardEvidence, expected).violations);
   }
   return { passed: violations.length === 0, violations };
 }
@@ -4535,7 +4604,7 @@ function screenshotFileTuple(record) {
   };
 }
 
-function validateSchemaV8ProfileExactSet(run, expected) {
+function validateCurrentProfileExactSet(run, expected) {
   const violations = [];
   const expectedWorkspaceKeys = expected.workspaces.map(
     (item) => `${item.workspace}/${item.subview}`,
@@ -4571,8 +4640,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
   ]) {
     if (!result.passed) {
       violations.push(violation(
-        `V8_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_NOT_EXACT`,
-        `Schema v8 ${name} must equal its canonical set with no missing, duplicate, or extra entries.`,
+        `V9_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_NOT_EXACT`,
+        `Schema v9 ${name} must equal its canonical set with no missing, duplicate, or extra entries.`,
         result,
       ));
     }
@@ -4582,8 +4651,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
     binding = canonicalPackageUiArtifactBinding(run);
   } catch (error) {
     violations.push(violation(
-      'V8_PROFILE_EVIDENCE_BINDING_INVALID',
-      'Schema v8 profile evidence must bind one exact attempt, invocation, profile, scale, run group, and runner contract.',
+      'V9_PROFILE_EVIDENCE_BINDING_INVALID',
+      'Schema v9 profile evidence must bind one exact attempt, invocation, profile, scale, run group, and runner contract.',
       sanitizeDiagnosticText(error?.message || error),
     ));
   }
@@ -4609,8 +4678,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
     )
   ) {
     violations.push(violation(
-      'V8_PROFILE_EVIDENCE_BINDING_MISMATCH',
-      'Schema v8 profile evidence binding does not match its canonical profile/scale/run-group/lock lineage.',
+      'V9_PROFILE_EVIDENCE_BINDING_MISMATCH',
+      'Schema v9 profile evidence binding does not match its canonical profile/scale/run-group/lock lineage.',
       {
         actual: run?.evidenceBinding ?? null,
         expected: {
@@ -4629,8 +4698,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
     || run?.diagnostics?.failure !== null
   ) {
     violations.push(violation(
-      'V8_PROFILE_OUTCOME_NOT_EXACT_SUCCESS',
-      'A composed schema v8 profile must be a successful run with failure exactly null.',
+      'V9_PROFILE_OUTCOME_NOT_EXACT_SUCCESS',
+      'A composed schema v9 profile must be a successful run with failure exactly null.',
       {
         diagnosticsFailure: run?.diagnostics?.failure ?? null,
         failure: run?.failure ?? null,
@@ -4648,8 +4717,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
       || !/^\d{4}-/.test(path.basename(attemptRoot))
     ) {
       violations.push(violation(
-        'V8_ATTEMPT_ARTIFACT_ROOT_BINDING_MISMATCH',
-        'Schema v8 attempt artifacts must be rooted under their exact profile and attempt id.',
+        'V9_ATTEMPT_ARTIFACT_ROOT_BINDING_MISMATCH',
+        'Schema v9 attempt artifacts must be rooted under their exact profile and attempt id.',
         {
           attemptRootSha256: sha256Buffer(Buffer.from(
             normalizedWindowsPath(attemptRoot),
@@ -4673,7 +4742,7 @@ function validateSchemaV8ProfileExactSet(run, expected) {
         !== canonicalJson(screenshotFileTuple(check?.screenshot))
     ) {
       violations.push(violation(
-        'V8_WORKSPACE_SCREENSHOT_BINDING_MISMATCH',
+        'V9_WORKSPACE_SCREENSHOT_BINDING_MISMATCH',
         'Each workspace check must bind the one canonical top-level screenshot for the same workspace/subview.',
         key,
       ));
@@ -4690,7 +4759,7 @@ function validateSchemaV8ProfileExactSet(run, expected) {
         : record?.scalePercent !== expected.scalePercent
     ) {
       violations.push(violation(
-        'V8_WORKSPACE_SCREENSHOT_PROFILE_BINDING_MISMATCH',
+        'V9_WORKSPACE_SCREENSHOT_PROFILE_BINDING_MISMATCH',
         'Workspace screenshot metadata must match its exact profile/scale.',
         { profileId: record?.profileId ?? null, scalePercent: record?.scalePercent ?? null },
       ));
@@ -4703,7 +4772,7 @@ function validateSchemaV8ProfileExactSet(run, expected) {
     });
     if (check?.screenshot?.scalePercent !== expected.scalePercent) {
       violations.push(violation(
-        'V8_SUBVIEW_SCREENSHOT_PROFILE_BINDING_MISMATCH',
+        'V9_SUBVIEW_SCREENSHOT_PROFILE_BINDING_MISMATCH',
         'Subview screenshot metadata must match its exact compact scale.',
         check?.screenshot ?? null,
       ));
@@ -4719,18 +4788,21 @@ function validateSchemaV8ProfileExactSet(run, expected) {
       || check?.screenshot?.scalePercent !== expected.scalePercent
     ) {
       violations.push(violation(
-        'V8_OVERLAY_SCREENSHOT_BINDING_MISMATCH',
+        'V9_OVERLAY_SCREENSHOT_BINDING_MISMATCH',
         'Overlay screenshot metadata must match its exact overlay id and compact scale.',
         check?.screenshot ?? null,
       ));
     }
   }
+  for (const screenshot of run?.minimumWindow?.screenshots || []) {
+    allScreenshotSlots.push({ path: screenshot?.path, slot: `minimum:${screenshot?.workspace}/${screenshot?.subview}` });
+  }
   const screenshotPathSlots = new Map();
   for (const item of allScreenshotSlots) {
     if (!path.isAbsolute(String(item.path || ''))) {
       violations.push(violation(
-        'V8_SCREENSHOT_PATH_INVALID',
-        'Every schema v8 screenshot slot must use one absolute artifact path.',
+        'V9_SCREENSHOT_PATH_INVALID',
+        'Every schema v9 screenshot slot must use one absolute artifact path.',
         item.slot,
       ));
       continue;
@@ -4738,8 +4810,8 @@ function validateSchemaV8ProfileExactSet(run, expected) {
     const key = normalizedWindowsPath(item.path);
     if (screenshotPathSlots.has(key)) {
       violations.push(violation(
-        'V8_SCREENSHOT_PATH_REUSED',
-        'One screenshot path cannot satisfy multiple schema v8 semantic slots.',
+        'V9_SCREENSHOT_PATH_REUSED',
+        'One screenshot path cannot satisfy multiple schema v9 semantic slots.',
         {
           first: screenshotPathSlots.get(key),
           second: item.slot,
@@ -4761,36 +4833,36 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   const legacyV5 = schemaVersion === LEGACY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
   const legacySchedulerReadOnlyV6 =
     schemaVersion === LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
-  const interactiveLoginV8 = schemaVersion === PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
-  const schedulerReadOnlyContract = legacySchedulerReadOnlyV6 || interactiveLoginV8;
+  const interactiveLoginCurrent = schemaVersion === PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
+  const schedulerReadOnlyContract = legacySchedulerReadOnlyV6 || interactiveLoginCurrent;
   const runs = Array.isArray(input.runs) ? input.runs : [];
   const wideRun = input.wideProfile;
   if (!legacyV5 && !schedulerReadOnlyContract) {
     violations.push(violation(
       'PACKAGE_UI_SCHEMA_UNSUPPORTED',
-      'Package UI evidence must use historical schema v5/v6 or current two-phase interactive-login schema v8; schema v7 is superseded.',
+      'Package UI evidence must use historical schema v5/v6 or current two-phase interactive-login schema v9; schema v7 is superseded.',
       { schemaVersion },
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && canonicalJson(input.interactiveLoginContract) !== canonicalJson(INTERACTIVE_LOGIN_CONTRACT)
   ) {
     violations.push(violation(
       'INTERACTIVE_LOGIN_CONTRACT_MISSING_OR_CHANGED',
-      'Schema v8 must declare the exact two-phase, bounded, secret-blind operator login contract.',
+      'Schema v9 must declare the exact two-phase, bounded, secret-blind operator login contract.',
       input.interactiveLoginContract ?? null,
     ));
   }
-  if (interactiveLoginV8 && input.failure !== null) {
+  if (interactiveLoginCurrent && input.failure !== null) {
     violations.push(violation(
-      'V8_MANIFEST_FAILURE_NOT_NULL',
-      'A successful schema v8 manifest must carry failure exactly null.',
+      'V9_MANIFEST_FAILURE_NOT_NULL',
+      'A successful schema v9 manifest must carry failure exactly null.',
       input.failure ?? null,
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       input.requested?.allowInteractiveLogin !== true
       || input.requested?.allowSavedLogin !== false
@@ -4809,7 +4881,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'INTERACTIVE_LOGIN_REQUEST_CONTRACT_MISMATCH',
-      'Schema v8 must request a two-phase bounded visible operator handoff for every run and must not enable saved-login automation.',
+      'Schema v9 must request a two-phase bounded visible operator handoff for every run and must not enable saved-login automation.',
       {
         allowInteractiveLogin: input.requested?.allowInteractiveLogin ?? null,
         allowSavedLogin: input.requested?.allowSavedLogin ?? null,
@@ -4823,7 +4895,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       !validPackageUiAuthorityBinding(input.authority?.binding)
       || canonicalJson(input.authority?.binding)
@@ -4832,7 +4904,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'AUTHORITY_BINDING_MISSING_OR_CHANGED',
-      'Schema v8 must bind the canonical Known Folder DB identity and current authority-selection receipt hash.',
+      'Schema v9 must bind the canonical Known Folder DB identity and current authority-selection receipt hash.',
       {
         authority: input.authority?.binding ?? null,
         runGroup: input.runGroup?.authorityBinding ?? null,
@@ -4840,7 +4912,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
         String(input.invocation?.invocationId || ''),
@@ -4858,15 +4930,15 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'INVOCATION_BINDING_MISSING_OR_CHANGED',
-      'Schema v8 manifest must bind one invocation id, lease generation, and exact attempt receipt collection.',
+      'Schema v9 manifest must bind one invocation id, lease generation, and exact attempt receipt collection.',
       input.invocation ?? null,
     ));
   }
-  const currentRunnerContract = interactiveLoginV8
+  const currentRunnerContract = interactiveLoginCurrent
     ? buildPackageUiRunnerContract()
     : null;
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       canonicalJson(input.runGroup?.profileSequence)
         !== canonicalJson(PACKAGE_UI_PROFILE_SEQUENCE)
@@ -4877,7 +4949,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'RUNNER_CONTRACT_LINEAGE_MISSING_OR_CHANGED',
-      'Schema v8 must bind the immutable run group and composed checkpoints to the current evidence script and semantic contract.',
+      'Schema v9 must bind the immutable run group and composed checkpoints to the current evidence script and semantic contract.',
       {
         checkpointRunnerContractSha256:
           input.checkpointComposition?.runnerContractSha256 ?? null,
@@ -4905,7 +4977,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       input.protectedDatabaseLogical?.passed !== true
       || !logicalSqliteArtifactMatches(
@@ -4916,12 +4988,12 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'PROTECTED_DATABASE_LOGICAL_STATE_CHANGED',
-      'Schema v8 must prove the protected authority DB is unchanged through WAL-aware read-only online backups.',
+      'Schema v9 must prove the protected authority DB is unchanged through WAL-aware read-only online backups.',
       input.protectedDatabaseLogical ?? null,
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       input.checkpointComposition?.passed !== true
       || input.checkpointComposition?.checkpointRecords?.length
@@ -4945,12 +5017,12 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'PROFILE_CHECKPOINT_COMPOSITION_MISSING_OR_FAILED',
-      'Schema v8 must compose immutable ordered 100/125/wide checkpoints from one run-group/package/profile lineage.',
+      'Schema v9 must compose immutable ordered 100/125/wide checkpoints from one run-group/package/profile lineage.',
       input.checkpointComposition ?? null,
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       input.profileLineage?.passed !== true
       || !profileLineageStateMatches(
@@ -4961,14 +5033,14 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'TERMINAL_PROFILE_LINEAGE_MISSING_OR_FAILED',
-      'Schema v8 must bind the terminal isolated-profile content/logical DB hash to the composed checkpoints.',
+      'Schema v9 must bind the terminal isolated-profile content/logical DB hash to the composed checkpoints.',
       input.profileLineage ?? null,
     ));
   }
   if (schedulerReadOnlyContract && input.profileDatabaseFileIsolation?.passed !== true) {
     violations.push(violation(
       'PROFILE_DATABASE_FILE_ISOLATION_FAILED',
-      'Schema v6/v8 evidence must prove that the isolated profile database is not a hardlink alias of --protected-db.',
+      'Schema v6/v9 evidence must prove that the isolated profile database is not a hardlink alias of --protected-db.',
       input.profileDatabaseFileIsolation,
     ));
   }
@@ -4979,7 +5051,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'ISOLATED_PROFILE_BOOTSTRAP_CONTRACT_MISSING_OR_CHANGED',
-      'Schema v6/v8 must declare the exact isolated-profile-only visible bootstrap contract with no business readiness credit.',
+      'Schema v6/v9 must declare the exact isolated-profile-only visible bootstrap contract with no business readiness credit.',
       input.isolatedProfileBootstrapContract ?? null,
     ));
   }
@@ -5004,7 +5076,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       input.profileProcessIsolation,
     ));
   }
-  const topLevelProfileLockBinding = interactiveLoginV8
+  const topLevelProfileLockBinding = interactiveLoginCurrent
     ? {
         invocationIdSha256: sha256Buffer(Buffer.from(
           String(input.invocation?.invocationId || ''),
@@ -5020,7 +5092,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }
     : null;
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
       ? !packageUiProfileLockIsolationPassed(
           input.profileLockIsolation,
           topLevelProfileLockBinding,
@@ -5035,7 +5107,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       input.profileLockIsolation ?? null,
     ));
   }
-  if (interactiveLoginV8) {
+  if (interactiveLoginCurrent) {
     const exactScaleRuns = exactPackageUiCollection(
       runs,
       EXPECTED_PACKAGE_UI_SCALES.map(
@@ -5045,8 +5117,8 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     );
     if (!exactScaleRuns.passed) {
       violations.push(violation(
-        'V8_SCALE_RUN_SET_NOT_EXACT',
-        'Schema v8 compact scale runs must exactly equal the canonical 100/125 profile set.',
+        'V9_SCALE_RUN_SET_NOT_EXACT',
+        'Schema v9 compact scale runs must exactly equal the canonical 100/125 profile set.',
         exactScaleRuns,
       ));
     }
@@ -5054,7 +5126,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   for (const scale of EXPECTED_PACKAGE_UI_SCALES) {
     const profileId = `${scale.scalePercent}-compact`;
     const profileViolationStart = violations.length;
-    const run = interactiveLoginV8
+    const run = interactiveLoginCurrent
       ? runs.find((candidate) => candidate?.profileId === profileId)
       : runs.find((candidate) => candidate.scalePercent === scale.scalePercent);
     if (!run) {
@@ -5064,8 +5136,8 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       });
       continue;
     }
-    if (interactiveLoginV8) {
-      const exactProfile = validateSchemaV8ProfileExactSet(run, {
+    if (interactiveLoginCurrent) {
+      const exactProfile = validateCurrentProfileExactSet(run, {
         overlays: EXPECTED_OVERLAY_CHECK_IDS,
         profileId,
         profileRootPathSha256: input.profileValidationOnly === true
@@ -5080,19 +5152,24 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         runnerContractSha256: input.runGroup?.runnerContractSha256,
         scalePercent: scale.scalePercent,
         subviews: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
-        workspaces: EXPECTED_PACKAGE_UI_WORKSPACES,
+        workspaces: EXPECTED_PACKAGE_UI_ENTRIES,
       });
       violations.push(...exactProfile.violations);
+      if (scale.scalePercent === 100) {
+        violations.push(...validatePackageMinimumWindow(run.minimumWindow).violations);
+      } else if (run.minimumWindow != null) {
+        violations.push(violation('MINIMUM_WINDOW_WRONG_PROFILE', 'The native minimum-window capture belongs only to the 100% run.'));
+      }
     }
-    if (interactiveLoginV8 && run.session?.mode !== 'interactive-operator-login') {
+    if (interactiveLoginCurrent && run.session?.mode !== 'interactive-operator-login') {
       violations.push(violation(
         'SCALE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
-        `The ${scale.scalePercent}% schema v8 run must be reached through its own visible operator handoff.`,
+        `The ${scale.scalePercent}% schema v9 run must be reached through its own visible operator handoff.`,
         { mode: run.session?.mode ?? null },
       ));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
       && (
         run.session?.operatorHandoff?.phaseTimeoutMs
           !== input.requested?.interactiveLoginTimeoutMs
@@ -5111,13 +5188,13 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       ));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
       && scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent
       && !firstInteractiveLoginAttestationPassed(run.session?.loginSessionAttestation)
     ) {
       violations.push(violation(
         'INTERACTIVE_LOGIN_FIRST_RUN_TYPED_PROOF_MISSING',
-        'The first schema v8 run must establish a fresh typed-and-saved, non-reused, identity-verified ERP session before any saved-session continuation.',
+        'The first schema v9 run must establish a fresh typed-and-saved, non-reused, identity-verified ERP session before any saved-session continuation.',
         run.session?.loginSessionAttestation ?? null,
       ));
     }
@@ -5125,6 +5202,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       actual: run.viewport,
       actualDeviceScaleFactor: run.actualDeviceScaleFactor,
       expectedDeviceScaleFactor: scale.deviceScaleFactor,
+      requested: interactiveLoginCurrent ? PACKAGE_UI_VIEWPORT : { width: 1200, height: 700 },
     });
     if (viewportContract.violations.some((item) => item.code === 'DEVICE_SCALE_FACTOR_DELTA')) {
       violations.push(violation('DEVICE_SCALE_FACTOR_MISMATCH', `The ${scale.scalePercent}% run did not use the expected device scale factor.`, {
@@ -5132,7 +5210,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }));
     }
     if (viewportContract.violations.some((item) => item.code === 'VIEWPORT_DIMENSION_DELTA')) {
-      violations.push(violation('SCALE_VIEWPORT_MISMATCH', `The ${scale.scalePercent}% run exceeded the strict nominal 1200x700 DPI rounding tolerance.`, viewportContract));
+      violations.push(violation('SCALE_VIEWPORT_MISMATCH', `The ${scale.scalePercent}% run exceeded its declared viewport and DPI rounding tolerance.`, viewportContract));
     }
     if (run.identity?.passed !== true) {
       violations.push(violation('SCALE_IDENTITY_FAILED', `The ${scale.scalePercent}% packaged identity check failed.`, run.identity?.violations));
@@ -5144,7 +5222,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       violations.push(violation('SCALE_PROFILE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% profile browser isolation evidence is missing or failed.`, run.profileProcessIsolation));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
         ? !packageUiProfileLockIsolationPassed(
             run.profileLockIsolation,
             run.evidenceBinding?.profileLockBinding || null,
@@ -5159,7 +5237,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         run.profileLockIsolation ?? null,
       ));
     }
-    if (interactiveLoginV8 && !chromiumLineageEvidencePassed(run.chromiumProcessLineage)) {
+    if (interactiveLoginCurrent && !chromiumLineageEvidencePassed(run.chromiumProcessLineage)) {
       violations.push(violation(
         'SCALE_CHROMIUM_LINEAGE_MISSING_OR_FAILED',
         `${scale.scalePercent}% did not bind the packaged Chromium hash, root/descendant PIDs, profile binding, and terminal cleanup.`,
@@ -5167,7 +5245,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       ));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
       && (
         !packageUiAttemptArtifactManifestMatches(run.attemptArtifacts)
         || !validatePackageUiAttemptArtifactMembership(
@@ -5227,7 +5305,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     if ((run.pageErrors || []).length > 0) {
       violations.push(violation('RENDERER_PAGE_ERROR', `The ${scale.scalePercent}% packaged renderer emitted uncaught page errors.`, run.pageErrors));
     }
-    for (const workspace of EXPECTED_PACKAGE_UI_WORKSPACES) {
+    for (const workspace of interactiveLoginCurrent ? EXPECTED_PACKAGE_UI_ENTRIES : EXPECTED_PACKAGE_UI_WORKSPACES) {
       const check = (run.workspaceChecks || []).find((candidate) => (
         candidate.workspace === workspace.workspace && candidate.subview === workspace.subview
       ));
@@ -5239,6 +5317,10 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }
       if (check?.keyboardEvidence?.passed !== true) {
         violations.push(violation('WORKSPACE_KEYBOARD_EVIDENCE_MISSING_OR_FAILED', `${scale.scalePercent}% ${workspace.workspace}/${workspace.subview} tab keyboard evidence is missing or failed.`, check?.keyboardEvidence));
+      }
+      if (interactiveLoginCurrent) {
+        violations.push(...validateWorkspaceRuntimeMetrics(check?.metrics || {}, workspace).violations);
+        violations.push(...validateWorkspaceTabKeyboardEvidence(check?.keyboardEvidence, workspace).violations);
       }
       const screenshot = (run.screenshots || []).find((candidate) => (
         candidate.workspace === workspace.workspace && candidate.subview === workspace.subview
@@ -5259,7 +5341,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }
     }
     // Schema v5 is intentionally interpreted with its historical ten-workspace
-    // contract. Schemas v6/v8 prove the scheduler subview, Main read-only guard,
+    // contract. Schemas v6/v9 prove the scheduler subview, Main read-only guard,
     // and current screenshot bytes; v5 must never be silently upgraded in place.
     for (const expectedSubview of schedulerReadOnlyContract ? EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS : []) {
       const check = (run.subviewChecks || []).find((candidate) => (
@@ -5337,8 +5419,8 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     });
   } else {
   const wideViolationStart = violations.length;
-  if (interactiveLoginV8) {
-    const exactWide = validateSchemaV8ProfileExactSet(wideRun, {
+  if (interactiveLoginCurrent) {
+    const exactWide = validateCurrentProfileExactSet(wideRun, {
       overlays: [],
       profileId: PACKAGE_UI_WIDE_PROFILE.id,
       profileRootPathSha256: input.profileValidationOnly === true
@@ -5357,15 +5439,15 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     });
     violations.push(...exactWide.violations);
   }
-  if (interactiveLoginV8 && wideRun.session?.mode !== 'interactive-operator-login') {
+  if (interactiveLoginCurrent && wideRun.session?.mode !== 'interactive-operator-login') {
     violations.push(violation(
       'WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
-      'The wide schema v8 run must be reached through its own visible operator handoff.',
+      'The wide schema v9 run must be reached through its own visible operator handoff.',
       { mode: wideRun.session?.mode ?? null },
     ));
   }
   if (
-    interactiveLoginV8
+    interactiveLoginCurrent
     && (
       wideRun.session?.operatorHandoff?.phaseTimeoutMs
         !== input.requested?.interactiveLoginTimeoutMs
@@ -5402,7 +5484,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       violations.push(violation('WIDE_PROFILE_PROCESS_ISOLATION_FAILED', 'The wide profile browser isolation evidence is missing or failed.', wideRun.profileProcessIsolation));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
         ? !packageUiProfileLockIsolationPassed(
             wideRun.profileLockIsolation,
             wideRun.evidenceBinding?.profileLockBinding || null,
@@ -5417,7 +5499,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         wideRun.profileLockIsolation ?? null,
       ));
     }
-    if (interactiveLoginV8 && !chromiumLineageEvidencePassed(wideRun.chromiumProcessLineage)) {
+    if (interactiveLoginCurrent && !chromiumLineageEvidencePassed(wideRun.chromiumProcessLineage)) {
       violations.push(violation(
         'WIDE_CHROMIUM_LINEAGE_MISSING_OR_FAILED',
         'The wide profile did not bind the packaged Chromium hash, root/descendant PIDs, profile binding, and terminal cleanup.',
@@ -5425,7 +5507,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       ));
     }
     if (
-      interactiveLoginV8
+      interactiveLoginCurrent
       && (
         !packageUiAttemptArtifactManifestMatches(wideRun.attemptArtifacts)
         || !validatePackageUiAttemptArtifactMembership(
@@ -5485,7 +5567,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         pageErrors: wideRun.pageErrors,
       }));
     }
-    for (const workspace of interactiveLoginV8 ? PACKAGE_UI_WIDE_PROFILE.workspaces : []) {
+    for (const workspace of interactiveLoginCurrent ? PACKAGE_UI_WIDE_PROFILE.workspaces : []) {
       const check = (wideRun.workspaceChecks || []).find((candidate) => (
         candidate.workspace === workspace.workspace
         && candidate.subview === workspace.subview
@@ -5507,6 +5589,8 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         candidate.workspace === workspace.workspace
         && candidate.subview === workspace.subview
       ));
+      violations.push(...validateWorkspaceRuntimeMetrics(check?.metrics || {}, workspace, PACKAGE_UI_WIDE_PROFILE.viewport).violations);
+      violations.push(...validateWorkspaceTabKeyboardEvidence(check?.keyboardEvidence, workspace).violations);
       if (!/^[A-F0-9]{64}$/.test(String(screenshot?.sha256 || ''))) {
         violations.push(violation(
           'WIDE_CANONICAL_SCREENSHOT_MISSING_OR_UNHASHED',
@@ -6402,7 +6486,9 @@ function buildPackageUiRunnerContract() {
     resumeInspectionSchemaVersion: PACKAGE_UI_RESUME_INSPECTION_SCHEMA_VERSION,
     profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
     scales: EXPECTED_PACKAGE_UI_SCALES,
-    workspaces: EXPECTED_PACKAGE_UI_WORKSPACES,
+    workspaces: EXPECTED_PACKAGE_UI_ENTRIES,
+    modules: EXPECTED_PACKAGE_UI_MODULES,
+    minimumWindow: { nativeMinimum: { width: 1200, height: 700 }, profileId: '100-compact', entries: 22 },
     subviewChecks: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
     wideProfile: PACKAGE_UI_WIDE_PROFILE,
     overlayCheckIds: EXPECTED_OVERLAY_CHECK_IDS,
@@ -7453,6 +7539,12 @@ function packageUiAttemptKnownArtifactReferences(runEvidence) {
       workspace: null,
     });
   }
+  for (const screenshot of runEvidence?.minimumWindow?.screenshots || []) {
+    add(screenshot, 'minimum-window-screenshot', {
+      kind: 'minimum-window', overlayId: null, pathSha256: null,
+      subview: screenshot?.subview || null, workspace: screenshot?.workspace || null,
+    });
+  }
   add(runEvidence?.schedulerReadOnlyRuntime?.artifact, 'main-runtime-artifact', {
     kind: 'main-runtime',
     overlayId: null,
@@ -7591,6 +7683,7 @@ function validatePackageUiAttemptArtifactMembership(attemptArtifacts, evidence) 
     'failed-capture': 'failed-capture-artifact',
     inspector: 'inspector-screenshot',
     'main-runtime': 'main-runtime-artifact',
+    'minimum-window': 'minimum-window-screenshot',
     overlay: 'overlay-screenshot',
     subview: 'subview-screenshot',
     workspace: 'workspace-screenshot',
@@ -7644,7 +7737,7 @@ function validatePackageUiAttemptArtifactMembership(attemptArtifacts, evidence) 
           : record.slot.overlayId !== null
       )
       || (
-        ['workspace', 'subview', 'inspector'].includes(record.slot.kind)
+        ['workspace', 'subview', 'inspector', 'minimum-window'].includes(record.slot.kind)
           ? typeof record.slot.workspace !== 'string'
             || record.slot.workspace.length < 1
             || typeof record.slot.subview !== 'string'
@@ -8043,7 +8136,9 @@ async function collectPackageWorkspaceMetrics(page, expected) {
     const primaryActions = anyRoot
       ? Array.from(anyRoot.querySelectorAll('[data-action-priority="primary"]')).filter(inViewport)
       : [];
-    const activeNavigation = Array.from(document.querySelectorAll('.app-sidebar .nav-item[aria-current="page"]')).filter(rendered);
+    const activeNavigation = Array.from(document.querySelectorAll('.app-sidebar [data-operator-entry][aria-current="page"]')).filter(rendered);
+    const moduleButtons = Array.from(document.querySelectorAll('.app-sidebar [data-operator-module]')).filter(rendered);
+    const entryButtons = Array.from(document.querySelectorAll('.app-sidebar [data-operator-entry]')).filter(rendered);
 
     const horizontalTargets = [
       { element: document.documentElement, selector: 'documentElement' },
@@ -8173,7 +8268,15 @@ async function collectPackageWorkspaceMetrics(page, expected) {
     }
 
     return {
-      activeNavigation: { count: activeNavigation.length, label: compactText(activeNavigation[0]) },
+      activeNavigation: {
+        count: activeNavigation.length,
+        label: compactText(activeNavigation[0]),
+        view: activeNavigation[0]?.getAttribute('data-operator-entry') || null,
+        moduleIds: moduleButtons.map((button) => button.getAttribute('data-operator-module')),
+        activeModuleIds: moduleButtons.filter((button) => button.getAttribute('aria-expanded') === 'true')
+          .map((button) => button.getAttribute('data-operator-module')),
+        entryIds: entryButtons.map((button) => button.getAttribute('data-operator-entry')),
+      },
       aria: { brokenReferences, duplicateIds },
       deviceScaleFactor: window.devicePixelRatio,
       h1: { count: h1Elements.length, labels: h1Elements.map(compactText) },
@@ -8322,11 +8425,26 @@ async function waitForWorkspaceSettled(page, selector, settleMs) {
   }));
 }
 
-async function navigateToWorkspace(page, expected, settleMs) {
+async function selectSidebarEntry(page, expected) {
   await waitForNavigationIdle(page);
-  const button = page.locator('.app-sidebar .nav-item').filter({ hasText: expected.label });
-  if (await button.count() !== 1) fail('Expected exactly one sidebar workspace button', expected.label);
-  await button.click();
+  const expand = page.getByRole('button', { name: '展开主导航', exact: true });
+  if (await expand.isVisible()) await expand.click();
+  const module = EXPECTED_PACKAGE_UI_MODULES.find((item) => item.workspaces.includes(expected.workspace));
+  if (!module) fail('Workspace has no canonical module', expected.workspace);
+  const button = page.locator(`.app-sidebar [data-operator-module="${module.id}"]`);
+  if (await button.count() !== 1) fail('Expected exactly one sidebar module button', module.id);
+  if (await button.getAttribute('aria-expanded') !== 'true') {
+    await button.click();
+    await waitForNavigationIdle(page);
+  }
+  const entry = page.locator(`.app-sidebar [data-operator-entry="${expected.workspace}/${expected.subview}"]`);
+  if (await entry.count() !== 1) fail('Expected exactly one sidebar entry', `${expected.workspace}/${expected.subview}`);
+  if (await entry.getAttribute('aria-current') !== 'page') await entry.click();
+  await waitForNavigationIdle(page);
+}
+
+async function navigateToWorkspace(page, expected, settleMs) {
+  await selectSidebarEntry(page, expected);
   if (expected.tabLabel) {
     const tab = page.getByRole('tab', { name: decisionsTabAccessibleNamePattern(expected.tabLabel) });
     await tab.waitFor({ state: 'visible', timeout: 10_000 });
@@ -8408,7 +8526,11 @@ async function exerciseWorkspaceTabKeyboard(page, expected) {
   await waitForWorkspaceSubview(page, expected.workspace, endSubview);
   const end = await workspaceTabKeyboardSnapshot(page, expected);
   await page.keyboard.press('Home');
-  await waitForWorkspaceSubview(page, expected.workspace, expected.subview);
+  await waitForWorkspaceSubview(page, expected.workspace, expected.tabs[0]);
+  for (let index = 1; index <= expected.tabs.indexOf(expected.subview); index += 1) {
+    await page.keyboard.press('ArrowRight');
+    await waitForWorkspaceSubview(page, expected.workspace, expected.tabs[index]);
+  }
   const restored = await workspaceTabKeyboardSnapshot(page, expected);
   const evidence = validateWorkspaceTabKeyboardEvidence({
     initial,
@@ -8651,16 +8773,10 @@ async function openStoreScopedConnectionWorkbench(page) {
     state: 'visible',
     timeout: 10_000,
   });
-  const settingsButton = page
-    .locator('nav[aria-label="主业务导航"] button.nav-item')
-    .filter({ hasText: '系统设置' })
-    .first();
-  await settingsButton.waitFor({ state: 'visible', timeout: 10_000 });
-  const alreadyCurrent = await settingsButton.getAttribute('aria-current') === 'page';
-  if (!alreadyCurrent) await settingsButton.click();
+  await selectSidebarEntry(page, { workspace: 'settings', subview: 'ai-and-local' });
   await status.waitFor({ state: 'visible', timeout: 15_000 });
   return {
-    navigated: !alreadyCurrent,
+    navigated: true,
     surface: 'store-scoped-connection-workbench',
   };
 }
@@ -9350,7 +9466,7 @@ async function ensureAuthenticatedWorkspace(page, options) {
     if (options.allowInteractiveLogin) {
       completeLoginDiagnostics(loginDiagnostics, 'interactive-login-surface-missing');
       fail(
-        'Schema v8 interactive evidence must begin from the visible login surface',
+        'Schema v9 interactive evidence must begin from the visible login surface',
         'The packaged workspace was already authenticated before the operator handoff.',
       );
     }
@@ -10595,6 +10711,10 @@ async function setElectronViewport(electronApp, viewport) {
       }
     };
 
+    if (window.isMinimized()) {
+      window.restore();
+      await waitForWindowStateExit('minimized state', () => window.isMinimized());
+    }
     if (window.isFullScreen()) {
       window.setFullScreen(false);
       await waitForWindowStateExit('full-screen state', () => window.isFullScreen());
@@ -10610,11 +10730,12 @@ async function setElectronViewport(electronApp, viewport) {
       if (window.isDestroyed()) {
         throw new Error('Package UI BrowserWindow closed while restoring the viewport.');
       }
-      if (window.isFullScreen() || window.isMaximized()) {
+      if (window.isMinimized() || window.isFullScreen() || window.isMaximized()) {
         stableSince = null;
       } else {
         const [actualWidth, actualHeight] = window.getContentSize();
-        if (actualWidth === settings.width && actualHeight === settings.height) {
+        if (Math.abs(actualWidth - settings.width) <= settings.tolerance.width
+          && Math.abs(actualHeight - settings.height) <= settings.tolerance.height) {
           stableSince ??= Date.now();
           if (Date.now() - stableSince >= settings.stabilityMs) break;
         } else {
@@ -10637,6 +10758,7 @@ async function setElectronViewport(electronApp, viewport) {
     pollMs: PACKAGE_UI_VIEWPORT_STATE_POLL_MS,
     restoreTimeoutMs: PACKAGE_UI_VIEWPORT_RESTORE_TIMEOUT_MS,
     stabilityMs: PACKAGE_UI_VIEWPORT_STABILITY_MS,
+    tolerance: PACKAGE_UI_VIEWPORT_TOLERANCE,
     width: viewport.width,
   });
 }
@@ -10727,6 +10849,129 @@ function attachRendererDiagnostics(page, diagnostics, attachedPages) {
       stack: sanitizeDiagnosticText(error?.stack || '', DIAGNOSTIC_STACK_LIMIT),
     });
   });
+}
+
+async function capturePackageMinimumWindow(page, electronApp, options) {
+  try {
+    await setElectronViewport(electronApp, PACKAGE_UI_VIEWPORT);
+    const nativeWindow = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      if (!window) throw new Error('No BrowserWindow available for minimum-window evidence.');
+      const [width, height] = window.getMinimumSize();
+      window.setSize(width - 1, height - 1, false);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const [contentWidth, contentHeight] = window.getContentSize();
+      return {
+        minimum: { width, height }, attempted: { width: width - 1, height: height - 1 },
+        bounds: window.getBounds(), content: { width: contentWidth, height: contentHeight },
+        maximized: window.isMaximized(), fullScreen: window.isFullScreen(),
+      };
+    });
+    await page.waitForFunction((size) => Math.abs(window.innerWidth - size.width) <= 2
+      && Math.abs(window.innerHeight - size.height) <= 2, nativeWindow.content, { timeout: 5_000 });
+    const viewport = await readElectronViewport(page);
+    const captures = await capturePackageWorkspaceMatrix(page, electronApp, {
+      ...options, profileId: '100-compact', captureId: 'minimum-100-compact', scalePercent: 100, viewport,
+    });
+    const evidence = { nativeWindow, viewport, ...captures };
+    const validation = validatePackageMinimumWindow(evidence);
+    if (!validation.passed) fail('Native minimum-window evidence failed', JSON.stringify(validation.violations));
+    return { ...evidence, ...validation };
+  } finally {
+    await setElectronViewport(electronApp, PACKAGE_UI_VIEWPORT);
+  }
+}
+
+async function capturePackageWorkspaceMatrix(page, electronApp, {
+  diagnostics, runDir, settleMs, profileId, scalePercent, viewport, captureId = profileId, wide = false,
+}) {
+  const objectContract = PACKAGE_OBJECT_EXPERIENCE_CONTRACTS[wide ? 'wide' : 'compact'];
+    const workspaceChecks = [];
+    const screenshots = [];
+    for (const workspace of EXPECTED_PACKAGE_UI_ENTRIES) {
+      setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
+      const settleEvidence = await navigateToWorkspace(page, workspace, settleMs);
+      const keyboardEvidence = await exerciseWorkspaceTabKeyboard(page, workspace);
+      const workspaceRoot = page.locator(
+        `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
+      );
+      await waitForWorkspaceSettled(
+        page,
+        `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
+        settleMs,
+      );
+      await restoreWorkspaceScrollTop(page);
+      const compositeEvidence = await waitForRendererComposite(page, electronApp, workspaceRoot);
+      const metrics = await collectPackageWorkspaceMetrics(page, workspace);
+      const contract = validateWorkspaceRuntimeMetrics(metrics, workspace, viewport);
+      let experienceEvidence = null;
+      let inspectorEvidence = null;
+      if (PACKAGE_OBJECT_WORKSPACES.some((item) => item.workspace === workspace.workspace)) {
+        const rootSelector = `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`;
+        const capacity = await collectObjectQueueCapacityMetrics(page, rootSelector);
+        const requiredVisibleCapacity = objectContract.minFullyVisibleRows;
+        const experienceMetrics = await collectWorkspaceDomMetrics(page, {
+          experienceContract: adaptiveObjectExperienceContract(
+            objectContract,
+            capacity,
+          ),
+          rootSelector,
+        });
+        const aiRunState = workspace.workspace === 'diagnosis'
+          ? await collectVisibleAiRunState(page)
+          : { ariaBusy: false, observed: false, statusLabel: null, text: '', tone: null };
+        experienceEvidence = validateObjectWorkspaceExperienceEvidence({
+          aiRunState,
+          capacity,
+          metrics: experienceMetrics,
+          requiredVisibleCapacity,
+          workspace: workspace.workspace,
+        });
+        if (!experienceEvidence.passed) {
+          fail('Packaged object-workspace experience contract failed', `${workspace.workspace}: ${JSON.stringify(experienceEvidence.violations)}`);
+        }
+      }
+      const screenshotPath = path.join(
+        runDir,
+        `${captureId}-${safeSegment(workspace.workspace)}-${safeSegment(workspace.subview)}.png`,
+      );
+      const screenshotCapture = await captureViewportScreenshot(electronApp, screenshotPath);
+      const screenshot = screenshotRecord(screenshotPath, {
+        capture: screenshotCapture,
+        heading: workspace.heading,
+        scalePercent,
+        profileId,
+        subview: workspace.subview,
+        workspace: workspace.workspace,
+      });
+      screenshots.push(screenshot);
+      if (experienceEvidence) {
+        inspectorEvidence = await exerciseObjectInspector(page, {
+          electronApp,
+          expectedMode: wide ? 'inline' : 'drawer',
+          profileId: profileId,
+          runDir,
+          workspace,
+        });
+      }
+      workspaceChecks.push({
+        ...workspace,
+        compositeEvidence,
+        passed: contract.passed,
+        settleEvidence,
+        violations: contract.violations,
+        metrics,
+        experienceEvidence,
+        inspectorEvidence,
+        keyboardEvidence,
+        screenshot,
+      });
+      if (!contract.passed) {
+        fail('Packaged workspace runtime contract failed', `${workspace.workspace}/${workspace.subview}: ${JSON.stringify(contract.violations)}`);
+      }
+    }
+
+  return { workspaceChecks, screenshots };
 }
 
 async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnostics) {
@@ -10851,91 +11096,14 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       postBootstrap: await requestPackageUiDatabaseCheckpoint(page, 'post-bootstrap'),
       postNavigation: null,
     };
-    const workspaceChecks = [];
+    const { workspaceChecks, screenshots } = await capturePackageWorkspaceMatrix(page, electronApp, {
+      diagnostics, runDir, settleMs: options.settleMs, profileId: `${scale.scalePercent}-compact`,
+      scalePercent: scale.scalePercent, viewport: PACKAGE_UI_VIEWPORT,
+    });
+    const minimumWindow = scale.scalePercent === 100
+      ? await capturePackageMinimumWindow(page, electronApp, { diagnostics, runDir, settleMs: options.settleMs })
+      : null;
     const subviewChecks = [];
-    const screenshots = [];
-    for (const workspace of EXPECTED_PACKAGE_UI_WORKSPACES) {
-      setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
-      const settleEvidence = await navigateToWorkspace(page, workspace, options.settleMs);
-      const keyboardEvidence = await exerciseWorkspaceTabKeyboard(page, workspace);
-      const workspaceRoot = page.locator(
-        `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
-      );
-      await waitForWorkspaceSettled(
-        page,
-        `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
-        options.settleMs,
-      );
-      await restoreWorkspaceScrollTop(page);
-      const compositeEvidence = await waitForRendererComposite(page, electronApp, workspaceRoot);
-      const metrics = await collectPackageWorkspaceMetrics(page, workspace);
-      const contract = validateWorkspaceRuntimeMetrics(metrics, workspace);
-      let experienceEvidence = null;
-      let inspectorEvidence = null;
-      if (PACKAGE_OBJECT_WORKSPACES.some((item) => item.workspace === workspace.workspace)) {
-        const rootSelector = `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`;
-        const capacity = await collectObjectQueueCapacityMetrics(page, rootSelector);
-        const requiredVisibleCapacity = PACKAGE_OBJECT_EXPERIENCE_CONTRACTS.compact.minFullyVisibleRows;
-        const experienceMetrics = await collectWorkspaceDomMetrics(page, {
-          experienceContract: adaptiveObjectExperienceContract(
-            PACKAGE_OBJECT_EXPERIENCE_CONTRACTS.compact,
-            capacity,
-          ),
-          rootSelector,
-        });
-        const aiRunState = workspace.workspace === 'diagnosis'
-          ? await collectVisibleAiRunState(page)
-          : { ariaBusy: false, observed: false, statusLabel: null, text: '', tone: null };
-        experienceEvidence = validateObjectWorkspaceExperienceEvidence({
-          aiRunState,
-          capacity,
-          metrics: experienceMetrics,
-          requiredVisibleCapacity,
-          workspace: workspace.workspace,
-        });
-        if (!experienceEvidence.passed) {
-          fail('Packaged object-workspace experience contract failed', `${workspace.workspace}: ${JSON.stringify(experienceEvidence.violations)}`);
-        }
-      }
-      const screenshotPath = path.join(
-        runDir,
-        `${scale.scalePercent}-${safeSegment(workspace.workspace)}-${safeSegment(workspace.subview)}.png`,
-      );
-      const screenshotCapture = await captureViewportScreenshot(electronApp, screenshotPath);
-      const screenshot = screenshotRecord(screenshotPath, {
-        capture: screenshotCapture,
-        heading: workspace.heading,
-        scalePercent: scale.scalePercent,
-        subview: workspace.subview,
-        workspace: workspace.workspace,
-      });
-      screenshots.push(screenshot);
-      if (experienceEvidence) {
-        inspectorEvidence = await exerciseObjectInspector(page, {
-          electronApp,
-          expectedMode: 'drawer',
-          profileId: `${scale.scalePercent}-compact`,
-          runDir,
-          workspace,
-        });
-      }
-      workspaceChecks.push({
-        ...workspace,
-        compositeEvidence,
-        passed: contract.passed,
-        settleEvidence,
-        violations: contract.violations,
-        metrics,
-        experienceEvidence,
-        inspectorEvidence,
-        keyboardEvidence,
-        screenshot,
-      });
-      if (!contract.passed) {
-        fail('Packaged workspace runtime contract failed', `${workspace.workspace}/${workspace.subview}: ${JSON.stringify(contract.violations)}`);
-      }
-    }
-
     for (const subview of EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS) {
       setRunDiagnosticPhase(diagnostics, `subview:${subview.workspace}/${subview.subview}`);
       await prepareReadOnlySubviewNavigationBoundary(page, subview, options.settleMs);
@@ -10956,7 +11124,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       );
       const screenshotPath = path.join(
         runDir,
-        `${scale.scalePercent}-${safeSegment(subview.workspace)}-${safeSegment(subview.subview)}.png`,
+        `${scale.scalePercent}-${safeSegment(subview.workspace)}-${safeSegment(subview.subview)}-readonly.png`,
       );
       const screenshotCapture = await captureViewportScreenshot(electronApp, screenshotPath);
       const screenshot = screenshotRecord(screenshotPath, {
@@ -11016,6 +11184,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       scalePercent: scale.scalePercent,
       screenshots,
       session,
+      minimumWindow,
       subviewChecks,
       viewport: { width: actualViewport.width, height: actualViewport.height },
       viewportContract,
@@ -11157,79 +11326,10 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       postBootstrap: await requestPackageUiDatabaseCheckpoint(page, 'post-bootstrap'),
       postNavigation: null,
     };
-    const workspaceChecks = [];
-    const screenshots = [];
-    for (const workspace of profile.workspaces) {
-      setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
-      const settleEvidence = await navigateToWorkspace(page, workspace, options.settleMs);
-      const rootSelector = `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`;
-      const workspaceRoot = page.locator(rootSelector);
-      const compositeEvidence = await waitForRendererComposite(page, electronApp, workspaceRoot);
-      const metrics = await collectPackageWorkspaceMetrics(page, workspace);
-      const contract = validateWorkspaceRuntimeMetrics(metrics, workspace, profile.viewport);
-      const keyboardEvidence = await exerciseWorkspaceTabKeyboard(page, workspace);
-      await restoreWorkspaceScrollTop(page);
-      let experienceEvidence = null;
-      let inspectorEvidence = null;
-      if (PACKAGE_OBJECT_WORKSPACES.some((item) => item.workspace === workspace.workspace)) {
-        const capacity = await collectObjectQueueCapacityMetrics(page, rootSelector);
-        const requiredVisibleCapacity = PACKAGE_OBJECT_EXPERIENCE_CONTRACTS.wide.minFullyVisibleRows;
-        const experienceMetrics = await collectWorkspaceDomMetrics(page, {
-          experienceContract: adaptiveObjectExperienceContract(
-            PACKAGE_OBJECT_EXPERIENCE_CONTRACTS.wide,
-            capacity,
-          ),
-          rootSelector,
-        });
-        const aiRunState = await collectVisibleAiRunState(page);
-        experienceEvidence = validateObjectWorkspaceExperienceEvidence({
-          aiRunState,
-          capacity,
-          metrics: experienceMetrics,
-          requiredVisibleCapacity,
-          workspace: workspace.workspace,
-        });
-        inspectorEvidence = await exerciseObjectInspector(page, {
-          electronApp,
-          expectedMode: 'inline',
-          profileId: profile.id,
-          runDir,
-          workspace,
-        });
-      }
-      const violations = [
-        ...contract.violations,
-        ...(experienceEvidence?.violations || []),
-        ...(inspectorEvidence?.violations || []),
-      ];
-      if (violations.length > 0) {
-        fail('Wide canonical workspace contract failed', `${workspace.workspace}: ${JSON.stringify(violations)}`);
-      }
-      const screenshotPath = path.join(runDir, `${profile.id}-${safeSegment(workspace.workspace)}-${safeSegment(workspace.subview)}.png`);
-      const screenshotCapture = await captureViewportScreenshot(electronApp, screenshotPath);
-      const screenshot = screenshotRecord(screenshotPath, {
-        capture: screenshotCapture,
-        heading: workspace.heading,
-        profileId: profile.id,
-        subview: workspace.subview,
-        workspace: workspace.workspace,
-      });
-      screenshots.push(screenshot);
-      workspaceChecks.push({
-        ...workspace,
-        compositeEvidence,
-        experienceEvidence,
-        inspectorEvidence,
-        keyboardEvidence,
-        metrics,
-        passed: contract.passed
-          && (experienceEvidence?.passed ?? true)
-          && (inspectorEvidence?.passed ?? true),
-        screenshot,
-        settleEvidence,
-        violations,
-      });
-    }
+    const { workspaceChecks, screenshots } = await capturePackageWorkspaceMatrix(page, electronApp, {
+      diagnostics, runDir, settleMs: options.settleMs, profileId: profile.id,
+      scalePercent: profile.scalePercent, viewport: profile.viewport, wide: true,
+    });
     databaseAuditCheckpoints.postNavigation = await requestPackageUiDatabaseCheckpoint(
       page,
       'post-navigation',
@@ -12339,6 +12439,8 @@ module.exports = {
   EXPECTED_PACKAGE_UI_SCALES,
   EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
+  EXPECTED_PACKAGE_UI_MODULES,
   EXPECTED_RENDERER_ENTRY_PATH,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -12455,6 +12557,7 @@ module.exports = {
   validateObjectWorkspaceExperienceEvidence,
   validateObjectInspectorEvidence,
   validateWorkspaceRuntimeMetrics,
+  validatePackageMinimumWindow,
   validRunDiagnostics,
   waitForPackageProcessCleanup,
   waitForProfileBrowserProcessCleanup,

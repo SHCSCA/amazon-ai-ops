@@ -28,6 +28,8 @@ import {
   type PolicyGrantDispatchTrigger,
 } from '@amazon-ai-ops/local-db';
 import {
+  AD_EXECUTION_RECONCILIATION_COPY,
+  type AdExecutionReconciliationCase,
   isTerminalAdExecutionStatus,
   missionControlContextKey,
   type AdExecutionProgressEvent,
@@ -179,8 +181,8 @@ export class ExecutionAuthorityService {
 
   listBatches(contextInput: StoreContextEnvelope): readonly AdExecutionBatchProjection[] {
     const context = this.assertContext(contextInput);
-    this.reconcileRecoveredBatches(context);
-    return this.repository.listExecutionBatches(context);
+    // Startup/store activation own recovery writes; history stays readable when Ads is offline.
+    return [...this.repository.listExecutionBatchesForStoreReconciliation(context)].reverse();
   }
 
   /**
@@ -457,132 +459,62 @@ export class ExecutionAuthorityService {
     const context = this.assertContext(request.context);
     const batchId = requiredId(request.batchId, 'batchId');
     const projection = this.requireBatch(context, batchId);
-    const unknownJobs = projection.jobs.filter((job) => job.status === 'unknown');
+    const unknownJobs = projection.jobs.filter(job => job.status === 'unknown');
     if (projection.batch.status !== 'unknown' || unknownJobs.length !== 1) {
-      throw new Error('只有恰好包含一个结果不确定动作的终态批次可以进行人工对账。');
+      throw new Error('只有恰好包含一个结果不确定动作的终态批次可以进行只读对账。');
     }
     const job = unknownJobs[0]!;
-    const grant = this.missionRepository.getMissionGrant(context, projection.batch.grantId);
-    if (!grant) throw new Error('结果不确定批次缺少原始执行授权，无法重建只读核验条件。');
-    const lease = this.leases.acquire({
-      storeId: context.storeId,
-      purpose: 'external_write',
-      owner: `reconcile-unknown:${batchId}`,
-      ttlMs: EXECUTION_LEASE_TTL_MS,
-    });
+    // Reserve the case before navigation or observation; duplicate calls only read its receipt.
+    const admission = this.repository.beginUnknownReconciliation(context, job.id);
+    if (!admission.created) return reconciliationResult(admission.record);
+    const caseId = admission.record.caseId;
+    let lease: BrowserLease | undefined;
+    let record: AdExecutionReconciliationCase;
     try {
+      const grant = this.missionRepository.getMissionGrant(context, projection.batch.grantId);
+      if (!grant) throw new Error('原执行记录缺少对象信息。');
+      // Serialize with writers but do not require a valid write Grant or an enabled kill switch.
+      lease = this.leases.acquire({ storeId: context.storeId, purpose: 'external_write', owner: 'reconcile-unknown:' + caseId, ttlMs: EXECUTION_LEASE_TTL_MS });
       const runtime = await this.navigateToJob(context, job, lease);
       const command = this.commandFor(context, grant, job, runtime.capsule);
       const page = new PlaywrightLingxingKeywordBidPage(runtime.page);
-      const firstPath = executionReconciliationEvidencePath(
-        runtime.capsule, batchId, job.id, 'first', context.sessionGeneration,
-      );
-      const reloadPath = executionReconciliationEvidencePath(
-        runtime.capsule, batchId, job.id, 'reload', context.sessionGeneration,
-      );
-      fs.mkdirSync(path.dirname(firstPath), { recursive: true });
-      fs.mkdirSync(path.dirname(reloadPath), { recursive: true });
-
-      const first = await page.readSnapshot(command);
-      await page.captureScreenshot(firstPath);
-      const confirmedFirst = await page.readSnapshot(command);
-      const firstIdentityHash = fingerprintKeywordBidPageSnapshot(first);
-      if (firstIdentityHash !== fingerprintKeywordBidPageSnapshot(confirmedFirst)
-        || first.keyword.bidCents !== confirmedFirst.keyword.bidCents) {
-        throw new Error('首次结果对账截图前后对象或竞价发生变化，请保持页面稳定后重试。');
+      for (const slot of ['first', 'reload'] as const) {
+        this.assertLeaseAndRuntime(lease, context, job.identity.adsAccountId);
+        if (slot === 'reload') await page.reload();
+        this.assertLeaseAndRuntime(lease, context, job.identity.adsAccountId);
+        const snapshot = await page.readSnapshot(command);
+        this.assertLeaseAndRuntime(lease, context, job.identity.adsAccountId);
+        const proofPath = executionReconciliationEvidencePath(runtime.capsule, batchId, job.id, slot, context.sessionGeneration, caseId);
+        fs.mkdirSync(path.dirname(proofPath), { recursive: true });
+        if (fs.existsSync(proofPath)) throw new Error('该对账观察已有证据，禁止覆盖。');
+        await page.captureScreenshot(proofPath);
+        this.assertLeaseAndRuntime(lease, context, job.identity.adsAccountId);
+        const confirmed = await page.readSnapshot(command);
+        this.assertLeaseAndRuntime(lease, context, job.identity.adsAccountId);
+        const pageIdentityHash = fingerprintKeywordBidPageSnapshot(snapshot);
+        if (pageIdentityHash !== fingerprintKeywordBidPageSnapshot(confirmed) || snapshot.keyword.bidCents !== confirmed.keyword.bidCents) {
+          throw new Error('对账截图前后对象或竞价不一致。');
+        }
+        this.repository.recordUnknownObservation(context, caseId, slot, {
+          ...executionReconciliationArtifact(String(context.storeId), batchId, job.id, slot, proofPath),
+          capturedAt: this.now().toISOString(), pageIdentityHash,
+          canonicalKeywordId: job.canonicalKeywordId, objectRevision: job.identity.objectRevision,
+          adsAccountId: confirmed.pageIdentity.adsAccountId, campaignId: confirmed.pageIdentity.campaignId,
+          adGroupId: confirmed.keyword.adGroupId, keywordId: confirmed.keyword.keywordId,
+          observedBidCents: confirmed.keyword.bidCents,
+        });
       }
-      await page.reload();
-      const reload = await page.readSnapshot(command);
-      await page.captureScreenshot(reloadPath);
-      const confirmedReload = await page.readSnapshot(command);
-      const reloadIdentityHash = fingerprintKeywordBidPageSnapshot(reload);
-      if (reloadIdentityHash !== fingerprintKeywordBidPageSnapshot(confirmedReload)
-        || reload.keyword.bidCents !== confirmedReload.keyword.bidCents) {
-        throw new Error('刷新结果对账截图前后对象或竞价发生变化，请保持页面稳定后重试。');
-      }
-      if (firstIdentityHash !== reloadIdentityHash) {
-        throw new Error('两次结果对账没有命中同一广告对象，操作已阻断。');
-      }
-
-      const firstBid = confirmedFirst.keyword.bidCents;
-      const reloadBid = confirmedReload.keyword.bidCents;
-      const status = firstBid !== reloadBid
-        ? 'STILL_UNKNOWN' as const
-        : reloadBid === job.targetBidCents
-          ? 'CONFIRMED_TARGET' as const
-          : reloadBid === job.expectedBidCents
-            ? 'CONFIRMED_ORIGINAL' as const
-            : 'CURRENT_VALUE_DRIFT' as const;
-      const statusCopy = status === 'CONFIRMED_TARGET'
-        ? '两次只读核验均命中目标竞价；原结果不确定历史保持不变。'
-        : status === 'CONFIRMED_ORIGINAL'
-          ? '两次只读核验均命中原竞价；未再次提交，原结果不确定历史保持不变。'
-          : status === 'CURRENT_VALUE_DRIFT'
-            ? '两次只读核验一致，但当前竞价既不是原值也不是目标值；需要重新分析。'
-            : '两次只读核验竞价不一致；结果仍不确定，禁止自动重试。';
-      const firstArtifact = executionReconciliationArtifact(
-        String(context.storeId), batchId, job.id, 'first', firstPath,
-      );
-      const reloadArtifact = executionReconciliationArtifact(
-        String(context.storeId), batchId, job.id, 'reload', reloadPath,
-      );
-      const observedAt = this.now().toISOString();
-      const eventId = compactId('causal:execution-reconciliation', [
-        context.storeId,
-        batchId,
-        job.id,
-        context.sessionGeneration,
-        firstArtifact.contentSha256,
-        reloadArtifact.contentSha256,
-      ]);
-      const existing = this.missionRepository.listCausalEvents(context, { missionId: projection.batch.missionId })
-        .find((event) => event.id === eventId);
-      if (!existing) {
-        this.missionRepository.appendCausalEventWithEvidence(context, {
-          id: eventId,
-          stage: 'READBACK',
-          eventType: 'execution_unknown_reconciled',
-          entityType: 'ad_execution_batch',
-          entityId: batchId,
-          missionId: projection.batch.missionId,
-          title: '结果不确定批次人工对账',
-          signal: `首次 ${firstBid} 美分；刷新后 ${reloadBid} 美分。`,
-          observedEffect: statusCopy,
-          confidence: firstBid === reloadBid ? 1 : 0,
-          status: status.toLowerCase(),
-          source: 'execution-authority',
-          actorId: OPERATOR_ACTOR,
-        }, [{
-          id: `${eventId}:first`,
-          eventId,
-          evidenceType: 'ad_execution_reconciliation_first',
-          evidenceRef: firstArtifact.artifactRef,
-          sha256: firstArtifact.contentSha256,
-        }, {
-          id: `${eventId}:reload`,
-          eventId,
-          evidenceType: 'ad_execution_reconciliation_reload',
-          evidenceRef: reloadArtifact.artifactRef,
-          sha256: reloadArtifact.contentSha256,
-        }]);
-      }
-      this.progress(context, batchId, job.id, 'readback', 'unknown', statusCopy);
-      return {
-        status,
-        batchId,
-        jobId: job.id,
-        originalStatus: 'unknown',
-        firstObservedBidCents: firstBid,
-        reloadObservedBidCents: reloadBid,
-        observedBidCents: reloadBid,
-        observedAt,
-        firstEvidenceRef: firstArtifact.artifactRef,
-        reloadEvidenceRef: reloadArtifact.artifactRef,
-        detail: statusCopy,
-      };
+      record = this.repository.finishUnknownReconciliation(context, caseId);
+    } catch {
+      // Missing proof, identity drift, disconnected browser or lost context permanently closes this case.
+      record = this.repository.finishUnknownReconciliation(context, caseId, true);
     } finally {
-      releaseLeaseQuietly(this.leases, lease);
+      if (lease) releaseLeaseQuietly(this.leases, lease);
     }
+    this.assertContext(context);
+    const result = reconciliationResult(record);
+    this.progress(context, batchId, job.id, 'readback', 'unknown', result.detail);
+    return result;
   }
 
   takeOverVisibleBrowser(
@@ -853,6 +785,10 @@ export class ExecutionAuthorityService {
                 commandFingerprint: requiredSha256(job.commandFingerprint, 'commandFingerprint'),
               };
             },
+            afterSubmit: (receipt) => {
+              if (receipt.intentId !== job.submitIntentId) throw new Error('提交回执与当前动作意图不一致。');
+              job = this.repository.recordSubmitted(context, { jobId: job.id, expectedRevision: job.revision }).job;
+            },
           });
         } catch (error) {
           if (['intent_written', 'submitted', 'verifying'].includes(job.status)) {
@@ -927,10 +863,8 @@ export class ExecutionAuthorityService {
         }
 
         try {
-          job = this.repository.recordSubmitted(context, {
-            jobId: job.id,
-            expectedRevision: job.revision,
-          }).job;
+          job = this.requireJob(context, batchId, job.id);
+          if (job.status !== 'submitted') throw new Error('保存点击缺少持久化提交回执，必须只读对账。');
           const after = buildExecutionEvidenceInput({
             storeId: String(context.storeId),
             batchId,
@@ -1802,7 +1736,7 @@ export class ExecutionAuthorityService {
       this.missionRepository.appendMissionGrantEvent(context, {
         id: compactId('grant-revoked', [grantId, projection.batch.id]),
         grantId,
-        eventType: 'revoked',
+        eventType: 'invalidated',
         actorId: EXECUTOR_ACTOR,
         reason: safeReason(reason),
       });
@@ -1841,9 +1775,7 @@ export class ExecutionAuthorityService {
   ): void {
     const grantId = projection.batch.grantId;
     const terminal = this.missionRepository.getMissionGrantTerminalEvent(context, grantId);
-    if (terminal && terminal.eventType !== 'consumed') {
-      throw new Error(`执行批次已验证，但授权先进入 ${terminal.eventType}；需要内部账本对账。`);
-    }
+    // A later stop invalidates remaining authority without rewriting verified submit history.
     if (!terminal) {
       this.missionRepository.appendMissionGrantEvent(context, {
         id: compactId('grant-consumed', [grantId, projection.batch.id]),
@@ -2209,4 +2141,12 @@ function releaseLeaseQuietly(manager: BrowserLeaseManager, lease: BrowserLease):
   } catch {
     // Expired/stale leases are already non-authoritative; never mask the result.
   }
+}
+
+function reconciliationResult(record: AdExecutionReconciliationCase): AdExecutionUnknownReconciliationResult {
+  if (!record.outcome || !record.completedAt) throw new Error('只读对账正在进行；请等待原请求完成，禁止重复观察。');
+  return { status: record.outcome, caseId: record.caseId, batchId: record.batchId, jobId: record.jobId, originalStatus: 'unknown',
+    ...(record.first ? { firstObservedBidCents: record.first.observedBidCents, firstEvidenceRef: record.first.artifactRef } : {}),
+    ...(record.reload ? { reloadObservedBidCents: record.reload.observedBidCents, observedBidCents: record.reload.observedBidCents, reloadEvidenceRef: record.reload.artifactRef } : {}),
+    observedAt: record.completedAt, detail: AD_EXECUTION_RECONCILIATION_COPY[record.outcome] };
 }

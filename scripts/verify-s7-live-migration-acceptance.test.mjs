@@ -10,6 +10,7 @@ const {
   REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES,
   REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES,
   legacyV1Checksum,
+  openOfflineReadOnly,
   parseLiveMigrationAcceptanceArgs,
   readJsonArtifact,
   removeCaptureRoot,
@@ -40,6 +41,27 @@ afterEach(() => {
 });
 
 describe('S7 live migration acceptance receipt CLI', () => {
+  it('reads a checkpointed WAL artifact without creating sidecars or allowing writes', () => {
+    const filePath = path.join(tempDirectory(), 'checkpointed.db');
+    const Database = requireSqlite();
+    const writable = new Database(filePath);
+    writable.pragma('journal_mode = WAL');
+    writable.exec('CREATE TABLE evidence (value INTEGER); INSERT INTO evidence VALUES (42)');
+    writable.close();
+    const before = fs.readFileSync(filePath);
+    expect(before[18]).toBe(2);
+    const readonly = openOfflineReadOnly(Database, filePath);
+    try {
+      expect(readonly.prepare('SELECT value FROM evidence').get()).toEqual({ value: 42 });
+      expect(() => readonly.exec('DELETE FROM evidence')).toThrow(/readonly/i);
+    } finally { readonly.close(); }
+    expect(fs.readFileSync(filePath)).toEqual(before);
+    expect(fs.existsSync(`${filePath}-wal`)).toBe(false);
+    expect(fs.existsSync(`${filePath}-shm`)).toBe(false);
+    fs.writeFileSync(`${filePath}-wal`, 'pending');
+    expect(() => openOfflineReadOnly(Database, filePath)).toThrow(/sidecar/i);
+  });
+
   it('prints help without validating paths or creating files', async () => {
     const root = tempDirectory();
     const outputPath = path.join(root, 'must-not-exist.json');
@@ -788,6 +810,18 @@ function createV7Source(databasePath) {
   const database = runtime.initSqlite(databasePath);
   try {
     database.pragma('foreign_keys = OFF');
+    // Test-only old-schema fixture: remove all later structures, not just their ledger rows.
+    database.exec(`DROP TABLE ai_cost_records; DROP TABLE ai_spend_policies; DROP TABLE legacy_record_classifications;
+      DROP TABLE ad_execution_reconciliation_cases;
+      DROP TRIGGER trg_grant_slot_intent; DROP TRIGGER trg_decision_write_authority_immutable;
+      ALTER TABLE analysis_action_batches DROP COLUMN authority_json;
+      ALTER TABLE decisions DROP COLUMN authority_json;
+      ALTER TABLE mission_grants DROP COLUMN authority_json;`);
+    for (const table of ['authority_invalidation_v16','mode_change_log_v16','policy_versions_v16',
+      'causal_events_v16','experiment_snapshots_v16','experiments_v16','reconciliation_cases','execution_batches',
+      'execution_slots','grant_lifecycle_events','mission_grants_v16','decision_history_v16','decisions_v16','v16_missions','analysis_runs']) {
+      database.exec(`DROP TABLE IF EXISTS "${table}"`);
+    }
     for (const trigger of [
       'trg_stores_v1_authority_insert',
       'trg_stores_v1_authority_update',

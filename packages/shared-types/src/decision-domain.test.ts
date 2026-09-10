@@ -1,3 +1,4 @@
+import { normalizeStoreId } from './store';
 /**
  * Decision Domain Model Tests
  */
@@ -24,7 +25,7 @@ const NOW = '2026-09-03T12:00:00.000Z';
 
 const MINIMAL_RECORD = {
   decisionId: 'dec-001',
-  storeId: 'jf-us',
+  storeId: normalizeStoreId('jf-us'),
   marketplace: 'US' as const,
   currency: 'USD' as const,
   missionId: 'mission-001',
@@ -197,7 +198,7 @@ describe('DecisionDomain', () => {
 
   describe('validateCreateDecisionInput', () => {
     const minimalInput = {
-      storeId: 'jf-us',
+      storeId: normalizeStoreId('jf-us'),
       marketplace: 'US' as const,
       currency: 'USD' as const,
       missionId: 'mission-001',
@@ -360,7 +361,7 @@ describe('DecisionDomain', () => {
   describe('buildDecisionRecord', () => {
     it('creates a proposed decision with revision 1', () => {
       const input = {
-        storeId: 'jf-us',
+        storeId: normalizeStoreId('jf-us'),
         marketplace: 'US' as const,
         currency: 'USD' as const,
         missionId: 'mission-001',

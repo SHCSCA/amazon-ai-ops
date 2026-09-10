@@ -1,268 +1,3088 @@
 {
-  "schemaVersion": "v16.requirements/0.1",
-  "version": "v1.6.0",
+  "schemaVersion": "v16.requirements/1",
   "prdReference": "docs/amazon_ai_ops_agent_prd_v1_6_0.md",
   "requirements": [
     {
-      "id": "V16-ANA-001",
-      "title": "Analysis Authority - Grant Issuance",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.7",
-      "description": "Analysis authority must issue grants bound to exact store, batch, and report snapshot",
-      "testIds": ["V16-T-L1-ANALYSIS-AUTH", "V16-T-L2-CROSS-DOMAIN", "V16-T-L3-WORKFLOW"]
+      "id": "V16-IA-001",
+      "title": "一级业务导航必须且仅展示六个模块，不新增 Skills 一级入口",
+      "priority": "MUST",
+      "section": "6.3 IA 需求",
+      "line": 371,
+      "acceptanceIds": [
+        "AC-IA-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/renderer/mission-control/workspaces/v16-module-router.ts",
+        "apps/desktop/src/renderer/mission-control/operator-module-navigation.ts",
+        "apps/desktop/src/renderer/mission-control/components/operator-module-sidebar.tsx",
+        "scripts/package-ui-evidence.js"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL",
+        "V16-T-L4-PACKAGE-UI"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-IA-001",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "scripts/package-ui-evidence.test.mjs::package workspace runtime contract captures each production entry exactly once under its actual six-module parent at both scales and wide"
+        },
+        {
+          "acceptanceId": "AC-IA-001",
+          "testId": "V16-T-L4-PACKAGE-UI",
+          "caseId": "six-modules-22-intents"
+        }
+      ]
     },
     {
-      "id": "V16-ANA-002",
-      "title": "Analysis Authority - Revision Binding",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.7",
-      "description": "Analysis grants must bind to latest Stage5 revision and fail when stale",
-      "testIds": ["V16-T-L1-ANALYSIS-AUTH"]
+      "id": "V16-IA-002",
+      "title": "现有 22 个 intent 必须各自且仅归属一个一级模块",
+      "priority": "MUST",
+      "section": "6.3 IA 需求",
+      "line": 372,
+      "acceptanceIds": [
+        "AC-IA-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/renderer/mission-control/workspaces/v16-module-router.ts",
+        "apps/desktop/src/renderer/mission-control/operator-module-navigation.ts",
+        "apps/desktop/src/renderer/mission-control/components/operator-module-sidebar.tsx",
+        "scripts/package-ui-evidence.js"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL",
+        "V16-T-L4-PACKAGE-UI"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-IA-001",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "scripts/package-ui-evidence.test.mjs::package workspace runtime contract captures each production entry exactly once under its actual six-module parent at both scales and wide"
+        },
+        {
+          "acceptanceId": "AC-IA-001",
+          "testId": "V16-T-L4-PACKAGE-UI",
+          "caseId": "six-modules-22-intents"
+        }
+      ]
     },
     {
-      "id": "V16-GRANT-001",
-      "title": "Execution Grant - Authority Validation",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.8",
-      "description": "Execution grants must validate current store authority and Stage6 session",
-      "testIds": ["V16-T-L1-EXECUTION-AUTH", "V16-T-L2-CROSS-DOMAIN", "V16-T-L3-WORKFLOW"]
+      "id": "V16-IA-003",
+      "title": "导航重组不得改变 StoreContext、Main authority 或领域记录所有权",
+      "priority": "MUST",
+      "section": "6.3 IA 需求",
+      "line": 373,
+      "acceptanceIds": [
+        "AC-IA-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-GRANT-002",
-      "title": "Execution Grant - Session Binding",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.8",
-      "description": "Execution grants must bind to current Stage6 identity and session",
-      "testIds": ["V16-T-L1-EXECUTION-AUTH"]
+      "id": "V16-IA-004",
+      "title": "当前路由无 native 能力时必须显示受阻或受控 legacy adapter，不得显示模拟成功",
+      "priority": "MUST",
+      "section": "6.3 IA 需求",
+      "line": 374,
+      "acceptanceIds": [
+        "AC-IA-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-MIS-001",
-      "title": "Mission Domain - Store Isolation",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.8",
-      "description": "Mission, Policy, Experiment, and AnalysisRun must be strictly store-scoped",
-      "testIds": ["V16-T-L1-MISSION-DOMAIN", "V16-T-L2-CROSS-DOMAIN"]
+      "id": "V16-FLOW-001",
+      "title": "每个主阶段必须显示当前状态、刚发生的结果、阻断原因和恢复/下一动作",
+      "priority": "MUST",
+      "section": "7.3 流程需求",
+      "line": 452,
+      "acceptanceIds": [
+        "AC-FLOW-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-MIS-002",
-      "title": "Mission Domain - CRUD Operations",
-      "category": "Core Domain",
-      "priority": "P0",
-      "prdSection": "12.8",
-      "description": "Mission domain must support create, read, update, and archive operations",
-      "testIds": ["V16-T-L1-MISSION-DOMAIN"]
+      "id": "V16-FLOW-002",
+      "title": "阶段完成必须由相应 Main 持久化事实驱动，Renderer 不得自行推进业务真相",
+      "priority": "MUST",
+      "section": "7.3 流程需求",
+      "line": 453,
+      "acceptanceIds": [
+        "AC-FLOW-002"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-FLOW-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/mission-domain-service.test.ts::MissionDomainService Main authority boundary prevents Renderer from forging execution/readback decisions, grant consumption, and causal stages"
+        },
+        {
+          "acceptanceId": "AC-FLOW-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/mission-domain-service.test.ts::MissionDomainService Main authority boundary prevents Renderer text from completing experiments and exposes only a Main-authored evaluation request"
+        }
+      ]
+    },
+    {
+      "id": "V16-FLOW-003",
+      "title": "任一上游权威发生 revision/session/store 漂移时，下游待执行 authority 必须失效或重新验证",
+      "priority": "MUST",
+      "section": "7.3 流程需求",
+      "line": 454,
+      "acceptanceIds": [
+        "AC-FLOW-003"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-FLOW-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService fails closed when the Mission changes during asynchronous recommendation generation"
+        },
+        {
+          "acceptanceId": "AC-FLOW-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService blocks stale Mission, rule, AI runtime and non-latest action revisions before changing Decisions"
+        }
+      ]
+    },
+    {
+      "id": "V16-CTX-001",
+      "title": "所有业务 query/command 必须携带或由 Main 推导当前 StoreContext，并在 Main 再验证",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 478,
+      "acceptanceIds": [
+        "AC-CTX-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/v16-store-context-guard.ts",
+        "apps/desktop/src/main/v16-domain-ipc.ts",
+        "apps/desktop/src/main/mission-domain-service.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-CTX-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC fails before business writes when any current authority field differs"
+        },
+        {
+          "acceptanceId": "AC-CTX-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/mission-domain-service.test.ts::MissionDomainService Main authority boundary checks the active context before and after every repository operation"
+        }
+      ]
+    },
+    {
+      "id": "V16-CTX-002",
+      "title": "切换店铺必须替换产品、报表、Analysis Run、建议、审批、Grant、执行、实验和记忆上下文",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 479,
+      "acceptanceIds": [
+        "AC-CTX-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-CTX-003",
+      "title": "不同店铺不得共用 browser Profile、session generation、Grant 或执行证据",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 480,
+      "acceptanceIds": [
+        "AC-CTX-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-CTX-004",
+      "title": "marketplace/currency 非 US/USD 时，v1.6.0 业务主链必须阻断",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 481,
+      "acceptanceIds": [
+        "AC-CTX-004"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/v16-store-context-guard.ts",
+        "apps/desktop/src/main/v16-domain-ipc.ts",
+        "apps/desktop/src/main/mission-domain-service.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-CTX-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC fails before business writes when any current authority field differs"
+        },
+        {
+          "acceptanceId": "AC-CTX-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator rejects an invalid or unsupported request before resolving a runtime"
+        }
+      ]
+    },
+    {
+      "id": "V16-CTX-005",
+      "title": "StoreContext mismatch 必须返回业务可理解的阻断，不得返回另一店铺数据",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 482,
+      "acceptanceIds": [
+        "AC-CTX-005"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/v16-store-context-guard.ts",
+        "apps/desktop/src/main/v16-domain-ipc.ts",
+        "apps/desktop/src/main/mission-domain-service.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-CTX-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/mission-domain-service.test.ts::MissionDomainService Main authority boundary rejects cross-store and stale-generation contexts before repository access"
+        },
+        {
+          "acceptanceId": "AC-CTX-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC fails before business writes when any current authority field differs"
+        }
+      ]
+    },
+    {
+      "id": "V16-CTX-006",
+      "title": "店铺切换或 session generation 变化后，旧的异步响应不得覆盖新上下文",
+      "priority": "MUST",
+      "section": "8.2 隔离需求",
+      "line": 483,
+      "acceptanceIds": [
+        "AC-CTX-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-TODAY-001",
+      "title": "首页投影必须与当前 storeId、businessDate、US/USD authority key 完全匹配",
+      "priority": "MUST",
+      "section": "9.5 需求",
+      "line": 569,
+      "acceptanceIds": [
+        "AC-TODAY-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-control-today-projection.ts",
+        "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.tsx",
+        "apps/desktop/src/main/mission-control-ipc.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-TODAY-001",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.test.tsx::TodayWorkspace fails closed when the projection belongs to another store"
+        },
+        {
+          "acceptanceId": "AC-TODAY-001",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.test.tsx::TodayWorkspace fails closed when the same store advances to another browser session generation"
+        },
+        {
+          "acceptanceId": "AC-TODAY-001",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.test.tsx::TodayWorkspace renders the authoritative US/USD projection and its real next action"
+        }
+      ]
+    },
+    {
+      "id": "V16-TODAY-002",
+      "title": "首页必须显示且只显示一个当前主动作，其他动作降为次级入口",
+      "priority": "MUST",
+      "section": "9.5 需求",
+      "line": 570,
+      "acceptanceIds": [
+        "AC-TODAY-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-TODAY-003",
+      "title": "首页不得把缺失、过期或受阻能力展示为成功/就绪",
+      "priority": "MUST",
+      "section": "9.5 需求",
+      "line": 571,
+      "acceptanceIds": [
+        "AC-TODAY-003"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-control-today-projection.ts",
+        "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.tsx",
+        "apps/desktop/src/main/mission-control-legacy-adapter.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-TODAY-003",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-today-projection.test.ts::buildMissionControlTodayProjection prioritizes product setup, incomplete collection and failed import without treating canary as production"
+        },
+        {
+          "acceptanceId": "AC-TODAY-003",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-today-projection.test.ts::buildMissionControlTodayProjection does not unlock analysis when imported metrics are older than the completed collection window"
+        },
+        {
+          "acceptanceId": "AC-TODAY-003",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-legacy-adapter.test.ts::Mission Control legacy adapter marks Today native only when its Main provider exists and authorizes a real target capability"
+        },
+        {
+          "acceptanceId": "AC-TODAY-003",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/renderer/mission-control/workspaces/today-workspace.test.tsx::TodayWorkspace disables a projected action when the live capability is blocked"
+        }
+      ]
+    },
+    {
+      "id": "V16-TODAY-004",
+      "title": "当前有 UNKNOWN 时，主动作必须优先指向只读对账，而非再次执行",
+      "priority": "MUST",
+      "section": "9.5 需求",
+      "line": 572,
+      "acceptanceIds": [
+        "AC-TODAY-004"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-control-today-projection.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/execution-authority-service.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-TODAY-004",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-today-projection.test.ts::buildMissionControlTodayProjection prioritizes current-store UNKNOWN read-only reconciliation when other readiness is false"
+        },
+        {
+          "acceptanceId": "AC-TODAY-004",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-today-projection.test.ts::buildMissionControlTodayProjection prioritizes current-store UNKNOWN read-only reconciliation when other readiness is true"
+        },
+        {
+          "acceptanceId": "AC-TODAY-004",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/mission-control-today-projection.test.ts::buildMissionControlTodayProjection does not use another store unknown execution to change the current next action"
+        },
+        {
+          "acceptanceId": "AC-TODAY-004",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration terminalizes the batch UNKNOWN when Ads liveness drops after the single save click"
+        }
+      ]
+    },
+    {
+      "id": "V16-TODAY-005",
+      "title": "每个 blocker 必须包含中文原因和具体恢复目的地",
+      "priority": "MUST",
+      "section": "9.5 需求",
+      "line": 573,
+      "acceptanceIds": [
+        "AC-TODAY-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ASSET-001",
+      "title": "产品、目标、广告对象、关键词和 Listing 数据必须按当前店铺隔离",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 688,
+      "acceptanceIds": [
+        "AC-ASSET-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ASSET-002",
+      "title": "产品经营配置只能影响分析和护栏，不得直接生成审批或执行 authority",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 689,
+      "acceptanceIds": [
+        "AC-ASSET-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ASSET-003",
+      "title": "普通 UI 必须用可读广告对象路径，内部标识默认折叠",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 690,
+      "acceptanceIds": [
+        "AC-ASSET-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ASSET-004",
+      "title": "Listing 只保存本地版本、差异、建议和导出，不自动提交 Amazon/领星",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 691,
+      "acceptanceIds": [
+        "AC-ASSET-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
       "id": "V16-DATA-001",
-      "title": "Data Pipeline - Formal Gate",
-      "category": "Data Pipeline",
-      "priority": "P0",
-      "prdSection": "12.6",
-      "description": "Analysis must block when 8-report snapshot is incomplete",
-      "testIds": ["V16-T-L1-FORMAL-DATA-GATE", "V16-T-L3-WORKFLOW"]
+      "title": "正式 Analysis Run 只能使用同一 `production_full` lineage 的 exact 8/8",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 692,
+      "acceptanceIds": [
+        "AC-DATA-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/lingxing-collection-coordinator.ts",
+        "apps/desktop/src/main/lingxing-report-import.ts",
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DATA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator production-imports one exact eight-report root job with its Main-issued lineage"
+        },
+        {
+          "acceptanceId": "AC-DATA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services manual_approval persists eight files through analysis, execution, experiment baseline and memory"
+        },
+        {
+          "acceptanceId": "AC-DATA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services policy_auto persists eight files through analysis, execution, experiment baseline and memory"
+        }
+      ]
     },
     {
       "id": "V16-DATA-002",
-      "title": "Data Pipeline - Report Completeness",
-      "category": "Data Pipeline",
-      "priority": "P0",
-      "prdSection": "12.6",
-      "description": "System must track and validate all 8 required report types",
-      "testIds": ["V16-T-L1-FORMAL-DATA-GATE", "V16-T-L3-WORKFLOW"]
+      "title": "7/8 或任一 reconciliation 失败必须阻断建议发布并指向缺失项",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 693,
+      "acceptanceIds": [
+        "AC-DATA-002"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/lingxing-collection-coordinator.ts",
+        "apps/desktop/src/main/lingxing-report-import.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DATA-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services rejects seven without a partial completed import"
+        },
+        {
+          "acceptanceId": "AC-DATA-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator does not production-import an eight-report result with a failed report checkpoint"
+        },
+        {
+          "acceptanceId": "AC-DATA-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC rejects seven report types without manufacturing a completed analysis"
+        }
+      ]
     },
     {
       "id": "V16-DATA-003",
-      "title": "Data Pipeline - Lingxing Collection",
-      "category": "Data Pipeline",
-      "priority": "P1",
-      "prdSection": "12.6",
-      "description": "Lingxing collection coordinator must automate report downloads",
-      "testIds": []
+      "title": "系统不得跨独立 batch/import 拼接为形式上的 8/8",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 694,
+      "acceptanceIds": [
+        "AC-DATA-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
       "id": "V16-DATA-004",
-      "title": "Data Pipeline - SSO Session",
-      "category": "Data Pipeline",
-      "priority": "P1",
-      "prdSection": "12.6",
-      "description": "Lingxing SSO must maintain valid ERP session",
-      "testIds": []
+      "title": "截图、审计文件、DOM/Trace 或页面归档不得计为原始报表",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 695,
+      "acceptanceIds": [
+        "AC-DATA-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
       "id": "V16-DATA-005",
-      "title": "Data Pipeline - Collection Coordinator",
-      "category": "Data Pipeline",
-      "priority": "P1",
-      "prdSection": "12.6",
-      "description": "Collection coordinator must orchestrate multi-report workflows",
-      "testIds": []
+      "title": "每个报表必须保留类型、文件 hash、大小、导入行数、指标行数和 source row 范围",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 696,
+      "acceptanceIds": [
+        "AC-DATA-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-AI-001",
-      "title": "AI Adapter - Strategy Diagnosis",
-      "category": "AI Integration",
-      "priority": "P1",
-      "prdSection": "12.12",
-      "description": "AI adapter must generate structured strategy diagnosis",
-      "testIds": []
+      "id": "V16-DATA-006",
+      "title": "不同业务粒度不得盲目相加；UI 指标必须标明粒度/口径",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 697,
+      "acceptanceIds": [
+        "AC-DATA-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-AI-002",
-      "title": "AI Adapter - Action Reasoning",
-      "category": "AI Integration",
-      "priority": "P1",
-      "prdSection": "12.12",
-      "description": "AI adapter must explain recommended actions with evidence",
-      "testIds": []
+      "id": "V16-DATA-007",
+      "title": "采集 start/resume/cancel/import 必须使用当前店铺 authority，切店后旧任务结果不得写入新上下文",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 698,
+      "acceptanceIds": [
+        "AC-DATA-007"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/lingxing-collection-coordinator.ts",
+        "apps/desktop/src/main/lingxing-report-import.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DATA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator re-authorizes the captured store, owns the capsule path, persists progress, and imports"
+        },
+        {
+          "acceptanceId": "AC-DATA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator does not publish an earlier store progress event after the selected store changes"
+        },
+        {
+          "acceptanceId": "AC-DATA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator rechecks cancellation after terminal persistence and before importing rows"
+        },
+        {
+          "acceptanceId": "AC-DATA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator requires the runner result to carry the same store authority"
+        }
+      ]
     },
     {
-      "id": "V16-AI-003",
-      "title": "AI Adapter - OpenAI Compatibility",
-      "category": "AI Integration",
-      "priority": "P1",
-      "prdSection": "12.12",
-      "description": "AI adapter must support OpenAI-compatible providers",
-      "testIds": []
+      "id": "V16-DATA-009",
+      "title": "每种 report type 的受支持模板 revision、规范字段、alias、必填性、单位、grain 和唯一键必须进入版本化 compatibility manifest",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 700,
+      "acceptanceIds": [
+        "AC-DATA-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DATA-010",
+      "title": "未知或歧义模板、缺关键字段、单位/币种不明确、多类型匹配均必须阻断，禁止猜测导入",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 701,
+      "acceptanceIds": [
+        "AC-DATA-010"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/lingxing-report-import.ts",
+        "packages/report-parser/src/parser.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DATA-010",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services rejects unknown-template without a partial completed import"
+        },
+        {
+          "acceptanceId": "AC-DATA-010",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services rejects bad-date without a partial completed import"
+        },
+        {
+          "acceptanceId": "AC-DATA-010",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services rejects a workbook replaced during parsing even when its row count and cost remain equal"
+        }
+      ]
+    },
+    {
+      "id": "V16-DATA-011",
+      "title": "provider 缺少任一 required report 时 exact 8/8 保持 blocked；不得把 required type 静默降级为 optional",
+      "priority": "MUST",
+      "section": "10.6 需求",
+      "line": 702,
+      "acceptanceIds": [
+        "AC-DATA-011"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/lingxing-collection-coordinator.ts",
+        "apps/desktop/src/main/lingxing-report-import.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DATA-011",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator normalizes omitted report types to the exact eight-report contract"
+        },
+        {
+          "acceptanceId": "AC-DATA-011",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-collection-coordinator.test.ts::LingxingCollectionCoordinator keeps a standalone selected-report download out of the production exact-eight import chain"
+        },
+        {
+          "acceptanceId": "AC-DATA-011",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services rejects seven without a partial completed import"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-001",
+      "title": "每个正式建议必须属于一个当前店铺、产品、时间窗、Evidence Package 和 Analysis Run",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 837,
+      "acceptanceIds": [
+        "AC-ANA-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService runs real recommendation generation into a path-free evidence/proposal/Decision projection"
+        },
+        {
+          "acceptanceId": "AC-ANA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService binds complete context and issuer to immutable batch, Decision and Grant records"
+        },
+        {
+          "acceptanceId": "AC-ANA-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService derives product scope and proof authority in Main instead of trusting Renderer fields or arbitrary files"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-002",
+      "title": "Analysis Run 必须显示阶段、开始/结束时间、结果摘要和恢复入口",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 838,
+      "acceptanceIds": [
+        "AC-ANA-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ANA-003",
+      "title": "相同 fingerprint 重跑必须保留新回执、复用合法结果并保持重复活跃建议为 0",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 839,
+      "acceptanceIds": [
+        "AC-ANA-003"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService persists a fresh receipt while reusing the same legal result without a second generator call"
+        },
+        {
+          "acceptanceId": "AC-ANA-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService blocks duplicate clicks before generation and projects a crashed pending receipt as interrupted"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-004",
+      "title": "Evidence、Mission、rule、model、policy 或 session authority 变化时不得复用旧可执行结果",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 840,
+      "acceptanceIds": [
+        "AC-ANA-004"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService blocks stale Mission, rule, AI runtime and non-latest action revisions before changing Decisions"
+        },
+        {
+          "acceptanceId": "AC-ANA-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService keeps one immutable generation authority when mutable settings change A to B to A during an AI await"
+        },
+        {
+          "acceptanceId": "AC-ANA-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService fails closed without action authority when trusted causal memory changes during generation"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-005",
+      "title": "AI 超时、取消、结构无效或不可用时必须记录结果并按合同阻断或规则回退，不得伪造 AI 成功",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 841,
+      "acceptanceIds": [
+        "AC-ANA-005"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService times out a stalled analysis without advancing the Mission and can retry with a new run"
+        },
+        {
+          "acceptanceId": "AC-ANA-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService keeps a late generator result from persisting recommendations after its deadline"
+        },
+        {
+          "acceptanceId": "AC-ANA-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService persists an actionable failed receipt without exposing the raw generation error"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-006",
+      "title": "`rule`、`rule_ai`、`ai`、`rule_fallback` 必须按规范 source eligibility matrix 分别计算人工与 policy-auto 资格；AI-only 与 rule fallback 不得获得 policy-auto eligibility，AI/rule 冲突必须阻断",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 842,
+      "acceptanceIds": [
+        "AC-ANA-006"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-006",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService does not issue or dispatch a policy grant for legacy metadata without an explicit aligned rule-AI decision"
+        },
+        {
+          "acceptanceId": "AC-ANA-006",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService keeps rule fallback and missing opaque Ads identity visible but non-authorizable"
+        }
+      ]
+    },
+    {
+      "id": "V16-ANA-007",
+      "title": "action batch 和 proposal snapshot 必须不可变，并绑定 actionRevision",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 843,
+      "acceptanceIds": [
+        "AC-ANA-007"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-ANA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService binds complete context and issuer to immutable batch, Decision and Grant records"
+        },
+        {
+          "acceptanceId": "AC-ANA-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService rolls back Mission progress, action snapshots and checkpoints when finalization fails"
+        }
+      ]
     },
     {
       "id": "V16-DEC-001",
-      "title": "Decisioning - Recommendation Eligibility",
-      "category": "Decision Engine",
-      "priority": "P0",
-      "prdSection": "12.7",
-      "description": "Recommendations must validate against current authority before approval",
-      "testIds": []
+      "title": "每个 Decision 必须回链到当前 proposal、Mission、batch、policy 和 action revision",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 844,
+      "acceptanceIds": [
+        "AC-DEC-001"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts",
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService binds complete context and issuer to immutable batch, Decision and Grant records"
+        },
+        {
+          "acceptanceId": "AC-DEC-001",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService preserves prior human Decisions but refuses them after mode A-to-B-to-A before any grant exists"
+        }
+      ]
     },
     {
-      "id": "V16-AUTH-001",
-      "title": "Shared Types - Authority Identity",
-      "category": "Type System",
-      "priority": "P0",
-      "prdSection": "12.13",
-      "description": "Shared types must define authority identity contracts",
-      "testIds": []
+      "id": "V16-DEC-002",
+      "title": "批准、拒绝和权限变更必须记录非空业务 reason",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 845,
+      "acceptanceIds": [
+        "AC-DEC-002"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts",
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService requires each human Decision and its reason before the explicit complete-batch grant"
+        },
+        {
+          "acceptanceId": "AC-DEC-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC requires and preserves the operator reason when revoking a current human grant"
+        }
+      ]
     },
     {
-      "id": "V16-AUTH-002",
-      "title": "Shared Types - Repository Integration",
-      "category": "Type System",
-      "priority": "P0",
-      "prdSection": "12.13",
-      "description": "Preload API must expose authority contracts to renderer",
-      "testIds": ["V16-T-L4-UI-CONTRACT"]
+      "id": "V16-DEC-003",
+      "title": "只 supersede 仍开放的旧建议，已批准/拒绝/验证历史不可被新分析重写",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 846,
+      "acceptanceIds": [
+        "AC-DEC-003"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService upgrades legacy judgments without backfilling authority and retains readable approval history"
+        },
+        {
+          "acceptanceId": "AC-DEC-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService supersedes the old open Decision for the same Ads object when a new action batch is published"
+        }
+      ]
     },
     {
-      "id": "V16-ENG-001",
-      "title": "L2 Engineering - Typecheck",
-      "category": "Engineering Quality",
-      "priority": "P0",
-      "prdSection": "13.2",
-      "description": "All workspace packages must pass TypeScript strict mode",
-      "testIds": []
+      "id": "V16-DEC-004",
+      "title": "revision 冲突必须 fail-closed 并要求刷新",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 847,
+      "acceptanceIds": [
+        "AC-DEC-004"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-l2-cross-domain-coordination.test.ts::Production context and batch coordination rejects stale revisions while preserving the current Mission"
+        }
+      ]
     },
     {
-      "id": "V16-ENG-002",
-      "title": "L2 Engineering - Renderer Build",
-      "category": "Engineering Quality",
-      "priority": "P0",
-      "prdSection": "13.2",
-      "description": "Renderer must build without errors",
-      "testIds": []
+      "id": "V16-DEC-005",
+      "title": "MissionGrant 必须覆盖最新完整 action batch，禁止部分选择规避整批门禁",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 848,
+      "acceptanceIds": [
+        "AC-DEC-005"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts",
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService will not issue a partial grant through the canonical repository after all human Decisions exist"
+        },
+        {
+          "acceptanceId": "AC-DEC-005",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-integration.test.ts::V1.6 production services through Preload and IPC does not authorize a partial selection of the current action batch"
+        }
+      ]
     },
     {
-      "id": "V16-ENG-003",
-      "title": "L2 Engineering - Package Scripts",
-      "category": "Engineering Quality",
-      "priority": "P0",
-      "prdSection": "13.2",
-      "description": "Package scripts must pass contract verification",
-      "testIds": []
+      "id": "V16-DEC-007",
+      "title": "每个 batch/Grant 只能使用 human 或 policy 一条 authorization path；禁止 mixed issuer、跨 mode Decision 复用、拆批或组合 Grant",
+      "priority": "MUST",
+      "section": "11.6 需求",
+      "line": 850,
+      "acceptanceIds": [
+        "AC-DEC-007"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts",
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-DEC-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService never downgrades an automatic authorization attempt into a human grant when mode changes"
+        },
+        {
+          "acceptanceId": "AC-DEC-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-l2-cross-domain-coordination.test.ts::Production context and batch coordination preserves the whole batch and refuses a renderer-supplied grant issuer"
+        },
+        {
+          "acceptanceId": "AC-DEC-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService preserves prior human Decisions but refuses them after mode A-to-B-to-A before any grant exists"
+        }
+      ]
+    },
+    {
+      "id": "V16-MIS-001",
+      "title": "Mission 必须绑定当前 store、data batch、policy version、观察窗、成功条件和护栏",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 968,
+      "acceptanceIds": [
+        "AC-MIS-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIS-002",
+      "title": "Mission 阶段只能按 FACT→ANALYSIS→DECISION→ACTION→READBACK→EFFECT 的事实链推进",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 969,
+      "acceptanceIds": [
+        "AC-MIS-002"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/mission-domain-service.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-MIS-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService advances the Mission and records automatic fact and analysis checkpoints after a successful run"
+        },
+        {
+          "acceptanceId": "AC-MIS-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/lingxing-report-import.test.ts::Eight workbook import into the production business services manual_approval persists eight files through analysis, execution, experiment baseline and memory"
+        },
+        {
+          "acceptanceId": "AC-MIS-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-l3-workflow-integrity.test.ts::Production execution and history invariants cannot let renderer mark an experiment completed or manufacture an effect memory"
+        }
+      ]
+    },
+    {
+      "id": "V16-MIS-003",
+      "title": "Renderer 不得直接声明 Mission EFFECT/completed",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 970,
+      "acceptanceIds": [
+        "AC-MIS-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIS-004",
+      "title": "Mission 和 Experiment 只支持归档/恢复，不支持不可恢复硬删除",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 971,
+      "acceptanceIds": [
+        "AC-MIS-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-001",
+      "title": "Grant 必须是不可变、店铺级、最新 revision 和 session generation 绑定的完整授权包",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 972,
+      "acceptanceIds": [
+        "AC-GRANT-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-002",
+      "title": "过期、撤销、已消费或 revision/session/store 不匹配的 Grant 不得授权执行",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 973,
+      "acceptanceIds": [
+        "AC-GRANT-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-003",
+      "title": "Grant 必须包含完整 decisionIds、allowed entity、上限、预算、证据和停止条件",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 974,
+      "acceptanceIds": [
+        "AC-GRANT-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-004",
+      "title": "每个 slot 必须在 submit 前最后一刻重验全部当前写入 authority；submit 后只验证历史绑定及 after/reload 事实，后发漂移不得改写历史 submit，但必须阻断剩余 slot并在无法证明结果时保持 UNKNOWN",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 975,
+      "acceptanceIds": [
+        "AC-GRANT-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-005",
+      "title": "Grant 事件 issued/reserved/spent/invalidated/revoked/consumed/expired 必须追加记录，不覆盖历史",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 976,
+      "acceptanceIds": [
+        "AC-GRANT-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-006",
+      "title": "Grant 当前状态与 residual authority 必须由不可变 Grant 和追加式 slot/lifecycle events 派生；authority consumption 与 execution success 必须分离",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 977,
+      "acceptanceIds": [
+        "AC-GRANT-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-007",
+      "title": "UNKNOWN 或硬门禁导致的 Grant invalidation 为终态；恢复原条件或切回旧 mode/policy 不得复活旧 Grant",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 978,
+      "acceptanceIds": [
+        "AC-GRANT-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-008",
+      "title": "Grant 的 authority mode、mode revision、authorization path 和 issuer 必须唯一匹配",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 979,
+      "acceptanceIds": [
+        "AC-GRANT-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-GRANT-009",
+      "title": "禁止 mixed authorization、跨 mode Decision 复用、拆批规避或组合多个 Grant",
+      "priority": "MUST",
+      "section": "12.3 需求",
+      "line": 980,
+      "acceptanceIds": [
+        "AC-GRANT-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-001",
+      "title": "v1.6.0 只允许当前已核验 keyword 的具体 bid reduction",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1205,
+      "acceptanceIds": [
+        "AC-EXE-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-002",
+      "title": "有效降幅上限必须为 `min(10%, Grant.maxChangePct)`，bid increase 永久阻断",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1206,
+      "acceptanceIds": [
+        "AC-EXE-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-003",
+      "title": "所有 preflight 完成且 submit intent 持久化后才允许第一次保存",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1207,
+      "acceptanceIds": [
+        "AC-EXE-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-004",
+      "title": "每个 action slot 最多一次 submit，batch 必须串行",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1208,
+      "acceptanceIds": [
+        "AC-EXE-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-005",
+      "title": "成功必须具备 before、after、reload 和 verifier 证明",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1209,
+      "acceptanceIds": [
+        "AC-EXE-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-006",
+      "title": "当前对象/账号/match type/bid/page identity 任一不唯一或漂移时写入次数为 0",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1210,
+      "acceptanceIds": [
+        "AC-EXE-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-007",
+      "title": "UNKNOWN 必须停止 batch、禁止原写入自动重试和跳过",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1211,
+      "acceptanceIds": [
+        "AC-EXE-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-008",
+      "title": "UNKNOWN 对账必须是两次只读观察、独立证明、另记 READBACK，不重写原历史",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1212,
+      "acceptanceIds": [
+        "AC-EXE-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-009",
+      "title": "人工接管不得绕过 Grant、重试原写入或伪造 verified 结果",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1213,
+      "acceptanceIds": [
+        "AC-EXE-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-010",
+      "title": "kill switch 是当前 StoreContext 写入域的紧急停止机制；触发后任何待授权或待执行写入立即阻断，但安全只读对账仍可进行",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1214,
+      "acceptanceIds": [
+        "AC-EXE-010"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-011",
+      "title": "UNKNOWN 后 slot 视为 spent、batch 为 stopped_unknown、未提交 slots 被阻断、Grant residual authority 为 0",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1215,
+      "acceptanceIds": [
+        "AC-EXE-011"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-012",
+      "title": "每个 unknown intent 最多一个 reconciliation case，且恰好执行 reload 前后两个独立 observation slots",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1216,
+      "acceptanceIds": [
+        "AC-EXE-012"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-013",
+      "title": "对账只能产生四种规范 outcome；任一不一致或证据不足必须为 inconclusive_permanent，禁止第三次观察升级",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1217,
+      "acceptanceIds": [
+        "AC-EXE-013"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-014",
+      "title": "UNKNOWN 后任何新写入必须从当前 StoreContext 建立新的完整 Mission/Analysis/Decision/Grant authority 链",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1218,
+      "acceptanceIds": [
+        "AC-EXE-014"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-015",
+      "title": "UNKNOWN 保守占用 daily count、cooldown 和最大可能 impact budget，对账不得返还",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1219,
+      "acceptanceIds": [
+        "AC-EXE-015"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXE-016",
+      "title": "submit 后 mode/policy/session/revision 漂移不得改写已发生事实，但必须停止后续写入并只允许受限 readback",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1220,
+      "acceptanceIds": [
+        "AC-EXE-016"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXP-001",
+      "title": "Experiment 必须绑定当前 store、Mission、product/ad entity 和 verified Decision/READBACK",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1221,
+      "acceptanceIds": [
+        "AC-EXP-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXP-002",
+      "title": "baseline/metric snapshot 必须来自当前权威正式数据和对应 dataBatchId",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1222,
+      "acceptanceIds": [
+        "AC-EXP-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXP-003",
+      "title": "观察窗未结束、指标不足或 guardrail 触发时不得形成成功 EFFECT",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1223,
+      "acceptanceIds": [
+        "AC-EXP-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-EXP-004",
+      "title": "实验结论和 Mission EFFECT/completed 必须由系统判定，不接受自由文本直接推进",
+      "priority": "MUST",
+      "section": "13.8 需求",
+      "line": 1224,
+      "acceptanceIds": [
+        "AC-EXP-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MEM-001",
+      "title": "经营记忆按当前店铺重建和检索，跨店事件必须阻断",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1300,
+      "acceptanceIds": [
+        "AC-MEM-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MEM-002",
+      "title": "UNKNOWN 或缺 proof 的记录不得进入可信记忆索引",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1301,
+      "acceptanceIds": [
+        "AC-MEM-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MEM-003",
+      "title": "可信 READBACK/EFFECT 必须保留 Mission、对象、business date、session generation 和 evidence proof",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1302,
+      "acceptanceIds": [
+        "AC-MEM-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MEM-004",
+      "title": "历史只能追加修正，不能覆盖或硬删除",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1303,
+      "acceptanceIds": [
+        "AC-MEM-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MEM-005",
+      "title": "记忆文本作为 AI 不可信 user context，不能覆盖系统安全指令",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1304,
+      "acceptanceIds": [
+        "AC-MEM-005"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-causal-memory-prompt.ts",
+        "apps/desktop/src/main/analysis-authority-service.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-MEM-005",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/analysis-causal-memory-prompt.test.ts::analysis causal memory prompt boundary keeps historical free text out of system messages and inserts it as untrusted user context"
+        }
+      ]
+    },
+    {
+      "id": "V16-MEM-006",
+      "title": "JSON 导出必须包含 US/USD 范围、业务日期、记录、检索词和证据引用，不含秘密或本地敏感路径",
+      "priority": "MUST",
+      "section": "14.5 需求",
+      "line": 1305,
+      "acceptanceIds": [
+        "AC-MEM-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SET-001",
+      "title": "ERP 和 Ads connection/session/identity 必须独立投影，ERP ready 不等于 Ads 可执行",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1494,
+      "acceptanceIds": [
+        "AC-SET-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SET-002",
+      "title": "每个店铺恢复自己的 mode、policy runtime、Profile 和 scheduler，不跨店复用",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1495,
+      "acceptanceIds": [
+        "AC-SET-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-001",
+      "title": "Ads 写入 authority 仅有 manual_approval 和 policy_auto 两种",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1496,
+      "acceptanceIds": [
+        "AC-POL-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-002",
+      "title": "调度自动化与 Ads 写入 authority 必须分离；manual_approval 始终要求 human Grant，policy_auto 始终要求当前 policy-runtime Grant，“半自动”不得成为第三 mode",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1497,
+      "acceptanceIds": [
+        "AC-POL-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-003",
+      "title": "policy-auto 必须使用 active enabled 当前版本，并满足 scope/priority/entity/action/window/count/cooldown/limit/evidence 条件",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1498,
+      "acceptanceIds": [
+        "AC-POL-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-004",
+      "title": "kill switch 或 open circuit breaker 必须阻断新授权和写入，但不得阻断安全只读 readback/reconciliation",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1499,
+      "acceptanceIds": [
+        "AC-POL-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-005",
+      "title": "策略版本启用后不可原地修改，变更必须生成新版本",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1500,
+      "acceptanceIds": [
+        "AC-POL-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-006",
+      "title": "模式、kill switch、circuit breaker、active policy 变更必须使用 expectedRevision/CAS",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1501,
+      "acceptanceIds": [
+        "AC-POL-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-007",
+      "title": "所有模式/权限变更的真实 operator reason 必须端到端持久化",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1502,
+      "acceptanceIds": [
+        "AC-POL-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-008",
+      "title": "P0–P6 gate precedence 必须确定性计算；所有 gate 为 AND，优先级不得被解释为跳过后续门禁",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1503,
+      "acceptanceIds": [
+        "AC-POL-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-009",
+      "title": "hard gate invalidation 和 terminal Grant/batch/slot 不得因恢复旧配置而复活",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1504,
+      "acceptanceIds": [
+        "AC-POL-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-010",
+      "title": "只有 click=0 有 durable proof、Grant 未终止且 authority 未漂移的 P6 transient blocker 才允许全量重验后继续 pending slot",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1505,
+      "acceptanceIds": [
+        "AC-POL-010"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-011",
+      "title": "Grant issuance、just-before-submit 与 post-submit readback 必须使用不同阶段合同，readback 不得追加写入",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1506,
+      "acceptanceIds": [
+        "AC-POL-011"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-012",
+      "title": "mode change 必须递增 authorityModeRevision 并终止旧 pending authority；切回旧 mode 不得复活",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1507,
+      "acceptanceIds": [
+        "AC-POL-012"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-POL-013",
+      "title": "trigger、proposal source、Decision actor、Grant issuer 和 execution worker 必须分离记录，只有合法 human/policy issuer 可签发 Grant",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1508,
+      "acceptanceIds": [
+        "AC-POL-013"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SCH-001",
+      "title": "scheduler 可自动采集和分析，但不能绕过当前 mode 对应的 Decision、Grant 和 execution gate，也不能成为 Grant issuer",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1509,
+      "acceptanceIds": [
+        "AC-SCH-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-AI-001",
+      "title": "AI Key/凭证不得以明文出现在 UI、日志、Prompt、测试、文档或仓库",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1510,
+      "acceptanceIds": [
+        "AC-AI-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-AI-002",
+      "title": "AI 输出必须结构化验证；无效、超时、取消和 fallback 状态必须可审计",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1511,
+      "acceptanceIds": [
+        "AC-AI-002"
+      ],
+      "implementation": [
+        "packages/shared-types/src/ai-spend.ts",
+        "packages/local-db/src/sqlite/repositories/ai-call-log-repo.ts",
+        "apps/desktop/src/main/ai-spend-governance.ts",
+        "packages/ai-adapter/src/ad-action-reason.ts",
+        "packages/ai-adapter/src/ad-strategy-diagnosis.ts",
+        "packages/ai-adapter/src/daily-report.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-AI-002",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary does not treat an unvalidated response as accepted and cannot rewrite its eventual audit or charge"
+        },
+        {
+          "acceptanceId": "AC-AI-002",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary retains the charge when HTTP succeeds but validated business output falls back"
+        },
+        {
+          "acceptanceId": "AC-AI-002",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary records a late bill against its original context but refuses a stale business response"
+        }
+      ]
+    },
+    {
+      "id": "V16-AI-003",
+      "title": "AI 不拥有 Grant 签发或 Ads 写入 authority",
+      "priority": "MUST",
+      "section": "15.7 需求",
+      "line": 1512,
+      "acceptanceIds": [
+        "AC-AI-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-001",
+      "title": "所有可执行对象必须具备从当前 StoreContext 到 proposal 的完整可验证谱系",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1572,
+      "acceptanceIds": [
+        "AC-DOM-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-002",
+      "title": "对 authority 有影响的实体必须包含 revision 或不可变 identity，并在写入时校验",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1573,
+      "acceptanceIds": [
+        "AC-DOM-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-003",
+      "title": "Evidence Package、action batch、proposal、Grant、audit/readback 记录必须不可变或追加式",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1574,
+      "acceptanceIds": [
+        "AC-DOM-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-004",
+      "title": "Evidence ref 必须是 opaque logical ID，不得是本地绝对路径或 file URI",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1575,
+      "acceptanceIds": [
+        "AC-DOM-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-005",
+      "title": "Renderer projection 不得包含 Cookie、密码、Token、Profile 路径或原始证据绝对路径",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1576,
+      "acceptanceIds": [
+        "AC-DOM-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-006",
+      "title": "时间戳、业务日期、时区、过期时间必须可验证，未来/过期/非法值按合同阻断",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1577,
+      "acceptanceIds": [
+        "AC-DOM-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-007",
+      "title": "slot authority consumption、execution outcome、batch outcome 与 Grant residual authority 必须分离持久化和派生",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1578,
+      "acceptanceIds": [
+        "AC-DOM-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-DOM-008",
+      "title": "每个 unknown submit intent 最多关联一个 reconciliation case，case 固定两个 observation slots",
+      "priority": "MUST",
+      "section": "16.3 数据需求",
+      "line": 1579,
+      "acceptanceIds": [
+        "AC-DOM-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-001",
+      "title": "所有 legacy authority/evidence records 必须进入四类之一并记录 reason/validation revision",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1624,
+      "acceptanceIds": [
+        "AC-MIG-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-002",
+      "title": "migration 不得通过默认补值把 legacy record 提升为当前可执行 authority",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1625,
+      "acceptanceIds": [
+        "AC-MIG-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-003",
+      "title": "schema upgrade 必须 transactional、idempotent、可从中断恢复并产生 durable receipt",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1626,
+      "acceptanceIds": [
+        "AC-MIG-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-004",
+      "title": "unknown/future/partial schema 必须 fail-closed，旧 binary 不得写入不支持的新 schema",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1627,
+      "acceptanceIds": [
+        "AC-MIG-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-005",
+      "title": "upgrade 前必须有经验证的 WAL-safe backup；rollback 不得静默覆盖目标版本新写入或执行 destructive down migration",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1628,
+      "acceptanceIds": [
+        "AC-MIG-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-006",
+      "title": "exact-eight template compatibility 必须来自版本化 manifest，未知或歧义模板拒绝导入",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1629,
+      "acceptanceIds": [
+        "AC-MIG-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-007",
+      "title": "Main/Preload/Renderer projection/API 必须版本化，缺字段或版本不兼容时返回 blocked/unsupported",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1630,
+      "acceptanceIds": [
+        "AC-MIG-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-008",
+      "title": "legacy evidence path 只能在 Main 映射为经 scope/proof 验证的 opaque ref，不得进入 Renderer payload",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1631,
+      "acceptanceIds": [
+        "AC-MIG-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-009",
+      "title": "migration、兼容读取和历史可见性不得继承 prior-version acceptance credit",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1632,
+      "acceptanceIds": [
+        "AC-MIG-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MIG-010",
+      "title": "迁移实施必须闭合本文规定的三份 companion specifications 与当前 PRD/AC traceability",
+      "priority": "MUST",
+      "section": "16.7 迁移与兼容需求",
+      "line": 1633,
+      "acceptanceIds": [
+        "AC-MIG-010"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-AI-004",
+      "title": "每个 AI 场景必须声明 A0–A3 价值等级、是否必要、fallback 和是否允许阻断",
+      "priority": "MUST",
+      "section": "17.5 AI 价值与成本治理",
+      "line": 1718,
+      "acceptanceIds": [
+        "AC-AI-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-AI-005",
+      "title": "可计费调用必须记录 usage/cost 状态；未知费用不得记零",
+      "priority": "MUST",
+      "section": "17.5 AI 价值与成本治理",
+      "line": 1719,
+      "acceptanceIds": [
+        "AC-AI-005"
+      ],
+      "implementation": [
+        "packages/shared-types/src/ai-spend.ts",
+        "packages/local-db/src/sqlite/repositories/ai-call-log-repo.ts",
+        "apps/desktop/src/main/ai-spend-governance.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-AI-005",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary retains the charge when HTTP succeeds but validated business output falls back"
+        },
+        {
+          "acceptanceId": "AC-AI-005",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary keeps missing_usage cost unknown across new policy revisions and never retries automatically"
+        },
+        {
+          "acceptanceId": "AC-AI-005",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary keeps disconnect cost unknown across new policy revisions and never retries automatically"
+        },
+        {
+          "acceptanceId": "AC-AI-005",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary keeps process_crash cost unknown across new policy revisions and never retries automatically"
+        }
+      ]
+    },
+    {
+      "id": "V16-AI-006",
+      "title": "自动付费调用必须验证当前 store-scoped spend policy，无法证明预算余量时 fail-closed 或 rule fallback",
+      "priority": "MUST",
+      "section": "17.5 AI 价值与成本治理",
+      "line": 1720,
+      "acceptanceIds": [
+        "AC-AI-006"
+      ],
+      "implementation": [
+        "packages/shared-types/src/ai-spend.ts",
+        "packages/local-db/src/sqlite/repositories/ai-call-log-repo.ts",
+        "apps/desktop/src/main/ai-spend-governance.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-AI-006",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary falls back with zero requests without a current policy and never sends the prompt into accounting"
+        },
+        {
+          "acceptanceId": "AC-AI-006",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary reserves the reviewed full model bound atomically and prevents concurrent overspend"
+        },
+        {
+          "acceptanceId": "AC-AI-006",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary rejects stale policy revisions, secrets, provider/model drift and excess output before requests"
+        }
+      ]
+    },
+    {
+      "id": "V16-AI-007",
+      "title": "AI 费用预算与 Ads impact budget 必须使用独立记录、单位、revision 和 authority",
+      "priority": "MUST",
+      "section": "17.5 AI 价值与成本治理",
+      "line": 1721,
+      "acceptanceIds": [
+        "AC-AI-007"
+      ],
+      "implementation": [
+        "packages/shared-types/src/ai-spend.ts",
+        "packages/local-db/src/sqlite/repositories/ai-call-log-repo.ts",
+        "apps/desktop/src/main/ai-spend-governance.ts",
+        "packages/local-db/src/sqlite/migrations/0020-ai-spend-governance.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-AI-007",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary logs explicit connection-test cost as unknown without claiming a free request or Ads authority"
+        },
+        {
+          "acceptanceId": "AC-AI-007",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary reserves the reviewed full model bound atomically and prevents concurrent overspend"
+        }
+      ]
+    },
+    {
+      "id": "V16-AI-009",
+      "title": "AI value/cost records 不得包含秘密、raw path 或超出已声明目的的业务数据",
+      "priority": "MUST",
+      "section": "17.5 AI 价值与成本治理",
+      "line": 1723,
+      "acceptanceIds": [
+        "AC-AI-009"
+      ],
+      "implementation": [
+        "packages/shared-types/src/ai-spend.ts",
+        "packages/local-db/src/sqlite/repositories/ai-call-log-repo.ts",
+        "apps/desktop/src/main/ai-spend-governance.ts"
+      ],
+      "testIds": [
+        "V16-T-L1-ALL"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-AI-009",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary does not treat an unvalidated response as accepted and cannot rewrite its eventual audit or charge"
+        },
+        {
+          "acceptanceId": "AC-AI-009",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary falls back with zero requests without a current policy and never sends the prompt into accounting"
+        },
+        {
+          "acceptanceId": "AC-AI-009",
+          "testId": "V16-T-L1-ALL",
+          "caseId": "apps/desktop/src/main/ai-spend-governance.test.ts::AI paid-call budget and durable cost boundary rejects stale policy revisions, secrets, provider/model drift and excess output before requests"
+        }
+      ]
     },
     {
       "id": "V16-UI-001",
-      "title": "L3 Business UI - Mission Control Shell",
-      "category": "User Interface",
-      "priority": "P0",
-      "prdSection": "13.3",
-      "description": "Mission Control shell must provide workspace navigation",
-      "testIds": ["V16-T-L4-UI-CONTRACT"]
+      "title": "核心工作区必须在 1366×768、100%、125% 和规定 wide/minimum 档可操作",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1803,
+      "acceptanceIds": [
+        "AC-UI-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
       "id": "V16-UI-002",
-      "title": "L3 Business UI - Workspace Routing",
-      "category": "User Interface",
-      "priority": "P0",
-      "prdSection": "13.3",
-      "description": "Workspace routing must isolate store context",
-      "testIds": ["V16-T-L4-UI-CONTRACT"]
+      "title": "弹窗正文可滚动且 footer 动作始终可达，不能因缩放遮挡",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1804,
+      "acceptanceIds": [
+        "AC-UI-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-ENG-010",
-      "title": "L8 Readiness - Aggregation Verifier",
-      "category": "Delivery Quality",
-      "priority": "P0",
-      "prdSection": "13.8",
-      "description": "L8 aggregation must validate all gates and generate readiness report",
-      "testIds": []
+      "id": "V16-UI-003",
+      "title": "键盘焦点可见，主要交互支持键盘，关闭后焦点合理恢复",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1805,
+      "acceptanceIds": [
+        "AC-UI-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-MODE-001",
-      "title": "Operating Mode - Per-Store Configuration",
-      "category": "Operating Mode",
-      "priority": "P0",
-      "prdSection": "7.2",
-      "description": "Each store must persist its own operating mode (人工审批/半自动/策略内自动)",
-      "testIds": []
+      "id": "V16-UI-004",
+      "title": "支持 reduced-motion 偏好，关键信息不依赖动画表达",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1806,
+      "acceptanceIds": [
+        "AC-UI-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-MODE-002",
-      "title": "Operating Mode - Mode Switching",
-      "category": "Operating Mode",
-      "priority": "P0",
-      "prdSection": "7.2",
-      "description": "Mode switching must require explicit confirmation dialog",
-      "testIds": []
+      "id": "V16-UI-005",
+      "title": "disabled 控件必须解释原因并在可恢复时提供入口",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1807,
+      "acceptanceIds": [
+        "AC-UI-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-EXEC-001",
-      "title": "Execution Safety - V1 Action Scope",
-      "category": "Execution Safety",
-      "priority": "P0",
-      "prdSection": "8.3",
-      "description": "V1 must permit only keyword bid adjustments",
-      "testIds": []
+      "id": "V16-UI-006",
+      "title": "普通页面不得显示秘密、原始路径或不必要的内部 ID/revision",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1808,
+      "acceptanceIds": [
+        "AC-UI-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-EXEC-002",
-      "title": "Execution Safety - Fail-Closed Gates",
-      "category": "Execution Safety",
-      "priority": "P0",
-      "prdSection": "8.3",
-      "description": "Execution must validate 8/8 reports, analysis completion, Ads session, store match, action type, approval, and readback requirement",
-      "testIds": []
+      "id": "V16-UI-007",
+      "title": "成功色只用于 verified 状态，UNKNOWN/blocked 不得使用成功语义",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1809,
+      "acceptanceIds": [
+        "AC-UI-009"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-ARUN-001",
-      "title": "Analysis Run - Lifecycle Management",
-      "category": "Analysis Domain",
-      "priority": "P0",
-      "prdSection": "6.3",
-      "description": "Analysis run must progress through creation, verification, analysis, generation, and completion",
-      "testIds": []
+      "id": "V16-UI-010",
+      "title": "业务中文、规范英文领域标识、内部 code 和仅诊断字段必须遵循版本化 UI terminology table",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1812,
+      "acceptanceIds": [
+        "AC-UI-012"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     },
     {
-      "id": "V16-ARUN-002",
-      "title": "Analysis Run - Supersession Logic",
-      "category": "Analysis Domain",
-      "priority": "P0",
-      "prdSection": "6.3",
-      "description": "Re-running identical input must supersede older run and its recommendations",
-      "testIds": []
+      "id": "V16-UI-011",
+      "title": "modal/dialog 必须验证初始焦点、焦点约束、Escape 行为和关闭后焦点恢复，不能只验证 ARIA 属性存在",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1813,
+      "acceptanceIds": [
+        "AC-UI-013"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-UI-012",
+      "title": "v1.6.0 必须维护相对 v1.5.1 primitives 的 Accessibility Delta Register；未验证项不得声明改善或标准合规",
+      "priority": "MUST",
+      "section": "18.6 响应和可访问性",
+      "line": 1814,
+      "acceptanceIds": [
+        "AC-UI-014"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-NFR-001",
+      "title": "可变 authority 更新使用事务和 expectedRevision/CAS；不可变/追加写入使用事务和唯一性/幂等约束，冲突不静默覆盖",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1841,
+      "acceptanceIds": [
+        "AC-NFR-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-NFR-002",
+      "title": "执行 intent、证据和结果在崩溃/重启后可恢复为可解释状态",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1842,
+      "acceptanceIds": [
+        "AC-NFR-002"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/execution-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/execution-authority-repo.ts",
+        "packages/action-executor/src/keyword-bid-adapter.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-NFR-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration keeps startup alive when one recovered domain projection fails and retries it later"
+        },
+        {
+          "acceptanceId": "AC-NFR-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration resumes the same created-but-not-started policy batch after startup recovery"
+        },
+        {
+          "acceptanceId": "AC-NFR-002",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration never restarts an existing UNKNOWN policy batch during startup or session recovery"
+        }
+      ]
+    },
+    {
+      "id": "V16-NFR-003",
+      "title": "重复 query/refresh 不产生重复业务记录；相同幂等 command 不产生重复写入",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1843,
+      "acceptanceIds": [
+        "AC-NFR-003"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/analysis-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-authority-repo.ts",
+        "packages/local-db/src/sqlite/repositories/analysis-runs-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-NFR-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService reuses the same persisted analysis result when identical evidence is analyzed again"
+        },
+        {
+          "acceptanceId": "AC-NFR-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService blocks duplicate clicks before generation and projects a crashed pending receipt as interrupted"
+        },
+        {
+          "acceptanceId": "AC-NFR-003",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/analysis-authority-service.test.ts::AnalysisAuthorityService notifies execution exactly once for a policy-auto grant and never for manual authorization"
+        }
+      ]
+    },
+    {
+      "id": "V16-NFR-004",
+      "title": "submit intent 前且 durable fact 证明 click=0 的中断可为 interrupted；submit intent 后无法证明 click=0 或结果时必须为 UNKNOWN，绝不得推断 success",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1844,
+      "acceptanceIds": [
+        "AC-NFR-004"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/execution-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/execution-authority-repo.ts",
+        "packages/action-executor/src/keyword-bid-adapter.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-NFR-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration cancels before submit intent without clicking save"
+        },
+        {
+          "acceptanceId": "AC-NFR-004",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration marks a thrown save result UNKNOWN after durable intent and never retries the click"
+        }
+      ]
+    },
+    {
+      "id": "V16-NFR-005",
+      "title": "正式 DB 取证使用 WAL-safe、readonly/query_only 方式，验收前后证明零业务写入",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1845,
+      "acceptanceIds": [
+        "AC-NFR-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-NFR-006",
+      "title": "submit intent/idempotency/slot reservation 必须形成可恢复的 crash boundary，重启不得分配第二次 submit authority",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1846,
+      "acceptanceIds": [
+        "AC-NFR-006"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/execution-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/execution-authority-repo.ts",
+        "packages/action-executor/src/keyword-bid-adapter.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-NFR-006",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/v16-l3-workflow-integrity.test.ts::Production execution and history invariants persists submission before an ambiguous click outcome and never retries it"
+        },
+        {
+          "acceptanceId": "AC-NFR-006",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration consumes submitted authority before readback and records execution success independently"
+        },
+        {
+          "acceptanceId": "AC-NFR-006",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration never restarts an existing UNKNOWN policy batch during startup or session recovery"
+        }
+      ]
+    },
+    {
+      "id": "V16-NFR-007",
+      "title": "重启后必须从 durable slot/batch/Grant residual events 重建 authority，不依赖 Renderer memory",
+      "priority": "MUST",
+      "section": "19.1 可靠性与一致性",
+      "line": 1847,
+      "acceptanceIds": [
+        "AC-NFR-007"
+      ],
+      "implementation": [
+        "apps/desktop/src/main/execution-authority-service.ts",
+        "packages/local-db/src/sqlite/repositories/execution-authority-repo.ts",
+        "packages/action-executor/src/keyword-bid-adapter.ts",
+        "packages/local-db/src/sqlite/repositories/mission-domain-repo.ts"
+      ],
+      "testIds": [
+        "V16-T-L3-BUSINESS"
+      ],
+      "status": "UNVERIFIED",
+      "acceptanceCases": [
+        {
+          "acceptanceId": "AC-NFR-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration resumes a partially succeeded policy batch and runs only its untouched action"
+        },
+        {
+          "acceptanceId": "AC-NFR-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration repairs a missing execution link for a terminal grant without starting its batch"
+        },
+        {
+          "acceptanceId": "AC-NFR-007",
+          "testId": "V16-T-L3-BUSINESS",
+          "caseId": "apps/desktop/src/main/execution-authority-service.test.ts::ExecutionAuthorityService safety orchestration never restarts an existing UNKNOWN policy batch during startup or session recovery"
+        }
+      ]
+    },
+    {
+      "id": "V16-SEC-001",
+      "title": "凭证、AI Key、Cookie、Token 和 Profile 数据不得进入 Renderer domain payload、日志、文档、测试或 Git",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1853,
+      "acceptanceIds": [
+        "AC-SEC-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SEC-002",
+      "title": "Preload 只暴露受限、类型化、store-scoped API，不暴露任意 Electron/文件/数据库能力",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1854,
+      "acceptanceIds": [
+        "AC-SEC-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SEC-003",
+      "title": "外链、导航、新窗口和 Node 环境按 package security contract fail-closed",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1855,
+      "acceptanceIds": [
+        "AC-SEC-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SEC-004",
+      "title": "本地证据引用对 Renderer 使用 opaque logical ID，Main 负责安全解析",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1856,
+      "acceptanceIds": [
+        "AC-SEC-004"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SEC-005",
+      "title": "日志和导出对 store/profile/job/import 等敏感标识采用必要的稳定别名或最小披露",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1857,
+      "acceptanceIds": [
+        "AC-SEC-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-SEC-006",
+      "title": "v1.6.0 不得默认把业务数据、证据、Prompt、日志或遥测上传到未明确声明的云端服务",
+      "priority": "MUST",
+      "section": "19.2 安全与隐私",
+      "line": 1858,
+      "acceptanceIds": [
+        "AC-SEC-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-PERF-001",
+      "title": "用户触发异步动作后必须立即进入反馈状态，禁止无反馈重复点击窗口",
+      "priority": "MUST",
+      "section": "19.3 性能与可用性",
+      "line": 1864,
+      "acceptanceIds": [
+        "AC-PERF-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-OFF-001",
+      "title": "网络/ERP/Ads 不可用时，本地产品、历史、实验、记忆和诊断仍可只读访问",
+      "priority": "MUST",
+      "section": "19.4 离线与降级",
+      "line": 1873,
+      "acceptanceIds": [
+        "AC-OFF-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-OFF-002",
+      "title": "ERP 不可用阻断采集；Ads 不可用只阻断执行，不能错误阻断本地分析历史查看",
+      "priority": "MUST",
+      "section": "19.4 离线与降级",
+      "line": 1874,
+      "acceptanceIds": [
+        "AC-OFF-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-OFF-003",
+      "title": "AI provider 不可用时按当前规则显示 fallback/blocked，不影响本地历史完整性",
+      "priority": "MUST",
+      "section": "19.4 离线与降级",
+      "line": 1875,
+      "acceptanceIds": [
+        "AC-OFF-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MNT-001",
+      "title": "Main/Preload/Renderer 的 query/command 合同使用共享类型并保持 store-scoped",
+      "priority": "MUST",
+      "section": "19.5 可维护性与可观测性",
+      "line": 1881,
+      "acceptanceIds": [
+        "AC-MNT-001"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MNT-002",
+      "title": "关键流程具有结构化业务事件、blocker code、用户文案和诊断 detail",
+      "priority": "MUST",
+      "section": "19.5 可维护性与可观测性",
+      "line": 1882,
+      "acceptanceIds": [
+        "AC-MNT-002"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-MNT-003",
+      "title": "preview/prototype fixture 在 production mode 不得作为 fallback",
+      "priority": "MUST",
+      "section": "19.5 可维护性与可观测性",
+      "line": 1883,
+      "acceptanceIds": [
+        "AC-MNT-003"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-PERF-005",
+      "title": "M0/M1 必须建立可重复的典型/最大 fixture 和版本化 NFR Baseline Record",
+      "priority": "MUST",
+      "section": "19.6 数值 NFR 基线与预算治理",
+      "line": 1904,
+      "acceptanceIds": [
+        "AC-PERF-005"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-PERF-006",
+      "title": "每个发布阻断型性能指标必须有经批准的 Budget Record，不得直接把当前观测值当阈值",
+      "priority": "MUST",
+      "section": "19.6 数值 NFR 基线与预算治理",
+      "line": 1905,
+      "acceptanceIds": [
+        "AC-PERF-006"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-PERF-007",
+      "title": "startup、store switch、projection、exact-eight、analysis、memory、DB/evidence growth 至少进入预算目录",
+      "priority": "MUST",
+      "section": "19.6 数值 NFR 基线与预算治理",
+      "line": 1906,
+      "acceptanceIds": [
+        "AC-PERF-007"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-PERF-008",
+      "title": "当前 package 超过批准预算时必须形成 blocker/偏差，不得静默扩大阈值",
+      "priority": "MUST",
+      "section": "19.6 数值 NFR 基线与预算治理",
+      "line": 1907,
+      "acceptanceIds": [
+        "AC-PERF-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-001",
+      "title": "v1.6.0 不得继承 v1.5.x 运行态证据",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2246,
+      "acceptanceIds": [
+        "AC-ACC-001",
+        "AC-ACC-017"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-002",
+      "title": "当前源码、包、DB snapshot、canary 和 readiness 必须属于同一版本谱系",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2247,
+      "acceptanceIds": [
+        "AC-ACC-003",
+        "AC-ACC-007",
+        "AC-ACC-009",
+        "AC-ACC-017"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-003",
+      "title": "L1–L8 或 trace closure 任一门缺失/失败时状态必须为 APP_NEEDS_WORK/NON_READY",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2248,
+      "acceptanceIds": [
+        "AC-ACC-011",
+        "AC-ACC-012",
+        "AC-ACC-014"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-004",
+      "title": "README DELIVERY 只能在当前 READINESS_PASS、matching READY bundle safety 全部通过后更新为 APP_READY",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2249,
+      "acceptanceIds": [
+        "AC-ACC-011",
+        "AC-ACC-012",
+        "AC-ACC-017"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-005",
+      "title": "用户禁止的动态门必须保持 pending，不得用静态或历史证据替代",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2250,
+      "acceptanceIds": [
+        "AC-ACC-002",
+        "AC-ACC-003",
+        "AC-ACC-004",
+        "AC-ACC-005",
+        "AC-ACC-006",
+        "AC-ACC-007",
+        "AC-ACC-008",
+        "AC-ACC-009",
+        "AC-ACC-010"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-006",
+      "title": "正式取证 DB 按当前 gate 使用恰好两家 active US/USD 店铺；额外店铺需 inactive/archived 或先正式升级 gate",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2251,
+      "acceptanceIds": [
+        "AC-ACC-007",
+        "AC-ACC-008"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-007",
+      "title": "NFR、AI cost/value 和 accessibility 发布声明必须有当前版本批准记录与 package evidence",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2252,
+      "acceptanceIds": [
+        "AC-ACC-013"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-008",
+      "title": "MUST→AC→L1–L8→evidence/result trace closure 必须机器可检查，缺项不得 PASS",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2253,
+      "acceptanceIds": [
+        "AC-ACC-014"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-009",
+      "title": "manual 与 policy-auto canary 必须使用独立 candidate/Grant/batch/job/evidence 并验证不同合法 issuer",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2254,
+      "acceptanceIds": [
+        "AC-ACC-016"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-010",
+      "title": "legacy v15/s7 命名工具只有通过 v1.6 schema/identity adapter 和当前验证后才能参与流程，旧结果不得获得 v1.6 credit",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2255,
+      "acceptanceIds": [
+        "AC-ACC-015"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-011",
+      "title": "L8 聚合不得用嵌套 legacy readiness 替代任一 L1–L7 当前结果",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2256,
+      "acceptanceIds": [
+        "AC-ACC-011",
+        "AC-ACC-015"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "id": "V16-ACC-012",
+      "title": "publication closure 任一输入变化必须使旧 readiness/README READY/bundle 失效并恢复 NON_READY",
+      "priority": "MUST",
+      "section": "21.4 发布判定需求",
+      "line": 2257,
+      "acceptanceIds": [
+        "AC-ACC-017"
+      ],
+      "implementation": [],
+      "testIds": [],
+      "status": "UNVERIFIED"
     }
   ]
 }

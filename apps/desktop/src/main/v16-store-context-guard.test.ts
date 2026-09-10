@@ -1,3 +1,5 @@
+import { normalizeStoreId, normalizeBusinessDate } from '@amazon-ai-ops/shared-types';
+import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 /**
  * V1.6 StoreContext Guard Tests
  */
@@ -14,13 +16,13 @@ import {
   storeContextTracker,
 } from './v16-store-context-guard';
 
-const base: StoreContextEnvelope = {
-  storeId: 'store-a',
+const base: StoreContextEnvelope = normalizeStoreContextEnvelope({browserProfileId: 'profile-store-a', businessTimezone: 'America/Los_Angeles',
+  storeId: normalizeStoreId('store-a'),
   marketplace: 'US',
   currency: 'USD',
-  businessDate: '2026-09-03',
+  businessDate: normalizeBusinessDate('2026-09-03'),
   sessionGeneration: 1,
-};
+});
 
 describe('V16StoreContextGuard', () => {
   describe('assertValidStoreContext', () => {
@@ -46,10 +48,10 @@ describe('V16StoreContextGuard', () => {
       ).toThrow(StoreContextGuardError);
     });
 
-    it('rejects non-positive sessionGeneration', () => {
+    it('rejects negative sessionGeneration', () => {
       expect(() =>
-        assertValidStoreContext({ ...base, sessionGeneration: 0 }),
-      ).toThrow(/positive integer/);
+        assertValidStoreContext({ ...base, sessionGeneration: -1 }),
+      ).toThrow(/non-negative integer/);
     });
 
     it('rejects malformed businessDate', () => {
@@ -60,11 +62,11 @@ describe('V16StoreContextGuard', () => {
   });
 
   describe('sameStoreContext', () => {
-    it('true when all three fields match', () => {
+    it('true when the complete envelope match', () => {
       expect(sameStoreContext(base, { ...base })).toBe(true);
     });
     it('false when storeId differs', () => {
-      expect(sameStoreContext(base, { ...base, storeId: 'b' })).toBe(false);
+      expect(sameStoreContext(base, { ...base, storeId: normalizeStoreId('b') })).toBe(false);
     });
     it('false when sessionGeneration differs', () => {
       expect(sameStoreContext(base, { ...base, sessionGeneration: 2 })).toBe(false);
@@ -76,10 +78,10 @@ describe('V16StoreContextGuard', () => {
       expect(classifyStoreSwitch(base, { ...base })).toBe('match');
     });
     it('different storeId -> mismatch', () => {
-      expect(classifyStoreSwitch(base, { ...base, storeId: 'b' })).toBe('mismatch');
+      expect(classifyStoreSwitch(base, { ...base, storeId: normalizeStoreId('b') })).toBe('mismatch');
     });
     it('different businessDate -> mismatched_date', () => {
-      expect(classifyStoreSwitch(base, { ...base, businessDate: '2026-09-04' })).toBe('mismatched_date');
+      expect(classifyStoreSwitch(base, { ...base, businessDate: normalizeBusinessDate('2026-09-04') })).toBe('mismatched_date');
     });
     it('lower sessionGeneration -> stale_session', () => {
       expect(classifyStoreSwitch(base, { ...base, sessionGeneration: 0 })).toBe('stale_session');
@@ -91,7 +93,7 @@ describe('V16StoreContextGuard', () => {
       expect(() => assertSameStore(base, base)).not.toThrow();
     });
     it('throws STORE_MISMATCH for different stores', () => {
-      expect(() => assertSameStore(base, { ...base, storeId: 'b' })).toThrow(/StoreContext mismatch/);
+      expect(() => assertSameStore(base, { ...base, storeId: normalizeStoreId('b') })).toThrow(/StoreContext mismatch/);
     });
     it('throws STALE_SESSION for stale incoming', () => {
       expect(() =>
@@ -128,12 +130,12 @@ describe('V16StoreContextGuard', () => {
         const cleanup = tracker.trackOperation('op-1');
         
         expect(() =>
-          tracker.setContext({ ...base, storeId: 'store-b' }),
+          tracker.setContext({ ...base, storeId: normalizeStoreId('store-b') }),
         ).toThrow(/Cannot switch store while 1 operations are pending/);
 
         cleanup();
         expect(() =>
-          tracker.setContext({ ...base, storeId: 'store-b' }),
+          tracker.setContext({ ...base, storeId: normalizeStoreId('store-b') }),
         ).not.toThrow();
       });
     });
@@ -146,7 +148,7 @@ describe('V16StoreContextGuard', () => {
 
       it('returns false for different context', () => {
         tracker.setContext(base);
-        expect(tracker.isCurrentContext({ ...base, storeId: 'store-b' })).toBe(false);
+        expect(tracker.isCurrentContext({ ...base, storeId: normalizeStoreId('store-b') })).toBe(false);
       });
 
       it('returns false when no context is set', () => {
@@ -163,7 +165,7 @@ describe('V16StoreContextGuard', () => {
       it('throws for mismatched store', () => {
         tracker.setContext(base);
         expect(() =>
-          tracker.assertCurrentContext({ ...base, storeId: 'store-b' }),
+          tracker.assertCurrentContext({ ...base, storeId: normalizeStoreId('store-b') }),
         ).toThrow(/StoreContext mismatch/);
       });
 
@@ -211,7 +213,7 @@ describe('V16StoreContextGuard', () => {
         tracker.setContext(base);
         expect(callback).not.toHaveBeenCalled(); // First set doesn't trigger
         
-        const newCtx = { ...base, storeId: 'store-b' };
+        const newCtx = { ...base, storeId: normalizeStoreId('store-b') };
         tracker.setContext(newCtx);
         expect(callback).toHaveBeenCalledWith(newCtx);
       });
@@ -232,7 +234,7 @@ describe('V16StoreContextGuard', () => {
         tracker.setContext(base);
         unsubscribe();
         
-        tracker.setContext({ ...base, storeId: 'store-b' });
+        tracker.setContext({ ...base, storeId: normalizeStoreId('store-b') });
         expect(callback).not.toHaveBeenCalled();
       });
     });
@@ -250,7 +252,7 @@ describe('V16StoreContextGuard', () => {
         expect(tracker.hasPendingOperations()).toBe(false);
         
         tracker.setContext(base);
-        tracker.setContext({ ...base, storeId: 'store-b' });
+        tracker.setContext({ ...base, storeId: normalizeStoreId('store-b') });
         expect(callback).not.toHaveBeenCalled();
       });
     });
@@ -268,24 +270,24 @@ describe('V16StoreContextGuard', () => {
 
     it('prevents A→B→A race conditions', () => {
       // Set store A
-      storeContextTracker.setContext({ ...base, storeId: 'store-a' });
+      storeContextTracker.setContext({ ...base, storeId: normalizeStoreId('store-a') });
       
       // Start async operation for A
       const cleanup = storeContextTracker.trackOperation('async-op-a');
       
       // Switch to store B (blocked by pending operation)
       expect(() =>
-        storeContextTracker.setContext({ ...base, storeId: 'store-b' }),
+        storeContextTracker.setContext({ ...base, storeId: normalizeStoreId('store-b') }),
       ).toThrow(/Cannot switch store/);
       
       // Complete operation
       cleanup();
       
       // Now switch to B is allowed
-      storeContextTracker.setContext({ ...base, storeId: 'store-b' });
+      storeContextTracker.setContext({ ...base, storeId: normalizeStoreId('store-b') });
       
       // Verify stale result from A would be rejected
-      expect(storeContextTracker.isCurrentContext({ ...base, storeId: 'store-a' })).toBe(false);
+      expect(storeContextTracker.isCurrentContext({ ...base, storeId: normalizeStoreId('store-a') })).toBe(false);
     });
   });
 });

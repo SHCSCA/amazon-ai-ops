@@ -1,231 +1,148 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://amazon-ai-ops.local/schemas/v16_required_test_manifest.schema.json",
-  "title": "V16 Required Test Manifest",
-  "description": "Single source of truth for which tests are required for v1.6.0 acceptance. Validated by scripts/verify-v16-required-test-manifest.js. See docs/v16_companion_verification_traceability.md §3.",
+  "title": "V1.6 required test definition and run manifest",
+  "description": "Version 1 contract. Runtime verifiers additionally recompute runner results and bind current source, package and retained artifacts.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "manifestVersion",
+    "schemaVersion",
     "prdReference",
     "companionSpec",
-    "identity",
-    "buckets",
-    "tests"
+    "requiredTests"
   ],
   "properties": {
-    "manifestVersion": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+$",
-      "description": "Manifest format version, independent of v1.6.0 release version."
+    "schemaVersion": {
+      "const": "v16.manifest/1"
     },
     "prdReference": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "version"],
-      "properties": {
-        "path": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "pattern": "^\\d+\\.\\d+$" }
-      }
+      "type": "string",
+      "minLength": 1
     },
     "companionSpec": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version"],
-      "properties": {
-        "id": { "const": "V16-COMPANION-VT" },
-        "version": { "type": "string", "pattern": "^\\d+\\.\\d+$" }
-      }
-    },
-    "identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["sourceRevision", "packageVersion"],
-      "properties": {
-        "sourceRevision": {
-          "type": "string",
-          "minLength": 1,
-          "description": "git commit SHA, or uncommitted:<ISO timestamp> when worktree has no committed HEAD."
-        },
-        "packageVersion": {
-          "type": "string",
-          "pattern": "^v16\\.\\d+\\.\\d+",
-          "description": "Target v1.6.0 release version, must match apps/desktop/package.json#version when produced."
-        }
-      }
-    },
-    "buckets": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["active", "gated"],
-      "properties": {
-        "active": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/bucket" },
-          "description": "Layers and tests that can be executed under current user ban."
-        },
-        "gated": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/bucket" },
-          "description": "Layers/tests blocked behind user ban (always PENDING until ban lifts)."
-        }
-      }
-    },
-    "tests": {
-      "type": "array",
-      "items": { "$ref": "#/definitions/testEntry" },
-      "description": "All required tests, regardless of which bucket they live in."
-    }
-  },
-  "definitions": {
-    "bucket": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["bucketId", "label", "layer", "producer", "verifier", "blockedBy"],
-      "properties": {
-        "bucketId": {
-          "type": "string",
-          "pattern": "^[A-Z0-9][A-Z0-9_-]+$",
-          "description": "Stable bucket identifier; unique across active and gated."
-        },
-        "label": { "type": "string", "minLength": 1 },
-        "layer": {
-          "type": "string",
-          "enum": ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"]
-        },
-        "producer": {
-          "type": "string",
-          "minLength": 1,
-          "description": "PNPM script that produces this bucket's evidence file."
-        },
-        "verifier": {
-          "type": "string",
-          "minLength": 1,
-          "description": "PNPM script that validates the evidence file."
-        },
-        "blockedBy": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "user-ban-app-control",
-              "user-ban-typecheck",
-              "user-ban-smoke",
-              "user-ban-package-ui",
-              "user-ban-zip-launch",
-              "user-ban-formal-db",
-              "user-ban-real-ads"
-            ]
-          },
-          "description": "Empty array means the bucket is runnable today. Non-empty means the bucket is gated."
-        }
-      }
-    },
-    "testEntry": {
-      "type": "object",
-      "additionalProperties": false,
       "required": [
-        "testId",
-        "requirementIds",
-        "acceptanceIds",
-        "layer",
-        "bucketId",
-        "producer",
-        "verifier",
-        "evidenceSchemaRef",
-        "identityBindings"
+        "id",
+        "version"
       ],
       "properties": {
-        "testId": {
+        "id": {
           "type": "string",
-          "pattern": "^V16-T-[A-Z0-9_-]+$",
-          "description": "Stable test identifier, unique within the manifest."
+          "minLength": 1
         },
-        "requirementIds": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity": {
+      "$ref": "v16_evidence.schema.json#/definitions/identity"
+    },
+    "requiredTests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "testId",
+          "layer",
+          "format",
+          "requirementIds"
+        ],
+        "properties": {
+          "testId": {
             "type": "string",
-            "pattern": "^V16-[A-Z0-9-]+$"
+            "minLength": 1
           },
-          "description": "PRD MUST requirement IDs this test exercises (from §21.x)."
-        },
-        "acceptanceIds": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
+          "title": {
             "type": "string",
-            "pattern": "^AC-[A-Z0-9-]+$"
+            "minLength": 1
           },
-          "description": "Acceptance criteria IDs from PRD §21.2 that this test validates."
-        },
-        "layer": {
-          "type": "string",
-          "enum": ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"]
-        },
-        "bucketId": {
-          "type": "string",
-          "pattern": "^[A-Z0-9][A-Z0-9_-]+$",
-          "description": "Must reference a bucketId defined in buckets.active or buckets.gated."
-        },
-        "title": { "type": "string" },
-        "producer": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["script", "producesArtifact"],
-          "properties": {
-            "script": { "type": "string", "minLength": 1 },
-            "args": {
-              "type": "array",
-              "items": { "type": "string" },
-              "default": []
-            },
-            "producesArtifact": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Glob pattern relative to repo root, e.g. 'output/v16-evidence/v16_l1_unit_contract.json'."
-            }
-          }
-        },
-        "verifier": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["script", "consumesArtifact", "resultKind"],
-          "properties": {
-            "script": { "type": "string", "minLength": 1 },
-            "consumesArtifact": { "type": "string", "minLength": 1 },
-            "resultKind": {
-              "type": "string",
-              "enum": ["boolean", "structured-gate", "structural-validate"]
-            }
-          }
-        },
-        "evidenceSchemaRef": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Path to the evidence JSON Schema, relative to repo root."
-        },
-        "identityBindings": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
+          "layer": {
             "enum": [
-              "sourceRevision",
-              "packageVersion",
-              "packageSha256",
-              "dbIdentity",
-              "fixtureIdentity"
+              "L1",
+              "L2",
+              "L3",
+              "L4",
+              "L5",
+              "L6",
+              "L7"
             ]
           },
-          "description": "Which identity fields this test's evidence must bind."
+          "format": {
+            "enum": [
+              "vitest-json",
+              "checks-json"
+            ]
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "requiredChecks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "requirementIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "evidencePath": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "blocking": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Blocker codes that must be closed for this test to PASS."
-        },
-        "notes": { "type": "string" }
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "format": {
+                  "const": "vitest-json"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "testFiles"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "format": {
+                  "const": "checks-json"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "requiredChecks"
+              ]
+            }
+          }
+        ]
       }
     }
   }

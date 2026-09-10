@@ -13,7 +13,7 @@ export interface AnalysisRunsRepository {
     updates: Partial<Omit<AnalysisRunRecord, 'runId' | 'createdAt'>>
   ): AnalysisRunRecord | null;
   findById(runId: string): AnalysisRunRecord | null;
-  findByStoreId(storeId: string, limit?: number): AnalysisRunRecord[];
+  findByStoreId(storeId: string, limit?: number, offset?: number): AnalysisRunRecord[];
   findByMissionId(missionId: string): AnalysisRunRecord[];
   findLatestByStore(storeId: string): AnalysisRunRecord | null;
   deleteById(runId: string): boolean;
@@ -46,11 +46,7 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
       record.completedAt = row.completed_at;
     }
     if (row.metadata) {
-      try {
-        record.metadata = JSON.parse(row.metadata);
-      } catch {
-        record.metadata = undefined;
-      }
+      record.metadata = JSON.parse(row.metadata);
     }
 
     validateAnalysisRunRecord(record);
@@ -59,6 +55,9 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
 
   function create(run: Omit<AnalysisRunRecord, 'createdAt' | 'updatedAt'>): AnalysisRunRecord {
     const now = new Date().toISOString();
+    validateAnalysisRunRecord({ ...run, createdAt: now, updatedAt: now });
+    const store = db.prepare('SELECT marketplace, currency FROM stores WHERE store_id = ?').get(run.storeId) as { marketplace: string; currency: string } | undefined;
+    if (!store || store.marketplace !== run.marketplace || store.currency !== run.currency) throw new Error('Analysis run store identity mismatch.');
     const metadata = run.metadata ? JSON.stringify(run.metadata) : null;
 
     if (run.metadata) {
@@ -67,18 +66,16 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
 
     const stmt = db.prepare(`
       INSERT INTO analysis_runs (
-        run_id, store_id, marketplace, currency, mission_id,
+        run_id, store_id, mission_id,
         report_snapshot_id, status, recommendations_count,
         blocked_reason, started_at, completed_at, metadata,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
       run.runId,
       run.storeId,
-      run.marketplace,
-      run.currency,
       run.missionId || null,
       run.reportSnapshotId,
       run.status,
@@ -111,6 +108,7 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
     }
 
     const now = new Date().toISOString();
+    validateAnalysisRunRecord({ ...existing, ...updates, updatedAt: now });
     const metadata =
       updates.metadata !== undefined ? JSON.stringify(updates.metadata) : undefined;
 
@@ -163,28 +161,29 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
 
   function findById(runId: string): AnalysisRunRecord | null {
     const stmt = db.prepare(`
-      SELECT * FROM analysis_runs WHERE run_id = ?
+      SELECT runs.*, stores.marketplace, stores.currency FROM analysis_runs AS runs
+      JOIN stores ON stores.store_id = runs.store_id WHERE run_id = ?
     `);
     const row = stmt.get(runId);
     return row ? rowToRecord(row) : null;
   }
 
-  function findByStoreId(storeId: string, limit = 50): AnalysisRunRecord[] {
+  function findByStoreId(storeId: string, limit = 50, offset = 0): AnalysisRunRecord[] {
     const stmt = db.prepare(`
-      SELECT * FROM analysis_runs
-      WHERE store_id = ?
-      ORDER BY created_at DESC
-      LIMIT ?
+      SELECT runs.*, stores.marketplace, stores.currency FROM analysis_runs AS runs
+      JOIN stores ON stores.store_id = runs.store_id WHERE runs.store_id = ?
+      ORDER BY runs.created_at DESC, run_id DESC
+      LIMIT ? OFFSET ?
     `);
-    const rows = stmt.all(storeId, limit);
+    const rows = stmt.all(storeId, limit, offset);
     return rows.map(rowToRecord);
   }
 
   function findByMissionId(missionId: string): AnalysisRunRecord[] {
     const stmt = db.prepare(`
-      SELECT * FROM analysis_runs
-      WHERE mission_id = ?
-      ORDER BY created_at DESC
+      SELECT runs.*, stores.marketplace, stores.currency FROM analysis_runs AS runs
+      JOIN stores ON stores.store_id = runs.store_id WHERE mission_id = ?
+      ORDER BY runs.created_at DESC, run_id DESC
     `);
     const rows = stmt.all(missionId);
     return rows.map(rowToRecord);
@@ -192,9 +191,9 @@ export function createAnalysisRunsRepository(db: Database.Database): AnalysisRun
 
   function findLatestByStore(storeId: string): AnalysisRunRecord | null {
     const stmt = db.prepare(`
-      SELECT * FROM analysis_runs
-      WHERE store_id = ?
-      ORDER BY created_at DESC
+      SELECT runs.*, stores.marketplace, stores.currency FROM analysis_runs AS runs
+      JOIN stores ON stores.store_id = runs.store_id WHERE runs.store_id = ?
+      ORDER BY runs.created_at DESC, run_id DESC
       LIMIT 1
     `);
     const row = stmt.get(storeId);

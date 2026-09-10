@@ -166,6 +166,7 @@ const validIntentKeys = new Set<string>([
   'settings:ai-and-local',
   'settings:scheduler',
   'settings:delivery',
+  'settings:v16-dev', // V1.6 开发者工作区
 ]);
 
 function intentKey(intent: Pick<NavigationIntent, 'workspace' | 'subview'>): string {

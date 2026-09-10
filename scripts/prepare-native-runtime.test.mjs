@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
@@ -63,7 +64,7 @@ describe('read-only source and isolated Electron native runtime', () => {
     expect(command.args).toEqual([
       fixture.sourcePaths.prebuildInstallPath,
       '--runtime=electron',
-      '--target=28.3.3',
+      '--target=44.2.0',
       '--arch=x64',
       '--platform=win32',
     ]);
@@ -75,7 +76,7 @@ describe('read-only source and isolated Electron native runtime', () => {
     expect(sanitizedNativeEnvironment({
       PATH: 'safe-path',
       npm_config_runtime: 'electron',
-      NPM_CONFIG_TARGET: '28.3.3',
+      NPM_CONFIG_TARGET: '44.2.0',
       npm_config_build_from_source: 'true',
       npm_config_target_arch: 'arm64',
       npm_execpath: 'unsafe-cli',
@@ -83,28 +84,28 @@ describe('read-only source and isolated Electron native runtime', () => {
     })).toEqual({ PATH: 'safe-path' });
   });
 
-  it('pins isolated Electron and packaged probes to ABI 119', () => {
+  it('pins isolated Electron and packaged probes to ABI 149', () => {
     expect(probeInputForMode('electron', {
       executablePath: 'D:\\electron.exe',
       betterSqliteRoot: 'D:\\better-sqlite3',
       duckdbRoot: 'D:\\duckdb',
-      electronVersion: '28.3.3',
+      electronVersion: '44.2.0',
     })).toMatchObject({
-      expectedElectronVersion: '28.3.3',
+      expectedElectronVersion: '44.2.0',
       expectedModulesAbi: EXPECTED_ELECTRON_MODULES_ABI,
     });
     expect(() => validateNativeProbeObserved(
       {
         sqliteValue: 1,
         duckdbValue: 1,
-        electronVersion: '28.3.3',
+        electronVersion: '44.2.0',
         modulesAbi: '118',
       },
       {
-        expectedElectronVersion: '28.3.3',
+        expectedElectronVersion: '44.2.0',
         expectedModulesAbi: EXPECTED_ELECTRON_MODULES_ABI,
       },
-    )).toThrow(/ABI mismatch.*119.*118/i);
+    )).toThrow(/ABI mismatch.*149.*118/i);
   });
 
   it('verifies Node source bindings read-only and refuses an in-place repair', () => {
@@ -113,7 +114,7 @@ describe('read-only source and isolated Electron native runtime', () => {
     const result = prepareNativeRuntime(
       { mode: 'node', packageExe: '' },
       {
-        electronMetadata: { version: '28.3.3' },
+        electronMetadata: { version: '44.2.0' },
         sourcePaths: fixture.sourcePaths,
         withLock: (callback) => callback(),
         runProbe: () => observedRuntime(process.versions.modules, null),
@@ -129,7 +130,7 @@ describe('read-only source and isolated Electron native runtime', () => {
     expect(() => prepareNativeRuntime(
       { mode: 'node', packageExe: '' },
       {
-        electronMetadata: { version: '28.3.3' },
+        electronMetadata: { version: '44.2.0' },
         sourcePaths: fixture.sourcePaths,
         withLock: (callback) => callback(),
         runProbe: () => {
@@ -146,18 +147,18 @@ describe('read-only source and isolated Electron native runtime', () => {
     const result = prepareNativeRuntime(
       { mode: 'package', packageExe: fixture.executablePath },
       {
-        electronMetadata: { version: '28.3.3' },
+        electronMetadata: { version: '44.2.0' },
         packagePaths: fixture.packagePaths,
         withLock: (callback) => callback(),
         runProbe: (input) => {
           probeInput = input;
-          return observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '28.3.3');
+          return observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '44.2.0');
         },
       },
     );
     expect(probeInput).toMatchObject({
       executablePath: fixture.executablePath,
-      expectedElectronVersion: '28.3.3',
+      expectedElectronVersion: '44.2.0',
       expectedModulesAbi: EXPECTED_ELECTRON_MODULES_ABI,
     });
     expect(result).toMatchObject({
@@ -172,7 +173,7 @@ describe('read-only source and isolated Electron native runtime', () => {
     let stagedBindingPath;
     const result = withPreparedIsolatedElectronRuntime(
       fixture.sourcePaths,
-      { version: '28.3.3' },
+      { version: '44.2.0' },
       (preparation) => {
         stagedBindingPath = preparation.bindings.sqlite.path;
         expect(fs.readFileSync(stagedBindingPath, 'utf8')).toBe('isolated-electron-sqlite');
@@ -203,7 +204,7 @@ describe('read-only source and isolated Electron native runtime', () => {
         runProbe: (input) => {
           expect(input.betterSqliteRoot).not.toBe(fixture.sourcePaths.betterSqliteRoot);
           expect(input.duckdbRoot).toBe(fixture.sourcePaths.duckdbRoot);
-          return observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '28.3.3');
+          return observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '44.2.0');
         },
       },
     );
@@ -212,13 +213,39 @@ describe('read-only source and isolated Electron native runtime', () => {
     expect(fs.existsSync(path.dirname(path.dirname(path.dirname(stagedBindingPath))))).toBe(false);
   });
 
+  it('loads shipped N-API prebuilds without invoking an ABI-specific installer', () => {
+    const fixture = sourceFixture();
+    const sqliteBindingPath = path.join(fixture.sourcePaths.betterSqliteRoot, 'prebuilds', 'win32-x64.node');
+    fs.mkdirSync(path.dirname(sqliteBindingPath));
+    fs.writeFileSync(sqliteBindingPath, 'shipped-napi-prebuild');
+    const before = sha256File(sqliteBindingPath);
+    const result = withPreparedIsolatedElectronRuntime({ ...fixture.sourcePaths, sqliteBindingPath, sqliteNapi: true, runtimeDependencyRoots: [] },
+      { version: '44.2.0' }, p => p, {
+        withLock: work => work(),
+        executeCommand: () => { throw new Error('N-API must not download or rebuild'); },
+        runProbe: input => {
+          expect(fs.readFileSync(path.join(input.betterSqliteRoot, 'prebuilds', 'win32-x64.node'), 'utf8')).toBe('shipped-napi-prebuild');
+          return observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '44.2.0');
+        },
+      });
+    expect(result.bindings.sqlite.sha256).toBe(before);
+    expect(sha256File(sqliteBindingPath)).toBe(before);
+    expect(fs.existsSync(result.bindings.sqlite.path)).toBe(false);
+  });
+
+  it('actually enters the CLI on Windows and rejects invalid modes with a nonzero exit', () => {
+    const run = spawnSync(process.execPath, [path.resolve('scripts/prepare-native-runtime.js'), '--mode=invalid'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(/--mode must be one of/);
+  });
+
   it('cleans isolated staging and preserves source hashes when downstream packaging fails', () => {
     const fixture = sourceFixture();
     const before = fixture.sourceHashes();
     let stagedRoot;
     expect(() => withPreparedIsolatedElectronRuntime(
       fixture.sourcePaths,
-      { version: '28.3.3' },
+      { version: '44.2.0' },
       (preparation) => {
         stagedRoot = preparation.bindings.sqlite.path;
         throw new Error('builder failed');
@@ -231,7 +258,7 @@ describe('read-only source and isolated Electron native runtime', () => {
             'isolated-electron-sqlite',
           );
         },
-        runProbe: () => observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '28.3.3'),
+        runProbe: () => observedRuntime(EXPECTED_ELECTRON_MODULES_ABI, '44.2.0'),
       },
     )).toThrow(/builder failed/i);
     expect(fixture.sourceHashes()).toEqual(before);
@@ -318,7 +345,7 @@ function sourceFixture() {
   fs.writeFileSync(path.join(fileUriRoot, 'index.js'), 'file-uri');
   const sourcePaths = {
     kind: 'source-native-runtime',
-    electronVersion: '28.3.3',
+    electronVersion: '44.2.0',
     executablePath,
     betterSqliteRoot,
     betterSqlitePackageJson,
@@ -353,7 +380,7 @@ function packageFixture() {
   return {
     executablePath,
     packagePaths: {
-      electronVersion: '28.3.3',
+      electronVersion: '44.2.0',
       executablePath,
       betterSqliteRoot: directory,
       duckdbRoot: directory,

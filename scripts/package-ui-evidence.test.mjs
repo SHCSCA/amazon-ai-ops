@@ -1,3 +1,6 @@
+import { validPackageUiWorkspaceCheck, validPackageUiMinimumWindow } from './package-ui-evidence.test-fixture.mjs';
+import { V16_MODULE_INTENT_MAP } from '../apps/desktop/src/renderer/mission-control/workspaces/v16-module-router';
+import { packageUiBindingFixture } from './package-ui-evidence.test-fixture.mjs';
 import {
   copyFileSync,
   linkSync,
@@ -26,6 +29,7 @@ const USER_DATA_DIR = 'D:\\Temp\\amazon-ai-ops-package-ui\\profile-copy';
 const PROTECTED_DB_PATH = 'C:\\Users\\wz\\AppData\\Roaming\\@amazon-ai-ops\\desktop\\amazon-ai-ops.db';
 const AUTHORITY_SELECTION_PATH = 'C:\\Temp\\current-production-authority-selection.json';
 const CURRENT_ARTIFACT_ROOT = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-current-'));
+const { validProfileLockIsolation, validRunEvidenceBinding, validAuthorityBinding, bindRunAttemptArtifacts, validLogicalArtifact, validProfileLineageState, canonicalJsonForTest, validCheckpointComposition } = packageUiBindingFixture(CURRENT_ARTIFACT_ROOT, USER_DATA_DIR);
 const requireFromLocalDb = createRequire(
   path.resolve('packages', 'local-db', 'package.json'),
 );
@@ -41,6 +45,8 @@ const {
   EXPECTED_PACKAGE_UI_SCALES,
   EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
+  EXPECTED_PACKAGE_UI_MODULES,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_WIDE_PROFILE,
@@ -117,6 +123,7 @@ const {
   validateObjectWorkspaceExperienceEvidence,
   validateObjectInspectorEvidence,
   validateWorkspaceRuntimeMetrics,
+  validatePackageMinimumWindow,
   validRunDiagnostics,
   waitForPackageProcessCleanup,
   waitForBoundedElectronClose,
@@ -142,29 +149,48 @@ describe('bounded packaged Electron shutdown', () => {
 });
 
 describe('packaged Electron viewport restoration', () => {
-  it('waits through a delayed Windows unmaximize restore and returns only after the requested content size is stable', async () => {
-    let maximized = true;
+  it.each([1, 3])('applies the same two-pixel DPI tolerance while setting the native viewport (offset %i)', async (offset) => {
+    let size = [0, 0];
+    const window = {
+      focus() {}, show() {},
+      isDestroyed: () => false,
+      isFullScreen: () => false,
+      isMaximized: () => false,
+      isMinimized: () => false,
+      getContentSize: () => size,
+      setContentSize: (width, height) => { size = [width + offset, height + offset]; },
+    };
+    const electronApp = { evaluate: (callback, settings) => callback(
+      { BrowserWindow: { getAllWindows: () => [window] } },
+      { ...settings, restoreTimeoutMs: 100, stabilityMs: 10, pollMs: 1 },
+    ) };
+    const result = setElectronViewport(electronApp, { width: 1366, height: 768 });
+    if (offset <= 2) await expect(result).resolves.toBeUndefined();
+    else await expect(result).rejects.toThrow(/viewport did not stabilize/);
+  });
+
+  it.each(['maximized', 'minimized'])('waits through a delayed Windows %s restore and returns only after the requested content size is stable', async (state) => {
+    let inactive = true;
     let contentSize = [1200, 785];
     const requestedSizes = [];
+    const restore = () => {
+      setTimeout(() => { inactive = false; }, 5);
+      setTimeout(() => { contentSize = [1200, 785]; }, 25);
+    };
     const window = {
       focus() {},
       getContentSize: () => [...contentSize],
       isDestroyed: () => false,
       isFullScreen: () => false,
-      isMaximized: () => maximized,
+      isMaximized: () => state === 'maximized' && inactive,
+      isMinimized: () => state === 'minimized' && inactive,
       setContentSize(width, height) {
-        requestedSizes.push({ height, maximized, width });
+        requestedSizes.push({ height, inactive, width });
         contentSize = [width, height];
       },
       show() {},
-      unmaximize() {
-        setTimeout(() => {
-          maximized = false;
-        }, 5);
-        setTimeout(() => {
-          contentSize = [1200, 785];
-        }, 25);
-      },
+      unmaximize: restore,
+      restore,
     };
     const electronApp = {
       evaluate: async (callback, argument) => callback({
@@ -177,7 +203,7 @@ describe('packaged Electron viewport restoration', () => {
 
     expect(contentSize).toEqual([1200, 700]);
     expect(requestedSizes.length).toBeGreaterThan(0);
-    expect(requestedSizes.every((entry) => entry.maximized === false)).toBe(true);
+    expect(requestedSizes.every((entry) => entry.inactive === false)).toBe(true);
   });
 });
 
@@ -281,76 +307,45 @@ describe('workspace authentication probe', () => {
     })).resolves.toEqual(attestation);
   });
 
-  it('opens the current store connection workbench from an existing Mission Control workspace', async () => {
+  it.each([false, true])('opens the exact connection entry through the six-module sidebar (collapsed=%s)', async (initiallyCollapsed) => {
+    let collapsed = initiallyCollapsed;
+    let expanded = false;
     let workbenchVisible = false;
-    const workbench = {
-      isVisible: async () => workbenchVisible,
-      waitFor: async () => {
-        if (!workbenchVisible) throw new Error('workbench was not opened');
-      },
-    };
-    const navButton = {
-      click: async () => {
-        workbenchVisible = true;
-      },
-      first: () => navButton,
-      getAttribute: async () => null,
-      waitFor: async () => undefined,
-    };
+    const clicks = [];
     const page = {
+      waitForFunction: async () => undefined,
+      getByRole: (_role, { name }) => {
+        expect(name).toBe('展开主导航');
+        return { isVisible: async () => collapsed, click: async () => { collapsed = false; clicks.push('expand'); } };
+      },
       locator: (selector) => {
-        if (selector === '[data-login-connection-status]') return workbench;
-        if (selector === 'nav[aria-label="主业务导航"]') {
-          return { waitFor: async () => undefined };
-        }
-        if (selector === 'nav[aria-label="主业务导航"] button.nav-item') {
-          return { filter: () => navButton };
-        }
+        if (selector === '[data-login-connection-status]') return {
+          isVisible: async () => workbenchVisible,
+          waitFor: async () => { expect(workbenchVisible).toBe(true); },
+        };
+        if (selector === 'nav[aria-label="主业务导航"]') return { waitFor: async () => undefined };
+        if (selector === '.app-sidebar [data-operator-module="system-settings"]') return {
+          count: async () => 1,
+          getAttribute: async () => expanded ? 'true' : 'false',
+          click: async () => { expanded = true; clicks.push('system-settings'); },
+        };
+        if (selector === '.app-sidebar [data-operator-entry="settings/ai-and-local"]') return {
+          count: async () => expanded && !collapsed ? 1 : 0,
+          getAttribute: async () => null,
+          click: async () => { workbenchVisible = true; clicks.push('settings/ai-and-local'); },
+        };
         throw new Error(`unexpected selector: ${selector}`);
       },
     };
-
     await expect(openStoreScopedConnectionWorkbench(page)).resolves.toEqual({
-      navigated: true,
-      surface: 'store-scoped-connection-workbench',
+      navigated: true, surface: 'store-scoped-connection-workbench',
     });
+    expect(clicks).toEqual([...(initiallyCollapsed ? ['expand'] : []), 'system-settings', 'settings/ai-and-local']);
+    await expect(openStoreScopedConnectionWorkbench(page)).resolves.toEqual({
+      navigated: false, surface: 'store-scoped-connection-workbench',
+    });
+    expect(clicks).toHaveLength(initiallyCollapsed ? 3 : 2);
   });
-
-  it('uses the production System Settings navigation entry that owns the connection workbench', async () => {
-    let selectedLabel = null;
-    const workbench = {
-      isVisible: async () => false,
-      waitFor: async () => undefined,
-    };
-    const navButton = {
-      click: async () => undefined,
-      first: () => navButton,
-      getAttribute: async () => 'page',
-      waitFor: async () => undefined,
-    };
-    const page = {
-      locator: (selector) => {
-        if (selector === '[data-login-connection-status]') return workbench;
-        if (selector === 'nav[aria-label="主业务导航"]') {
-          return { waitFor: async () => undefined };
-        }
-        if (selector === 'nav[aria-label="主业务导航"] button.nav-item') {
-          return {
-            filter: ({ hasText }) => {
-              selectedLabel = hasText;
-              return navButton;
-            },
-          };
-        }
-        throw new Error(`unexpected selector: ${selector}`);
-      },
-    };
-
-    await openStoreScopedConnectionWorkbench(page);
-
-    expect(selectedLabel).toBe('系统设置');
-  });
-
   it('selects the first explicit active Store Gate option deterministically without retaining an unbounded label', () => {
     expect(selectDeterministicEvidenceStoreCandidate([
       { label: '请选择店铺', value: '' },
@@ -608,7 +603,7 @@ function withValidAppContent(run) {
     'dist/renderer/assets/index.js': 'renderer-bundle',
     'dist/renderer/index.html': '<main>renderer</main>',
     'node_modules/runtime/index.js': 'runtime-dependency',
-    'package.json': JSON.stringify({ main: 'dist/main/index.js', name: '@amazon-ai-ops/desktop', version: '1.5.0' }),
+    'package.json': JSON.stringify({ main: 'dist/main/index.js', name: '@amazon-ai-ops/desktop', version: JSON.parse(readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version }),
     'playwright-browsers/chrome-win64/chrome.exe': 'chromium-runtime',
   };
   for (const [relativePath, content] of Object.entries(files).reverse()) {
@@ -2445,23 +2440,7 @@ describe('saved-login navigation retry contract', () => {
 });
 
 function validMetrics(expected, overrides = {}) {
-  return {
-    activeNavigation: { count: 1, label: expected.label },
-    aria: { brokenReferences: [], duplicateIds: [] },
-    h1: { count: 1, labels: [expected.heading] },
-    horizontalOverflow: { violations: [] },
-    operatorCopy: { forbiddenMatches: [], textLength: 128, textSha256: HASH_A },
-    primaryAction: { count: 1, labels: ['继续'] },
-    previewMarkers: [],
-    rendererUrl: 'file:///D:/resources/app/dist/renderer/index.html',
-    root: { count: 1, subview: expected.subview, workspace: expected.workspace },
-    scrollOwnership: {
-      defaultOwner: { declared: true, matchCount: 1, scrollTop: 0 },
-      unlabelledActiveOwners: [],
-    },
-    viewport: { height: 700, width: 1200 },
-    ...overrides,
-  };
+  return { ...validPackageUiWorkspaceCheck(expected).metrics, ...overrides };
 }
 
 function validProcessSnapshot(overrides = {}) {
@@ -2481,100 +2460,9 @@ function validProcessIsolation() {
   return buildProcessIsolationEvidence(validProcessSnapshot(), validProcessSnapshot({ attempts: 1 }));
 }
 
-function validProfileLockIsolation(
-  profileId = 'fixture-profile',
-  invocationId = 'fixture-invocation',
-) {
-  const binding = {
-    invocationIdSha256: evidenceModule.sha256Buffer(
-      Buffer.from(invocationId, 'utf8'),
-    ),
-    profileId,
-    rootPathSha256: evidenceModule.sha256Buffer(Buffer.from(
-      path.resolve(USER_DATA_DIR).replace(/\\/g, '/').toLowerCase(),
-      'utf8',
-    )),
-  };
-  const snapshot = {
-    binding,
-    claim: 'bounded-quiescent-exclusive-open-attestation',
-    exclusiveOpen: {
-      allEntriesHeld: true,
-      closeFailureCount: 0,
-      closeFailures: [],
-      directoryCount: 1,
-      entryCount: 2,
-      fileCount: 1,
-      heldHandleCount: 2,
-      method: 'win32-createfile-share-none-stable-tree/v1',
-    },
-    exclusiveProbe: { created: true, removed: true },
-    kind: 'package-ui-profile-lock-snapshot',
-    observedAt: '2026-07-17T06:00:00.000Z',
-    passed: true,
-    rootIdentityStable: true,
-    schemaVersion: 'package-ui-profile-lock-snapshot/v2',
-    tree: {
-      criticalEntries: [],
-      criticalEntryCount: 0,
-      identitySetSha256: HASH_B,
-      limits: {
-        maxCriticalEntries: 1_024,
-        maxEntries: 20_000,
-        maxPathCharacters: 2_000_000,
-      },
-      pathSetSha256: HASH_A,
-      secondSnapshotEntryCount: 2,
-      totalPathCharacters: 42,
-      treeStable: true,
-    },
-    unresolved: [],
-    unresolvedCount: 0,
-  };
-  snapshot.tree.attestationSha256 = evidenceModule.sha256Buffer(Buffer.from(
-    canonicalJsonForTest({
-      binding: snapshot.binding,
-      criticalEntries: snapshot.tree.criticalEntries,
-      criticalEntryCount: snapshot.tree.criticalEntryCount,
-      directoryCount: snapshot.exclusiveOpen.directoryCount,
-      entryCount: snapshot.exclusiveOpen.entryCount,
-      fileCount: snapshot.exclusiveOpen.fileCount,
-      identitySetSha256: snapshot.tree.identitySetSha256,
-      pathSetSha256: snapshot.tree.pathSetSha256,
-      secondSnapshotEntryCount: snapshot.tree.secondSnapshotEntryCount,
-      totalPathCharacters: snapshot.tree.totalPathCharacters,
-    }),
-    'utf8',
-  ));
-  return {
-    after: structuredClone(snapshot),
-    before: structuredClone(snapshot),
-    passed: true,
-  };
-}
 
-function validRunEvidenceBinding(
-  profileId,
-  {
-    attemptId = `test-attempt-${profileId}`,
-    invocationId = `test-invocation-${profileId}`,
-    runGroupId = 'package-ui-test-run-group',
-    runnerContractSha256 = buildPackageUiRunnerContract().sha256,
-  } = {},
-) {
-  return {
-    attemptId,
-    invocationId,
-    profileId,
-    profileLockBinding:
-      validProfileLockIsolation(profileId, invocationId).before.binding,
-    runGroupId,
-    runnerContractSha256,
-    scalePercent: profileId === PACKAGE_UI_WIDE_PROFILE.id
-      ? PACKAGE_UI_WIDE_PROFILE.scalePercent
-      : Number.parseInt(profileId.split('-')[0], 10),
-  };
-}
+
+
 
 function runEvidenceBindingFromAttempt(manager, profileId, attemptContext) {
   return validRunEvidenceBinding(profileId, {
@@ -2585,18 +2473,7 @@ function runEvidenceBindingFromAttempt(manager, profileId, attemptContext) {
   });
 }
 
-function validAuthorityBinding() {
-  return {
-    authoritySelectionReceiptSha256: HASH_A,
-    canonicalDatabasePathSha256: HASH_B,
-    databaseFileIdentity: {
-      deviceId: '1',
-      fileId: '2',
-      hardLinkCount: 1,
-      stabilityTokenSha256: HASH_A,
-    },
-  };
-}
+
 
 function validInvocation(manager, suffix = '001') {
   const invocationId = `test-invocation-${suffix}`;
@@ -2621,56 +2498,7 @@ function artifactReferences(manifest, role = 'workspace-screenshot') {
   }));
 }
 
-function bindRunAttemptArtifacts(run, label) {
-  const binding = run.evidenceBinding;
-  const profileRoot = mkdtempSync(path.join(
-    CURRENT_ARTIFACT_ROOT,
-    'profile-attempt-artifacts-',
-  ));
-  const root = path.join(
-    profileRoot,
-    binding.profileId,
-    `0001-${binding.attemptId}`,
-  );
-  mkdirSync(root, { recursive: true });
-  const records = [];
-  const seenRecords = new Set();
-  const add = (record, role) => {
-    if (!record || seenRecords.has(record)) return;
-    seenRecords.add(record);
-    records.push({ record, role });
-  };
-  for (const screenshot of run.screenshots || []) add(screenshot, 'workspace');
-  for (const check of run.workspaceChecks || []) {
-    add(check.screenshot, 'workspace-check');
-    add(check.inspectorEvidence?.screenshot, 'inspector');
-  }
-  for (const check of run.subviewChecks || []) {
-    add(check.screenshot, 'subview');
-    add(check.inspectorEvidence?.screenshot, 'subview-inspector');
-  }
-  for (const check of run.overlayChecks || []) add(check.screenshot, 'overlay');
-  add(run.schedulerReadOnlyRuntime?.artifact, 'main-runtime');
-  records.forEach(({ record, role }, index) => {
-    const filePath = path.join(
-      root,
-      `${String(index + 1).padStart(3, '0')}-${role}-${label}.bin`,
-    );
-    const bytes = role === 'main-runtime'
-      ? Buffer.from(JSON.stringify(run.schedulerReadOnlyRuntime.marker), 'utf8')
-      : Buffer.from(`${role}-${label}-${index + 1}`);
-    writeFileSync(filePath, bytes);
-    record.path = filePath;
-    record.sha256 = evidenceModule.sha256File(filePath);
-    record.sizeBytes = readFileSync(filePath).byteLength;
-  });
-  run.attemptArtifacts = buildPackageUiAttemptArtifactManifest(root);
-  run.artifactReferences = buildPackageUiAttemptArtifactReferences(
-    run.attemptArtifacts,
-    run,
-  );
-  return run;
-}
+
 
 function bindSingleSuccessfulAttemptArtifact(run, manifest) {
   const file = manifest.files[0];
@@ -2689,28 +2517,9 @@ function bindSingleSuccessfulAttemptArtifact(run, manifest) {
   return run;
 }
 
-function validLogicalArtifact() {
-  return {
-    method: 'readonly-sqlite-online-backup',
-    remainingPages: 0,
-    schemaVersion: 'sqlite-authority-currentness-proof/v1',
-    sha256: HASH_A,
-    sizeBytes: 4096,
-    totalPages: 1,
-  };
-}
 
-function validProfileLineageState() {
-  return {
-    capturedAt: '2026-07-17T06:00:01.100Z',
-    logicalDatabase: validLogicalArtifact(),
-    profileContent: {
-      fileCount: 10,
-      sha256: HASH_B,
-      sizeBytes: 8192,
-    },
-  };
-}
+
+
 
 function validAttemptArtifacts(label = 'fixture') {
   const root = mkdtempSync(path.join(CURRENT_ARTIFACT_ROOT, 'attempt-artifacts-'));
@@ -2718,14 +2527,7 @@ function validAttemptArtifacts(label = 'fixture') {
   return buildPackageUiAttemptArtifactManifest(root);
 }
 
-function canonicalJsonForTest(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJsonForTest).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) =>
-      `${JSON.stringify(key)}:${canonicalJsonForTest(value[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
+
 
 function changedRunnerContract(contract) {
   const binding = {
@@ -2744,74 +2546,7 @@ function changedRunnerContract(contract) {
   };
 }
 
-function validCheckpointComposition(
-  runGroupId,
-  runnerContractSha256,
-  profileRuns,
-) {
-  const root = mkdtempSync(path.join(CURRENT_ARTIFACT_ROOT, 'checkpoints-'));
-  const checkpointRecords = PACKAGE_UI_PROFILE_SEQUENCE.map((profileId, index) => {
-    const runEvidence = profileRuns.find(
-      (candidate) => candidate.profileId === profileId,
-    );
-    const profileState = validProfileLineageState();
-    const attemptPayload = {
-      attemptArtifacts: runEvidence.attemptArtifacts,
-      artifactReferences: runEvidence.artifactReferences,
-      attemptId: runEvidence.evidenceBinding.attemptId,
-      cleanupEvidence: {
-        chromiumProcessLineage: runEvidence.chromiumProcessLineage ?? null,
-        packageProcessIsolation: runEvidence.packageProcessIsolation,
-        profileLockIsolation: runEvidence.profileLockIsolation,
-        profileProcessIsolation: runEvidence.profileProcessIsolation,
-      },
-      diagnostics: runEvidence.diagnostics,
-      failure: runEvidence.failure,
-      invocationId: runEvidence.evidenceBinding.invocationId,
-      kind: 'package-ui-profile-attempt',
-      passed: true,
-      profileId,
-      profileState,
-      resumable: true,
-      runGroupId,
-      runnerContractSha256,
-      schemaVersion: 'package-ui-profile-attempt/v3',
-    };
-    const attemptReceipt = writeImmutableEnvelope(
-      path.join(root, 'attempts', profileId, '0001-attempt.json'),
-      attemptPayload,
-    );
-    const payload = {
-      attemptReceipt,
-      kind: 'package-ui-profile-checkpoint',
-      profileId,
-      profileState,
-      runEvidence,
-      runGroupId,
-      runnerContractSha256,
-      schemaVersion: 'package-ui-profile-checkpoint/v2',
-      sequence: index + 1,
-    };
-    const file = writeImmutableEnvelope(
-      path.join(root, 'checkpoints', `${profileId}.json`),
-      payload,
-    );
-    const envelope = JSON.parse(readFileSync(file.path, 'utf8'));
-    return {
-      file,
-      payloadSha256: envelope.payloadSha256,
-      profileId,
-    };
-  });
-  return {
-    checkpointRecords,
-    finalProfileState: validProfileLineageState(),
-    packageLineage: { chromium: { sha256: HASH_A } },
-    passed: true,
-    runGroupId,
-    runnerContractSha256,
-  };
-}
+
 
 function validChromiumLineage() {
   const profilePathBindingSha256 = HASH_A;
@@ -3007,7 +2742,7 @@ function validDatabaseMutationAudit() {
     dataVersion: 1,
     pageCount: 12,
     pageSize: 4096,
-    schemaVersion: 9,
+    schemaVersion: 8,
     userVersion: 9,
   };
   return {
@@ -3294,7 +3029,8 @@ function validRun(scale) {
     ),
     passed: true,
     scalePercent: scale.scalePercent,
-    screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+    minimumWindow: scale.scalePercent === 100 ? validPackageUiMinimumWindow(CURRENT_ARTIFACT_ROOT) : null,
+    screenshots: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => ({
       path: `${workspace.workspace}-${scale.scalePercent}.png`,
       scalePercent: scale.scalePercent,
       sha256: HASH_A,
@@ -3304,9 +3040,9 @@ function validRun(scale) {
     schedulerReadOnlyRuntime,
     session: validSession(`${scale.scalePercent}-compact`),
     subviewChecks: [validSubviewCheck(scale)],
-    viewport: { height: 700, width: 1200 },
+    viewport: { height: 768, width: 1366 },
     profileProcessIsolation: validProcessIsolation(),
-    workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => {
+    workspaceChecks: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => {
       const objectWorkspace = workspace.workspace === 'product' || workspace.workspace === 'diagnosis';
       return {
         compositeEvidence: { passed: true },
@@ -3318,7 +3054,7 @@ function validRun(scale) {
         } : null,
         passed: true,
         settleEvidence: { passed: true },
-        keyboardEvidence: { passed: true },
+        ...validPackageUiWorkspaceCheck(workspace),
         subview: workspace.subview,
         workspace: workspace.workspace,
       };
@@ -3452,7 +3188,7 @@ function validWideRun() {
       compositeEvidence: { passed: true },
       experienceEvidence: null,
       inspectorEvidence: null,
-      keyboardEvidence: { passed: true },
+      ...validPackageUiWorkspaceCheck(workspace, PACKAGE_UI_WIDE_PROFILE.viewport),
       passed: true,
       settleEvidence: { passed: true },
       subview: workspace.subview,
@@ -3471,7 +3207,7 @@ function validWideRun() {
 }
 
 describe('package UI evidence CLI contract', () => {
-  it('reasserts the schema-v8 secret-blind login boundary for direct runtime callers', () => {
+  it('reasserts the schema-v9 secret-blind login boundary for direct runtime callers', () => {
     expect(assertPackageUiRuntimeLoginBoundary({
       allowInteractiveLogin: true,
       allowSavedLogin: false,
@@ -4305,7 +4041,7 @@ describe('isolated profile database provenance', () => {
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
       '--authority-selection', AUTHORITY_SELECTION_PATH,
-    ])).toThrow(/schema v8.*--allow-interactive-login/i);
+    ])).toThrow(/schema v9.*--allow-interactive-login/i);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
       '--expected-app-content-sha256', HASH_B,
@@ -4758,7 +4494,7 @@ describe('unpacked app-content manifest', () => {
       writeFileSync(path.join(root, 'package.json'), JSON.stringify({
         main: '../../outside.js',
         name: '@amazon-ai-ops/desktop',
-        version: '1.5.0',
+        version: JSON.parse(readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version,
       }), 'utf8');
       expect(() => buildAppContentManifest(root)).toThrow(/package\.json main must be a safe relative path/i);
     });
@@ -4961,6 +4697,32 @@ describe('package workspace runtime contract', () => {
     })));
   });
 
+  it('captures each production entry exactly once under its actual six-module parent at both scales and wide', () => {
+    expect(EXPECTED_PACKAGE_UI_MODULES).toEqual(V16_MODULE_INTENT_MAP.map((module) => ({ id: module.id, workspaces: [...module.workspaceIds] })));
+    const keys = EXPECTED_PACKAGE_UI_ENTRIES.map((entry) => `${entry.workspace}/${entry.subview}`).sort();
+    expect(keys).toHaveLength(22);
+    expect(new Set(keys).size).toBe(22);
+    expect(keys).toEqual(V16_MODULE_INTENT_MAP.flatMap((module) => module.intents.map((intent) => `${intent.workspace}/${intent.subview}`)).sort());
+    expect(PACKAGE_UI_WIDE_PROFILE.workspaces).toEqual(EXPECTED_PACKAGE_UI_ENTRIES);
+  });
+
+  it.each([
+    ['missing native capture', (run) => { delete run.minimumWindow; }, 'MINIMUM_WINDOW_BOUNDS'],
+    ['content viewport substituted for native minimum', (run) => { run.minimumWindow.nativeWindow.bounds.height = 740; }, 'MINIMUM_WINDOW_BOUNDS'],
+    ['missing middle entry', (run) => { run.minimumWindow.workspaceChecks.splice(3, 1); }, 'MINIMUM_WINDOW_ENTRIES_NOT_EXACT'],
+    ['raw metrics missing despite passed flag', (run) => { delete run.workspaceChecks[0].metrics; }, 'H1_CONTRACT'],
+    ['wrong module despite passed flag', (run) => { run.workspaceChecks[0].metrics.activeNavigation.activeModuleIds = ['system-settings']; }, 'ACTIVE_NAVIGATION_CONTRACT'],
+    ['keyboard focus mismatch despite passed flag', (run) => { run.workspaceChecks[0].keyboardEvidence.restored.focusedSubview = 'events'; }, 'WORKSPACE_TAB_KEYBOARD_STATE_MISMATCH'],
+    ['reused regular capture for minimum window', (run) => { run.minimumWindow.screenshots[0] = run.screenshots[0]; run.minimumWindow.workspaceChecks[0].screenshot = run.screenshots[0]; }, 'V9_SCREENSHOT_PATH_REUSED'],
+  ])('rejects %s without trusting the saved passed flags', (_name, mutate, code) => {
+    const run = validRun(EXPECTED_PACKAGE_UI_SCALES[0]);
+    expect(validatePackageMinimumWindow(run.minimumWindow).passed).toBe(true);
+    mutate(run);
+    const result = evaluatePackageUiProfileEvidence('100-compact', run);
+    expect(result.passed).toBe(false);
+    expect(result.relevantViolations).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
+  });
+
   it('locks the read-only production scheduler subview without duplicating the settings workspace matrix entry', () => {
     expect(EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS).toEqual([{
       workspace: 'settings',
@@ -5068,7 +4830,7 @@ describe('package workspace runtime contract', () => {
       const baselineReceipt = runner.indexOf(
         "requestPackageUiDatabaseCheckpoint(page, 'post-bootstrap')",
       );
-      const navigation = runner.indexOf('for (const workspace');
+      const navigation = runner.indexOf('await capturePackageWorkspaceMatrix(');
       const finalCheckpoint = runner.indexOf("'post-navigation'", navigation);
       const electronClose = runner.indexOf('await electronApp.close()', finalCheckpoint);
       const runtimeMarker = runner.indexOf('collectPackageUiReadOnlyRuntimeEvidence');
@@ -5093,7 +4855,7 @@ describe('package workspace runtime contract', () => {
     for (const runner of [compact, wide]) {
       const authentication = runner.indexOf('const session = await ensureAuthenticatedWorkspace');
       const viewportRestore = runner.indexOf('await restoreElectronViewportAfterAuthentication', authentication);
-      const navigation = runner.indexOf('for (const workspace', authentication);
+      const navigation = runner.indexOf('await capturePackageWorkspaceMatrix(', authentication);
       expect(authentication).toBeGreaterThan(0);
       expect(viewportRestore).toBeGreaterThan(authentication);
       expect(navigation).toBeGreaterThan(viewportRestore);
@@ -5840,7 +5602,7 @@ describe('read-only interactions and evidence completeness', () => {
     ]));
   });
 
-  it('requires protected state, process cleanup, 100% and 125%, ten workspaces, keyboard evidence, three overlays and hashed screenshots', () => {
+  it('requires protected state, cleanup, both scales, all 22 entries, native minimum, wide, keyboard and overlay evidence', () => {
     const runGroupId = 'package-ui-test-run-group';
     const runnerContract = buildPackageUiRunnerContract();
     const runs = EXPECTED_PACKAGE_UI_SCALES.map(validRun);
@@ -5865,7 +5627,7 @@ describe('read-only interactions and evidence completeness', () => {
           payloadSha256: HASH_A,
         },
       },
-      schemaVersion: 8,
+      schemaVersion: 9,
       interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
       isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
       packageProcessIsolation: validProcessIsolation(),
@@ -5919,7 +5681,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       nonNullManifestFailure,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_MANIFEST_FAILURE_NOT_NULL' }),
+      expect.objectContaining({ code: 'V9_MANIFEST_FAILURE_NOT_NULL' }),
     ]));
 
     const extraScaleRun = structuredClone(valid);
@@ -5927,7 +5689,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       extraScaleRun,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_SCALE_RUN_SET_NOT_EXACT' }),
+      expect.objectContaining({ code: 'V9_SCALE_RUN_SET_NOT_EXACT' }),
     ]));
 
     const nestedProfileLockExtra = structuredClone(valid);
@@ -5948,7 +5710,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       duplicateWorkspaceKey,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_WORKSPACE_CHECKS_NOT_EXACT' }),
+      expect.objectContaining({ code: 'V9_WORKSPACE_CHECKS_NOT_EXACT' }),
     ]));
 
     const extraSubviewKey = structuredClone(valid);
@@ -5959,7 +5721,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       extraSubviewKey,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_SUBVIEW_CHECKS_NOT_EXACT' }),
+      expect.objectContaining({ code: 'V9_SUBVIEW_CHECKS_NOT_EXACT' }),
     ]));
 
     const duplicateOverlayKey = structuredClone(valid);
@@ -5969,7 +5731,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       duplicateOverlayKey,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_OVERLAY_CHECKS_NOT_EXACT' }),
+      expect.objectContaining({ code: 'V9_OVERLAY_CHECKS_NOT_EXACT' }),
     ]));
 
     const extraScreenshotKey = structuredClone(valid);
@@ -5980,7 +5742,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       extraScreenshotKey,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_SCREENSHOTS_NOT_EXACT' }),
+      expect.objectContaining({ code: 'V9_SCREENSHOTS_NOT_EXACT' }),
     ]));
 
     const reusedScreenshotAcrossSlots = structuredClone(valid);
@@ -5995,7 +5757,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(evaluatePackageUiEvidenceCompleteness(
       reusedScreenshotAcrossSlots,
     ).violations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'V8_SCREENSHOT_PATH_REUSED' }),
+      expect.objectContaining({ code: 'V9_SCREENSHOT_PATH_REUSED' }),
     ]));
 
     const invocationProfileBindingDrift = structuredClone(valid);
@@ -6173,6 +5935,7 @@ describe('read-only interactions and evidence completeness', () => {
     const legacyV5 = structuredClone(valid);
     legacyV5.schemaVersion = 5;
     for (const run of legacyV5.runs) {
+      run.viewport = { width: 1200, height: 700 };
       delete run.schedulerReadOnlyRuntime;
       delete run.subviewChecks;
     }
@@ -6181,6 +5944,7 @@ describe('read-only interactions and evidence completeness', () => {
 
     const legacyV6 = structuredClone(valid);
     legacyV6.schemaVersion = 6;
+    for (const run of legacyV6.runs) run.viewport = { width: 1200, height: 700 };
     delete legacyV6.interactiveLoginContract;
     expect(evaluatePackageUiEvidenceCompleteness(legacyV6)).toEqual({ passed: true, violations: [] });
 
@@ -6188,6 +5952,8 @@ describe('read-only interactions and evidence completeness', () => {
     expect(unsupportedSchema.violations).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'PACKAGE_UI_SCHEMA_UNSUPPORTED' }),
     ]));
+    expect(evaluatePackageUiEvidenceCompleteness({ ...valid, schemaVersion: 8 }).violations)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'PACKAGE_UI_SCHEMA_UNSUPPORTED' })]));
 
     const missingTopLevelProfileIsolation = structuredClone(valid);
     delete missingTopLevelProfileIsolation.profileProcessIsolation;
@@ -6361,7 +6127,7 @@ describe('read-only interactions and evidence completeness', () => {
     ]));
 
     const rounded125 = structuredClone(valid);
-    rounded125.runs.find((run) => run.scalePercent === 125).viewport.height = 702;
+    rounded125.runs.find((run) => run.scalePercent === 125).viewport.height += 2;
     const rounded125Result = evaluatePackageUiEvidenceCompleteness(rounded125);
     expect(rounded125Result.violations).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -6373,7 +6139,7 @@ describe('read-only interactions and evidence completeness', () => {
     ]));
 
     const drifted125 = structuredClone(valid);
-    drifted125.runs.find((run) => run.scalePercent === 125).viewport.height = 703;
+    drifted125.runs.find((run) => run.scalePercent === 125).viewport.height += 3;
     expect(evaluatePackageUiEvidenceCompleteness(drifted125).violations).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'SCALE_VIEWPORT_MISMATCH' }),
     ]));

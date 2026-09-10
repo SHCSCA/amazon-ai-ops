@@ -297,6 +297,7 @@ function packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManif
   };
   for (const run of packageUi?.runs || []) {
     for (const screenshot of run?.screenshots || []) pushArtifact(screenshot);
+    for (const screenshot of run?.minimumWindow?.screenshots || []) pushArtifact(screenshot);
     for (const overlay of run?.overlayChecks || []) pushArtifact(overlay?.screenshot);
     for (const workspace of run?.workspaceChecks || []) {
       pushArtifact(workspace?.inspectorEvidence?.screenshot);
@@ -674,10 +675,10 @@ function packageUiEvidenceIsStrictlyValid({
         wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
       ));
-    const currentPackageUiCompleteness = packageUi.schemaVersion === 8
+    const currentPackageUiCompleteness = packageUi.schemaVersion === 9
       ? evaluatePackageUiEvidenceCompleteness(packageUi)
       : null;
-    const packageUiSchemaContractValid = packageUi.schemaVersion === 8
+    const packageUiSchemaContractValid = packageUi.schemaVersion === 9
       && currentPackageUiCompleteness?.passed === true
       && Array.isArray(currentPackageUiCompleteness.violations)
       && currentPackageUiCompleteness.violations.length === 0;
@@ -732,7 +733,7 @@ function packageUiEvidenceIsStrictlyValid({
     const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
       && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
       && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
-    const referencedArtifactsBundled = packageUi.schemaVersion === 8
+    const referencedArtifactsBundled = packageUi.schemaVersion === 9
       && packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath);
     return packageUi.kind === 'package-ui-evidence'
       && packageUiSchemaContractValid

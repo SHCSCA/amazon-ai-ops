@@ -1,12 +1,14 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
 import { initSqlite } from '../db';
 import {
   LISTING_STORE_AUTHORITY_MIGRATION_CHECKSUM,
   LISTING_STORE_AUTHORITY_MIGRATION_VERSION,
+  runListingStoreAuthorityMigration,
   verifyListingStoreAuthoritySchema,
 } from './0004-listing-store-authority';
 
@@ -25,7 +27,8 @@ function tempDatabasePath(): string {
   return path.join(directory, 'app.db');
 }
 
-function preparePreV4Database(databasePath: string) {
+// Unit fixture for the v4 repair itself; a deliberately partial ledger is not a supported startup input.
+function prepareV4RepairFixture(databasePath: string) {
   const storeId = normalizeStoreId('listing-v4-store');
   const database = initSqlite(databasePath);
   database.exec(`
@@ -48,10 +51,19 @@ function preparePreV4Database(databasePath: string) {
   return { database, storeId };
 }
 
+function applyListingMigration(databasePath: string) {
+  const database = new Database(databasePath);
+  try {
+    database.pragma('foreign_keys = ON');
+    runListingStoreAuthorityMigration(database);
+    return database;
+  } catch (error) { database.close(); throw error; }
+}
+
 describe('listing store authority migration v4', () => {
   it('deterministically merges normalized duplicates and preserves loser evidence', () => {
     const databasePath = tempDatabasePath();
-    const { database, storeId } = preparePreV4Database(databasePath);
+    const { database, storeId } = prepareV4RepairFixture(databasePath);
     try {
       const older = database.prepare(`
         INSERT INTO listing_content (
@@ -79,7 +91,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       const rows = upgraded.prepare(`
         SELECT id, asin, title FROM listing_content WHERE store_id = ?
@@ -128,7 +140,7 @@ describe('listing store authority migration v4', () => {
 
   it('preserves a non-NULL pending Listing duplicate while keeping the valid row authoritative', () => {
     const databasePath = tempDatabasePath();
-    const { database, storeId } = preparePreV4Database(databasePath);
+    const { database, storeId } = prepareV4RepairFixture(databasePath);
     let validId = 0;
     let pendingId = 0;
     let pendingVersionId = 0;
@@ -170,7 +182,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       expect(upgraded.prepare(`
         SELECT id, title, store_id AS storeId,
@@ -204,7 +216,7 @@ describe('listing store authority migration v4', () => {
 
   it('does not claim a pending-quarantined ambiguous version while merging its parent', () => {
     const databasePath = tempDatabasePath();
-    const { database, storeId } = preparePreV4Database(databasePath);
+    const { database, storeId } = prepareV4RepairFixture(databasePath);
     let olderId = 0;
     let pendingVersionId = 0;
     try {
@@ -240,7 +252,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       expect(upgraded.prepare(`
         SELECT listing_content_id AS listingContentId, store_id AS storeId
@@ -263,7 +275,7 @@ describe('listing store authority migration v4', () => {
 
   it('selects the newest keeper by SQLite time and uses id as a deterministic tie-breaker', () => {
     const databasePath = tempDatabasePath();
-    const { database, storeId } = preparePreV4Database(databasePath);
+    const { database, storeId } = prepareV4RepairFixture(databasePath);
     let actuallyNewestId = 0;
     let tieBreakerId = 0;
     try {
@@ -292,7 +304,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       expect(upgraded.prepare(`
         SELECT id, title
@@ -317,7 +329,7 @@ describe('listing store authority migration v4', () => {
 
   it('isolates unowned duplicate rows instead of guessing an owner', () => {
     const databasePath = tempDatabasePath();
-    const { database } = preparePreV4Database(databasePath);
+    const { database } = prepareV4RepairFixture(databasePath);
     try {
       database.exec(`
         INSERT INTO listing_content (store_id, asin, title)
@@ -329,7 +341,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       expect(upgraded.prepare(`
         SELECT COUNT(*) AS count FROM listing_content WHERE store_id IS NULL
@@ -350,7 +362,7 @@ describe('listing store authority migration v4', () => {
 
   it('quarantines every remaining unowned historical object and version', () => {
     const databasePath = tempDatabasePath();
-    const { database } = preparePreV4Database(databasePath);
+    const { database } = prepareV4RepairFixture(databasePath);
     let listingId = 0;
     let versionId = 0;
     try {
@@ -367,7 +379,7 @@ describe('listing store authority migration v4', () => {
       database.close();
     }
 
-    const upgraded = initSqlite(databasePath);
+    const upgraded = applyListingMigration(databasePath);
     try {
       expect(upgraded.prepare(`
         SELECT source_table AS sourceTable, source_row_id AS sourceRowId, status

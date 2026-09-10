@@ -1,4 +1,6 @@
-import type { StoreId, UsCurrency, UsMarketplace } from './store';
+import type { StoreContextEnvelope, StoreId, UsCurrency, UsMarketplace } from './store';
+import type { RunMissionAnalysisResult } from './analysis-authority';
+import type { V16Request, V16Result } from './v16-api';
 
 /**
  * Analysis Run domain contracts.
@@ -34,6 +36,16 @@ export interface AnalysisRunRecord {
 }
 
 export interface AnalysisRunMetadata {
+  storeContext?: StoreContextEnvelope;
+  missionRevision?: number;
+  policyRevision?: number;
+  fingerprint?: string;
+  evidencePackageId?: string;
+  evidencePackageHash?: string;
+  actionBatchId?: string;
+  reusedFromRunId?: string;
+  provenance?: 'analysis-authority/v16';
+  historicalOnly?: boolean;
   /** Product ASIN if this run is scoped to a single product. */
   productId?: string;
   /** Date range for the analysis. */
@@ -68,6 +80,12 @@ export interface AnalysisRunMetadata {
     stack?: string;
   };
   [key: string]: unknown;
+}
+
+export interface AnalysisRunsApi {
+  create(request: V16Request<{ missionId: string }>): Promise<V16Result<RunMissionAnalysisResult>>;
+  query(request: V16Request<{ runId: string }>): Promise<V16Result<AnalysisRunRecord | null>>;
+  list(request: V16Request<{ missionId?: string; status?: AnalysisRunStatus; limit?: number }>): Promise<V16Result<AnalysisRunRecord[]>>;
 }
 
 export interface CreateAnalysisRunInput {

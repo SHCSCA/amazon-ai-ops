@@ -5,7 +5,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ExpectedTargetVersion = 11
+$ExpectedTargetVersion = 20
 
 Add-Type -TypeDefinition @'
 using System;

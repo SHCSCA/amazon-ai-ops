@@ -32,7 +32,7 @@ function createCanonicalPackageFixture(tempDir) {
   fs.mkdirSync(path.join(appContentPath, 'playwright-browsers', 'chrome-win64'), { recursive: true });
   fs.writeFileSync(path.join(appContentPath, 'package.json'), JSON.stringify({
     name: '@amazon-ai-ops/desktop',
-    version: '1.5.0',
+    version: JSON.parse(fs.readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version,
     main: 'dist/main/index.js',
   }));
   fs.writeFileSync(executablePath, 'canonical-unpacked-package');

@@ -571,14 +571,16 @@ export function describeLoginSession(session?: LoginSessionInfo | null): string 
       : '保存账号未与当前 ERP 会话核验';
     return `ERP 已复用登录态；${identity}，本机安全区未更改；${ads}`;
   }
-  const erp = session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录';
+  const erp = session.erpSessionReady === true
+    ? session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录'
+    : 'ERP 会话待确认';
   const ads = session.adsSessionReady === false
     ? session.adsTitle || session.adsUrl
       ? `Ads 页面已打开，当前店铺身份待识别：${session.adsUnavailableReason || '真实广告执行保持阻断'}`
       : `Ads 未连接：${session.adsUnavailableReason || '独立 Ads 会话待授权，广告执行保持阻断'}`
-    : session.adsTitle || session.adsUrl
+    : session.adsSessionReady === true && (session.adsTitle || session.adsUrl)
       ? `Ads 已进入：${session.adsTitle || session.adsUrl}`
-      : 'Ads 会话待确认';
+      : session.adsSessionReady === true ? 'Ads 已连接' : 'Ads 会话待确认';
   return `${erp}；${ads}`;
 }
 
@@ -590,10 +592,9 @@ export function headerSessionStatusLabel(session?: LoginSessionInfo | null): str
   ) {
     return 'ERP 会话复用 · 身份未核验';
   }
-  const erpReady = session.erpSessionReady === true || Boolean(session.erpSessionReused);
-  const adsReady = session.adsSessionReady === true
-    || (session.adsSessionReady === undefined && Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode));
-  if (erpReady && adsReady) return 'ERP/Ads 已连接';
+  const erpReady = session.erpSessionReady === true;
+  const adsReady = session.adsSessionReady === true;
+  if (erpReady && adsReady) return session.sessionIdentityVerified === true ? 'ERP/Ads 已连接' : 'ERP/Ads 身份待确认';
   if (erpReady && session.adsSessionReady === false && Boolean(session.adsTitle || session.adsUrl)) {
     return 'ERP 已连接 · Ads 待识别';
   }
@@ -2350,13 +2351,15 @@ function MissionControlRuntime({
       {missionControl.error && <span className="app-status app-status-warning">Capability 同步失败</span>}
     </>
   );
+  const sessionConfirmed = loginSession?.sessionIdentityVerified === true
+    && loginSession.erpSessionReady === true && loginSession.adsSessionReady === true;
   const sessionStatus = (
     <span
       aria-label={describeLoginSession(loginSession)}
       aria-live="polite"
-      className={`session-line${loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? ' session-line-warning' : ''}`}
+      className={`session-line${sessionConfirmed ? '' : ' session-line-warning'}`}
       role="status"
-      tabIndex={loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? 0 : undefined}
+      tabIndex={sessionConfirmed ? undefined : 0}
       title={describeLoginSession(loginSession)}
     >
       {headerSessionStatusLabel(loginSession)}

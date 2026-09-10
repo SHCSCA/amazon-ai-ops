@@ -62,6 +62,7 @@ function snapshot(overrides: Partial<KeywordBidPageSnapshot> = {}): KeywordBidPa
 }
 
 class FakeKeywordBidPage implements KeywordBidPagePort {
+  async assertServing(): Promise<void> {}
   currentSnapshot = snapshot();
   readonly captures: string[] = [];
   clickCount = 0;
@@ -277,6 +278,12 @@ describe('KeywordBidAdapter', () => {
           cookie: 'must-not-cross-boundary',
         };
       },
+      afterSubmit: (receipt) => {
+        expect(receipt.intentId).toBe('intent-1');
+        expect(page.clickCount).toBe(1);
+        expect(page.captures).not.toContain(input.evidencePaths.after);
+        submitBoundary.push('spent');
+      },
     });
 
     expect(result).toMatchObject({
@@ -295,7 +302,7 @@ describe('KeywordBidAdapter', () => {
         path: 'C:\\trusted\\store-one\\screenshots\\after.png',
       },
     });
-    expect(submitBoundary).toHaveLength(1);
+    expect(submitBoundary).toHaveLength(2);
     expect(page.clickCount).toBe(1);
     expect(JSON.stringify(result)).not.toContain('must-not-cross-boundary');
   });

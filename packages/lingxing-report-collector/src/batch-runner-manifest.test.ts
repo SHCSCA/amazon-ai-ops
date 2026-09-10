@@ -77,7 +77,7 @@ function options(
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[
           '日期', '广告活动', '广告组', '关键词', '展现量', '点击量', '花费', '订单', '销售额',
         ]]), 'Report');
-        XLSX.writeFile(workbook, filePath);
+        fs.writeFileSync(filePath, XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
         return filePath;
       },
     },

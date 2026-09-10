@@ -596,7 +596,7 @@ describe('initGuardedExistingSqlite', () => {
         SELECT MAX(version) AS version
         FROM schema_migrations
         WHERE status = 'applied'
-      `).get()).toEqual({ version: 11 });
+      `).get()).toEqual({ version: 20 });
     } finally {
       observed.database.close();
     }
@@ -723,5 +723,45 @@ describe('initGuardedExistingSqlite', () => {
     } finally {
       afterClose.close();
     }
+  });
+});
+
+
+describe('V1.6 database version and recovery boundary', () => {
+  it.each(['checksum', 'prefix'])('rejects a damaged migration %s before any startup normalization writes', damage => {
+    const filename = tempDbPath();
+    const database = initSqlite(filename);
+    if (damage === 'checksum') database.prepare("UPDATE schema_migrations SET checksum='unknown-contract' WHERE version=19").run();
+    else database.prepare('DELETE FROM schema_migrations WHERE version=2').run();
+    database.pragma('wal_checkpoint(TRUNCATE)'); database.close();
+    const before = fs.readFileSync(filename);
+    expect(() => initSqlite(filename)).toThrow(/ledger contract/);
+    expect(fs.readFileSync(filename)).toEqual(before);
+  });
+  it('backs up the complete pending chain through schema 20 before any legacy normalization', () => {
+    const filename = tempDbPath();
+    const legacy = new Database(filename);
+    legacy.exec("CREATE TABLE recovery_sentinel (value TEXT); INSERT INTO recovery_sentinel VALUES ('keep-me')");
+    legacy.close();
+    const upgraded = initSqlite(filename);
+    try {
+      const backup = filename + '.pre-upgrade-to-v20.bak';
+      expect(fs.existsSync(backup)).toBe(true);
+      const snapshot = new Database(backup, { readonly: true });
+      try {
+        expect(snapshot.prepare('SELECT value FROM recovery_sentinel').get()).toEqual({ value: 'keep-me' });
+        expect(snapshot.prepare("SELECT name FROM sqlite_master WHERE name='schema_migrations'").get()).toBeUndefined();
+      } finally { snapshot.close(); }
+    } finally { upgraded.close(); }
+  });
+
+  it('refuses a newer ledger without changing any database bytes', () => {
+    const filename = tempDbPath();
+    const future = new Database(filename);
+    future.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, status TEXT); INSERT INTO schema_migrations VALUES (21, 'applied')");
+    future.close();
+    const before = fs.readFileSync(filename);
+    expect(() => initSqlite(filename)).toThrow(/newer.*schema|schema.*newer/i);
+    expect(fs.readFileSync(filename)).toEqual(before);
   });
 });

@@ -1,3 +1,4 @@
+import { normalizeStoreContextEnvelope } from './store';
 /**
  * MissionGrant Domain Model Tests
  */
@@ -11,6 +12,8 @@ import {
 
 function makeGrant(overrides: Partial<MissionGrantRecord> = {}): MissionGrantRecord {
   return {
+    contextSnapshot: normalizeStoreContextEnvelope({ storeId: 'store-a', browserProfileId: 'profile-a', businessTimezone: 'America/Los_Angeles', marketplace: 'US', currency: 'USD', businessDate: '2026-09-03', sessionGeneration: 1 }),
+    sessionGeneration: 1,
     grantId: 'grant_1',
     storeId: 'store-a',
     missionId: 'mission-1',
@@ -180,9 +183,10 @@ describe('MissionGrant', () => {
   describe('validateCreateGrantInput', () => {
     it('accepts valid input', async () => {
       const { validateCreateGrantInput } = await import('./mission-grant-domain');
-      const { CreateGrantInput } = await import('./mission-grant-domain');
 
       const input = {
+        contextSnapshot: normalizeStoreContextEnvelope({ storeId: 'jf-us', browserProfileId: 'profile-jf', businessTimezone: 'America/Los_Angeles', marketplace: 'US', currency: 'USD', businessDate: '2026-09-03', sessionGeneration: 1 }),
+        sessionGeneration: 1,
         storeId: 'jf-us',
         missionId: 'mission-001',
         missionRevision: 1,
@@ -214,6 +218,8 @@ describe('MissionGrant', () => {
       const { validateCreateGrantInput } = await import('./mission-grant-domain');
 
       const input = {
+        contextSnapshot: normalizeStoreContextEnvelope({ storeId: 'jf-us', browserProfileId: 'profile-jf', businessTimezone: 'America/Los_Angeles', marketplace: 'US', currency: 'USD', businessDate: '2026-09-03', sessionGeneration: 1 }),
+        sessionGeneration: 1,
         storeId: 'jf-us',
         missionId: 'mission-001',
         missionRevision: 1,
@@ -240,6 +246,8 @@ describe('MissionGrant', () => {
       const { buildMissionGrantRecord } = await import('./mission-grant-domain');
 
       const input = {
+        contextSnapshot: normalizeStoreContextEnvelope({ storeId: 'jf-us', browserProfileId: 'profile-jf', businessTimezone: 'America/Los_Angeles', marketplace: 'US', currency: 'USD', businessDate: '2026-09-03', sessionGeneration: 1 }),
+        sessionGeneration: 1,
         storeId: 'jf-us',
         missionId: 'mission-001',
         missionRevision: 1,

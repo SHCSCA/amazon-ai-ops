@@ -1,4 +1,4 @@
-import type { MissionGrantRecord } from './mission-domain';
+import type { MissionGrantRecord, MissionWriteAuthoritySnapshot } from './mission-domain';
 import type {
   StoreContextEnvelope,
   StoreId,
@@ -157,6 +157,7 @@ export interface AnalysisProposalAuthorization {
 }
 
 export interface AnalysisActionBatchRecord {
+  authority?: MissionWriteAuthoritySnapshot;
   id: string;
   storeId: StoreId;
   missionId: string;

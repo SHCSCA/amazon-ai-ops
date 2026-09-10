@@ -1,14 +1,16 @@
 import {
   normalizeStoreContextEnvelope,
+  normalizeDomainText,
   type PolicyAutonomyMode,
   type PolicyRuntimeRecord,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import type { MissionDomainRepository } from '@amazon-ai-ops/local-db';
+import type { AiCallLogRepository, MissionDomainRepository } from '@amazon-ai-ops/local-db';
 import type { StoreCoordinator } from './store-coordinator';
 import type { StoreScopedObjectMutation } from './store-scoped-objects-ipc';
 
 export const MISSION_DOMAIN_OPERATIONS = [
+  'aiSpend.get', 'aiSpend.save',
   'policies.create', 'policies.get', 'policies.list', 'policies.update',
   'policies.disable', 'policies.archive', 'policies.restore',
   'policyVersions.create', 'policyVersions.get', 'policyVersions.list',
@@ -53,6 +55,7 @@ type MissionDomainRepositoryPort = Pick<MissionDomainRepository,
 >;
 
 export interface MissionDomainServiceOptions {
+  aiCalls?: AiCallLogRepository;
   repository: MissionDomainRepositoryPort;
   storeCoordinator: Pick<StoreCoordinator, 'assertActiveStoreContext'>;
 }
@@ -91,10 +94,12 @@ const EXPERIMENT_EVALUATOR_ACTOR = 'experiment-evaluator';
  * immediately before and immediately after the synchronous repository call.
  */
 export class MissionDomainService {
+  private readonly aiCalls?: AiCallLogRepository;
   private readonly repository: MissionDomainRepositoryPort;
   private readonly storeCoordinator: MissionDomainServiceOptions['storeCoordinator'];
 
   constructor(options: MissionDomainServiceOptions) {
+    this.aiCalls = options.aiCalls;
     this.repository = options.repository;
     this.storeCoordinator = options.storeCoordinator;
   }
@@ -106,6 +111,10 @@ export class MissionDomainService {
   ): unknown {
     const input = rendererInput(rawInput);
     switch (operation) {
+      case 'aiSpend.get': case 'aiSpend.save': return this.run(contextInput, c => {
+        if (!this.aiCalls) throw new Error('AI 费用服务尚未初始化，请重新打开应用。');
+        return operation === 'aiSpend.get' ? this.aiCalls.getSpendProjection(c) : this.aiCalls.saveSpendPolicy(c, input as never);
+      });
       case 'policies.create': return this.run(contextInput, (c) => this.repository.createPolicy(c, withActor(input) as never));
       case 'policies.get': return this.run(contextInput, (c) => this.repository.getPolicy(c, requiredId(input)));
       case 'policies.list': return this.run(contextInput, (c) => this.repository.listPolicies(c, input));
@@ -154,7 +163,7 @@ export class MissionDomainService {
       case 'grants.list': return this.run(contextInput, (c) => this.repository.listMissionGrants(c, requiredString(input, 'missionId')));
       case 'grants.listEvents': return this.run(contextInput, (c) => this.repository.listMissionGrantEvents(c, requiredString(input, 'missionId')));
       case 'grants.revokeHuman': return this.run(contextInput, (c) => this.repository.appendMissionGrantEvent(c, {
-        ...input, eventType: 'revoked', actorId: OPERATOR_ACTOR,
+        ...input, reason: normalizeDomainText(input.reason, 'reason', 2_000), eventType: 'revoked', actorId: OPERATOR_ACTOR,
       } as never));
       case 'decisions.create': return this.run(contextInput, (c) => this.repository.createDecision(c, withActor(input) as never));
       case 'decisions.get': return this.run(contextInput, (c) => this.repository.getDecision(c, requiredId(input)));
@@ -231,7 +240,7 @@ export class MissionDomainService {
       actorId: OPERATOR_ACTOR,
       patch: {
         autonomyMode: input.mode,
-        reason: input.reason ?? `operator_set_${input.mode}`,
+        reason: normalizeDomainText(input.reason, 'reason', 2_000),
       },
     }));
     return this.getAutonomyProjection(contextInput);

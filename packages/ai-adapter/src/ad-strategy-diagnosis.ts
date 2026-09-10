@@ -1,4 +1,5 @@
 import type { AIProvider } from './provider';
+import type { AIResponse } from './types';
 
 export type AdLifecycleStage =
   | 'cold_start'
@@ -344,6 +345,7 @@ export class AdStrategyDiagnoser {
     requestOptions: AdStrategyDiagnosisRequestOptions = {},
   ): Promise<AdStrategyDiagnosisOutput> {
     requestOptions.signal?.throwIfAborted();
+    let currentResponse: AIResponse | undefined;
     try {
       const response = await this.provider.chat(
         [
@@ -369,18 +371,23 @@ export class AdStrategyDiagnoser {
           signal: requestOptions.signal,
         },
       );
-      requestOptions.signal?.throwIfAborted();
+      currentResponse = response;
+      if (requestOptions.signal?.aborted) { response.reportOutput?.('discarded'); requestOptions.signal.throwIfAborted(); }
 
       if (!response.success) {
+        response.reportOutput?.('invalid');
         return this.fallback(input, response.error ? `AI 服务调用失败：${response.error}` : 'AI 服务调用失败，当前使用规则引擎兜底。');
       }
 
-      return this.normalizeOutput(
-        await this.parseOrRepairJson(response.content || '', input, requestOptions),
-        input,
-      );
+      currentResponse = undefined; // Each parse/repair attempt records its own rejected output.
+      const parsed = await this.parseOrRepairJson(response, input, requestOptions);
+      currentResponse = parsed.response;
+      const output = this.normalizeOutput(parsed.value, input);
+      currentResponse.reportOutput?.(output.source === 'ai' ? 'accepted' : 'invalid');
+      return output;
     } catch (error) {
       requestOptions.signal?.throwIfAborted();
+      currentResponse?.reportOutput?.('invalid');
       if (isJsonParseFailure(error)) {
         return this.fallback(input, AI_JSON_FORMAT_FALLBACK_REASON);
       }
@@ -389,15 +396,17 @@ export class AdStrategyDiagnoser {
   }
 
   private async parseOrRepairJson(
-    content: string,
+    response: AIResponse,
     input: AdStrategyDiagnosisInput,
     requestOptions: AdStrategyDiagnosisRequestOptions,
-  ): Promise<unknown> {
+  ): Promise<{ value: unknown; response: AIResponse }> {
     requestOptions.signal?.throwIfAborted();
+    const content = response.content || '';
     try {
-      return parseJsonObject(content);
+      return { value: parseJsonObject(content), response };
     } catch (error) {
       if (!isJsonParseFailure(error)) throw error;
+      response.reportOutput?.('invalid');
       const repairResponse = await this.provider.chat(
         [
           {
@@ -430,15 +439,17 @@ export class AdStrategyDiagnoser {
           signal: requestOptions.signal,
         },
       );
-      requestOptions.signal?.throwIfAborted();
+      if (requestOptions.signal?.aborted) { repairResponse.reportOutput?.('discarded'); requestOptions.signal.throwIfAborted(); }
 
       if (!repairResponse.success) {
+        repairResponse.reportOutput?.('invalid');
         throw new AiJsonParseError(AI_JSON_FORMAT_FALLBACK_REASON);
       }
 
       try {
-        return parseJsonObject(repairResponse.content || '');
+        return { value: parseJsonObject(repairResponse.content || ''), response: repairResponse };
       } catch {
+        repairResponse.reportOutput?.('invalid');
         throw new AiJsonParseError(AI_JSON_FORMAT_FALLBACK_REASON);
       }
     }

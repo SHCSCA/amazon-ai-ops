@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   normalizeStoreContextEnvelope,
   type RegisterAdKeywordIdentityInput,
+  type PolicyVersionRules,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { initSqlite } from '../db';
 import { ExecutionAuthorityRepository } from './execution-authority-repo';
+import { MissionDomainRepository } from './mission-domain-repo';
 
 const NOW = '2026-07-23T02:00:00.000Z';
 const PAGE_HASH = 'a'.repeat(64);
@@ -41,13 +43,14 @@ function createHarness(
   totalImpactBudget = 10,
   actionCount = 1,
   issuerType: 'human' | 'policy' = 'human',
+  rateLimits: Partial<PolicyVersionRules> = {},
 ): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-execution-repo-'));
   tempDirs.push(directory);
   const databasePath = path.join(directory, 'app.db');
   const database = initSqlite(databasePath);
   databases.push(database);
-  seedStage5Authority(database, maxChangePct, totalImpactBudget, actionCount, issuerType);
+  seedStage5Authority(database, maxChangePct, totalImpactBudget, actionCount, issuerType, rateLimits);
   const context = normalizeStoreContextEnvelope({
     storeId: 'store-one',
     browserProfileId: 'profile-one',
@@ -71,6 +74,7 @@ function seedStage5Authority(
   totalImpactBudget: number,
   actionCount: number,
   issuerType: 'human' | 'policy',
+  rateLimits: Partial<PolicyVersionRules>,
 ): void {
   database.prepare(`
     INSERT INTO stores (
@@ -140,6 +144,7 @@ function seedStage5Authority(
       { code: 'kill_switch', detail: 'stop' },
     ],
     killSwitch: false,
+    ...rateLimits,
   };
   database.prepare(`
     INSERT INTO policy_versions (
@@ -349,11 +354,11 @@ function seedStage5Authority(
       allowed_ad_entity_ids_json, max_change_pct, total_impact_budget,
       expires_at, policy_version_id, policy_revision, required_evidence_json,
       stop_conditions_json, issuer_type, issuer_actor_id, issued_at,
-      created_session_generation
+      created_session_generation, authority_json
     ) VALUES ('grant-1', 'store-one', 'US', 'USD', 'mission-1', 1,
       ?, 1, '["set_keyword_bid"]', ?,
        ?, ?, '2026-07-24T00:00:00.000Z', 'policy-version-1', 1, ?, ?,
-      ?, ?, ?, 4)
+      ?, ?, ?, 4, ?)
   `).run(
     decisionIds,
     adEntityIds,
@@ -364,6 +369,10 @@ function seedStage5Authority(
     issuerType,
     issuerType === 'policy' ? 'policy-engine' : 'operator',
     NOW,
+    JSON.stringify(new MissionDomainRepository(database).captureWriteAuthority(normalizeStoreContextEnvelope({
+      storeId: 'store-one', browserProfileId: 'profile-one', marketplace: 'US', currency: 'USD',
+      businessTimezone: 'America/Los_Angeles', businessDate: '2026-07-22', sessionGeneration: 4,
+    }))),
   );
   database.prepare(`
     INSERT INTO mission_grant_events (
@@ -634,11 +643,7 @@ describe('ExecutionAuthorityRepository', () => {
     })]);
     expect(recovery.revokedGrantIds).toEqual(['grant-1']);
     expect(recovery.missionsRequiringStop).toEqual(['mission-1']);
-    expect(harness.database.prepare(`
-      SELECT event_type AS eventType FROM mission_grant_events
-      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get()).toEqual({ eventType: 'revoked' });
+    expect(new MissionDomainRepository(harness.database).getMissionGrantTerminalEvent(harness.context, 'grant-1')?.eventType).toBe('invalidated');
     expect(harness.repository.getExecutionBatch(harness.context, created.projection.batch.id))
       .toMatchObject({ batch: { status: 'unknown' }, jobs: [{ status: 'unknown' }] });
     expect(() => harness.database.prepare(`
@@ -655,6 +660,38 @@ describe('ExecutionAuthorityRepository', () => {
       }),
     ]);
     expect(repeatedRecovery.missionsRequiringStop).toEqual(['mission-1']);
+    const mission = new MissionDomainRepository(harness.database, { now: () => new Date(NOW) });
+    expect(mission.getMissionGrant(harness.context, 'grant-1')?.usage).toMatchObject({
+      status: 'invalidated', spentSlots: 1, spentImpactCents: 10, residualSlots: 0, residualImpactCents: 0,
+    });
+    expect(mission.listMissionGrantEvents(harness.context, 'mission-1').map(event => event.eventType).sort())
+      .toEqual(['consumed','invalidated','issued','reserved','spent']);
+    expect(() => harness.database.prepare("UPDATE mission_grant_events SET impact_cents=0 WHERE event_type='spent'").run()).toThrow(/append-only/);
+    expect(() => harness.database.prepare("DELETE FROM mission_grant_events WHERE event_type='spent'").run()).toThrow(/append-only/);
+  });
+
+  it.each([
+    { maxDailyActionCount: 1, cooldownMinutes: 0, denied: /单日动作数/ },
+    { maxDailyActionCount: 10, cooldownMinutes: 90, denied: /冷却期/ },
+  ])('charges pending and UNKNOWN slots to current policy limits: $denied', ({ denied, ...limits }) => {
+    const h = createHarness(10, 10, 1, 'human', limits);
+    const identity = registerIdentity(h);
+    const job = h.repository.createExactExecutionBatch(h.context, 'grant-1').projection.jobs[0];
+    const domain = new MissionDomainRepository(h.database, { now: () => new Date(NOW) });
+    const check = () => domain.assertPolicyUsage(h.context, 'policy-version-1', ['opaque-keyword-1']);
+    expect(check).not.toThrow();
+    const start = h.repository.startJob(h.context, { jobId: job.id, expectedRevision: job.revision });
+    const preflight = h.repository.recordPreflight(h.context, { jobId: job.id, expectedRevision: start.job.revision,
+      observedBidCents: 149, pageIdentityHash: PAGE_HASH, canonicalKeywordId: identity.canonicalKeywordId, objectRevision: identity.objectRevision });
+    const intent = h.repository.recordSubmitIntent(h.context, { jobId: job.id, expectedRevision: preflight.job.revision,
+      submitIntentId: 'policy-limit-intent', commandFingerprint: COMMAND_HASH, before: evidence(identity.canonicalKeywordId, 149, 'policy-limit-before') });
+    expect(check).toThrow(denied);
+    expect(domain.getMissionGrant(h.context, 'grant-1')?.usage).toMatchObject({ reservedSlots: 1, spentSlots: 0, residualSlots: 0 });
+    h.repository.markUnknown(h.context, { jobId: job.id, expectedRevision: intent.job.revision, reasonCode: 'connection_lost' });
+    expect(check).toThrow(denied);
+    expect(domain.getMissionGrant(h.context, 'grant-1')?.usage).toMatchObject({ status: 'invalidated', reservedSlots: 0, spentSlots: 1, residualSlots: 0 });
+    expect(() => h.repository.recordSubmitIntent(h.context, { jobId: job.id, expectedRevision: intent.job.revision,
+      submitIntentId: 'cannot-retry', commandFingerprint: COMMAND_HASH, before: evidence(identity.canonicalKeywordId, 149, 'retry-before') })).toThrow();
   });
 
   it('atomically backfills causal evidence and durably suppresses completed startup reconciliation', () => {
@@ -832,11 +869,7 @@ describe('ExecutionAuthorityRepository', () => {
         expect.objectContaining({ id: first!.id, status: 'unknown' }),
         expect.objectContaining({ id: second!.id, status: 'cancelled' }),
       ]));
-    expect(harness.database.prepare(`
-      SELECT event_type AS eventType FROM mission_grant_events
-      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get()).toEqual({ eventType: 'revoked' });
+    expect(new MissionDomainRepository(harness.database).getMissionGrantTerminalEvent(harness.context, 'grant-1')?.eventType).toBe('invalidated');
   });
 
   it('rejects a grant that expands the V1 execution batch above ten actions', () => {
@@ -864,7 +897,7 @@ describe('ExecutionAuthorityRepository', () => {
       expectedRevision: cancelled.job.revision,
     })).toThrow(/terminal/i);
 
-    const intentHarness = createHarness();
+    const intentHarness = createHarness(10, 10, 1, 'human', { maxDailyActionCount: 1, cooldownMinutes: 90 });
     const identity = registerIdentity(intentHarness);
     const job = intentHarness.repository.createExactExecutionBatch(intentHarness.context, 'grant-1')
       .projection.jobs[0]!;
@@ -909,6 +942,11 @@ describe('ExecutionAuthorityRepository', () => {
       fromStatus: 'intent_written',
       toStatus: 'blocked',
     });
+    const domain = new MissionDomainRepository(intentHarness.database, { now: () => new Date(NOW) });
+    expect(domain.getMissionGrant(intentHarness.context, 'grant-1')?.usage).toMatchObject({
+      status: 'invalidated', reservedSlots: 0, spentSlots: 0, residualSlots: 0,
+    });
+    expect(() => domain.assertPolicyUsage(intentHarness.context, 'policy-version-1', ['opaque-keyword-1'])).not.toThrow();
   });
 
   it('allows BLOCKED only before intent and UNKNOWN only after intent', () => {
@@ -1189,7 +1227,7 @@ describe('ExecutionAuthorityRepository', () => {
       .toEqual([]);
     expect(harness.database.prepare(`
       SELECT event_type AS eventType FROM mission_grant_events
-      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
+      WHERE store_id = 'store-one' AND grant_id = 'grant-1' AND event_type NOT IN ('reserved','spent')
       ORDER BY created_at DESC, id DESC LIMIT 1
     `).get()).toEqual({ eventType: 'issued' });
   });
@@ -1470,12 +1508,14 @@ function seedSecondStoreAuthority(database: Database.Database): StoreContextEnve
     decision_ids_json, action_revision, allowed_action_types_json,
     allowed_ad_entity_ids_json, max_change_pct, total_impact_budget, expires_at,
     policy_version_id, policy_revision, required_evidence_json, stop_conditions_json,
-    issuer_type, issuer_actor_id, issued_at, created_session_generation
+    issuer_type, issuer_actor_id, issued_at, created_session_generation, authority_json
   ) SELECT 'grant-2', 'store-two', marketplace, currency, 'mission-2',
     mission_revision, '["decision-2"]', action_revision, allowed_action_types_json,
     allowed_ad_entity_ids_json, max_change_pct, total_impact_budget, expires_at,
     'policy-version-2', policy_revision, required_evidence_json, stop_conditions_json,
-    issuer_type, issuer_actor_id, issued_at, created_session_generation
+    issuer_type, issuer_actor_id, issued_at, created_session_generation,
+    json_set(authority_json, '$.context.storeId', 'store-two', '$.context.browserProfileId', 'profile-two',
+      '$.issuerRef', CASE issuer_type WHEN 'policy' THEN 'policy-runtime:store-two:1' ELSE 'operator' END)
     FROM mission_grants WHERE store_id = 'store-one' AND id = 'grant-1'`
   ).run();
   database.prepare(`INSERT INTO mission_grant_events (

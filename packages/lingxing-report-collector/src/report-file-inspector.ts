@@ -81,7 +81,7 @@ function readWorkbookRows(filePath: string): unknown[][] {
   const extension = path.extname(filePath).toLowerCase();
   const workbook = extension === '.csv' || extension === '.txt' || extension === '.tsv'
     ? XLSX.read(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''), { type: 'string' })
-    : XLSX.readFile(filePath, { cellDates: false, raw: false });
+    : XLSX.read(fs.readFileSync(filePath), { type: 'buffer', cellDates: false, raw: false });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) return [];
   const worksheet = workbook.Sheets[sheetName];

@@ -340,7 +340,7 @@ export interface DecisionRow {
   currency?: string;
   mission_id: string;
   mission_revision: number;
-  analysis_run_id?: string;
+  analysis_run_id?: string | null;
   batch_id: string;
   recommendation_id: string;
   action_type: string;

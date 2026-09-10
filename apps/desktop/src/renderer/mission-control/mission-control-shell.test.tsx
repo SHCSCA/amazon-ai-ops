@@ -43,8 +43,8 @@ describe('MissionControlShell operator modules', () => {
     );
 
     expect(markup.match(/data-operator-module=/g)).toHaveLength(6);
-    expect(markup).toContain('data-operator-module="today-decisions"');
-    expect(markup).toContain('data-operator-module="memory-settings"');
+    expect(markup).toContain('data-operator-module="today"');
+    expect(markup).toContain('data-operator-module="system-settings"');
     expect(markup).not.toContain('data-navigation-section="mission"');
     expect(markup).not.toMatch(/部分可用|PRODUCTION_NATIVE|LEGACY_ADAPTER|原型/);
   });

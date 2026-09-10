@@ -539,7 +539,7 @@ function writeRunManifest(fixture, {
       runGroupId: fixture.runGroupId,
       runnerContractSha256: fixture.contract.sha256,
     },
-    schemaVersion: 8,
+    schemaVersion: 9,
   };
   const manifestPath = path.join(fixture.groupRoot, 'manifests', `${id}.json`);
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
@@ -838,7 +838,7 @@ describe('inspect-package-ui-run-group', () => {
     expect(result.resume.pathInputsRequired).toEqual([]);
   });
 
-  it('accepts a fully bound current v8 manifest without importing Playwright', () => {
+  it('accepts a fully bound current v9 manifest without importing Playwright', () => {
     const fixture = createFixture();
     writeRunManifest(fixture);
     const result = inspectFixture(fixture);
@@ -1128,7 +1128,7 @@ describe('inspect-package-ui-run-group', () => {
     expect(inspector.cleanupProven(cleanup)).toBe(false);
   });
 
-  it('rejects a minimal passed checkpoint when the current profile-specific v8 validator fails', () => {
+  it('rejects a minimal passed checkpoint when the current profile-specific v9 validator fails', () => {
     const fixture = createFixture();
     const success = writeAttempt(fixture, { failure: null, passed: true });
     writeCheckpoint(fixture, { receipts: [success] });
@@ -1161,7 +1161,7 @@ describe('inspect-package-ui-run-group', () => {
     expect(validation.passed).toBe(false);
     expect(validation.relevantViolations.length).toBeGreaterThan(0);
     expect(validation.relevantViolations.map((item) => item.code)).toContain(
-      'V8_WORKSPACE_CHECKS_NOT_EXACT',
+      'V9_WORKSPACE_CHECKS_NOT_EXACT',
     );
     expect(require.cache[require.resolve('./playwright-loader.js')]).toBeUndefined();
   });

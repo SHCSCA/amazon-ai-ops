@@ -1,3 +1,5 @@
+import { V16_API_VERSION } from '@amazon-ai-ops/shared-types/src/v16-api';
+import type { AnalysisRunsApi } from '@amazon-ai-ops/shared-types';
 /**
  * Analysis Runs List View
  *
@@ -14,6 +16,8 @@ import './analysis-runs-list-view.css';
 
 export interface AnalysisRunsListViewProps {
   storeContext: StoreContextEnvelope;
+  missionId?: string;
+  refreshToken?: unknown;
   onRunSelect?: (runId: string) => void;
   selectedRunId?: string;
 }
@@ -24,14 +28,14 @@ interface ListState {
   error: string | null;
 }
 
-function getAnalysisRunsApi() {
-  return (window as unknown as { electronAPI?: { analysisRuns?: {
-    list: (storeContext: StoreContextEnvelope, input?: Record<string, unknown>) => Promise<unknown>;
-  }}}).electronAPI?.analysisRuns;
+function getAnalysisRunsApi(): AnalysisRunsApi | undefined {
+  return (window as unknown as { electronAPI?: { analysisRuns?: AnalysisRunsApi } }).electronAPI?.analysisRuns;
 }
 
 export function AnalysisRunsListView({
   storeContext,
+  missionId,
+  refreshToken,
   onRunSelect,
   selectedRunId,
 }: AnalysisRunsListViewProps): JSX.Element {
@@ -50,13 +54,13 @@ export function AnalysisRunsListView({
       const api = getAnalysisRunsApi();
       if (!api) {
         if (!cancelled) {
-          setState({ runs: [], loading: false, error: 'Analysis runs API not available.' });
+          setState({ runs: [], loading: false, error: '分析服务不可用，请重新启动当前版本应用。' });
         }
         return;
       }
 
       try {
-        const raw = await api.list(storeContext, {});
+        const raw = await api.list({ apiVersion: V16_API_VERSION, storeContext, input: { missionId } });
         if (cancelled) return;
 
         const response = raw as ListRunsResponse;
@@ -64,18 +68,18 @@ export function AnalysisRunsListView({
           setState({
             runs: [],
             loading: false,
-            error: response.error?.message ?? 'Failed to load analysis runs.',
+            error: response.error ?? '无法加载分析记录，请刷新后重试。',
           });
           return;
         }
 
-        setState({ runs: response.runs ?? [], loading: false, error: null });
+        setState({ runs: response.data, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
         setState({
           runs: [],
           loading: false,
-          error: err instanceof Error ? err.message : 'Unknown error.',
+          error: err instanceof Error ? err.message : '分析请求失败，请重试。',
         });
       }
     }
@@ -85,7 +89,7 @@ export function AnalysisRunsListView({
     return () => {
       cancelled = true;
     };
-  }, [storeContext]);
+  }, [storeContext, missionId, refreshToken]);
 
   if (state.loading) {
     return (
@@ -139,19 +143,19 @@ export function AnalysisRunsListView({
             aria-pressed={selectedRunId === run.runId}
           >
             <div className="run-header">
-              <span className="run-id">{run.runId}</span>
+              <span>{run.metadata?.reusedFromRunId ? '复用分析结果' : '分析记录'}</span>
               <RunStatusIndicator status={run.status} />
             </div>
 
             {run.missionId && (
               <div className="run-metadata">
-                <span className="run-mission">任务: {run.missionId}</span>
+                <span className="run-mission">{run.metadata?.productId ?? '当前运营任务'}</span>
               </div>
             )}
 
             <div className="run-stats">
               <span className="run-recommendations">
-                {run.recommendationsCount} 条建议
+                {run.recommendationsCount} 条建议{run.metadata?.historicalOnly ? ' · 历史记录，仅供查看' : ''}
               </span>
               <span className="run-time">
                 {formatRelativeTime(run.createdAt)}

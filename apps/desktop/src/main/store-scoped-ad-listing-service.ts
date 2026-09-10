@@ -445,7 +445,7 @@ export class StoreScopedAdListingService {
       const orders = finiteNumber(row.orders);
       const sourceRowCount = finiteNumber(row.source_row_count);
       const hasUniqueObservableGrain = kind !== 'target'
-        || sourceRowCount === 1;
+        || sourceRowCount === finiteNumber(row.observation_date_count);
       const hasRequiredKeywordMatchType = authorityReportType !== 'keyword' || Boolean(matchType);
       const stableAuthority = kind === 'target'
         && authorityReportType

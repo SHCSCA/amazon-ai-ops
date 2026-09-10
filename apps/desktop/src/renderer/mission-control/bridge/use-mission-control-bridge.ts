@@ -59,7 +59,9 @@ export function useMissionControlBridge(): MissionControlBridgeState {
     const contextEpoch = currentRef.current.contextEpoch;
     const requestId = nextRequestId('bootstrap');
     const capture = captureMissionControlRequest(requestId, contextEpoch, context);
-    setPhase('loading');
+    // Same-context refresh must not tear down an in-flight workspace operation.
+    // Authority changes still clear capabilities and enter loading in the effect below.
+    setPhase(current => current === 'ready' ? 'ready' : 'loading');
     setError(null);
     try {
       const response = await getMissionControlWindowApi().missionControl.query({

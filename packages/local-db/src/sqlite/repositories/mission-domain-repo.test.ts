@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -5,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   normalizeStoreContextEnvelope,
+  type DecisionRecord,
   type MissionRecord,
   type PolicyVersionRules,
   type PolicyVersionRecord,
@@ -14,10 +16,22 @@ import { initSqlite } from '../db';
 import {
   MissionDomainRepository,
   MissionDomainRepositoryError,
+  businessDayEnd,
   type MissionDomainRepositoryErrorCode,
 } from './mission-domain-repo';
 
 const NOW = '2026-07-22T12:00:00.000Z';
+
+describe('Experiment business-day boundaries', () => {
+  it.each([
+    ['2026-03-07', '2026-03-08T08:00:00.000Z'],
+    ['2026-03-08', '2026-03-09T07:00:00.000Z'],
+    ['2026-10-31', '2026-11-01T07:00:00.000Z'],
+    ['2026-11-01', '2026-11-02T08:00:00.000Z'],
+  ])('ends %s at the actual Los Angeles midnight %s', (date, expected) => {
+    expect(businessDayEnd(date, 'America/Los_Angeles')).toBe(expected);
+  });
+});
 const tempDirs: string[] = [];
 const databases: Database.Database[] = [];
 
@@ -193,8 +207,9 @@ function seedProductScopeAuthorityWithOnlyUnrelatedMetric(
       store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
       source_file_count, metric_row_count, reconciliation_count,
       started_at, completed_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, 'completed', 1, 1, 1, ?, ?, ?)
-  `).run(context.storeId, runId, `scope-idempotency-${lineageKey}-${context.storeId}`, 'b'.repeat(64), batchId, NOW, NOW, NOW);
+    ) VALUES (?, ?, ?, ?, ?, 'completed', ?, 1, ?, ?, ?, ?)
+  `).run(context.storeId, runId, `scope-idempotency-${lineageKey}-${context.storeId}`, 'b'.repeat(64), batchId,
+    lineageKey === 'baseline' ? 8 : 1, lineageKey === 'baseline' ? 8 : 1, NOW, NOW, NOW);
   const reportFileId = Number(database.prepare(`
     INSERT INTO report_files (
       store_id, batch_id, report_type, file_path, file_name, file_size,
@@ -216,6 +231,7 @@ function seedProductScopeAuthorityWithOnlyUnrelatedMetric(
     fileHash,
     NOW,
   );
+  if (lineageKey === 'baseline') seedOtherExperimentReports(database, context, batchId, runId);
   database.prepare(`
     INSERT INTO policies (
       id, store_id, name, scope, status, priority, active_version_id,
@@ -466,7 +482,7 @@ function seedExperimentObservationAuthority(
       id, date_start, date_end, store_name, marketplace_code, status,
       download_dir, created_at, completed_at, store_id, request_id,
       browser_profile_id, business_date, session_generation
-    ) VALUES (?, '2026-07-29', '2026-07-30', 'US Store One', 'US', 'completed',
+    ) VALUES (?, '2026-07-22', '2026-07-29', 'US Store One', 'US', 'completed',
       ?, ?, ?, ?, ?, ?, '2026-07-30', ?)
   `).run(
     batchId,
@@ -483,7 +499,7 @@ function seedExperimentObservationAuthority(
       store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
       source_file_count, metric_row_count, reconciliation_count,
       started_at, completed_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, 'completed', 1, 1, 1, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, 'completed', 8, 1, 8, ?, ?, ?)
   `).run(
     context.storeId,
     runId,
@@ -515,6 +531,7 @@ function seedExperimentObservationAuthority(
     fileHash,
     completedAt,
   );
+  seedOtherExperimentReports(database, context, batchId, runId);
   database.prepare(`
     INSERT INTO analysis_evidence_packages (
       id, store_id, marketplace, currency, mission_id, data_batch_id,
@@ -522,7 +539,7 @@ function seedExperimentObservationAuthority(
       metric_row_count, reconciliation_hash, rule_revision, model_revision,
       package_hash, imported_at, fresh_until, sealed_at,
       created_session_generation
-    ) VALUES (?, ?, 'US', 'USD', ?, ?, ?, '2026-07-29', '2026-07-30', ?,
+    ) VALUES (?, ?, 'US', 'USD', ?, ?, ?, '2026-07-22', '2026-07-29', ?,
       '["keyword"]', '[]', 1, ?, ?, 'model-test', ?, ?, ?, ?, ?)
   `).run(
     evidenceId,
@@ -564,7 +581,7 @@ function seedExperimentObservationAuthority(
       campaign_name, ad_group_name, targeting, source_file, source_row,
       clicks, cost, orders, sales, acos, cvr, currency,
       store_id, store_authority_quarantined
-    ) VALUES (?, 'keyword', '2026-07-30', 'US Store One', 'US', ?,
+    ) VALUES (?, 'keyword', '2026-07-29', 'US Store One', 'US', ?,
       'Baseline Campaign 1', 'Baseline Ad Group 1', 'baseline keyword 1', ?, ?,
       ?, ?, ?, ?, ?, ?, 'USD', ?, 0)
   `).run(
@@ -645,6 +662,25 @@ const EXACT_EIGHT_REPORT_TYPES = [
   'product_targeting',
   'user_search_term',
 ] as const;
+
+// Repository-only fixture. Service integration uses real workbook parsing instead.
+function seedOtherExperimentReports(database: Database.Database, context: StoreContextEnvelope, batchId: string, runId: string): void {
+  for (const type of EXACT_EIGHT_REPORT_TYPES.filter(type => type !== 'keyword')) {
+    const filePath = `C:/reports/${batchId}/${type}.xlsx`;
+    const fileId = Number(database.prepare(`INSERT INTO report_files(store_id,batch_id,report_type,file_path,file_name,file_size,status,imported_rows,file_hash)
+      VALUES(?,?,?,?,?,1024,'imported',0,?)`).run(context.storeId,batchId,type,filePath,`${type}.xlsx`,'a'.repeat(64)).lastInsertRowid);
+    database.prepare(`INSERT INTO report_import_file_snapshots(store_id,snapshot_id,run_id,batch_id,report_file_id,report_type,file_path,file_name,file_size_bytes,file_hash,imported_rows,captured_at)
+      VALUES(?,?,?,?,?,?,?,?,1024,?,0,?)`).run(context.storeId,`${runId}:${type}`,runId,batchId,fileId,type,filePath,`${type}.xlsx`,'a'.repeat(64),NOW);
+  }
+  const batch = database.prepare('SELECT request_id FROM lingxing_report_batches WHERE store_id=? AND id=?').get(context.storeId,batchId) as { request_id: string };
+  database.prepare(`INSERT INTO report_import_reconciliations(store_id,reconciliation_id,run_id,batch_id,metric_date,report_type,
+    expected_rows,actual_rows,expected_cost_1e4,actual_cost_1e4,absolute_cost_delta_1e4,tolerance_1e4,within_tolerance,status,reconciled_at)
+    SELECT files.store_id,files.snapshot_id,files.run_id,files.batch_id,batch.date_end,files.report_type,
+      files.imported_rows,files.imported_rows,0,0,0,0,1,'matched',?
+    FROM report_import_file_snapshots files JOIN lingxing_report_batches batch ON batch.store_id=files.store_id AND batch.id=files.batch_id
+    WHERE files.store_id=? AND files.run_id=?`).run(NOW,context.storeId,runId);
+  seedSucceededProductionFullCollectionRoot(database, context, { batchId, requestId: batch.request_id });
+}
 
 function seedExactEightImportedBatch(
   database: Database.Database,
@@ -804,7 +840,7 @@ function seedEnabledPolicy(
     name: 'Keyword bid policy',
     scope: 'sponsored-products-keywords',
     priority: 100,
-    actorId: 'operator-one',
+    actorId: 'operator',
   });
   const draftVersion = repository.createPolicyVersion(context, {
     id: `policy-version-${context.storeId}-1`,
@@ -812,14 +848,14 @@ function seedEnabledPolicy(
     version: 1,
     rules,
     validUntil: '2026-08-01T00:00:00.000Z',
-    actorId: 'operator-one',
+    actorId: 'operator',
   });
   const version = repository.enablePolicyVersion(context, {
     policyId: policy.id,
     versionId: draftVersion.id,
     expectedPolicyRevision: policy.revision,
     expectedVersionRevision: draftVersion.revision,
-    actorId: 'operator-one',
+    actorId: 'operator',
   });
   return {
     policy: repository.getPolicy(context, policy.id)!,
@@ -841,20 +877,60 @@ function seedActiveMission(repository: MissionDomainRepository, context: StoreCo
     observationEndsAt: '2026-07-29T00:00:00.000Z',
     successCriteria: ['ACOS improves by at least 2 points'],
     guardrails: ['Attributed sales decline stays below 5%'],
-    actorId: 'operator-one',
+    actorId: 'operator',
   });
   const mission = repository.transitionMission(context, {
     id: draft.id,
     expectedRevision: draft.revision,
     status: 'active',
     phase: 'analysis',
-    actorId: 'operator-one',
+    actorId: 'operator',
     reason: 'Facts reviewed.',
   });
   return { ...authority, mission };
 }
 
+// Isolated repository inputs; this fixture does not establish real import or Ads acceptance.
+function seedDecisionAnalysis(database: Database.Database, decision: DecisionRecord, mission: MissionRecord): void {
+  const evidenceId = `grant-test-evidence:${mission.id}`;
+  if (!database.prepare('SELECT id FROM analysis_evidence_packages WHERE id=?').get(evidenceId)) {
+    const source = database.prepare('SELECT * FROM analysis_evidence_packages WHERE store_id=? LIMIT 1').get(decision.storeId) as Record<string, unknown>;
+    const row = { ...source, id: evidenceId, mission_id: mission.id, data_batch_id: mission.dataBatchId,
+      package_hash: createHash('sha256').update(evidenceId).digest('hex') };
+    const columns = Object.keys(row);
+    database.prepare(`INSERT INTO analysis_evidence_packages (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
+  }
+  const evidence = database.prepare('SELECT * FROM analysis_evidence_packages WHERE id=?').get(evidenceId) as Record<string, unknown>;
+  const batchId = `grant-test-batch:${mission.id}:${decision.actionRevision}`;
+  if (!database.prepare('SELECT id FROM analysis_action_batches WHERE id=?').get(batchId)) {
+    database.prepare(`INSERT INTO analysis_action_batches(id,store_id,mission_id,mission_revision,evidence_package_id,
+      rule_revision,model_revision,action_revision,created_at,created_session_generation,authority_json)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(batchId, decision.storeId, mission.id, mission.revision, evidenceId,
+        evidence.rule_revision, evidence.model_revision, decision.actionRevision, NOW, mission.createdSessionGeneration, JSON.stringify(decision.authority));
+  }
+  const proposalId = `grant-test-proposal:${decision.id}`;
+  const authority = database.prepare('SELECT authority_id FROM verified_ad_entity_authority WHERE store_id=? AND ad_entity_id=? AND entity_revision=1')
+    .get(decision.storeId, decision.adEntityId) as { authority_id: string };
+  const proposal = {
+    id: proposalId, store_id: decision.storeId, marketplace: 'US', currency: 'USD', mission_id: mission.id,
+    mission_revision: mission.revision, evidence_package_id: evidenceId, evidence_package_hash: evidence.package_hash,
+    data_batch_id: mission.dataBatchId, policy_version_id: decision.policyVersionId, policy_revision: decision.policyRevision,
+    rule_revision: evidence.rule_revision, model_revision: evidence.model_revision, action_batch_id: batchId,
+    action_revision: decision.actionRevision, legacy_recommendation_id: parseInt(createHash('sha256').update(decision.id).digest('hex').slice(0, 8), 16) + 1, action_type: decision.actionType,
+    entity_type: 'keyword', entity_name: decision.title, campaign_name: 'Fixture campaign', ad_group_name: 'Fixture ad group',
+    ad_entity_id: decision.adEntityId, ad_entity_authority_id: authority.authority_id, ad_entity_revision: 1, current_bid_cents: Math.round(Number(decision.currentValue) * 100),
+    proposed_bid_cents: Math.round(Number(decision.recommendedValue) * 100), change_pct: -6, confidence: decision.confidence,
+    source: 'rule_ai', explanation: decision.rationale, authorization_json: JSON.stringify({ human: { eligible: true, blockers: [] }, policy: { eligible: true, blockers: [] } }),
+    valid_until: decision.validUntil, created_at: NOW, created_session_generation: mission.createdSessionGeneration,
+  };
+  const columns = Object.keys(proposal);
+  database.prepare(`INSERT INTO analysis_proposal_snapshots (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(proposal));
+  database.prepare(`INSERT INTO analysis_proposal_decision_links(id,store_id,proposal_id,decision_id,created_at)
+    VALUES(?,?,?,?,?)`).run(`link:${proposalId}`, decision.storeId, proposalId, decision.id, NOW);
+}
+
 function createApprovedDecision(
+  database: Database.Database,
   repository: MissionDomainRepository,
   context: StoreContextEnvelope,
   mission: MissionRecord,
@@ -889,23 +965,25 @@ function createApprovedDecision(
     actorId: 'ai-analyst',
   });
   expect(decision.productId).toBe(mission.productId);
+  seedDecisionAnalysis(database, decision, mission);
   return repository.resolveDecision(context, {
     id: decision.id,
     expectedRevision: decision.revision,
     status: 'approved',
-    actorId: 'operator-one',
+    actorId: decision.authority!.authorizationPath === 'human' ? 'operator' : 'policy-engine',
     reason: 'Approved within the immutable policy envelope.',
   });
 }
 
 function seedVerifiedReadbackDecision(
+  database: Database.Database,
   repository: MissionDomainRepository,
   context: StoreContextEnvelope,
   mission: MissionRecord,
   version: PolicyVersionRecord,
   options: { withEvidenceCheckpoint?: boolean } = {},
 ) {
-  const approved = createApprovedDecision(repository, context, mission, version, 1);
+  const approved = createApprovedDecision(database, repository, context, mission, version, 1);
   const executed = repository.resolveDecision(context, {
     id: approved.id,
     expectedRevision: approved.revision,
@@ -958,14 +1036,14 @@ function expectRepositoryError(
 
 describe('MissionDomainRepository policy and context authority', () => {
   it('resolves the lowest numeric matching policy independent of enable order and fails closed on a tie', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const enable = (id: string, priority: number) => {
       const policy = repository.createPolicy(contextOne, {
         id: `priority-policy-${id}`,
         name: `Priority policy ${id}`,
         scope: 'store',
         priority,
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
       const draft = repository.createPolicyVersion(contextOne, {
         id: `priority-policy-${id}-v1`,
@@ -973,14 +1051,14 @@ describe('MissionDomainRepository policy and context authority', () => {
         version: 1,
         rules: policyRules(contextOne.storeId),
         validUntil: '2026-08-01T00:00:00.000Z',
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
       return repository.enablePolicyVersion(contextOne, {
         policyId: policy.id,
         versionId: draft.id,
         expectedPolicyRevision: policy.revision,
         expectedVersionRevision: draft.revision,
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
     };
 
@@ -1003,13 +1081,13 @@ describe('MissionDomainRepository policy and context authority', () => {
   });
 
   it('rejects a V1 policy version whose persisted bid-change boundary exceeds ten percent', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const policy = repository.createPolicy(contextOne, {
       id: 'policy-ten-percent',
       name: 'Ten percent hard boundary',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1017,14 +1095,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), maxChangePct: 11 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'INVALID_INPUT');
     const valid = repository.createPolicyVersion(contextOne, {
       id: 'policy-ten-percent-v1',
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), maxChangePct: 10 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expect(valid.rules.maxChangePct).toBe(10);
   });
@@ -1044,7 +1122,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Keyword proof required',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1052,37 +1130,37 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
   it('freezes policy scope after any version exists while keeping metadata editable', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const policy = repository.createPolicy(contextOne, {
       id: 'policy-frozen-scope',
       name: 'Frozen scope policy',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     repository.createPolicyVersion(contextOne, {
       id: 'policy-frozen-scope-v1',
       policyId: policy.id,
       version: 1,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.updatePolicy(contextOne, {
       id: policy.id,
       expectedRevision: policy.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { scope: `keyword:${contextOne.storeId}-keyword-1` },
     }), 'STATE_CONFLICT');
     const renamed = repository.updatePolicy(contextOne, {
       id: policy.id,
       expectedRevision: policy.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { name: 'Renamed without scope drift', scope: policy.scope, priority: 4 },
     });
     expect(renamed).toMatchObject({ name: 'Renamed without scope drift', scope: 'store', priority: 4 });
@@ -1097,7 +1175,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'One keyword only',
       scope: `keyword:${inScopeId}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1105,19 +1183,19 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [outOfScopeId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'policy-keyword-scope-v1',
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [inScopeId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expectRepositoryError(() => repository.updateDraftPolicyVersion(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [outOfScopeId] },
     }), 'REFERENCE_CONFLICT');
 
@@ -1128,7 +1206,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
   });
@@ -1159,32 +1237,32 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Version validation lock',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'policy-version-lock-v1',
       policyId: policy.id,
       version: 1,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     repository.updateDraftPolicyVersion(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
       rules: { ...draft.rules, cooldownMinutes: 30 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expect(lockProbeCount).toBe(2);
   });
 
   it('does not expose store or advertising object IDs in attribution failures', () => {
-    const { repository, contextOne, contextTwo } = createHarness();
+    const { database, repository, contextOne, contextTwo } = createHarness();
     const policy = repository.createPolicy(contextOne, {
       id: 'policy-no-id-leak',
       name: 'No internal ID leak',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     try {
       repository.createPolicyVersion(contextOne, {
@@ -1195,7 +1273,7 @@ describe('MissionDomainRepository policy and context authority', () => {
           ...policyRules(contextOne.storeId),
           allowedAdEntityIds: [`${contextTwo.storeId}-keyword-secret`],
         },
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
       throw new Error('Expected attribution failure.');
     } catch (error) {
@@ -1216,7 +1294,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Exact product evidence only',
       scope: 'product:B0WRONGROW',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1224,7 +1302,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
 
     const exactMetric = database.prepare(`
@@ -1247,7 +1325,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     database.prepare(`
       UPDATE store_migration_quarantine
@@ -1262,7 +1340,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expect(valid.rules.allowedAdEntityIds).toEqual([authority.entityId]);
   });
@@ -1291,14 +1369,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Campaign without canonical identity',
       scope: `campaign:${encodeURIComponent(adsAccountId)}/${encodeURIComponent(campaignId)}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const adGroupPolicy = repository.createPolicy(contextOne, {
       id: 'policy-ad-group-without-canonical',
       name: 'Ad group without canonical identity',
       scope: `ad_group:${encodeURIComponent(adsAccountId)}/${encodeURIComponent(campaignId)}/${encodeURIComponent(adGroupId)}`,
       priority: 6,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1306,14 +1384,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: campaignPolicy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
       id: 'policy-ad-group-without-canonical-v1',
       policyId: adGroupPolicy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
@@ -1345,14 +1423,14 @@ describe('MissionDomainRepository policy and context authority', () => {
         name: id,
         scope,
         priority: 5,
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
       return repository.createPolicyVersion(contextOne, {
         id: `${id}-v1`,
         policyId: policy.id,
         version: 1,
         rules,
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
     };
     const rejectVersion = (id: string, scope: string) => {
@@ -1361,14 +1439,14 @@ describe('MissionDomainRepository policy and context authority', () => {
         name: id,
         scope,
         priority: 6,
-        actorId: 'operator-one',
+        actorId: 'operator',
       });
       expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
         id: `${id}-v1`,
         policyId: policy.id,
         version: 1,
         rules,
-        actorId: 'operator-one',
+        actorId: 'operator',
       }), 'REFERENCE_CONFLICT');
     };
 
@@ -1440,7 +1518,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Cross-store canonical identity must not authorize',
       scope: `campaign:${encodeURIComponent(otherAccountId)}/${encodeURIComponent(otherCampaignId)}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1448,7 +1526,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [localAuthority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
@@ -1491,7 +1569,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Keyword A campaign only',
       scope: `campaign:${encodeURIComponent(adsAccountId)}/${encodeURIComponent('campaign-A-id')}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1499,7 +1577,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authorityB.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
@@ -1529,7 +1607,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Current canonical revision only',
       scope: `campaign:${encodeURIComponent(adsAccountId)}/${encodeURIComponent(campaignId)}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const rules = { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] };
     const draft = repository.createPolicyVersion(contextOne, {
@@ -1537,7 +1615,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     seedCanonicalPolicyIdentity(database, contextOne, authority, {
       adsAccountId,
@@ -1551,14 +1629,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       id: draft.id,
       expectedRevision: draft.revision,
       rules: { ...rules, cooldownMinutes: 30 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
   });
@@ -1591,14 +1669,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Canonical session bound',
       scope,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'policy-canonical-session-bound-v1',
       policyId: policy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const nextContext = normalizeStoreContextEnvelope({ ...contextOne, sessionGeneration: 5 });
     database.prepare(`
@@ -1612,27 +1690,27 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Old canonical session create',
       scope,
       priority: 6,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expectRepositoryError(() => repository.createPolicyVersion(nextContext, {
       id: 'policy-old-canonical-session-create-v1',
       policyId: createPolicy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.updateDraftPolicyVersion(nextContext, {
       id: draft.id,
       expectedRevision: draft.revision,
       rules: { ...rules, cooldownMinutes: 30 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.enablePolicyVersion(nextContext, {
       policyId: policy.id,
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expect(repository.getPolicyVersion(nextContext, draft.id)?.status).toBe('draft');
   });
@@ -1645,14 +1723,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Store exact evidence',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'policy-store-exact-evidence-v1',
       policyId: policy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     database.prepare(`
       UPDATE ad_daily_metrics
@@ -1665,27 +1743,27 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Store path drift create',
       scope: 'store',
       priority: 6,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
       id: 'policy-store-path-drift-create-v1',
       policyId: createPolicy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.updateDraftPolicyVersion(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
       rules: { ...rules, cooldownMinutes: 30 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
   });
@@ -1711,7 +1789,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Unbound report file must fail closed',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1719,7 +1797,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
@@ -1732,14 +1810,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Keyword current import',
       scope: `keyword:${entityId}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'policy-keyword-current-import-v1',
       policyId: policy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const newerRunId = `scope-run-newer-${contextOne.storeId}`;
     const newerAt = '2026-07-22T12:01:00.000Z';
@@ -1779,39 +1857,39 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Keyword stale create',
       scope: `keyword:${entityId}`,
       priority: 6,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
       id: 'policy-keyword-stale-create-v1',
       policyId: createPolicy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.updateDraftPolicyVersion(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
       rules: { ...rules, cooldownMinutes: 30 },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expectRepositoryError(() => repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
     expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
   });
 
   it('fails closed for an unknown unstructured policy scope instead of widening it to the store', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const policy = repository.createPolicy(contextOne, {
       id: 'policy-unknown-legacy-scope',
       name: 'Unknown legacy scope',
       scope: 'unexpected-legacy-scope',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.createPolicyVersion(contextOne, {
@@ -1819,7 +1897,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       policyId: policy.id,
       version: 1,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'REFERENCE_CONFLICT');
   });
 
@@ -1830,14 +1908,14 @@ describe('MissionDomainRepository policy and context authority', () => {
       name: 'Legacy incomplete policy',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draft = repository.createPolicyVersion(contextOne, {
       id: 'legacy-incomplete-policy-v1',
       policyId: policy.id,
       version: 1,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const incomplete = { ...policyRules(contextOne.storeId) } as Record<string, unknown>;
     delete incomplete.maxDailyActionCount;
@@ -1850,7 +1928,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       versionId: draft.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'INVALID_INPUT');
     expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
   });
@@ -1870,7 +1948,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       () => repository.updatePolicy(contextOne, {
         id: policy.id,
         expectedRevision: 1,
-        actorId: 'operator-one',
+        actorId: 'operator',
         patch: { priority: 90 },
       }),
       'REVISION_CONFLICT',
@@ -1879,7 +1957,7 @@ describe('MissionDomainRepository policy and context authority', () => {
       () => repository.updateDraftPolicyVersion(contextOne, {
         id: version.id,
         expectedRevision: version.revision,
-        actorId: 'operator-one',
+        actorId: 'operator',
         rules: policyRules(contextOne.storeId),
       }),
       'IMMUTABLE_RECORD',
@@ -1891,7 +1969,7 @@ describe('MissionDomainRepository policy and context authority', () => {
     const runtime = repository.getPolicyRuntime(contextOne);
     const automatic = repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: {
         autonomyMode: 'policy_auto',
         activePolicyVersionId: version.id,
@@ -1907,7 +1985,7 @@ describe('MissionDomainRepository policy and context authority', () => {
     expectRepositoryError(
       () => repository.updatePolicyRuntime(contextOne, {
         expectedRevision: runtime.revision,
-        actorId: 'operator-one',
+        actorId: 'operator',
         patch: { autonomyMode: 'manual_approval' },
       }),
       'REVISION_CONFLICT',
@@ -1930,27 +2008,27 @@ describe('MissionDomainRepository policy and context authority', () => {
   });
 
   it('allows an empty policy entity allowlist but cannot mint a grant from it', () => {
-    const { repository, contextTwo } = createHarness();
+    const { database, repository, contextTwo } = createHarness();
     const policy = repository.createPolicy(contextTwo, {
       id: 'policy-no-objects',
       name: 'Policy awaiting stable objects',
       scope: 'sponsored-products-keywords',
       priority: 100,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftVersion = repository.createPolicyVersion(contextTwo, {
       id: 'policy-version-no-objects',
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextTwo.storeId), allowedAdEntityIds: [] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const version = repository.enablePolicyVersion(contextTwo, {
       policyId: policy.id,
       versionId: draftVersion.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draftVersion.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftMission = repository.createMission(contextTwo, {
       id: 'mission-no-objects',
@@ -1962,19 +2040,19 @@ describe('MissionDomainRepository policy and context authority', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Stable entity authority becomes available'],
       guardrails: ['No advertising mutation before entity selection'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const mission = repository.transitionMission(contextTwo, {
       id: draftMission.id,
       expectedRevision: draftMission.revision,
       status: 'active',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
-    const decision = createApprovedDecision(repository, contextTwo, mission, version, 1);
+    const decision = createApprovedDecision(database, repository, contextTwo, mission, version, 1);
     const runtime = repository.getPolicyRuntime(contextTwo);
     repository.updatePolicyRuntime(contextTwo, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
     });
 
@@ -2090,7 +2168,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Formal collection lineage is present'],
       guardrails: ['Local files never replace production collection'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     })).toThrow(
       '运营任务数据批次缺少已成功入库的 production_full 完整 8 类采集根证据；'
       + '请先启动完整 8 类采集并等待入库成功。',
@@ -2118,20 +2196,20 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Formal collection lineage remains current'],
       guardrails: ['Reject local or pending substitutes'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expect(mission).toMatchObject({ dataBatchId: batchId, status: 'draft', phase: 'fact' });
   });
 
   it('rejects unknown Mission patch keys without incrementing the revision', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
 
     expectRepositoryError(() => repository.updateMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { unsupportedAuthorityField: 'must-not-be-ignored' } as never,
     }), 'INVALID_INPUT');
 
@@ -2143,21 +2221,21 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   });
 
   it('freezes the complete Mission definition when the Mission reaches decision', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const decisionPhase = repository.transitionMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
       status: 'active',
       phase: 'decision',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Analysis is complete and the Mission definition is now evidence-bound.',
     });
 
     expectRepositoryError(() => repository.updateMission(contextOne, {
       id: decisionPhase.id,
       expectedRevision: decisionPhase.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: {
         title: 'Must remain immutable',
         objective: 'Must remain immutable',
@@ -2174,20 +2252,20 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   });
 
   it('allows a title-only rename after decision while preserving every authority field', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const decisionPhase = repository.transitionMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
       status: 'active',
       phase: 'decision',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     const renamed = repository.updateMission(contextOne, {
       id: decisionPhase.id,
       expectedRevision: decisionPhase.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { title: '新的任务显示名称' },
     });
 
@@ -2206,14 +2284,14 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   });
 
   it('does not allow a Mission phase to move backward and reopen its frozen definition', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const decisionPhase = repository.transitionMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
       status: 'active',
       phase: 'decision',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
 
     expectRepositoryError(() => repository.transitionMission(contextOne, {
@@ -2221,29 +2299,29 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       expectedRevision: decisionPhase.revision,
       status: 'active',
       phase: 'analysis',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Must not reopen the editable definition.',
     }), 'STATE_CONFLICT');
     expect(repository.getMission(contextOne, decisionPhase.id)).toEqual(decisionPhase);
   });
 
   it('freezes Mission authority fields as soon as a Decision exists even if a legacy phase flag is stale', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
-    createApprovedDecision(repository, contextOne, mission, version, 72);
+    createApprovedDecision(database, repository, contextOne, mission, version, 72);
     expect(mission.phase).toBe('analysis');
 
     expectRepositoryError(() => repository.updateMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { objective: 'Must not rewrite the definition behind an existing Decision.' },
     }), 'STATE_CONFLICT');
     expect(repository.getMission(contextOne, mission.id)).toEqual(mission);
   });
 
   it('rejects a Decision whose product differs from its Mission product', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
 
     expectRepositoryError(() => repository.createDecision(contextOne, {
@@ -2272,13 +2350,13 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   });
 
   it('issues a grant from the lower-number matching policy even when another policy was enabled later', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const lowPolicy = repository.createPolicy(contextOne, {
       id: 'grant-priority-low-policy',
       name: 'Exact object first-match policy',
       scope: 'store',
       priority: 10,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const lowDraft = repository.createPolicyVersion(contextOne, {
       id: 'grant-priority-low-policy-v1',
@@ -2286,14 +2364,14 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       version: 1,
       rules: policyRules(contextOne.storeId),
       validUntil: '2026-08-01T00:00:00.000Z',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const lowVersion = repository.enablePolicyVersion(contextOne, {
       policyId: lowPolicy.id,
       versionId: lowDraft.id,
       expectedPolicyRevision: lowPolicy.revision,
       expectedVersionRevision: lowDraft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const laterEnabled = seedEnabledPolicy(repository, contextOne);
     expect(repository.getPolicyRuntime(contextOne).activePolicyVersionId).toBe(laterEnabled.version.id);
@@ -2309,25 +2387,26 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Lower numeric policy wins'],
       guardrails: ['No last-enabled override'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const mission = repository.transitionMission(contextOne, {
       id: draftMission.id,
       expectedRevision: draftMission.revision,
       status: 'active',
       phase: 'decision',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
-    const decision = createApprovedDecision(repository, contextOne, mission, lowVersion, 71);
     const runtime = repository.getPolicyRuntime(contextOne);
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: {
         autonomyMode: 'policy_auto',
         activePolicyVersionId: laterEnabled.version.id,
       },
     });
+    const decision = createApprovedDecision(database, repository, contextOne, mission, lowVersion, 71);
+
 
     const grant = repository.issueMissionGrant(contextOne, {
       id: 'grant-priority-first-match',
@@ -2389,7 +2468,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['No stale Mission is created'],
       guardrails: ['Policy authority remains active'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'STATE_CONFLICT');
 
     expect(repository.getMission(contextOne, missionId)).toBeUndefined();
@@ -2422,21 +2501,21 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       name: 'Grant current session scope',
       scope: `campaign:${encodeURIComponent(adsAccountId)}/${encodeURIComponent(campaignId)}`,
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftVersion = repository.createPolicyVersion(contextOne, {
       id: 'policy-grant-session-scope-v1',
       policyId: policy.id,
       version: 1,
       rules: { ...policyRules(contextOne.storeId), allowedAdEntityIds: [authority.entityId] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const version = repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draftVersion.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draftVersion.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftMission = repository.createMission(contextOne, {
       id: 'mission-grant-session-scope',
@@ -2448,19 +2527,19 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['No stale-session grant is issued'],
       guardrails: ['Campaign scope remains bound to the current Ads session'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const mission = repository.transitionMission(contextOne, {
       id: draftMission.id,
       expectedRevision: draftMission.revision,
       status: 'active',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
-    const decision = createApprovedDecision(repository, contextOne, mission, version, 21, undefined, 'scope');
+    const decision = createApprovedDecision(database, repository, contextOne, mission, version, 21, undefined, 'scope');
     const runtime = repository.getPolicyRuntime(contextOne);
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
     });
     const nextContext = normalizeStoreContextEnvelope({ ...contextOne, sessionGeneration: 5 });
@@ -2497,7 +2576,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       name: 'Legacy over-limit policy',
       scope: 'store',
       priority: 5,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const versionId = 'legacy-over-limit-policy-v1';
     const legacyRules = { ...policyRules(contextOne.storeId), maxChangePct: 20 };
@@ -2523,19 +2602,19 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['No over-limit grant is issued'],
       guardrails: ['V1 change remains at or below ten percent'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const mission = repository.transitionMission(contextOne, {
       id: draftMission.id,
       expectedRevision: draftMission.revision,
       status: 'active',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
-    const decision = createApprovedDecision(repository, contextOne, mission, version, 20);
+    const decision = createApprovedDecision(database, repository, contextOne, mission, version, 20);
     const runtime = repository.getPolicyRuntime(contextOne);
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
     });
 
@@ -2562,13 +2641,14 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   it('holds an IMMEDIATE write lock while re-reading grant authority', () => {
     const { database, databasePath, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const decision = createApprovedDecision(repository, contextOne, mission, version, 9);
     const runtime = repository.getPolicyRuntime(contextOne);
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
     });
+    const decision = createApprovedDecision(database, repository, contextOne, mission, version, 9);
+
 
     const competing = new Database(databasePath);
     databases.push(competing);
@@ -2620,7 +2700,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
   it('binds Mission lineage and applies policy-auto and human grant rules fail closed', () => {
     const { database, repository, contextOne, contextTwo } = createHarness();
     const { policy, version, mission } = seedActiveMission(repository, contextOne);
-    const decisionOne = createApprovedDecision(repository, contextOne, mission, version, 1);
+    const decisionOne = createApprovedDecision(database, repository, contextOne, mission, version, 1);
 
     expect(repository.listMissions(contextTwo)).toEqual([]);
     expect(repository.getMission(contextTwo, mission.id)).toBeUndefined();
@@ -2628,7 +2708,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       () => repository.updateMission(contextOne, {
         id: mission.id,
         expectedRevision: mission.revision,
-        actorId: 'operator-one',
+        actorId: 'operator',
         patch: { productId: `${contextTwo.storeId}-product-1` },
       }),
       'STATE_CONFLICT',
@@ -2640,7 +2720,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       title: 'Diagnosis reviewed',
       status: 'complete',
       evidenceCount: 2,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const lineage = repository.getMissionLineage(contextOne, mission.id);
     expect(lineage.links.map((link) => link.linkType)).toEqual(expect.arrayContaining([
@@ -2672,20 +2752,20 @@ describe('MissionDomainRepository mission lineage and grants', () => {
     const initialRuntime = repository.getPolicyRuntime(contextOne);
     const inactiveRuntime = repository.updatePolicyRuntime(contextOne, {
       expectedRevision: initialRuntime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { activePolicyVersionId: null },
     });
     expectRepositoryError(
       () => repository.issueMissionGrant(contextOne, {
         ...grantInput,
         id: 'grant-human-inactive-policy',
-        issuer: { type: 'human', actorId: 'operator-one' },
+        issuer: { type: 'human', actorId: 'operator' },
       }),
       'STATE_CONFLICT',
     );
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: inactiveRuntime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { activePolicyVersionId: version.id },
     });
     expectRepositoryError(
@@ -2695,9 +2775,12 @@ describe('MissionDomainRepository mission lineage and grants', () => {
     const runtime = repository.getPolicyRuntime(contextOne);
     repository.updatePolicyRuntime(contextOne, {
       expectedRevision: runtime.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
     });
+    // Mode changes keep the old human Decision as history; policy produces a new action revision.
+    const policyDecision = createApprovedDecision(database, repository, contextOne, mission, version, 2);
+    grantInput.decisionIds = [policyDecision.id]; grantInput.actionRevision = 2;
     const policyGrant = repository.issueMissionGrant(contextOne, grantInput);
     expect(policyGrant).toMatchObject({
       storeId: contextOne.storeId,
@@ -2713,7 +2796,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       id: 'grant-event-policy-one-revoked',
       grantId: policyGrant.id,
       eventType: 'revoked',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Operator stopped the remaining batch.',
     });
     expect(repository.getMissionGrantTerminalEvent(contextOne, policyGrant.id)).toEqual(revoked);
@@ -2745,7 +2828,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
     expect(repository.listMissionGrants(contextOne, mission.id)).toHaveLength(1);
 
     const decisionFour = createApprovedDecision(
-      repository,
+      database, repository,
       contextOne,
       mission,
       version,
@@ -2763,27 +2846,27 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       'STATE_CONFLICT',
     );
 
-    const decisionTwo = createApprovedDecision(repository, contextOne, mission, version, 2);
+    const decisionTwo = createApprovedDecision(database, repository, contextOne, mission, version, 7);
 
     const draftV2 = repository.createPolicyVersion(contextOne, {
       id: 'policy-version-store-one-2',
       policyId: policy.id,
       version: 2,
       rules: policyRules(contextOne.storeId),
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draftV2.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draftV2.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const retiredAttempt = {
       ...grantInput,
       id: 'grant-retired-policy',
       decisionIds: [decisionTwo.id],
-      actionRevision: 2,
+      actionRevision: 7,
     };
     expectRepositoryError(
       () => repository.issueMissionGrant(contextOne, retiredAttempt),
@@ -2793,18 +2876,18 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       () => repository.issueMissionGrant(contextOne, {
         ...retiredAttempt,
         id: 'grant-human-retired-snapshot',
-        issuer: { type: 'human', actorId: 'operator-one' },
+        issuer: { type: 'human', actorId: 'operator' },
       }),
       'STATE_CONFLICT',
     );
     expect(repository.getMissionLineage(contextOne, mission.id).grants).toHaveLength(1);
 
-    const decisionFive = createApprovedDecision(repository, contextOne, mission, version, 5);
+    const decisionFive = createApprovedDecision(database, repository, contextOne, mission, version, 5);
     const pausedMission = repository.transitionMission(contextOne, {
       id: mission.id,
       expectedRevision: mission.revision,
       status: 'paused',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Operator paused further execution.',
     });
     expectRepositoryError(
@@ -2814,7 +2897,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
         missionRevision: pausedMission.revision,
         decisionIds: [decisionFive.id],
         actionRevision: 5,
-        issuer: { type: 'human', actorId: 'operator-one' },
+        issuer: { type: 'human', actorId: 'operator' },
       }),
       'STATE_CONFLICT',
     );
@@ -2834,21 +2917,21 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       name: 'Two-keyword batch policy',
       scope: 'sponsored-products-keywords',
       priority: 100,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftVersion = repository.createPolicyVersion(contextOne, {
       id: 'policy-version-store-one-batch-1',
       policyId: policy.id,
       version: 1,
       rules,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const version = repository.enablePolicyVersion(contextOne, {
       policyId: policy.id,
       versionId: draftVersion.id,
       expectedPolicyRevision: policy.revision,
       expectedVersionRevision: draftVersion.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const draftMission = repository.createMission(contextOne, {
       id: 'mission-store-one-batch',
@@ -2860,18 +2943,24 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Both keyword changes retain verified readback evidence'],
       guardrails: ['UNKNOWN stops the remaining batch'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const mission = repository.transitionMission(contextOne, {
       id: draftMission.id,
       expectedRevision: draftMission.revision,
       status: 'active',
       phase: 'analysis',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
-    const first = createApprovedDecision(repository, contextOne, mission, version, 6);
+    const runtime = repository.getPolicyRuntime(contextOne);
+    repository.updatePolicyRuntime(contextOne, {
+      expectedRevision: runtime.revision,
+      actorId: 'operator',
+      patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
+    });
+    const first = createApprovedDecision(database, repository, contextOne, mission, version, 6);
     const second = createApprovedDecision(
-      repository,
+      database, repository,
       contextOne,
       mission,
       version,
@@ -2879,12 +2968,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       '2026-07-23T00:00:00.000Z',
       '2',
     );
-    const runtime = repository.getPolicyRuntime(contextOne);
-    repository.updatePolicyRuntime(contextOne, {
-      expectedRevision: runtime.revision,
-      actorId: 'operator-one',
-      patch: { autonomyMode: 'policy_auto', activePolicyVersionId: version.id },
-    });
+
 
     const batchGrant = repository.issueMissionGrant(contextOne, {
       id: 'grant-store-one-batch-6',
@@ -2913,7 +2997,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       () => repository.issueMissionGrant(contextOne, {
         ...batchGrant,
         id: 'grant-store-one-batch-duplicate',
-        issuer: { type: 'human', actorId: 'operator-one' },
+        issuer: { type: 'policy', actorId: 'policy-engine' },
       }),
       'DUPLICATE_IDENTITY',
     );
@@ -2923,7 +3007,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
         id: 'grant-store-one-batch-mismatch',
         decisionIds: [first.id, second.id],
         allowedAdEntityIds: [first.adEntityId!],
-        issuer: { type: 'human', actorId: 'operator-one' },
+        issuer: { type: 'policy', actorId: 'policy-engine' },
       }),
       'REFERENCE_CONFLICT',
     );
@@ -2932,7 +3016,7 @@ describe('MissionDomainRepository mission lineage and grants', () => {
 
 describe('MissionDomainRepository decisions, experiments, and causal ledger', () => {
   it('rejects an Experiment when its product differs from the selected Mission product without leaving lineage writes', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const experimentId = 'experiment-cross-product-mission';
     const before = repository.getMissionLineage(contextOne, mission.id);
@@ -2963,7 +3047,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('keeps a draft Experiment unchanged when an edit moves it to another same-store product and matching Ads object', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-cross-product-draft-edit',
@@ -2985,7 +3069,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     expectRepositoryError(() => repository.updateExperiment(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: {
         productId: `${contextOne.storeId}-product-2`,
         adEntityId: `${contextOne.storeId}-keyword-2`,
@@ -3049,7 +3133,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('returns only same-product proven non-UNKNOWN causal memory for Main analysis', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
     const otherProductMission = repository.createMission(contextOne, {
       id: 'mission-other-product-memory',
@@ -3062,7 +3146,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       observationEndsAt: '2026-07-29T00:00:00.000Z',
       successCriteria: ['Keep products isolated'],
       guardrails: ['Never mix causal memory'],
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const appendEffect = (input: {
       id: string;
@@ -3118,7 +3202,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       observedEffect: 'Two read-only observations found the target bid, but the original batch remains UNKNOWN.',
       status: 'confirmed_target',
       source: 'execution-authority',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     repository.appendEvidenceRef(contextOne, {
       id: 'memory-unknown-reconciled-proof-first',
@@ -3176,7 +3260,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       observedEffect: 'Two read-only observations were attempted.',
       status: 'confirmed_target',
       source: 'execution-authority',
-      actorId: 'operator-one',
+      actorId: 'operator',
     }, [{
       id: 'duplicate-atomic-evidence-id',
       eventId,
@@ -3201,7 +3285,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('keeps an Experiment in draft when the exact Ads object has no verified execution readback', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-without-verified-readback',
@@ -3223,7 +3307,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start without a real intervention.',
     }), 'STATE_CONFLICT');
 
@@ -3235,7 +3319,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('does not let archive and restore bypass the verified execution baseline for a draft Experiment', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-restored-without-verified-readback',
@@ -3255,13 +3339,13 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     const archived = repository.archiveExperiment(contextOne, {
       id: draft.id,
       expectedRevision: draft.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Temporarily hide the draft.',
     });
     const restored = repository.restoreExperiment(contextOne, {
       id: archived.id,
       expectedRevision: archived.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Restore the same unverified draft.',
     });
     const eventsBeforeStart = repository.listCausalEvents(contextOne, { missionId: mission.id });
@@ -3274,7 +3358,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: restored.id,
       expectedRevision: restored.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Attempt to start without verified execution readback.',
     }), 'STATE_CONFLICT');
 
@@ -3286,7 +3370,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('rejects an Experiment before persistence when guardrail metrics and criteria are not one-to-one', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const experimentId = 'experiment-invalid-guardrail-cardinality';
 
@@ -3314,7 +3398,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('rejects an Experiment before persistence when a guardrail criterion cannot be safely parsed', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const experimentId = 'experiment-invalid-guardrail-criterion';
 
@@ -3340,7 +3424,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('rejects an Experiment before persistence when a guardrail threshold is negative', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const experimentId = 'experiment-negative-guardrail-threshold';
 
@@ -3364,7 +3448,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('rejects an Experiment before persistence when a metric lacks an authoritative data source', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const experimentId = 'experiment-unsupported-tacos';
 
@@ -3388,7 +3472,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('keeps a draft Experiment unchanged when an edit makes its guardrail contract invalid', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-invalid-draft-edit',
@@ -3410,7 +3494,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       patch: { guardrailMetrics: ['广告订单', 'CVR'] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'INVALID_INPUT');
 
     expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
@@ -3420,7 +3504,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('keeps a draft Experiment unchanged when an edit adds an ambiguous guardrail criterion', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-invalid-criterion-edit',
@@ -3442,14 +3526,14 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       patch: { guardrailCriteria: ['广告订单 ~= 95%'] },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'INVALID_INPUT');
 
     expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
   });
 
   it('keeps a draft Experiment unchanged when an edit selects a metric without authoritative data', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { mission } = seedActiveMission(repository, contextOne);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-unsupported-metric-edit',
@@ -3471,16 +3555,16 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       patch: { primaryMetric: 'TACOS' },
-      actorId: 'operator-one',
+      actorId: 'operator',
     }), 'INVALID_INPUT');
 
     expect(repository.getExperiment(contextOne, draft.id)).toEqual(draft);
   });
 
   it('keeps an Experiment in draft when verified status has no durable readback evidence checkpoint', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version, {
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version, {
       withEvidenceCheckpoint: false,
     });
     const draft = repository.createExperiment(contextOne, {
@@ -3503,7 +3587,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start from a status label without durable evidence.',
     }), 'STATE_CONFLICT');
     expect(repository.getExperiment(contextOne, draft.id)).toMatchObject({
@@ -3521,7 +3605,22 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
           acos = 0.4, cvr = 0.2, currency = 'USD'
       WHERE store_id = ? AND batch_id = ? AND targeting = 'baseline keyword 1'
     `).run(mission.productId, contextOne.storeId, mission.dataBatchId);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    // The identity anchor is a zero-sales day; revenue belongs to another day
+    // of the same keyword and match type in the same imported report.
+    database.prepare(`
+      INSERT INTO ad_daily_metrics (
+        store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
+        campaign_name, ad_group_name, targeting, match_type, source_file, source_row,
+        clicks, cost, orders, sales, currency, store_authority_quarantined
+      ) SELECT store_id, batch_id, report_type, date(date, '-1 day'), store_name, marketplace_code, asin,
+        campaign_name, ad_group_name, targeting, match_type, source_file, source_row + 1000,
+        clicks, cost, orders, sales, currency, store_authority_quarantined
+      FROM ad_daily_metrics WHERE store_id = ? AND batch_id = ? AND targeting = 'baseline keyword 1'
+    `).run(contextOne.storeId, mission.dataBatchId);
+    database.prepare(`UPDATE ad_daily_metrics SET clicks = 0, cost = 0, orders = 0, sales = 0
+      WHERE store_id = ? AND batch_id = ? AND targeting = 'baseline keyword 1' AND source_row < 1000
+    `).run(contextOne.storeId, mission.dataBatchId);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-with-verified-readback',
       missionId: verified.mission.id,
@@ -3542,7 +3641,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start from the verified intervention.',
     });
 
@@ -3579,7 +3678,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     let currentNow = new Date(NOW);
     const { database, repository, contextOne } = createHarness(() => currentNow);
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-machine-evaluation',
       missionId: verified.mission.id,
@@ -3599,7 +3698,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start from the verified intervention.',
     });
     const resultBatchId = seedExperimentObservationAuthority(database, contextOne, {
@@ -3659,13 +3758,13 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     const archivedExperiment = repository.archiveExperiment(contextOne, {
       id: completed.id,
       expectedRevision: completed.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Hide the completed experiment from the default queue.',
     });
     const restoredExperiment = repository.restoreExperiment(contextOne, {
       id: archivedExperiment.id,
       expectedRevision: archivedExperiment.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Show the immutable completed experiment again.',
     });
     expect(restoredExperiment.status).toBe('completed');
@@ -3674,13 +3773,13 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     const archivedMission = repository.archiveMission(contextOne, {
       id: completedMission.id,
       expectedRevision: completedMission.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Hide the completed Mission from the default queue.',
     });
     const restoredMission = repository.restoreMission(contextOne, {
       id: archivedMission.id,
       expectedRevision: archivedMission.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Show the immutable completed Mission again.',
     });
     expect(restoredMission).toMatchObject({ status: 'completed', phase: 'effect' });
@@ -3690,7 +3789,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     let currentNow = new Date(NOW);
     const { database, repository, contextOne } = createHarness(() => currentNow);
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const firstDraft = repository.createExperiment(contextOne, {
       id: 'experiment-first-of-two',
       missionId: verified.mission.id,
@@ -3725,7 +3824,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: firstDraft.id,
       expectedRevision: firstDraft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start the first verified intervention.',
     });
     seedExperimentObservationAuthority(database, contextOne, {
@@ -3756,7 +3855,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: nextDraft.id,
       expectedRevision: nextDraft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start the next verified observation after recording the first effect.',
     });
 
@@ -3778,7 +3877,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     let currentNow = new Date(NOW);
     const { database, repository, contextOne } = createHarness(() => currentNow);
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-guardrail-breach',
       missionId: verified.mission.id,
@@ -3798,7 +3897,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start from the verified intervention.',
     });
     seedExperimentObservationAuthority(database, contextOne, {
@@ -3836,7 +3935,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: paused.id,
       expectedRevision: paused.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Ignore the measured guardrail and keep running.',
     }), 'STATE_CONFLICT');
     expect(repository.getExperiment(contextOne, paused.id)).toMatchObject({
@@ -3847,9 +3946,9 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('keeps an Experiment running when an operator tries to complete it before the observation window ends', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-early-completion',
       missionId: verified.mission.id,
@@ -3869,7 +3968,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start the evidence-bound observation window.',
     });
 
@@ -3877,7 +3976,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: running.id,
       expectedRevision: running.revision,
       status: 'completed',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Looks good to me.',
     }), 'STATE_CONFLICT');
 
@@ -3892,9 +3991,9 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
   });
 
   it('freezes the Experiment causal contract after its first verified start', () => {
-    const { repository, contextOne } = createHarness();
+    const { database, repository, contextOne } = createHarness();
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-frozen-after-start',
       missionId: verified.mission.id,
@@ -3914,21 +4013,21 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start from the verified intervention.',
     });
     const paused = repository.transitionExperiment(contextOne, {
       id: running.id,
       expectedRevision: running.revision,
       status: 'paused',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Pause without changing the causal contract.',
     });
 
     expectRepositoryError(() => repository.updateExperiment(contextOne, {
       id: paused.id,
       expectedRevision: paused.revision,
-      actorId: 'operator-one',
+      actorId: 'operator',
       patch: { variant: { bidUsd: 0.5, onlyVariable: 'keyword_bid' } },
     }), 'STATE_CONFLICT');
 
@@ -3941,9 +4040,9 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
 
   it('keeps an Experiment running after the window when required metric snapshots are missing', () => {
     let currentNow = new Date(NOW);
-    const { repository, contextOne } = createHarness(() => currentNow);
+    const { database, repository, contextOne } = createHarness(() => currentNow);
     const { version, mission } = seedActiveMission(repository, contextOne);
-    const verified = seedVerifiedReadbackDecision(repository, contextOne, mission, version);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
     const draft = repository.createExperiment(contextOne, {
       id: 'experiment-missing-evaluation-snapshots',
       missionId: verified.mission.id,
@@ -3963,7 +4062,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: draft.id,
       expectedRevision: draft.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Start the evidence-bound observation window.',
     });
     currentNow = new Date('2026-07-30T12:00:00.000Z');
@@ -3972,7 +4071,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       id: running.id,
       expectedRevision: running.revision,
       status: 'completed',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'The operator believes the result is positive.',
     }), 'STATE_CONFLICT');
 
@@ -3981,6 +4080,32 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       revision: running.revision,
       conclusion: undefined,
     });
+  });
+
+  it.each(['latest-partial-import', 'before-intervention', 'ambiguous-guardrail'] as const)('rejects experiment %s without persisting a baseline or EFFECT', failure => {
+    const { database, repository, contextOne } = createHarness();
+    const { version, mission } = seedActiveMission(repository, contextOne);
+    const verified = seedVerifiedReadbackDecision(database, repository, contextOne, mission, version);
+    const input = { id: `experiment-${failure}`, missionId: mission.id, name: 'Reject unverifiable observation',
+      hypothesis: 'Only verified full-window inputs may form an effect.', primaryMetric: 'ACOS',
+      guardrailMetrics: ['广告订单'], guardrailCriteria: [failure === 'ambiguous-guardrail' ? '广告订单变化 >= 95%' : '广告订单 >= 95%'],
+      productId: mission.productId, adEntityId: verified.decision.adEntityId, baseline: {}, variant: { bidUsd: 0.94, onlyVariable: 'keyword_bid' },
+      observationStartsAt: failure === 'before-intervention' ? '2026-07-22T11:59:59.999Z' : NOW, observationEndsAt: '2026-07-29T12:00:00.000Z' };
+    if (failure === 'ambiguous-guardrail') {
+      expectRepositoryError(() => repository.createExperiment(contextOne, input), 'INVALID_INPUT');
+    } else {
+      const draft = repository.createExperiment(contextOne, input);
+      if (failure === 'latest-partial-import') {
+        database.prepare(`INSERT INTO report_import_runs(store_id,run_id,idempotency_key,input_fingerprint,batch_id,status,
+          source_file_count,metric_row_count,reconciliation_count,started_at,completed_at,created_at)
+          VALUES(?,'newer-incomplete','newer-incomplete',?,?,'completed',7,1,7,?,?,?)`).run(contextOne.storeId,'e'.repeat(64),mission.dataBatchId,
+          '2026-07-22T12:00:01.000Z','2026-07-22T12:00:01.000Z','2026-07-22T12:00:01.000Z');
+      }
+      expectRepositoryError(() => repository.transitionExperiment(contextOne, { id: draft.id, expectedRevision: draft.revision, status: 'running', actorId: 'operator' }), 'STATE_CONFLICT');
+      expect(repository.getExperiment(contextOne, draft.id)).toMatchObject({ status: 'draft', revision: draft.revision, baseline: {} });
+    }
+    expect(database.prepare('SELECT COUNT(*) AS count FROM experiment_metric_snapshots WHERE store_id=? AND experiment_id=?').get(contextOne.storeId,input.id)).toEqual({ count: 0 });
+    expect(repository.listCausalEvents(contextOne, { missionId: mission.id }).some(event => event.stage === 'EFFECT')).toBe(false);
   });
 
   it('retains decision history, experiment observations, evidence, and causal corrections', () => {
@@ -4014,15 +4139,16 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       expectedRevision: decision.revision,
       recommendation: 'Lower keyword bid from 1.00 to 0.94 USD.',
       recommendedValue: 0.94,
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const approved = repository.resolveDecision(contextOne, {
       id: revised.id,
       expectedRevision: revised.revision,
       status: 'approved',
-      actorId: 'operator-one',
+      actorId: 'operator',
       reason: 'Within the configured policy envelope.',
     });
+    seedDecisionAnalysis(database, approved, mission);
     const executed = repository.resolveDecision(contextOne, {
       id: approved.id,
       expectedRevision: approved.revision,
@@ -4068,7 +4194,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       hypothesis: 'A six-percent bid reduction lowers ACOS without material sales loss.',
       primaryMetric: 'acos',
       guardrailMetrics: ['sales', 'orders'],
-      guardrailCriteria: ['sales decline < 5%', 'orders decline < 5%'],
+      guardrailCriteria: ['sales >= 95%', 'orders >= 95%'],
       productId: `${contextOne.storeId}-product-1`,
       adEntityId: `${contextOne.storeId}-keyword-1`,
       baseline: { bid: 1, acos: 0.41 },
@@ -4079,14 +4205,14 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
     const updated = repository.updateExperiment(contextOne, {
       id: experiment.id,
       expectedRevision: experiment.revision,
-      patch: { guardrailCriteria: ['sales decline < 4%', 'orders decline < 5%'] },
-      actorId: 'operator-one',
+      patch: { guardrailCriteria: ['sales >= 96%', 'orders >= 95%'] },
+      actorId: 'operator',
     });
     repository.transitionExperiment(contextOne, {
       id: updated.id,
       expectedRevision: updated.revision,
       status: 'running',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const observation = repository.appendExperimentObservation(contextOne, {
       id: 'experiment-observation-one',
@@ -4105,7 +4231,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
         title: 'Invalid implicit correction',
         observation: 'A non-correction record cannot rewrite another observation.',
         observedAt: '2026-07-23T12:03:00.000Z',
-        actorId: 'operator-one',
+        actorId: 'operator',
         correctsRecordId: observation.id,
       }),
       'INVALID_INPUT',
@@ -4117,7 +4243,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       title: 'Corrected day-one observation',
       observation: 'Sales are stable and ACOS is down 0.8 points.',
       observedAt: '2026-07-23T12:05:00.000Z',
-      actorId: 'operator-one',
+      actorId: 'operator',
       correctsRecordId: observation.id,
     });
     expect(repository.listExperimentObservations(contextOne, experiment.id))
@@ -4132,7 +4258,9 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       dataBatchId: mission.dataBatchId,
     });
     expect(repository.listExperimentMetricSnapshots(contextOne, experiment.id))
-      .toEqual([metricSnapshot]);
+      .toEqual(expect.arrayContaining([metricSnapshot,
+        expect.objectContaining({ metric: 'sales', value: 50 }),
+        expect.objectContaining({ metric: 'orders', value: 2 })]));
 
     const fact = repository.appendCausalEvent(contextOne, {
       id: 'causal-manual-fact',
@@ -4145,7 +4273,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       signal: 'Promotion no longer affects the comparison window.',
       status: 'recorded',
       source: 'operator-event',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const correction = repository.appendCausalEvent(contextOne, {
       id: 'causal-manual-fact-correction',
@@ -4158,7 +4286,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       signal: 'Promotion ended one day later than first recorded.',
       status: 'corrected',
       source: 'operator-event',
-      actorId: 'operator-one',
+      actorId: 'operator',
       correctsEventId: fact.id,
     });
     const storeFact = repository.appendCausalEvent(contextOne, {
@@ -4171,7 +4299,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       signal: 'A store-wide promotion was observed.',
       status: 'recorded',
       source: 'operator-event',
-      actorId: 'operator-one',
+      actorId: 'operator',
     });
     const storeCorrection = repository.appendCausalEvent(contextOne, {
       id: 'causal-store-fact-correction',
@@ -4183,7 +4311,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
       signal: 'The promotion applied one day later.',
       status: 'corrected',
       source: 'operator-event',
-      actorId: 'operator-one',
+      actorId: 'operator',
       correctsEventId: storeFact.id,
     });
     expect(storeCorrection.correctsEventId).toBe(storeFact.id);
@@ -4198,7 +4326,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
         title: 'Invalid cross-entity correction',
         status: 'corrected',
         source: 'operator-event',
-        actorId: 'operator-one',
+        actorId: 'operator',
         correctsEventId: fact.id,
       }),
       'REFERENCE_CONFLICT',
@@ -4214,7 +4342,7 @@ describe('MissionDomainRepository decisions, experiments, and causal ledger', ()
         title: 'Invalid cross-stage correction',
         status: 'corrected',
         source: 'operator-event',
-        actorId: 'operator-one',
+        actorId: 'operator',
         correctsEventId: fact.id,
       }),
       'REFERENCE_CONFLICT',

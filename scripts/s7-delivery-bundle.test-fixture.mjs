@@ -63,7 +63,7 @@ function gateEvidence(id, fixture) {
     const screenshot = artifact(screenshotPath);
     return {
       kind: 'mission-control-execution-canary-evidence',
-      schemaVersion: 'mission-control-execution-canary-evidence/v1',
+      schemaVersion: 'mission-control-execution-canary-evidence/v2',
       generatedAt: '2026-07-28T00:10:00.000Z',
       status: 'PASSED',
       passed: true,
@@ -94,7 +94,7 @@ function gateEvidence(id, fixture) {
     const screenshot = artifact(screenshotPath);
     return {
       kind: 'package-ui-evidence',
-      schemaVersion: 8,
+      schemaVersion: 9,
       passed: true,
       screenshot: {
         path: screenshot.sourcePath,
@@ -126,7 +126,7 @@ export function createS7BundleFixture(passedCount) {
   );
   writeJson(path.join(appContentPath, 'package.json'), {
     name: '@amazon-ai-ops/desktop',
-    version: '1.5.0',
+    version: JSON.parse(fs.readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version,
     main: 'dist/main/index.js',
   });
   writeFile(path.join(appContentPath, 'dist', 'main', 'index.js'), 'fixture-main');

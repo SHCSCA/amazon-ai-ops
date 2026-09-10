@@ -5,6 +5,7 @@ import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { addCurrentCanaryLineage } from './execution-canary-current.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -530,6 +531,8 @@ function createFixture(mode) {
     database.close();
   }
 
+  const currentDatabase = new Database(databasePath);
+  try { addCurrentCanaryLineage(currentDatabase); } finally { currentDatabase.close(); }
   fs.copyFileSync(databasePath, sourcePath);
   fs.rmSync(databasePath);
   const onlineBackup = runReadonlySqliteOnlineBackupSync({
@@ -631,6 +634,40 @@ function expectFormalCanaryPass(fixture, evidence) {
 }
 
 describe('Mission Control execution canary evidence exporter', () => {
+  it.each([
+    ['legacy missing authority', 'UPDATE mission_grants SET authority_json=NULL'],
+    ['replayed mode revision', "UPDATE decisions SET authority_json=json_set(authority_json,'$.authorityModeRevision',2)"],
+    ['foreign Profile', "UPDATE mission_grants SET authority_json=json_set(authority_json,'$.context.browserProfileId','foreign-profile')"],
+    ['mixed issuer', "UPDATE mission_grants SET issuer_actor_id='policy-engine'"],
+    ['missing Mission history', 'DELETE FROM mission_events WHERE mission_revision=1'],
+    ['missing Decision history', "DELETE FROM decision_history WHERE event_type='executed'"],
+    ['altered approved value', "UPDATE decision_history SET snapshot_json=json_set(snapshot_json,'$.recommendedValue',0.96) WHERE event_type='approved'"],
+    ['wrong approval actor', "UPDATE decision_history SET actor_id='policy-engine' WHERE event_type='approved'"],
+    ['missing reservation', "DELETE FROM mission_grant_events WHERE event_type='reserved'"],
+    ['missing spent slot', "DELETE FROM mission_grant_events WHERE event_type='spent'"],
+    ['different submit intent', "UPDATE mission_grant_events SET submit_intent_id='another-intent' WHERE event_type='spent'"],
+    ['duplicate submitted event', "INSERT INTO ad_execution_events SELECT id||'-duplicate',store_id,batch_id,job_id,sequence+1,event_type,from_status,to_status,session_generation,created_at FROM ad_execution_events WHERE event_type='submitted'"],
+    ['cropped action batch', "INSERT INTO analysis_proposal_snapshots SELECT id||'-second',store_id,marketplace,currency,mission_id,mission_revision,policy_version_id,policy_revision,action_revision,action_type,entity_type,ad_entity_authority_id,ad_entity_id,ad_entity_revision,current_bid_cents,proposed_bid_cents,change_pct,authorization_json,valid_until,created_session_generation,created_at,action_batch_id FROM analysis_proposal_snapshots"],
+  ])('rejects current canary %s', (_name, sql) => {
+    const fixture = createFixture('manual_approval');
+    mutateSnapshot(fixture, database => database.exec(sql));
+    expect(() => exporter.exportExecutionCanaryEvidence(fixture.options, fixture.context)).toThrow(/Current execution lineage/);
+    expect(fs.existsSync(fixture.outputPath)).toBe(false);
+  });
+
+  it('accepts expiry after submit during readback without creating new write authority', () => {
+    const fixture = createFixture('manual_approval');
+    mutateSnapshot(fixture, database => {
+      const expiry = '2026-07-27T11:40:31.000Z';
+      database.prepare('UPDATE mission_grants SET expires_at=?').run(expiry);
+      database.prepare('UPDATE decisions SET valid_until=?').run(expiry);
+      database.prepare('UPDATE analysis_proposal_snapshots SET valid_until=?').run(expiry);
+      database.prepare("UPDATE decision_history SET snapshot_json=json_set(snapshot_json,'$.validUntil',?)").run(expiry);
+    });
+    const { evidence } = exporter.exportExecutionCanaryEvidence(fixture.options, fixture.context);
+    expectFormalCanaryPass(fixture, evidence);
+  });
+
   it('exports manual-approval authority facts directly accepted by the formal verifier', () => {
     const fixture = createFixture('manual_approval');
     const databaseSha256Before = sha256File(fixture.databasePath);
@@ -639,7 +676,7 @@ describe('Mission Control execution canary evidence exporter', () => {
 
     expect(evidence).toMatchObject({
       kind: 'mission-control-execution-canary-evidence',
-      schemaVersion: 'mission-control-execution-canary-evidence/v1',
+      schemaVersion: 'mission-control-execution-canary-evidence/v2',
       status: 'PASSED',
       passed: true,
       mode: 'manual_approval',
@@ -660,7 +697,7 @@ describe('Mission Control execution canary evidence exporter', () => {
         packageIdentity: fixture.packageIdentity,
         snapshotManifestSha256: sha256File(fixture.manifestPath),
         authorityProof: {
-          queryContract: 'mission-control-execution-canary-authority/v1',
+          queryContract: 'mission-control-execution-canary-authority/v2',
           passed: true,
         },
       },

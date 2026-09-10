@@ -2588,7 +2588,18 @@ describe('StoreCollectionOrchestrator', () => {
         };
       },
     });
-    await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
+    const failure = await test.orchestrator.runCycle().catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
+    const seen = new Set<unknown>();
+    const messages: string[] = [];
+    let cause: unknown = failure;
+    while (cause instanceof Error && !seen.has(cause)) {
+      seen.add(cause);
+      messages.push(cause.message);
+      cause = (cause as Error & { cause?: unknown }).cause;
+    }
+    expect(cause).toBeUndefined();
+    expect(messages).toContain('scheduler cleanup close failed');
     const collectionOutcome = readHistory(test).outcomes.find((item: any) => item.storeId === 'store-a');
     expect(collectionOutcome).toMatchObject({
       state: 'failed',
@@ -4093,7 +4104,9 @@ describe('StoreCollectionOrchestrator', () => {
   });
 
   it('makes start idempotent and isolates a throwing onError observer', async () => {
-    const onError = vi.fn(() => { throw new Error('observer'); });
+    let observed!: () => void;
+    const observation = new Promise<void>(resolve => { observed = resolve; });
+    const onError = vi.fn(() => { observed(); throw new Error('observer'); });
     const setInterval = vi.fn(() => ({ unref: vi.fn() }) as never);
     const clearInterval = vi.fn();
     const test = harness({
@@ -4104,7 +4117,8 @@ describe('StoreCollectionOrchestrator', () => {
     });
     test.orchestrator.start();
     test.orchestrator.start();
-    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    await observation;
+    expect(onError).toHaveBeenCalledOnce();
     expect(setInterval).toHaveBeenCalledOnce();
     test.orchestrator.stop();
     expect(clearInterval).toHaveBeenCalledOnce();

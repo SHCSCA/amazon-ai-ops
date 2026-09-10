@@ -1,3 +1,4 @@
+import { normalizeStoreId, type AdExecutionBatchProjection } from '@amazon-ai-ops/shared-types';
 import { describe, expect, it } from 'vitest';
 import { selectExecutionReadbackGate } from './execution-workspace-gate';
 
@@ -18,26 +19,22 @@ function makeProjection(overrides: {
       observedBidCents: number;
     }>;
   }>[];
-} = {}) {
-  const { grantId = BASE_GRANT_ID, jobs = [] } = overrides;
+} = {}): AdExecutionBatchProjection {
+  const { grantId = BASE_GRANT_ID, jobs = [{}] } = overrides;
+  const storeId = normalizeStoreId('store-a');
+  const now = '2026-09-07T00:00:00Z';
   return {
-    batch: { id: BASE_BATCH_ID, grantId, status: 'queued' as const },
-    jobs: jobs.length
-      ? jobs.map((j) => ({
-          id: BASE_JOB_ID,
-          identity: { campaignId: 'C1', adGroupId: 'AG1', keywordId: 'K1' },
-          evidence: [],
-          events: [],
-          ...j,
-        }))
-      : [
-          {
-            id: BASE_JOB_ID,
-            identity: { campaignId: 'C1', adGroupId: 'AG1', keywordId: 'K1' },
-            evidence: [],
-            events: [],
-          },
-        ],
+    batch: { id: BASE_BATCH_ID, storeId, marketplace: 'US', currency: 'USD', missionId: 'mission-a', missionRevision: 1, grantId, actionRevision: 1, status: 'queued', revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now },
+    jobs: jobs.map(j => ({
+      id: j.id ?? BASE_JOB_ID, storeId, batchId: BASE_BATCH_ID, ordinal: 1, missionId: 'mission-a', grantId,
+      proposalId: 'proposal-a', decisionId: 'decision-a', decisionRevision: 1, actionRevision: 1,
+      actionType: 'set_keyword_bid', canonicalKeywordId: 'keyword-a', adEntityId: 'entity-a', entityRevision: 1,
+      identity: { storeId, marketplace: 'US', currency: 'USD', adsAccountId: 'account-a', objectRevision: 1, campaignId: 'C1', adGroupId: 'AG1', keywordId: 'K1', ...j.identity },
+      pageIdentityHash: 'a'.repeat(64), expectedBidCents: 100, targetBidCents: 90, changePct: -10,
+      idempotencyKey: 'key-a', status: 'queued', revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now,
+      evidence: (j.evidence ?? []).map((e, i) => ({ id: 'evidence-' + i, storeId, contentSha256: String(i).repeat(64), pageIdentityHash: 'a'.repeat(64), canonicalKeywordId: 'keyword-a', objectRevision: 1, capturedSessionGeneration: 1, capturedAt: now, createdAt: now, ...e })),
+      events: [],
+    })),
   };
 }
 
@@ -52,6 +49,10 @@ describe('selectExecutionReadbackGate', () => {
     const result = selectExecutionReadbackGate(makeProjection(), null, BASE_GRANT_ID);
     expect(result.eligible).toBe(false);
     expect(result.blockers).toContain('尚未选择执行批次');
+  });
+
+  it('rejects a selected grant from another batch', () => {
+    expect(selectExecutionReadbackGate(makeProjection(), BASE_JOB_ID, 'other-grant').authorityBound).toBe(false);
   });
 
   it('blocks when no grant id', () => {
@@ -223,7 +224,7 @@ describe('selectExecutionReadbackGate', () => {
     expect(result.blockers).toContain('提交后与刷新后出价不一致');
   });
 
-  it('allows 1 cent tolerance on bid values', () => {
+  it('accepts exact bid value equality', () => {
     const evidence = [
       {
         batchId: BASE_BATCH_ID,

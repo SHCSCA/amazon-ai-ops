@@ -72,9 +72,10 @@ export class AdActionReasonExplainer {
       responseFormat: 'json_object',
       signal: requestOptions.signal,
     });
-    requestOptions.signal?.throwIfAborted();
+    if (requestOptions.signal?.aborted) { response.reportOutput?.('discarded'); requestOptions.signal.throwIfAborted(); }
 
     if (!response.success) {
+      response.reportOutput?.('invalid');
       return {
         schemaVersion: 'ad_action_reason_v1',
         explanation: `建议${input.recommendedAction}：基于当前 ACOS ${(input.currentMetrics.acos * 100).toFixed(1)}%、花费 USD ${input.currentMetrics.cost.toFixed(2)} 的表现做出的判断。`,
@@ -87,7 +88,15 @@ export class AdActionReasonExplainer {
     try {
       const parsed = parseJsonObject(response.content || '{}');
       if (parsed.schemaVersion !== 'ad_action_reason_v1') {
+        response.reportOutput?.('invalid');
         return this.ruleFallback(input, `AI 输出 schemaVersion 错误：${String(parsed.schemaVersion || 'missing')}`);
+      }
+      if (typeof parsed.explanation !== 'string' || !parsed.explanation.trim()
+        || !Array.isArray(parsed.riskWarnings) || parsed.riskWarnings.some(item => typeof item !== 'string' || !item.trim())
+        || (parsed.alternativeSuggestions !== undefined && (!Array.isArray(parsed.alternativeSuggestions)
+          || parsed.alternativeSuggestions.some(item => typeof item !== 'string' || !item.trim())))) {
+        response.reportOutput?.('invalid');
+        return this.ruleFallback(input, 'AI 解释字段不完整或格式无效。');
       }
       const output: AdActionExplainOutput = {
         schemaVersion: 'ad_action_reason_v1',
@@ -103,10 +112,13 @@ export class AdActionReasonExplainer {
         ...output.riskWarnings,
         ...(output.alternativeSuggestions || []),
       ])) {
+        response.reportOutput?.('invalid');
         return this.ruleFallback(input, `AI 返回的自然语言字段不是${this.outputLanguage()}。`);
       }
+      response.reportOutput?.('accepted');
       return output;
     } catch {
+      response.reportOutput?.('invalid');
       return {
         schemaVersion: 'ad_action_reason_v1',
         explanation: 'AI 响应无法解析为标准 JSON，已回退到规则解释。',

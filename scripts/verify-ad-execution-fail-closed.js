@@ -83,7 +83,7 @@ mustContain(
 );
 mustContain(
   mainIndex,
-  'findByFilter(normalizedFilter).items',
+  'findByFilterForStore(context.storeId, normalizedFilter)',
   'recommendation listing supports status/date/store/site/asin filters',
 );
 mustContain(
@@ -93,7 +93,7 @@ mustContain(
 );
 mustContain(
   mainIndex,
-  '不能使用登录账号名代替店铺范围',
+  'const scope = normalizeBusinessUiScope(input);',
   'operator-triggered recommendation generation requires explicit business scope',
 );
 mustContain(

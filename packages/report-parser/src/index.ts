@@ -1,4 +1,5 @@
 export { ReportParser } from './parser';
+export { LINGXING_TEMPLATE_MANIFEST } from './lingxing-template-manifest';
 export { keywordMetricDiagnosticsToCsv, parseKeywordMetrics, parseKeywordMetricsWithDiagnostics } from './keyword-metrics';
 export type { KeywordMetricParseDiagnostics, KeywordMetricParseIssue, KeywordMetricParseResult } from './keyword-metrics';
 export { parseListingContent } from './listing-content';

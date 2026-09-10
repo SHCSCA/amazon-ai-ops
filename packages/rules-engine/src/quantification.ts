@@ -399,12 +399,12 @@ function compareTrend(previous: number, recent: number): 'up' | 'down' | 'flat' 
   return 'flat';
 }
 
-function lowerBidValue(cpc: number, config: RuleConfig): string {
+export function lowerBidValue(cpc: number, config: RuleConfig): string {
   const reduction = Math.min(numberOrFallback(config.bidAdjustPercent, 0.1), numberOrFallback(config.maxBidDecrement, 0.2));
   return Math.max(numberOrFallback(config.minCpc, 0.02), cpc * (1 - reduction)).toFixed(2);
 }
 
-function raiseBidValue(cpc: number, config: RuleConfig): string {
+export function raiseBidValue(cpc: number, config: RuleConfig): string {
   const increase = Math.min(numberOrFallback(config.bidAdjustPercent, 0.1), numberOrFallback(config.maxBidIncrement, 0.5));
   return Math.min(numberOrFallback(config.maxCpc, 5), cpc * (1 + increase)).toFixed(2);
 }

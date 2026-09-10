@@ -1,10 +1,16 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
 import * as path from 'path';
+import * as sqliteMigrations from './migrations';
 import {
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  AI_SPEND_MIGRATION_CHECKSUM,
+  AI_SPEND_MIGRATION_NAME,
+  AI_SPEND_MIGRATION_VERSION,
+  runMissionWriteAuthorityMigration,
+  runGrantSlotLedgerMigration,
+  runLegacyCompatibilityMigration,
+  runAiSpendMigration,
+  runExecutionReconciliationMigration,
   runAnalysisAuthorityMigration,
   runAnalysisRunsMigration,
   runCollectionResumeAuthorityMigration,
@@ -20,8 +26,19 @@ import {
   runStoreAuthorityMigrations,
   runStoreAuthorityRepairMigration,
   runV16DomainMigration,
+  applyContextBindingMigration,
+  runPolicyAuthorityMigration,
   type UpgradeBackupManifest,
 } from './migrations';
+
+export const SQLITE_MIGRATION_CONTRACT = Object.freeze(Object.entries(sqliteMigrations)
+  .filter(([key]) => key.endsWith('_MIGRATION_VERSION'))
+  .map(([key, version]) => {
+    const prefix = key.slice(0, -'_VERSION'.length);
+    const metadata = sqliteMigrations as Record<string, unknown>;
+    return Object.freeze({ version: Number(version), name: String(metadata[prefix + '_NAME']), checksum: String(metadata[prefix + '_CHECKSUM']) });
+  }).sort((left, right) => left.version - right.version));
+export const SQLITE_SCHEMA_VERSION = SQLITE_MIGRATION_CONTRACT.at(-1)!.version;
 
 // 获取用户数据目录
 function getUserDataPath(): string {
@@ -110,6 +127,23 @@ export function getSqliteDb(): Database.Database {
 }
 
 function initializeSqlite(database: Database.Database): void {
+  // Reject a future ledger before even changing journal mode or creating tables.
+  if (database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get()) {
+    const ledger = database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as { version: number | null };
+    if (Number(ledger.version) > AI_SPEND_MIGRATION_VERSION) throw new Error('Database uses a newer schema; install the matching application version.');
+    const contracts = new Map(SQLITE_MIGRATION_CONTRACT.map(row => [row.version, row]));
+    const rows = database.prepare('SELECT version,name,checksum,status FROM schema_migrations ORDER BY version').all() as Array<{ version: number; name: string; checksum: string; status: string }>;
+    let applied = 0;
+    for (const row of rows) {
+      const contract = contracts.get(row.version);
+      const legacyV1 = row.version === 1 && row.checksum === sqliteMigrations.LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM;
+      if (!contract || row.name !== contract.name || (!legacyV1 && row.checksum !== contract.checksum)
+        || !['applied','started','failed'].includes(row.status)
+        || (row.status === 'applied' && row.version !== ++applied)) {
+        throw new Error('Migration ledger name/checksum/status contract is unknown or incomplete; restore the verified backup or use the matching application.');
+      }
+    }
+  }
   // 启用 WAL 模式，提升并发性能
   database.pragma('journal_mode = WAL');
   database.pragma('foreign_keys = ON');
@@ -117,9 +151,9 @@ function initializeSqlite(database: Database.Database): void {
   // Capture one immutable recovery point for the complete pending chain.
   // This runs before CREATE/ALTER statements, including a v7 -> v8 startup.
   const upgradeBackup = prepareUpgradeBackup(database, {
-    targetVersion: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
-    targetName: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
-    targetChecksum: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
+    targetVersion: AI_SPEND_MIGRATION_VERSION,
+    targetName: AI_SPEND_MIGRATION_NAME,
+    targetChecksum: AI_SPEND_MIGRATION_CHECKSUM,
   });
 
   // Bind and verify the Stage 1 recovery snapshot before any legacy startup
@@ -728,6 +762,13 @@ function runMigrations(database: Database.Database, upgradeBackup: UpgradeBackup
   runStoreProviderIdentityAuthorityMigration(database, upgradeBackup);
   runAnalysisRunsMigration(database);
   runV16DomainMigration(database);
+  applyContextBindingMigration(database);
+  runPolicyAuthorityMigration(database, upgradeBackup);
+  runExecutionReconciliationMigration(database, upgradeBackup);
+  runMissionWriteAuthorityMigration(database, upgradeBackup);
+  runGrantSlotLedgerMigration(database, upgradeBackup);
+  runLegacyCompatibilityMigration(database, upgradeBackup);
+  runAiSpendMigration(database, upgradeBackup);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

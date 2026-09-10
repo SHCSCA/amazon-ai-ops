@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AdStrategyDiagnoser, assessAdEvidenceSufficiency } from './ad-strategy-diagnosis';
 import type { AIProvider, ChatMessage, ChatOptions, CompleteOptions } from './provider';
 import type { AIResponse } from './types';
@@ -579,13 +579,16 @@ describe('AdStrategyDiagnoser', () => {
   });
 
   it('repairs malformed JSON once and parses the repaired structured diagnosis', async () => {
+    const firstOutput = vi.fn(), repairedOutput = vi.fn();
     const provider = new FakeProvider([
       {
         success: true,
+        reportOutput: firstOutput,
         content: '{"schemaVersion":"ad_strategy_diagnosis_v1","lifecycleStage":"keyword_exploration","summary":"坏 JSON","mainProblems":["HIGH_ACOS",],"thresholdSuggestions":{},"aiCandidates":[],"insightOnlyCandidates":[],"riskWarnings":[]}',
       },
       {
         success: true,
+        reportOutput: repairedOutput,
         content: JSON.stringify({
           schemaVersion: 'ad_strategy_diagnosis_v1',
           lifecycleStage: 'keyword_exploration',
@@ -625,6 +628,8 @@ describe('AdStrategyDiagnoser', () => {
     expect(provider.chatCount).toBe(2);
     expect(provider.messageBatches[1].map((message) => message.content).join('\n')).toContain('修复为一个合法 JSON 对象');
     expect(result.source).toBe('ai');
+    expect(firstOutput).toHaveBeenCalledTimes(1); expect(firstOutput).toHaveBeenCalledWith('invalid');
+    expect(repairedOutput).toHaveBeenCalledTimes(1); expect(repairedOutput).toHaveBeenCalledWith('accepted');
     expect(result.summary).toBe('AI 输出已修复为标准 JSON，当前只展示可控字段。');
     expect(result.aiFallbackReason).toBeUndefined();
   });

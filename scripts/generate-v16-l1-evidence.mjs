@@ -1,150 +1,26 @@
-#!/usr/bin/env node
-/**
- * V1.6.0 L1 测试证据生成器
- * 
- * 运行指定测试并生成符合 v16_evidence.schema.json 的证据文件
- */
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { cliArg, readJson, sha256, sourceIdentity, summarizeVitest, writeJson } from './verify-v16-required-test-manifest.js';
 
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
-
-const L1_TESTS = [
-  {
-    testId: 'V16-T-L1-ANALYSIS-AUTH',
-    title: 'Analysis Authority L1 主域不变量',
-    file: 'apps/desktop/src/main/analysis-authority-service.test.ts',
-  },
-  {
-    testId: 'V16-T-L1-EXECUTION-AUTH',
-    title: 'Execution Authority L1 主域不变量',
-    file: 'apps/desktop/src/main/execution-authority-service.test.ts',
-  },
-  {
-    testId: 'V16-T-L1-MISSION-DOMAIN',
-    title: 'Mission Domain L1 主域不变量',
-    file: 'apps/desktop/src/main/mission-domain-service.test.ts',
-  },
-  {
-    testId: 'V16-T-L1-FORMAL-DATA-GATE',
-    title: 'Formal Business Data Gate L1 合同',
-    file: 'apps/desktop/src/main/formal-business-data-gate.test.ts',
-  },
-];
-
-function runTest(testFile) {
-  const start = Date.now();
-  try {
-    const output = execSync(
-      `pnpm vitest run ${testFile} --reporter=json --reporter=verbose`,
-      { 
-        cwd: ROOT,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }
-    );
-    
-    // 从 JSON reporter 输出解析结果
-    const lines = output.split('\n');
-    const jsonLine = lines.find(line => line.trim().startsWith('{') && line.includes('"testResults"'));
-    
-    if (jsonLine) {
-      const result = JSON.parse(jsonLine);
-      const testResults = result.testResults?.[0];
-      
-      return {
-        passed: true,
-        duration: Date.now() - start,
-        total: testResults?.assertionResults?.length || 0,
-        passedCount: testResults?.assertionResults?.filter(t => t.status === 'passed').length || 0,
-        failedCount: testResults?.assertionResults?.filter(t => t.status === 'failed').length || 0,
-        skippedCount: testResults?.assertionResults?.filter(t => t.status === 'skipped').length || 0,
-      };
-    }
-    
-    // fallback: 从 verbose 输出计数
-    const passedMatch = output.match(/(\d+) passed/);
-    const totalTests = passedMatch ? parseInt(passedMatch[1]) : 0;
-    
-    return {
-      passed: true,
-      duration: Date.now() - start,
-      total: totalTests,
-      passedCount: totalTests,
-      failedCount: 0,
-      skippedCount: 0,
-    };
-  } catch (error) {
-    return {
-      passed: false,
-      duration: Date.now() - start,
-      total: 0,
-      passedCount: 0,
-      failedCount: 0,
-      skippedCount: 0,
-      error: error.message,
-    };
-  }
-}
-
-function writeEvidence(testConfig, result) {
-  const evidenceDir = path.join(ROOT, 'output', 'v16-evidence');
-  fs.mkdirSync(evidenceDir, { recursive: true });
-  
-  const evidence = {
-    schemaVersion: 'v16.evidence/0.1',
-    testId: testConfig.testId,
-    title: testConfig.title,
-    layer: 'L1',
-    testFile: testConfig.file,
-    executionTime: new Date().toISOString(),
-    duration: result.duration,
-    result: {
-      passed: result.passed,
-      total: result.total,
-      passed: result.passedCount,
-      failed: result.failedCount,
-      skipped: result.skippedCount,
-    },
-    environment: {
-      nodeVersion: process.version,
-      platform: process.platform,
-    },
-  };
-  
-  if (result.error) {
-    evidence.error = result.error;
-  }
-  
-  const filename = testConfig.testId.toLowerCase().replace(/[^a-z0-9]/g, '_') + '.json';
-  const filepath = path.join(evidenceDir, filename);
-  
-  fs.writeFileSync(filepath, JSON.stringify(evidence, null, 2), 'utf8');
-  console.log(`✓ Evidence written: ${filename}`);
-  
-  return evidence.result.passed;
-}
-
-console.log('=== V1.6.0 L1 Test Evidence Generator ===\n');
-
-let allPassed = true;
-
-for (const test of L1_TESTS) {
-  console.log(`Running: ${test.testId}...`);
-  const result = runTest(test.file);
-  const passed = writeEvidence(test, result);
-  
-  if (passed) {
-    console.log(`  ✓ ${result.passedCount}/${result.total} tests passed (${result.duration}ms)\n`);
-  } else {
-    console.log(`  ✗ Test failed\n`);
-    allPassed = false;
-  }
-}
-
-console.log(allPassed ? '✓ All L1 tests passed' : '✗ Some tests failed');
-process.exit(allPassed ? 0 : 1);
+const root = path.resolve(cliArg('repo-root', process.cwd()));
+const manifest = readJson(path.join(root, 'docs/v16_required_test_manifest.json'));
+const testId = cliArg('test', 'V16-T-L1-ALL');
+const test = manifest.requiredTests.find(test => test.testId === testId);
+if (!test || test.format !== 'vitest-json' || !test.testFiles.length) throw new Error('Unknown or non-Vitest required test: ' + testId);
+const dir = path.resolve(root, cliArg('out-dir', 'output/v16-evidence/run-' + new Date().toISOString().replaceAll(':', '-')));
+fs.mkdirSync(dir, { recursive: true });
+const identity = sourceIdentity(root);
+const artifact = path.join(dir, testId + '.runner.json');
+if (fs.existsSync(artifact)) fs.unlinkSync(artifact);
+const startedAt = new Date().toISOString();
+const filterFiles = testId === 'V16-T-L1-ALL' ? [] : test.testFiles;
+const run = spawnSync(process.execPath, [path.join(root, 'node_modules/vitest/vitest.mjs'), 'run', ...filterFiles, '--reporter=json', '--outputFile=' + artifact], { cwd: root, stdio: 'inherit' });
+const finishedAt = new Date().toISOString();
+const result = fs.existsSync(artifact) ? summarizeVitest(readJson(artifact), test.testFiles, root) : { success: false, total: 0, passed: 0, failed: 0, skipped: 0, issues: ['RUNNER_MISSING'] };
+if (run.status !== 0 || JSON.stringify(identity) !== JSON.stringify(sourceIdentity(root))) result.success = false;
+const evidencePath = path.join(dir, testId + '.json');
+writeJson(evidencePath, { schemaVersion: 'v16.evidence/1', testId, layer: test.layer, identity, execution: { startedAt, finishedAt, exitCode: run.status }, artifact: { format: 'vitest-json', path: artifact, sha256: fs.existsSync(artifact) ? sha256(fs.readFileSync(artifact)) : null }, result });
+writeJson(path.join(dir, 'manifest.json'), { ...manifest, identity, requiredTests: manifest.requiredTests.map(t => ({ ...t, evidencePath: path.join(dir, t.testId + '.json') })) });
+console.log(`${testId}: ${result.passed}/${result.total}; success=${result.success}; ${evidencePath}`);
+process.exitCode = result.success ? 0 : 1;

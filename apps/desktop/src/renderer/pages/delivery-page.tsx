@@ -1444,6 +1444,19 @@ export function DeliveryPage() {
       <div className="business-stack delivery-prototype-stack">
         <Panel className="delivery-summary-workbench" title="交付摘要" tone={deliveryReady ? 'success' : missingItems.length ? 'warning' : 'default'}>
           <DeliveryPreviewNotice state={previewState} />
+          <div className="action-row delivery-prototype-actions">
+            <button
+              aria-busy={deliveryPrimaryButton.ariaBusy}
+              className={deliveryPrimaryButton.className}
+              data-action-priority="primary"
+              disabled={deliveryPrimaryButton.disabled}
+              onClick={deliveryPrimaryAction.onClick}
+              type="button"
+            >
+              {deliveryPrimaryButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{deliveryPrimaryButton.label}</span>
+            </button>
+          </div>
           <div className="delivery-summary-hero" aria-label="交付验收结论">
             <div className="delivery-summary-conclusion">
               <div className="delivery-summary-status-row">
@@ -1489,19 +1502,6 @@ export function DeliveryPage() {
               ))}
             </ul>
           )}
-          <div className="action-row delivery-prototype-actions">
-            <button
-              aria-busy={deliveryPrimaryButton.ariaBusy}
-              className={deliveryPrimaryButton.className}
-              data-action-priority="primary"
-              disabled={deliveryPrimaryButton.disabled}
-              onClick={deliveryPrimaryAction.onClick}
-              type="button"
-            >
-              {deliveryPrimaryButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-              <span>{deliveryPrimaryButton.label}</span>
-            </button>
-          </div>
           {secondaryTaskActions.length > 0 && (
             <div className="action-row delivery-prototype-actions">
               {secondaryTaskActions.map((action) => (

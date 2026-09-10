@@ -1,3 +1,5 @@
+import { V16_API_VERSION } from '@amazon-ai-ops/shared-types/src/v16-api';
+import type { AnalysisRunsApi } from '@amazon-ai-ops/shared-types';
 /**
  * Analysis Run Detail View
  *
@@ -25,10 +27,8 @@ interface DetailState {
   error: string | null;
 }
 
-function getAnalysisRunsApi() {
-  return (window as unknown as { electronAPI?: { analysisRuns?: {
-    query: (storeContext: StoreContextEnvelope, input: { runId: string }) => Promise<unknown>;
-  }}}).electronAPI?.analysisRuns;
+function getAnalysisRunsApi(): AnalysisRunsApi | undefined {
+  return (window as unknown as { electronAPI?: { analysisRuns?: AnalysisRunsApi } }).electronAPI?.analysisRuns;
 }
 
 /**
@@ -87,13 +87,13 @@ export function AnalysisRunDetailView({
       const api = getAnalysisRunsApi();
       if (!api) {
         if (!cancelled) {
-          setState({ run: null, loading: false, error: 'Analysis runs API not available.' });
+          setState({ run: null, loading: false, error: '分析服务不可用，请重新启动当前版本应用。' });
         }
         return;
       }
 
       try {
-        const raw = await api.query(storeContext, { runId });
+        const raw = await api.query({ apiVersion: V16_API_VERSION, storeContext, input: { runId } });
         if (cancelled) return;
 
         const response = raw as QueryRunResponse;
@@ -101,18 +101,18 @@ export function AnalysisRunDetailView({
           setState({
             run: null,
             loading: false,
-            error: response.error?.message ?? 'Failed to load analysis run.',
+            error: response.error ?? '无法加载分析详情，请刷新后重试。',
           });
           return;
         }
 
-        setState({ run: response.run ?? null, loading: false, error: null });
+        setState({ run: response.data, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
         setState({
           run: null,
           loading: false,
-          error: err instanceof Error ? err.message : 'Unknown error.',
+          error: err instanceof Error ? err.message : '分析请求失败，请重试。',
         });
       }
     }
@@ -182,20 +182,17 @@ export function AnalysisRunDetailView({
         <section className="detail-section" aria-labelledby="basic-info">
           <h3 id="basic-info" className="section-title">基本信息</h3>
           <dl className="detail-grid">
-            <dt>记录 ID</dt>
-            <dd className="detail-id">{run.runId}</dd>
+            <dt>本次结果</dt>
+            <dd>{run.metadata?.reusedFromRunId ? '复用已封存结果' : '独立分析回执'}</dd>
 
-            <dt>店铺</dt>
-            <dd>{run.storeId}</dd>
+            <dt>范围</dt>
+            <dd>{run.metadata?.productId ?? '当前店铺'}</dd>
 
             <dt>市场</dt>
             <dd>{run.marketplace} / {run.currency}</dd>
 
-            <dt>任务</dt>
-            <dd>{run.missionId ?? '-'}</dd>
-
-            <dt>报告快照</dt>
-            <dd>{run.reportSnapshotId}</dd>
+            <dt>数据期间</dt>
+            <dd>{run.metadata?.dateFrom ?? '未记录'} 至 {run.metadata?.dateTo ?? '未记录'}</dd>
           </dl>
         </section>
 
@@ -236,12 +233,12 @@ export function AnalysisRunDetailView({
 
         {run.metadata && (
           <section className="detail-section" aria-labelledby="metadata-info">
-            <h3 id="metadata-info" className="section-title">元数据</h3>
+            <h3 id="metadata-info" className="section-title">分析输入</h3>
             <dl className="detail-grid">
               {run.metadata.fingerprint && (
                 <>
-                  <dt>指纹</dt>
-                  <dd className="detail-id">{run.metadata.fingerprint}</dd>
+                  <dt>输入核验</dt>
+                  <dd><details><summary>查看输入指纹</summary><code>{run.metadata.fingerprint}</code></details></dd>
                 </>
               )}
               {run.metadata.productId && (
@@ -267,13 +264,13 @@ export function AnalysisRunDetailView({
         )}
 
         <section className="detail-actions">
-          {run.status === 'pending' && onStartAnalysis && (
+          {['pending', 'failed', 'blocked'].includes(run.status) && onStartAnalysis && (
             <button
               type="button"
               className="action-button primary"
               onClick={() => onStartAnalysis(run.runId)}
             >
-              开始分析
+              重新运行分析
             </button>
           )}
           {run.status === 'completed' && run.recommendationsCount > 0 && onViewRecommendations && (

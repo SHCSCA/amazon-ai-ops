@@ -369,7 +369,7 @@ describe('S7 offline migration and recovery verifier', () => {
           version, name, checksum, status, started_at, applied_at,
           error_message, manifest_json, result_json
         )
-        SELECT 12, 'unexpected-v12', 'unexpected-v12', 'applied', started_at, applied_at,
+        SELECT ${TARGET_VERSION + 1}, 'unexpected-future', 'unexpected-future', 'applied', started_at, applied_at,
           NULL, '{}', '{}'
         FROM schema_migrations WHERE version = 11
       `);
@@ -601,6 +601,7 @@ function createV7Source(databasePath) {
   const database = runtime.initSqlite(databasePath);
   try {
     database.pragma('foreign_keys = OFF');
+    stripPostV11FixtureSchema(database);
     const postV7Tables = [
       'lingxing_collection_resume_events',
       'lingxing_collection_resume_active_claims',
@@ -659,6 +660,8 @@ function createV3SourceWithDuplicateListings(databasePath) {
   const runtime = loadLocalDbRuntime();
   const database = runtime.initSqlite(databasePath);
   try {
+    database.pragma('foreign_keys = OFF');
+    stripPostV11FixtureSchema(database);
     database.exec(`
       DELETE FROM listing_content_versions;
       DELETE FROM listing_content;
@@ -689,6 +692,22 @@ function createV3SourceWithDuplicateListings(databasePath) {
     database.prepare('DELETE FROM schema_migrations WHERE version >= 4').run();
   } finally {
     database.close();
+  }
+}
+
+// Test-only downgrade of an empty current schema; the production migrator never drops these tables.
+function stripPostV11FixtureSchema(database) {
+  database.exec(`DROP TABLE ai_cost_records; DROP TABLE ai_spend_policies; DROP TABLE legacy_record_classifications;
+    DROP TABLE ad_execution_reconciliation_cases;
+    DROP TRIGGER trg_grant_slot_intent;
+    DROP TRIGGER trg_decision_write_authority_immutable;
+    ALTER TABLE analysis_action_batches DROP COLUMN authority_json;
+    ALTER TABLE decisions DROP COLUMN authority_json;
+    ALTER TABLE mission_grants DROP COLUMN authority_json;`);
+  for (const table of ['authority_invalidation_v16','mode_change_log_v16','policy_versions_v16',
+    'causal_events_v16','experiment_snapshots_v16','experiments_v16','reconciliation_cases','execution_batches',
+    'execution_slots','grant_lifecycle_events','mission_grants_v16','decision_history_v16','decisions_v16','v16_missions','analysis_runs']) {
+    database.exec(`DROP TABLE IF EXISTS "${table}"`);
   }
 }
 

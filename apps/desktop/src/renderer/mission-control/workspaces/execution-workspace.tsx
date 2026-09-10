@@ -1,3 +1,4 @@
+import { isTerminalMissionGrantEventType } from '@amazon-ai-ops/shared-types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowClockwise,
@@ -16,6 +17,7 @@ import {
   Warning,
 } from '@phosphor-icons/react';
 import {
+  AD_EXECUTION_RECONCILIATION_COPY,
   missionControlContextKey,
   type AdExecutionBatchProjection,
   type AdExecutionEvidenceSlot,
@@ -253,7 +255,7 @@ export function buildExecutableGrantSelections(input: {
     .map((link) => [link.proposalId, link.decisionId]));
   const terminalGrantIds = new Set(events
     .filter((event) => String(event.storeId) === String(context.storeId)
-      && event.eventType !== 'issued')
+      && isTerminalMissionGrantEventType(event.eventType))
     .map((event) => event.grantId));
 
   return grants.flatMap((grant): ExecutionGrantSelection[] => {
@@ -466,7 +468,7 @@ export function ExecutionWorkspace({
     [apiOverride, previewEnabled],
   );
   const api = viewCapabilityReady ? authorityApi : null;
-  const canReconcileUnknown = reconcileCapabilityProjected && Boolean(api);
+
   const selectionAuthorityApi = useMemo(
     () => selectionApiOverride ?? (previewEnabled ? null : readExecutionSelectionAuthorityApi()),
     [previewEnabled, selectionApiOverride],
@@ -863,6 +865,10 @@ export function ExecutionWorkspace({
   const selectedUnknown = selected?.batch.status === 'unknown'
     || selected?.jobs.some((job) => job.status === 'unknown');
   const selectedIssuer = selected ? grantIssuer(selected, issuerByGrantId[selected.batch.grantId]) : null;
+  const canReconcileUnknown = reconcileCapabilityProjected && Boolean(api) && !selected?.reconciliation;
+  const reconciliationCopy = selected?.reconciliation
+    ? selected.reconciliation.outcome ? AD_EXECUTION_RECONCILIATION_COPY[selected.reconciliation.outcome] : '只读对账正在进行；两个观察位置已保留，请等待原请求完成。'
+    : '外部结果无法确认，队列已停止。可人工接管当前浏览器，或进行一次只读双次对账。';
   const canTakeover = takeoverCapabilityReady && Boolean(selected);
   const canCancel = cancelCapabilityReady && Boolean(selected)
     && selected!.jobs.every((job) => ['queued', 'preflight'].includes(job.status));
@@ -1208,10 +1214,10 @@ export function ExecutionWorkspace({
               <div><dt>执行模式</dt><dd>{selectedIssuer ?? '等待执行授权'}</dd></div>
             </dl>
             <div className="execution-action-reason"><section><h3>调整原因</h3><p>{selectedBatchMission?.objective || '当前批次未提供可核验的运营任务目标。'}</p></section><section><h3>停止与守护条件</h3><p>{selectedBatchMission?.guardrails.length ? selectedBatchMission.guardrails.join('；') : '当前批次未提供可核验的任务守护条件。'}</p></section></div>
-            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>结果不确定 · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。可人工接管当前可见浏览器，或执行两次只读核验并把结果追加到因果记录。</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由本机安全进程自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
+            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>结果不确定 · 队列已停止</strong><p>{reconciliationCopy}</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由本机安全进程自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
           </div>}
           {detailTab === 'compare' && <section className="execution-evidence"><h3>变更前 / 提交后 / 刷新后</h3>{(['before', 'after', 'reload'] as const).map((slot) => { const evidence = selected && selectedJob ? evidenceForExecutionJob(selected, selectedJob.id, slot) : undefined; return <article data-state={evidence ? 'ready' : 'pending'} key={slot}><span>{evidence ? <CheckCircle size={17} weight="fill" /> : <Circle size={17} />}</span><div><strong>{EVIDENCE_SLOT_LABELS[slot]}</strong><small>{evidence ? `${money(evidence.observedBidCents)} · ${formatTime(evidence.capturedAt)}` : slot === 'before' ? '提交意图前捕获' : slot === 'after' ? '提交后捕获' : '刷新后同对象核验'}</small>{evidence && <details><summary>诊断详情</summary><code>{evidence.contentSha256.slice(0, 12)}…</code></details>}</div></article>; })}</section>}
-          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? '结果不确定 · 可进行只读双次对账' : '等待真实执行后回读'}</strong><p>提交后与刷新后的证据必须独立证明同一标准化关键词和目标值；任何不确定性都停止队列且不自动重试。对账只读取当前值并追加证据，不会再次提交。</p><button className="execution-button execution-button--secondary" disabled={!selectedUnknown || !canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></div>}
+          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? selected?.reconciliation ? '结果不确定 · 对账记录已保存' : '结果不确定 · 可进行一次只读双次对账' : '等待真实执行后回读'}</strong><p>{selectedUnknown ? reconciliationCopy : '提交后与刷新后的证据必须独立证明同一标准化关键词和目标值；任何不确定性都停止队列且不自动重试。'}</p><button className="execution-button execution-button--secondary" disabled={!selectedUnknown || !canReconcileUnknown || Boolean(pending)} onClick={reconcileUnknown} type="button">{pending === 'reconcile-unknown' ? '只读对账中…' : '执行只读双次对账'}</button><details><summary>诊断详情</summary><code>{UNKNOWN_DIAGNOSTIC_DETAIL}</code></details></div>}
           {detailTab === 'evidence' && <div className="execution-archive-panel"><h3>证据与归档</h3><p>串行批次、执行授权终态、因果事件以及变更前 / 提交后 / 刷新后截图和内容哈希均只允许追加。</p><dl><div><dt>批次</dt><dd>{selected ? '已生成' : '待生成'}</dd></div><div><dt>执行授权</dt><dd>{selected?.batch.grantId || grantId ? '已选择' : '待选择'}</dd></div><div><dt>事件数</dt><dd>{consoleRows.length}</dd></div><div><dt>归档状态</dt><dd>{selected?.batch.status === 'succeeded' ? '可归档' : '等待终态'}</dd></div></dl><details><summary>诊断详情</summary><code>{selected?.batch.id ?? '—'}</code><code>{(selected?.batch.grantId ?? grantId) || '—'}</code></details></div>}
           {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联经营实验</span><strong>当前批次没有可核验的关联经营实验</strong><p>执行批次投影未提供经营实验关联，因此这里不会用示例名称、假设或观察窗口冒充真实数据。</p>{selectedBatchMission && <dl><div><dt>关联运营任务</dt><dd>{selectedBatchMission.title}</dd></div><div><dt>任务观察期</dt><dd>{selectedBatchMission.observationStartsAt.slice(0, 10)} 至 {selectedBatchMission.observationEndsAt.slice(0, 10)}</dd></div></dl>}</div>}
         </div>

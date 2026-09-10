@@ -1,3 +1,4 @@
+import { isTerminalMissionGrantEventType } from '@amazon-ai-ops/shared-types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
@@ -46,6 +47,7 @@ import {
   readAnalysisAuthorityWindowApi,
   type AnalysisAuthorityRendererApi,
 } from './analysis-authority-window-api';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './decisions-workspace.css';
 
 const OPERATOR = 'desktop-operator';
@@ -586,6 +588,8 @@ function decisionHistoryEventLabel(eventType: string): string {
 }
 
 function grantTerminalDisplayLabel(eventType?: string): string {
+  if (eventType === 'historical') return '历史授权，仅供查阅';
+  if (eventType === 'invalidated') return '剩余授权已失效';
   if (eventType === 'revoked') return '已撤销';
   if (eventType === 'consumed') return '已消费';
   if (eventType === 'expired') return '已过期';
@@ -699,10 +703,13 @@ export function buildReviseDecisionInput(record: DecisionRecord, draft: Decision
 }
 
 export function DecisionDialog({ record, draft, busy, onChange, onClose, onSave }: { record: DecisionRecord | null; draft: DecisionDraft; busy: boolean; onChange: (draft: DecisionDraft) => void; onClose: () => void; onSave: () => void }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onClose, dismissDisabled: busy,
+  });
   const update = <K extends keyof DecisionDraft>(key: K, value: DecisionDraft[K]) => onChange({ ...draft, [key]: value });
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="decision-dialog-title" aria-modal="true" className="mission-control-dialog decision-domain-dialog" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="decision-dialog-title" aria-modal="true" className="mission-control-dialog decision-domain-dialog" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header>
           <div>
             <span>经营决策 · US / USD</span>
@@ -712,7 +719,7 @@ export function DecisionDialog({ record, draft, busy, onChange, onClose, onSave 
           <button aria-label="关闭经营决策编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button>
         </header>
         <div className="decision-domain-form">
-          <label className="decision-domain-form__wide"><span>决策标题 *</span><input autoFocus value={draft.title} onChange={(event) => update('title', event.target.value)} /></label>
+          <label className="decision-domain-form__wide"><span>决策标题 *</span><input data-overlay-initial-focus value={draft.title} onChange={(event) => update('title', event.target.value)} /></label>
           <label className="decision-domain-form__wide"><span>决策理由 *</span><textarea rows={3} value={draft.rationale} onChange={(event) => update('rationale', event.target.value)} /></label>
           <label className="decision-domain-form__wide"><span>推荐动作 *</span><textarea rows={2} value={draft.recommendation} onChange={(event) => update('recommendation', event.target.value)} /></label>
           <label className="decision-domain-form__wide"><span>可核验事实 *</span><textarea rows={3} value={draft.facts} onChange={(event) => update('facts', event.target.value)} /><small>用分号或换行分隔。</small></label>
@@ -764,6 +771,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const [feedback, setFeedback] = useState('');
   const [editor, setEditor] = useState<{ record: DecisionRecord | null; draft: DecisionDraft } | null>(null);
   const [resolution, setResolution] = useState<HumanDecisionResolutionInput['status'] | null>(null);
+  const [grantToRevoke, setGrantToRevoke] = useState<MissionGrantRecord | null>(null);
   const sequence = useRef(0);
   const detailSequence = useRef(0);
   const analysisSequence = useRef(0);
@@ -771,7 +779,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const mutationSequence = useRef(0);
   const authorityKey = storeContext ? missionControlContextKey(storeContext) : '';
   const authorityRef = useRef(authorityKey); authorityRef.current = authorityKey;
-  const api = apiOverride ?? readDecisionDomainWindowApi();
+  const api = useMemo(() => apiOverride ?? readDecisionDomainWindowApi(), [apiOverride]);
   const analysisApi = analysisApiOverride ?? readAnalysisAuthorityWindowApi();
   const targetBindingApi = previewMode || typeof window === 'undefined'
     ? null
@@ -810,7 +818,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   );
   const busy = pending !== null;
   const terminalGrantEvent = (grant: MissionGrantRecord) => grantEvents.find((event) => (
-    event.grantId === grant.id && event.eventType !== 'issued'
+    event.grantId === grant.id && isTerminalMissionGrantEventType(event.eventType)
   )) ?? (Date.parse(grant.expiresAt) <= Date.now() ? {
     id: `derived-expired:${grant.id}`, storeId: grant.storeId, grantId: grant.id,
     eventType: 'expired' as const, actorId: 'clock', createdAt: grant.expiresAt,
@@ -834,7 +842,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     analysisSequence.current += 1;
     authorizationAnalysisSequence.current += 1;
     mutationSequence.current += 1;
-    setPending(null); setQuery(''); setPage(1); setEditor(null); setResolution(null); setGrantEvents([]); setAnalysis(null);
+    setPending(null); setQuery(''); setPage(1); setEditor(null); setResolution(null); setGrantToRevoke(null); setGrantEvents([]); setAnalysis(null);
     setAuthorizationAnalysis(null); setAuthorizationMissionId(''); setAuthorizationBatchId('');
     setAuthorizationAnalysisLoading(false); setAuthorizationAnalysisError('');
     if (storeContext) void load(storeContext, authorityKey); else { setPhase('blocked'); setError('等待本机安全进程确认当前店铺范围。'); }
@@ -976,12 +984,14 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     setDecisions((items) => items.map((item) => item.id === saved.id ? saved : item)); setResolution(null); setFeedback(`经营决策已${STATUS_LABELS[saved.status]}；这不代表真实 Ads 已执行。`);
   };
 
-  const revokeGrant = async (grant: MissionGrantRecord) => {
+  const revokeGrant = async (grant: MissionGrantRecord, reason: string) => {
     if (view !== 'decisions/decided') { setError('人工授权只能在已决策工作台撤销。'); return; }
-    const event = await mutate('grant-revoke', (domain, context) => domain.revokeHumanGrant(context, { id: `GRANT-EVENT-${grant.id}-${Date.now()}`, grantId: grant.id, reason: 'operator_revoked_batch_authority', actorId: OPERATOR }));
+    if (!reason.trim()) { setError('撤销授权必须填写业务原因。'); return; }
+    const event = await mutate('grant-revoke', (domain, context) => domain.revokeHumanGrant(context, { id: `GRANT-EVENT-${grant.id}-${Date.now()}`, grantId: grant.id, reason: reason.trim(), actorId: OPERATOR }));
     if (!event) return;
     if (selectedMissionRef.current === grant.missionId) setGrantEvents((events) => [event, ...events]);
     setFeedback('人工授权已撤销，原记录保留在审计链。');
+    setGrantToRevoke(null);
   };
 
   const authorizationProposals = authorizationBatchId
@@ -1050,7 +1060,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         || !discovery.recommendationAsin.trim()
         || !discovery.recommendationMatchType.trim()
         || !Number.isInteger(discovery.recommendationRevision)
-        || discovery.recommendationRevision <= 0) {
+        || discovery.recommendationRevision < 0) {
         throw new Error('当前 Ads 页面与建议中的店铺、关键词或竞价不一致，未保存核验结果。');
       }
       await targetBindingApi.bindRecommendationWritableTarget({
@@ -1167,9 +1177,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
               <header>
                 <div>
                   <strong>整批授权一次</strong>
-                  <small>{previewMode
-                    ? '先选运营任务；系统只展示它的最新不可变动作批次，无需选中某条已决策记录。本机安全进程校验后，人工审批与策略自动签发同一种执行授权。'
-                    : '先选运营任务；系统只展示它的最新不可变动作批次，无需选中某条已决策记录。本机安全进程校验后，人工审批与策略自动签发同一种执行授权。'}</small>
+                  <small>人工审批须先在“待审批”逐条填写原因并批准，再签发整个最新批次的授权。策略内自动由当前策略核验完整批次，不需要人工补签。</small>
                 </div>
                 <button className="workspace-button workspace-button--primary" disabled={!canAuthorizeAnalysisBatch || authorizationProposals.length === 0 || busy || authorizationAnalysisLoading} onClick={() => void authorizeSelectedBatch()} type="button"><ShieldCheck size={14} />{pending === 'analysis-authorize' ? '授权校验中…' : `授权 ${authorizationProposals.length} 条`}</button>
               </header>
@@ -1232,7 +1240,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
           </section>
           <section className="decision-domain-grants">
             <header><div><h3>执行授权</h3><p>人工审批与策略自动共用同一不可变授权模型；终态从持久化授权事件派生。</p></div><ShieldCheck size={19} /></header>
-            {grants.length ? <div>{grants.map((grant) => { const terminal = terminalGrantEvent(grant); return <article data-revoked={terminal?.eventType === 'revoked' || undefined} data-terminal={terminal?.eventType} key={grant.id}><div><strong>执行授权</strong><small>{grant.issuer.type === 'policy' ? '策略自动' : '人工审批'} · {grant.allowedAdEntityIds.length} 个对象 · ≤ {grant.maxChangePct}% · ${grant.totalImpactBudget} · {grantTerminalDisplayLabel(terminal?.eventType)}</small><details><summary>诊断详情</summary><code>{grant.id}</code><code>{grant.allowedAdEntityIds.join(',')}</code><code>{terminal?.eventType ?? 'issued'}</code></details></div>{view === 'decisions/decided' && grant.issuer.type === 'human' && <button className="workspace-button workspace-button--secondary" disabled={!can('decisions.grants.revoke') || busy || Boolean(terminal)} onClick={() => void revokeGrant(grant)} type="button">{terminal ? grantTerminalDisplayLabel(terminal.eventType) : '撤销人工授权'}</button>}</article>; })}</div> : <p>当前运营任务没有授权。</p>}
+            {grants.length ? <div>{grants.map((grant) => { const terminal = terminalGrantEvent(grant); return <article data-revoked={terminal?.eventType === 'revoked' || undefined} data-terminal={terminal?.eventType} key={grant.id}><div><strong>执行授权</strong><small>{grant.issuer.type === 'policy' ? '策略自动' : '人工审批'} · {grant.allowedAdEntityIds.length} 个对象 · ≤ {grant.maxChangePct}% · ${grant.totalImpactBudget} · {grantTerminalDisplayLabel(grant.usage?.status ?? terminal?.eventType)}</small>{grant.usage && <small>总额度 {grant.usage.totalSlots} 次 · 提交中 {grant.usage.reservedSlots} 次 · 已消费 {grant.usage.spentSlots} 次 · 剩余 {grant.usage.residualSlots} 次；消费不代表执行成功。</small>}<details><summary>诊断详情</summary><code>{grant.id}</code><code>{grant.allowedAdEntityIds.join(',')}</code><code>{terminal?.eventType ?? 'issued'}</code></details></div>{view === 'decisions/decided' && grant.issuer.type === 'human' && <button className="workspace-button workspace-button--secondary" disabled={!can('decisions.grants.revoke') || busy || Boolean(terminal)} onClick={() => setGrantToRevoke(grant)} type="button">{terminal ? grantTerminalDisplayLabel(terminal.eventType) : '撤销人工授权'}</button>}</article>; })}</div> : <p>当前运营任务没有授权。</p>}
           </section>
         </> : phase === 'ready' ? <WorkspaceState kind="empty" title={`等待选择${copy.title}`} description="从左侧选择经营决策，查看事实、审批历史与授权边界。" /> : null}</div>
       </div>
@@ -1255,5 +1263,6 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         onClose={() => setResolution(null)}
       />
     )}
+    {grantToRevoke && <ReasonRequiredDialog open eyebrow="执行授权" title="撤销人工授权" description="填写业务原因后撤销剩余授权，历史判断和已提交结果继续保留。" tone="danger" confirmLabel="确认撤销" reasonLabel="撤销原因 *" reasonMinLength={1} busy={Boolean(pending)} onConfirm={reason => void revokeGrant(grantToRevoke, reason)} onClose={() => setGrantToRevoke(null)} />}
   </div>;
 }

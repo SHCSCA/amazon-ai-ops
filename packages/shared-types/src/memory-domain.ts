@@ -8,7 +8,7 @@
  * @module memory-domain
  */
 
-import type { MissionStage } from './mission-domain';
+import type { MissionStage } from './v16-mission-domain';
 
 /**
  * Memory status (only trusted observations can be indexed)
@@ -315,9 +315,7 @@ export function buildCausalEventRecord(params: {
   };
 
   // Compute memory digest
-  event.memoryDigest = computeMemoryDigest(event);
-
-  return event;
+  return { ...event, memoryDigest: computeMemoryDigest(event) };
 }
 
 /**

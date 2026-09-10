@@ -841,7 +841,13 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
   });
 
   it('executes one non-canary full-eight create/download request and proves its durable binding', async () => {
-    const test = await harness();
+    const test = await harness({
+      durableJob: (job) => job,
+      coordinatorJob: (job) => ({
+        ...job,
+        reports: job.reports.map((report) => ({ ...report, errorCode: undefined })),
+      }),
+    });
 
     const projection = await test.adapter.execute(test.executeInput);
 
@@ -878,6 +884,16 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
     expect(projection.capability).toBe(test.executeInput.capability);
     expect(projection.transitionCapability).toBe(test.executeInput.transitionCapability);
     expect(projection.transitionScope).toBe(test.executeInput.transitionScope);
+
+    const changed = await harness({
+      durableJob: (job) => job,
+      coordinatorJob: (job) => ({
+        ...job,
+        reports: job.reports.map((report) => ({ ...report, errorCode: 'ACTUAL_DIFFERENCE' })),
+      }),
+    });
+    await expect(changed.adapter.execute(changed.executeInput))
+      .rejects.toThrow(/coordinator result.*durable authority DB job 不一致/);
   });
 
   it('rejects a pre-existing exact request before coordinator/browser side effects', async () => {

@@ -48,7 +48,7 @@ function writeSemanticReportFixture(filePath: string, report: LingxingReportDefi
   const worksheet = XLSX.utils.aoa_to_sheet([headers]);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Report');
-  XLSX.writeFile(workbook, filePath);
+  fs.writeFileSync(filePath, XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
 }
 
 function createdOutcome(

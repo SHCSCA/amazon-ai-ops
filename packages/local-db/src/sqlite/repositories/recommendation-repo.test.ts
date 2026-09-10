@@ -642,6 +642,19 @@ describe('RecommendationRepository', () => {
     });
   });
 
+  it('replaces an unbound CPC estimate with a live bid without overwriting an approved recommendation', () => {
+    const { repo } = createRepo();
+    const stale = recommendation({ status: 'pending', currentValue: '2.60', recommendedValue: '2.34' });
+    const id = repo.insert(stale);
+    const live = recommendation({ status: 'pending', currentValue: '1.80', recommendedValue: '1.62',
+      evidence: { ...stale.evidence, currentValueSource: 'ads_ui' } });
+    expect(repo.insertIfNoDuplicate(live)).toEqual({ id, inserted: false, updated: true });
+    expect(repo.findById(id)).toMatchObject({ currentValue: '1.80', recommendedValue: '1.62' });
+    repo.updateStatus(id, 'approved');
+    expect(repo.insertIfNoDuplicate({ ...live, currentValue: '1.70' })).toEqual({ id, inserted: false });
+    expect(repo.findById(id)?.currentValue).toBe('1.80');
+  });
+
   it('refreshes a traceable pending duplicate when regenerated AI evidence is better', () => {
     const { repo } = createRepo();
     const staleId = repo.insert(recommendation({

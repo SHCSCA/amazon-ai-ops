@@ -22,7 +22,7 @@ describe('root package smoke scripts', () => {
       'verify-v15-enablement-evidence.js',
     ].map((file) => fs.readFileSync(path.join(root, 'scripts', file), 'utf8'));
 
-    expect(rootPackage.version).toBe('1.5.1');
+    expect(rootPackage.version).toBe('1.6.0');
     expect(desktopPackage.version).toBe(rootPackage.version);
     expect(mainSource).toContain(`const APP_VERSION = '${rootPackage.version}'`);
     expect(mainSource).toContain("registerTrackedIpcHandler('app:get-version', () => APP_VERSION)");
@@ -63,7 +63,7 @@ describe('root package smoke scripts', () => {
     const desktopPackageJson = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
     const electronBuilder = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8');
     const orchestrator = fs.readFileSync(path.join(root, 'scripts', 'build-windows-package.js'), 'utf8');
-    const afterPack = fs.readFileSync(path.join(root, 'scripts', 'electron-builder-after-pack.js'), 'utf8');
+    const afterPack = fs.readFileSync(path.join(root, 'apps', 'desktop', 'scripts', 'electron-builder-after-pack.js'), 'utf8');
 
     expect(desktopPackageJson.scripts['prepare:native:electron']).toBeUndefined();
     expect(desktopPackageJson.scripts.prebuild).toBeUndefined();
@@ -77,7 +77,7 @@ describe('root package smoke scripts', () => {
     expect(orchestrator).toContain("mode: 'package'");
     expect(orchestrator).not.toMatch(/install-app-deps|pnpm rebuild/i);
     expect(electronBuilder).toMatch(/\bnpmRebuild:\s*false\b/);
-    expect(electronBuilder).toContain('afterPack: ../../scripts/electron-builder-after-pack.js');
+    expect(electronBuilder).toContain('afterPack: scripts/electron-builder-after-pack.js');
     expect(afterPack).toContain('AAO_STAGED_SQLITE_BINDING');
     expect(afterPack).toContain('fs.unlinkSync(existingTarget)');
   });
@@ -173,13 +173,18 @@ describe('root package smoke scripts', () => {
     expect(userGuide).toContain('target.identityProofPath');
   });
 
-  it('documents the current final handoff order with matching READY and NON_READY safety branches', () => {
+  it('documents current V1.6 evidence commands and preserves historical V1.5 safety branches', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
     const userGuide = fs.readFileSync(path.join(root, 'docs', 'USER_GUIDE_v1_5.md'), 'utf8');
     const nonReadyMarker = '如果最终验收为 `APP_NEEDS_WORK`，README 顶部 DELIVERY 行必须保持非 READY';
     const readyMarker = '只有最终验收为 `APP_READY` 时，README 顶部 DELIVERY 行才切到 `APP_READY`';
 
-    for (const doc of [readme, userGuide]) {
+    for (const command of ['build:win', 'smoke:package-launch', 'smoke:folder-zip-launch', 'test:v16:evidence', 'verify:v16-full']) {
+      expect(readme).toContain(`pnpm run ${command}`);
+    }
+    expect(readme).toContain('单独通过不能替代 V1.6 最终验收');
+    expect(readme).toContain('现存 V1.5 指南、状态报告和旧包只作历史参考');
+    for (const doc of [userGuide]) {
       expect(doc).toContain('pnpm --filter @amazon-ai-ops/desktop run build:win');
       expect(doc).toContain(nonReadyMarker);
       expect(doc).toContain(readyMarker);

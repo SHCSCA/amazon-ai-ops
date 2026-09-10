@@ -1,9 +1,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initGuardedExistingSqlite } from '@amazon-ai-ops/local-db/src/sqlite/db';
+import { initGuardedExistingSqlite, SQLITE_MIGRATION_CONTRACT } from '@amazon-ai-ops/local-db/src/sqlite/db';
 import {
   STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
   STORE_PROVIDER_IDENTITY_UNIQUE_INDEX,
@@ -102,7 +103,7 @@ function safeIo() {
   };
 }
 
-function setupApprovedGate() {
+function setupApprovedGate(sourceRows?: Array<{ version: number; name: string; checksum: string }>) {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.tmp-s7-main-gate-'));
   roots.push(root);
   const canonicalUserDataDir = path.join(root, 'Roaming', '@amazon-ai-ops', 'desktop');
@@ -128,6 +129,12 @@ function setupApprovedGate() {
   fs.mkdirSync(canonicalUserDataDir, { recursive: true });
   const legacy = new Database(databasePath);
   legacy.exec('CREATE TABLE legacy_probe (id INTEGER PRIMARY KEY, value TEXT)');
+  if (sourceRows) {
+    legacy.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT, checksum TEXT, status TEXT)');
+    for (const row of sourceRows) {
+      legacy.prepare("INSERT INTO schema_migrations VALUES (?, ?, ?, 'applied')").run(row.version, row.name, row.checksum);
+    }
+  }
   legacy.close();
   write(intentPath, '{"approved":true}\n');
   fs.mkdirSync(gateDirectory);
@@ -442,6 +449,26 @@ function setupFinalizedGate() {
 }
 
 describe('S7 packaged Main startup exclusivity gate', () => {
+  it.runIf(process.platform === 'win32')(
+    'matches the approved fixed shell version and UTF-8 product name when localized FileVersion text differs',
+    () => {
+      const actual = S7_STARTUP_GATE_TESTING.defaultInspectTrustedPowerShell();
+      const result = spawnSync(actual.realPath, ['-NoProfile', '-NonInteractive', '-Command', [
+        "$ErrorActionPreference='Stop'",
+        '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)',
+        "$p=Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+        '$v=[Diagnostics.FileVersionInfo]::GetVersionInfo($p)',
+        "[ordered]@{fixedVersion=[string]::Join('.',@($v.FileMajorPart,$v.FileMinorPart,$v.FileBuildPart,$v.FilePrivatePart));localizedVersion=$v.FileVersion;productName=$v.ProductName} | ConvertTo-Json -Compress",
+      ].join('\n')], { encoding: 'utf8', windowsHide: true, timeout: 20_000 });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      const measured = JSON.parse(result.stdout.trim());
+      expect(actual.version.fileVersion).toBe(measured.fixedVersion);
+      expect(actual.version.fileVersion).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+      expect(actual.version.productName).toBe(measured.productName);
+    },
+  );
+
   it('streams large package/DB artifacts while keeping JSON capture bounded', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 's7-main-gate-large-artifact-'));
     roots.push(root);
@@ -501,6 +528,36 @@ describe('S7 packaged Main startup exclusivity gate', () => {
       });
     },
   );
+
+  it('admits the verified v11 prefix and rejects a tampered or incomplete prefix before admission', () => {
+    const prefix = SQLITE_MIGRATION_CONTRACT.filter((row) => row.version <= 11).map((row) => ({ ...row }));
+    for (const rows of [prefix, prefix.map((row) => row.version === 5 ? { ...row, checksum: 'tampered' } : row), prefix.filter((row) => row.version !== 5)]) {
+      const fixture = setupApprovedGate(rows);
+      const options = approvedOptions(fixture);
+      const startup = enforceS7MainStartupGate(options);
+      if (startup.mode !== 'S7_APPROVED_CHILD') throw new Error('Missing approved gate');
+      const database = new Database(fixture.databasePath, { fileMustExist: true });
+      try {
+        database.pragma('locking_mode = EXCLUSIVE');
+        database.exec('BEGIN EXCLUSIVE');
+        const admit = () => completeS7MainStartupAdmission({
+          startup, database, resolvedDatabasePath: fixture.databasePath,
+          executablePath: fixture.executablePath, mainModulePath: fixture.mainModulePath,
+          now: () => new Date('2026-07-30T01:00:04.000Z'), io: options.io,
+        });
+        if (rows === prefix) {
+          admit();
+          expect(JSON.parse(fs.readFileSync(fixture.admissionPath, 'utf8')).sqliteTakeover.schemaVersionBefore).toBe(11);
+        } else {
+          expect(admit).toThrow(/exact applied v1..v11 ledger prefix/);
+          expect(fs.existsSync(fixture.admissionPath)).toBe(false);
+        }
+      } finally {
+        if (database.inTransaction) database.exec('ROLLBACK');
+        database.close();
+      }
+    }
+  });
 
   it('hands off the DB and writes admission only inside the guarded SQLite connection', () => {
     const fixture = setupApprovedGate();

@@ -1,389 +1,59 @@
-/**
- * Analysis Runs IPC Handlers Tests
- *
- * Tests IPC contract between Main and Renderer for Analysis Runs operations.
- * Verifies request/response types and error handling through the service layer.
- */
-
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { AnalysisRunRecord, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-
-// Mock Electron's ipcMain before any imports
-vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-}));
-
-import {
-  registerAnalysisRunsIpcHandlers,
-  ANALYSIS_RUNS_CHANNELS,
-  type CreateRunResponse,
-  type UpdateRunResponse,
-  type QueryRunResponse,
-  type ListRunsResponse,
-} from './analysis-runs-ipc';
-import { AnalysisRunsServiceError } from './analysis-runs-service';
-
-// Mock service — only the methods the IPC layer calls
-type MockService = {
-  createRun: ReturnType<typeof vi.fn>;
-  updateStage: ReturnType<typeof vi.fn>;
-  completeRun: ReturnType<typeof vi.fn>;
-  failRun: ReturnType<typeof vi.fn>;
-  blockRun: ReturnType<typeof vi.fn>;
-  getRun: ReturnType<typeof vi.fn>;
-  listRuns: ReturnType<typeof vi.fn>;
-};
-
-// Mock IPC registrar
-type MockHandler = (event: unknown, request?: unknown) => unknown;
-const handlers = new Map<string, MockHandler>();
-
-const mockRegistrar = {
-  handle: vi.fn((channel: string, handler: MockHandler) => {
-    handlers.set(channel, handler);
-  }),
-};
-
-describe('Analysis Runs IPC', () => {
-  let service: MockService;
-
-  const storeContext: StoreContextEnvelope = {
-    storeId: 'store-a',
-    marketplace: 'US',
-    currency: 'USD',
-    businessDate: '2026-09-03',
-    sessionGeneration: 1,
-  };
-
-  const mockRun: AnalysisRunRecord = {
-    runId: 'run_1',
-    storeId: 'store-a',
-    marketplace: 'US',
-    currency: 'USD',
-    reportSnapshotId: 'snapshot-1',
-    status: 'pending',
-    recommendationsCount: 0,
-    createdAt: '2026-09-03T10:00:00Z',
-    updatedAt: '2026-09-03T10:00:00Z',
-  };
-
-  beforeEach(() => {
-    handlers.clear();
-    vi.clearAllMocks();
-    service = {
-      createRun: vi.fn(),
-      updateStage: vi.fn(),
-      completeRun: vi.fn(),
-      failRun: vi.fn(),
-      blockRun: vi.fn(),
-      getRun: vi.fn(),
-      listRuns: vi.fn(),
-    };
-    registerAnalysisRunsIpcHandlers(
-      mockRegistrar as unknown as Parameters<typeof registerAnalysisRunsIpcHandlers>[0],
-      service as unknown as Parameters<typeof registerAnalysisRunsIpcHandlers>[1],
-    );
+import { describe, it, expect, vi } from 'vitest';
+import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { V16_API_VERSION } from '@amazon-ai-ops/shared-types/src/v16-api';
+import { createAnalysisRunsPreloadApi } from '../preload/analysis-runs-api';
+import { registerAnalysisRunsIpcHandlers } from './analysis-runs-ipc';
+const context = normalizeStoreContextEnvelope({ storeId: 'store-a', browserProfileId: 'profile-a', marketplace: 'US', currency: 'USD', businessTimezone: 'America/Los_Angeles', businessDate: '2026-09-07', sessionGeneration: 2 });
+function harness() {
+  let active = context;
+  const handlers = new Map<string, (event: unknown, request?: unknown) => unknown>();
+  const service = { runMissionAnalysis: vi.fn(), getAnalysisRun: vi.fn(), listAnalysisRuns: vi.fn().mockReturnValue([]) };
+  registerAnalysisRunsIpcHandlers({ handle: (name, handler) => handlers.set(name, handler) }, service, { assertActiveStoreContext: value => {
+    const normalized = normalizeStoreContextEnvelope(value);
+    if (JSON.stringify(normalized) !== JSON.stringify(active)) throw new Error('店铺上下文已变化');
+    return normalized;
+  } } as Parameters<typeof registerAnalysisRunsIpcHandlers>[2]);
+  const api = createAnalysisRunsPreloadApi({ invoke: async (channel, request) => handlers.get(channel)!(undefined, request) });
+  return { service, api, handlers, switchTo: (value: typeof context) => { active = value; } };
+}
+describe('Analysis Run production boundary', () => {
+  it('round-trips shared requests and returns typed success data', async () => {
+    const h = harness();
+    expect(await h.api.list({ apiVersion: V16_API_VERSION, storeContext: context, input: { missionId: 'mission-a' } })).toEqual({ success: true, data: [] });
+    expect(h.service.listAnalysisRuns).toHaveBeenCalledWith(context, { missionId: 'mission-a' });
+    expect(h.handlers.has('analysis-runs:update')).toBe(false);
+    expect('update' in h.api).toBe(false);
   });
-
-  describe('registerAnalysisRunsIpcHandlers', () => {
-    it('registers all four channel handlers', () => {
-      expect(mockRegistrar.handle).toHaveBeenCalledWith(
-        ANALYSIS_RUNS_CHANNELS.CREATE,
-        expect.any(Function),
-      );
-      expect(mockRegistrar.handle).toHaveBeenCalledWith(
-        ANALYSIS_RUNS_CHANNELS.UPDATE,
-        expect.any(Function),
-      );
-      expect(mockRegistrar.handle).toHaveBeenCalledWith(
-        ANALYSIS_RUNS_CHANNELS.QUERY,
-        expect.any(Function),
-      );
-      expect(mockRegistrar.handle).toHaveBeenCalledWith(
-        ANALYSIS_RUNS_CHANNELS.LIST,
-        expect.any(Function),
-      );
-    });
+  it('creates by invoking the actual analysis owner, never a raw repository write', async () => {
+    const h = harness(); h.service.runMissionAnalysis.mockResolvedValue({ proposals: [] });
+    expect(await h.api.create({ apiVersion: V16_API_VERSION, storeContext: context, input: { missionId: 'mission-a' } })).toEqual({ success: true, data: { proposals: [] } });
+    expect(h.service.runMissionAnalysis).toHaveBeenCalledWith({ context, missionId: 'mission-a' });
   });
-
-  describe('CREATE handler', () => {
-    it('returns success response when service.createRun succeeds', async () => {
-      service.createRun.mockReturnValue(mockRun);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.CREATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { reportSnapshotId: 'snapshot-1' },
-      }) as CreateRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.run).toBeDefined();
-      expect(response.run?.runId).toBe('run_1');
-      expect(response.error).toBeUndefined();
-      expect(service.createRun).toHaveBeenCalled();
-    });
-
-    it('returns error response when service.createRun throws', async () => {
-      service.createRun.mockImplementation(() => {
-        throw new AnalysisRunsServiceError('DB write failed', 'SERVICE_ERROR');
-      });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.CREATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { reportSnapshotId: 'snapshot-1' },
-      }) as CreateRunResponse;
-
-      expect(response.success).toBe(false);
-      expect(response.error).toBeDefined();
-      expect(response.error?.message).toContain('DB write failed');
-    });
-
-    it('returns error when storeContext or input is missing', async () => {
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.CREATE)!;
-      const response = await handler({}, {}) as CreateRunResponse;
-
-      expect(response.success).toBe(false);
-      expect(response.error?.code).toBe('SERVICE_ERROR');
-    });
+  it.each(['storeId', 'browserProfileId', 'marketplace', 'currency', 'businessTimezone', 'businessDate', 'sessionGeneration'])('rejects missing %s before calling the service', async key => {
+    const h = harness(); const bad = { ...context } as Record<string, unknown>; delete bad[key];
+    const result = await h.handlers.get('analysis-runs:list')!(undefined, { apiVersion: V16_API_VERSION, storeContext: bad, input: {} });
+    expect(result).toMatchObject({ success: false }); expect(h.service.listAnalysisRuns).not.toHaveBeenCalled();
   });
-
-  describe('UPDATE handler', () => {
-    it('routes completed status to completeRun', async () => {
-      const updatedRun = { ...mockRun, status: 'completed' as const };
-      service.completeRun.mockReturnValue(updatedRun);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.UPDATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1', status: 'completed', recommendationsCount: 3 },
-      }) as UpdateRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.run?.status).toBe('completed');
-      expect(service.completeRun).toHaveBeenCalledWith({
-        storeContext,
-        runId: 'run_1',
-        recommendationsCount: 3,
-      });
-    });
-
-    it('routes failed status to failRun', async () => {
-      const failedRun = { ...mockRun, status: 'failed' as const, blockedReason: 'boom' };
-      service.failRun.mockReturnValue(failedRun);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.UPDATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1', status: 'failed', blockedReason: 'boom' },
-      }) as UpdateRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.run?.status).toBe('failed');
-      expect(service.failRun).toHaveBeenCalledWith({
-        storeContext,
-        runId: 'run_1',
-        reason: 'boom',
-      });
-    });
-
-    it('routes blocked status to blockRun', async () => {
-      const blockedRun = { ...mockRun, status: 'blocked' as const, blockedReason: 'waiting' };
-      service.blockRun.mockReturnValue(blockedRun);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.UPDATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1', status: 'blocked', blockedReason: 'waiting' },
-      }) as UpdateRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(service.blockRun).toHaveBeenCalledWith({
-        storeContext,
-        runId: 'run_1',
-        reason: 'waiting',
-      });
-    });
-
-    it('routes generic status to updateStage', async () => {
-      service.updateStage.mockReturnValue({ ...mockRun, status: 'analyzing' });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.UPDATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1', status: 'analyzing' },
-      }) as UpdateRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(service.updateStage).toHaveBeenCalledWith({
-        storeContext,
-        runId: 'run_1',
-        status: 'analyzing',
-        recommendationsCount: undefined,
-        blockedReason: undefined,
-        completedAt: undefined,
-      });
-    });
-
-    it('returns error when service throws', async () => {
-      service.completeRun.mockImplementation(() => {
-        throw new AnalysisRunsServiceError('RUN_NOT_FOUND', 'RUN_NOT_FOUND', 'run_1');
-      });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.UPDATE)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1', status: 'completed' },
-      }) as UpdateRunResponse;
-
-      expect(response.success).toBe(false);
-    });
+  it('rejects incompatible API versions and renderer-written terminal status', async () => {
+    const h = harness();
+    for (const request of [ { apiVersion: 'v16/0', storeContext: context, input: {} }, { apiVersion: V16_API_VERSION, storeContext: context, input: { missionId: 'mission-a', status: 'completed' } } ]) {
+      expect(await h.handlers.get('analysis-runs:create')!(undefined, request)).toMatchObject({ success: false });
+    }
+    expect(h.service.runMissionAnalysis).not.toHaveBeenCalled();
   });
-
-  describe('QUERY handler', () => {
-    it('returns success with run when found in same store', async () => {
-      service.getRun.mockReturnValue(mockRun);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.QUERY)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1' },
-      }) as QueryRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.run).toEqual(mockRun);
-    });
-
-    it('returns success with null when run not found', async () => {
-      service.getRun.mockReturnValue(null);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.QUERY)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'nonexistent' },
-      }) as QueryRunResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.run).toBeNull();
-    });
-
-    it('returns error when service throws STORE_MISMATCH', async () => {
-      service.getRun.mockImplementation(() => {
-        throw new AnalysisRunsServiceError('different store', 'STORE_MISMATCH', 'run_1');
-      });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.QUERY)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1' },
-      }) as QueryRunResponse;
-
-      expect(response.success).toBe(false);
-    });
-
-    it('returns error when service throws generic error', async () => {
-      service.getRun.mockImplementation(() => { throw new Error('DB read failed'); });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.QUERY)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { runId: 'run_1' },
-      }) as QueryRunResponse;
-
-      expect(response.success).toBe(false);
-    });
+  it('keeps filesystem and provider error details in Main', async () => {
+    const h = harness();
+    h.service.runMissionAnalysis.mockRejectedValue(new Error('provider secret-token at C:\\private\\keys.json'));
+    const result = await h.api.create({ apiVersion: V16_API_VERSION, storeContext: context, input: { missionId: 'mission-a' } });
+    expect(result).toMatchObject({ success: false });
+    expect(JSON.stringify(result)).not.toMatch(/secret-token|private|keys.json/);
   });
-
-  describe('LIST handler', () => {
-    it('returns success with runs array', async () => {
-      const runs = [mockRun, { ...mockRun, runId: 'run_2' }];
-      service.listRuns.mockReturnValue(runs);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      const response = await handler({}, {
-        storeContext,
-        input: {},
-      }) as ListRunsResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.runs).toHaveLength(2);
-      expect(service.listRuns).toHaveBeenCalledWith({
-        storeContext,
-        missionId: undefined,
-        status: undefined,
-        limit: undefined,
-      });
-    });
-
-    it('returns empty array when no runs exist', async () => {
-      service.listRuns.mockReturnValue([]);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      const response = await handler({}, {
-        storeContext,
-        input: {},
-      }) as ListRunsResponse;
-
-      expect(response.success).toBe(true);
-      expect(response.runs).toEqual([]);
-    });
-
-    it('passes missionId and status filters to service', async () => {
-      service.listRuns.mockReturnValue([{ ...mockRun, missionId: 'mission-1', status: 'completed' as const }]);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      const response = await handler({}, {
-        storeContext,
-        input: { missionId: 'mission-1', status: 'completed' },
-      }) as ListRunsResponse;
-
-      expect(response.success).toBe(true);
-      expect(service.listRuns).toHaveBeenCalledWith({
-        storeContext,
-        missionId: 'mission-1',
-        status: 'completed',
-        limit: undefined,
-      });
-    });
-
-    it('respects limit parameter', async () => {
-      service.listRuns.mockReturnValue([mockRun]);
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      await handler({}, {
-        storeContext,
-        input: { limit: 10 },
-      });
-
-      expect(service.listRuns).toHaveBeenCalledWith({
-        storeContext,
-        missionId: undefined,
-        status: undefined,
-        limit: 10,
-      });
-    });
-
-    it('returns error when service throws', async () => {
-      service.listRuns.mockImplementation(() => { throw new Error('DB error'); });
-
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      const response = await handler({}, {
-        storeContext,
-        input: {},
-      }) as ListRunsResponse;
-
-      expect(response.success).toBe(false);
-    });
-
-    it('returns error when storeContext is missing', async () => {
-      const handler = handlers.get(ANALYSIS_RUNS_CHANNELS.LIST)!;
-      const response = await handler({}, {}) as ListRunsResponse;
-
-      expect(response.success).toBe(false);
-      expect(response.error?.code).toBe('SERVICE_ERROR');
-    });
+  it('discards a completed async result after A to B to A session changes', async () => {
+    const h = harness(); let release!: (value: unknown) => void;
+    h.service.runMissionAnalysis.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const pending = h.api.create({ apiVersion: V16_API_VERSION, storeContext: context, input: { missionId: 'mission-a' } });
+    h.switchTo(normalizeStoreContextEnvelope({ ...context, storeId: 'store-b', browserProfileId: 'profile-b', sessionGeneration: 3 }));
+    h.switchTo({ ...context, sessionGeneration: 4 }); release({ proposals: [] });
+    expect(await pending).toMatchObject({ success: false, error: expect.stringMatching(/刷新当前店铺/)  });
   });
 });

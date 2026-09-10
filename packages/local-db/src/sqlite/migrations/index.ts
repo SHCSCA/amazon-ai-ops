@@ -152,3 +152,27 @@ export {
   verifyV16DomainSchema,
 } from './0013-v16-domain';
 export type { V16DomainMigrationResult } from './0013-v16-domain';
+export {
+  CONTEXT_BINDING_MIGRATION_CHECKSUM,
+  CONTEXT_BINDING_MIGRATION_NAME,
+  CONTEXT_BINDING_MIGRATION_VERSION,
+  ContextBindingMigrationError,
+  applyContextBindingMigration,
+  verifyContextBindingSchema,
+} from './0014-v16-context-binding';
+export type { ContextBindingMigrationResult } from './0014-v16-context-binding';
+export {
+  POLICY_AUTHORITY_MIGRATION_CHECKSUM,
+  POLICY_AUTHORITY_MIGRATION_NAME,
+  POLICY_AUTHORITY_MIGRATION_VERSION,
+  POLICY_AUTHORITY_TABLES,
+  PolicyAuthorityMigrationError,
+  runPolicyAuthorityMigration,
+  verifyPolicyAuthoritySchema,
+} from './0015-v16-policy-authority';
+export type { PolicyAuthorityMigrationResult } from './0015-v16-policy-authority';
+export * from './0016-execution-reconciliation';
+export * from './0017-mission-write-authority';
+export * from './0018-grant-slot-ledger';
+export * from './0019-legacy-record-compatibility';
+export * from './0020-ai-spend-governance';

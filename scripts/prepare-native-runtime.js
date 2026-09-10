@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 const ROOT = path.resolve(__dirname, '..');
 const DESKTOP_ROOT = path.join(ROOT, 'apps', 'desktop');
@@ -16,7 +17,8 @@ const PROBE_MARKER = 'AAO_NATIVE_PROBE=';
 const LOCK_BASENAME = 'amazon-ai-ops-native-runtime.lock';
 const STAGING_PREFIX = 'isolated-electron-';
 const PROBE_TIMEOUT_MS = 2 * 60 * 1000;
-const EXPECTED_ELECTRON_MODULES_ABI = '119';
+// Electron v44.2.0 build/args/all.gn pins node_module_version = 149.
+const EXPECTED_ELECTRON_MODULES_ABI = '149';
 
 function parseNativeRuntimeArgs(argv) {
   const args = { mode: '', packageExe: '' };
@@ -111,7 +113,7 @@ function withPreparedIsolatedElectronRuntime(
     let primaryError;
     let cleanupError;
     try {
-      execute(buildElectronPrebuildCommand(staging.paths));
+      if (!staging.paths.sqliteNapi) execute(buildElectronPrebuildCommand(staging.paths));
       const observed = probe(probeInputForMode('electron', staging.paths));
       const sourceAfterPreparation = bindingHashes(sourcePaths);
       assertBindingHashesEqual(
@@ -186,15 +188,15 @@ function resolveSourceNativePaths(
   const duckdbRoot = path.dirname(duckdbPackageJson);
   const electronExecutable = require(electronMetadata.root);
   assertRegularFile(electronExecutable, 'Electron executable');
-  const prebuildInstallPath = createRequire(betterSqlitePackageJson)
-    .resolve('prebuild-install/bin.js');
-  assertRegularFile(prebuildInstallPath, 'better-sqlite3 prebuild-install entrypoint');
+  const sqliteNapi = Number(readJson(betterSqlitePackageJson).version.split('.')[0]) >= 13;
+  const prebuildInstallPath = sqliteNapi ? null : createRequire(betterSqlitePackageJson).resolve('prebuild-install/bin.js');
+  if (prebuildInstallPath) assertRegularFile(prebuildInstallPath, 'better-sqlite3 prebuild-install entrypoint');
   const runtimeDependencyRoots = resolveBetterSqliteRuntimeDependencyRoots(
     betterSqlitePackageJson,
   );
   const sqliteBindingPath = privateCanonicalBinding(
     betterSqliteRoot,
-    path.join(betterSqliteRoot, 'build', 'Release', 'better_sqlite3.node'),
+    sqliteNapi ? path.join(betterSqliteRoot, 'prebuilds', 'win32-x64.node') : path.join(betterSqliteRoot, 'build', 'Release', 'better_sqlite3.node'),
     'better-sqlite3 binding',
   );
   const duckdbBindingPath = privateCanonicalBinding(
@@ -210,6 +212,7 @@ function resolveSourceNativePaths(
     betterSqliteRoot,
     betterSqlitePackageJson,
     sqliteBindingPath,
+    sqliteNapi,
     prebuildInstallPath,
     runtimeDependencyRoots,
     duckdbRoot,
@@ -238,12 +241,8 @@ function resolvePackageNativePaths(packageExe, expectedElectronVersion) {
     executablePath,
     appRoot,
     betterSqliteRoot,
-    sqliteBindingPath: path.join(
-      betterSqliteRoot,
-      'build',
-      'Release',
-      'better_sqlite3.node',
-    ),
+    sqliteBindingPath: fs.existsSync(path.join(betterSqliteRoot, 'prebuilds', 'win32-x64.node'))
+      ? path.join(betterSqliteRoot, 'prebuilds', 'win32-x64.node') : path.join(betterSqliteRoot, 'build', 'Release', 'better_sqlite3.node'),
     duckdbRoot,
     duckdbBindingPath: path.join(duckdbRoot, 'lib', 'binding', 'duckdb.node'),
   };
@@ -284,12 +283,7 @@ function createIsolatedElectronStaging(sourcePaths) {
       kind: 'isolated-electron-native-runtime',
       betterSqliteRoot,
       betterSqlitePackageJson: path.join(betterSqliteRoot, 'package.json'),
-      sqliteBindingPath: path.join(
-        betterSqliteRoot,
-        'build',
-        'Release',
-        'better_sqlite3.node',
-      ),
+      sqliteBindingPath: path.join(betterSqliteRoot, path.relative(sourcePaths.betterSqliteRoot, sourcePaths.sqliteBindingPath)),
     });
     assertRegularFile(paths.betterSqlitePackageJson, 'staged better-sqlite3 package.json');
     assertRegularFile(paths.sqliteBindingPath, 'staged better-sqlite3 binding');
@@ -309,6 +303,8 @@ function createIsolatedElectronStaging(sourcePaths) {
 }
 
 function resolveBetterSqliteRuntimeDependencyRoots(betterSqlitePackageJson) {
+  // N-API prebuilds ship inside better-sqlite3 13; loading them uses only Node built-ins.
+  if (Number(readJson(betterSqlitePackageJson).version.split('.')[0]) >= 13) return Object.freeze([]);
   const packageRequire = createRequire(betterSqlitePackageJson);
   return Object.freeze(['bindings', 'file-uri-to-path'].map((name) => {
     const packageJsonPath = realFile(
@@ -860,4 +856,4 @@ export {
   withPreparedIsolatedElectronRuntime,
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();

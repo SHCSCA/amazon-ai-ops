@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { enforceS7MainStartupGate } from '../apps/desktop/src/main/s7-migration-startup-gate.ts';
 
 const require = createRequire(import.meta.url);
 const {
@@ -15,7 +16,10 @@ const {
   defaultInspectWindowsPathSecurity,
   defaultProtectWindowsDirectory,
   defaultProtectWindowsFile,
+  fileArtifact,
   postMigrationAuthorityContract,
+  validatePackageUpgradeSmoke,
+  parseArgs,
   resolveTrustedWindowsPowerShell,
   run,
 } = require('./operate-s7-live-migration-launch.js');
@@ -27,7 +31,7 @@ const {
   validateS7LiveMigrationAcceptanceReceipt,
 } = require('./verify-s7-live-migration-acceptance.js');
 const { TARGET_VERSION } = require('./migrate-current-user-db.js');
-const { legacyV1Checksum } = require('./verify-production-authority-selection.js');
+const { legacyV1Checksum, REQUIRED_TABLES } = require('./verify-production-authority-selection.js');
 
 const roots = [];
 afterEach(() => {
@@ -103,7 +107,7 @@ function passingVerification(manifest) {
   };
 }
 
-function setup() {
+function setup(sourceVersion = 0) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 's7-launch-'));
   roots.push(root);
   const roaming = path.join(root, 'Roaming');
@@ -233,7 +237,7 @@ function setup() {
           shm: { exists: false },
           journal: { exists: false },
         },
-        sqlite: { state: 'MIGRATION_REQUIRED', appliedVersion: 0 },
+        sqlite: { state: 'MIGRATION_REQUIRED', appliedVersion: sourceVersion },
       },
       nonAuthority: [],
     },
@@ -248,14 +252,14 @@ function setup() {
     source: {
       path: fs.realpathSync.native(db),
       sha256: sha('v0-db'),
-      version: 0,
+      version: sourceVersion,
     },
   });
   const verificationValue = passingVerification(manifest);
   write(verification, verificationValue);
   const uiValue = {
     kind: 'package-ui-evidence',
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt: '2026-07-29T00:00:00.000Z',
     completedAt: '2026-07-29T00:05:00.000Z',
     passed: true,
@@ -284,7 +288,7 @@ function setup() {
   };
   write(ui, uiValue);
 
-  let schema = 0;
+  let schema = sourceVersion;
   let spawns = 0;
   let detachCalls = 0;
   let abortCalls = 0;
@@ -562,7 +566,7 @@ function setup() {
           beginMode: 'exclusive',
           transactionActive: true,
           sameConnectionRequiredForMigration: true,
-          schemaVersionBefore: 0,
+          schemaVersionBefore: sourceVersion,
         },
       });
       const admission = gateArtifact(startupGatePlan.admissionPath);
@@ -823,7 +827,7 @@ function writePassingAcceptance(s, packet, name = 'acceptance.json') {
       integrityCheck: 'ok',
       foreignKeyViolationCount: 0,
       migrationCount: TARGET_VERSION,
-      requiredTableCount: postMigrationAuthorityContract().requiredTables.length,
+      requiredTableCount: REQUIRED_TABLES.length,
       offlineArtifacts: {
         pathsDistinct: true,
         working: offlineArtifact('offline-working'),
@@ -900,7 +904,77 @@ function finalizeArgs(finalizationPacket, token) {
   ];
 }
 
+async function preparePostWriteRecoveryFixture() {
+  const s = setup(11);
+  // Use the production artifact projection; Number stat timestamps may round differently.
+  const fixtureMtime = fileArtifact(s.db, 'Recovery fixture authority').mtimeMs;
+  s.uiValue.protectedDatabase.before.mtimeMs = fixtureMtime;
+  s.uiValue.protectedDatabase.after.mtimeMs = fixtureMtime;
+  write(s.ui, s.uiValue);
+  const approved = await prepare(s);
+  const originalWait = s.context.waitForManagedPackageClose;
+  s.context.waitForManagedPackageClose = async () => {
+    await originalWait();
+    fs.unlinkSync(s.getStartupGatePlan().closedPath); // Synthetic crash fixture has no CLOSED.
+    const ids = s.getProtocolFixture();
+    return { outcome: 'process-monitor-error', errorCode: 'PROTOCOL_SEQUENCE_MISMATCH', errorProof: {
+      protocol: ids.protocol, status: 'ERROR', pid: ids.packagePid, helperPid: ids.helperPid,
+      phase: 'child-exit-failed-before-closed-receipt', processCreated: true, processResumed: true,
+      databaseHandleAcquired: true, databaseHandleReleased: true, databaseHandleExclusive: false,
+      releaseState: 'RELEASED', errorType: 'RuntimeException', exitCode: 1,
+    } };
+  };
+  const holdPath = path.join(s.launchOutputRoot, 'post-write-hold.json');
+  const held = await run(executeArgs(approved.packetPath, approved.token, holdPath), s.context);
+  expect(held.receipt.status).toBe('HOLD');
+  expect(held.receipt.untrustedCandidate.exitCode).toBe(1);
+  const acceptance = writePassingAcceptance(s, approved.packet);
+  const snapshot = path.join(s.evidence ?? path.dirname(s.manifest), 'post-write-backup.db');
+  fs.copyFileSync(s.db, snapshot);
+  s.context.assertProcessAbsent = vi.fn();
+  s.context.captureAuthorityCurrentness = vi.fn(({ sourceDatabasePath, expectedSnapshotArtifact }) => {
+    expect(fileArtifact(sourceDatabasePath, 'fixture source').sha256).toBe(expectedSnapshotArtifact.sha256);
+  });
+  // The recovery package changes while the failed migration package remains a historical binding.
+  write(s.identity.main.realPath, 'new-recovery-main');
+  s.identity.main = fileArtifact(s.identity.main.realPath, 'fixture recovery Main');
+  s.identity.appContent = { ...s.identity.appContent, sha256: sha('new-recovery-app'), sizeBytes: 17 };
+  const packetPath = path.join(s.finalizationOutputRoot, 'recovery.json');
+  const args = ['--prepare-recovery', '--approval-packet', approved.packetPath,
+    '--launch-receipt', holdPath, '--acceptance-receipt', acceptance,
+    '--recovery-snapshot', snapshot, '--recovery-root', s.finalizationOutputRoot, '--out', packetPath];
+  const prepared = await run(args, s.context);
+  return { s, approved, held, holdPath, snapshot, packetPath, prepared, args };
+}
+
 describe('operate-s7-live-migration-launch', () => {
+  it('preserves large Windows file IDs and rejects replacements hidden by Number rounding', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's7-large-file-id-'));
+    roots.push(root);
+    const target = path.join(root, 'identity.bin');
+    write(target, 'stable identity content');
+    const exactId = 142426338215754362n;
+    expect(Number(exactId)).toBe(Number(exactId + 1n));
+    const originals = Object.fromEntries(['lstatSync', 'statSync', 'fstatSync'].map(key => [key, fs[key].bind(fs)]));
+    let replaceDuringRead = false;
+    let handleReads = 0;
+    const spies = Object.keys(originals).map(key => vi.spyOn(fs, key).mockImplementation((value, options) => {
+      const stat = originals[key](value, options);
+      if (!options?.bigint) return stat;
+      const ino = key === 'fstatSync' && replaceDuringRead && ++handleReads === 2 ? exactId + 1n : exactId;
+      return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { ino });
+    }));
+    try {
+      const artifact = fileArtifact(target, 'Large Windows file ID');
+      expect(artifact.identity.ino).toBe(exactId.toString());
+      expect(JSON.parse(JSON.stringify(artifact)).identity.ino).toBe('142426338215754362');
+      replaceDuringRead = true;
+      expect(() => fileArtifact(target, 'Replaced file ID')).toThrow(/changed while it was being read/);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   it.runIf(process.platform === 'win32')(
     'keeps the Windows suspended-launch helper syntactically valid without executing it',
     () => {
@@ -1653,6 +1727,80 @@ public static class S7SyntheticTarget {
     },
     60_000,
   );
+
+  it('validates the isolated upgrade startup/reopen proof without claiming package UI acceptance', () => {
+    const s = setup(11);
+    const profile = fs.mkdtempSync(path.join('D:\\Temp', 'amazon-ai-ops-upgrade-smoke-test-'));
+    roots.push(profile);
+    const Database = require('./migrate-current-user-db.js').requireSqlite();
+    const sourcePath = path.join(s.root, 'source-snapshot.db');
+    const isolatedPath = path.join(profile, 'amazon-ai-ops.db');
+    const sourceDb = new Database(sourcePath);
+    sourceDb.exec("CREATE TABLE payload (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO payload VALUES (1, 'preserved')");
+    sourceDb.close(); fs.copyFileSync(sourcePath, isolatedPath);
+    const binding = (filePath) => ({ path: filePath, sha256: sha(fs.readFileSync(filePath)), sizeBytes: fs.statSync(filePath).size });
+    const source = { ...binding(sourcePath), tableRowCounts: { payload: 1 } };
+    const rehearsal = JSON.parse(fs.readFileSync(s.manifest, 'utf8'));
+    rehearsal.source = { ...source, version: 11 };
+    rehearsal.workingDatabase = { path: isolatedPath, upgradedSha256: binding(isolatedPath).sha256.toLowerCase() };
+    write(s.manifest, rehearsal);
+    const launches = [1, 2].map((index) => {
+      const startedAt = `2026-07-29T00:${40 + index}:00.000Z`;
+      const generatedAt = `2026-07-29T00:${40 + index}:02.000Z`;
+      const runtimePath = path.join(s.root, `runtime-${index}.json`);
+      const windowPath = path.join(s.root, `window-${index}.json`);
+      const pid = 9000 + index;
+      write(runtimePath, { pid, mode: 'package-launch-smoke', userDataDir: profile, generatedAt });
+      write(windowPath, { kind: 'package-launch-window-ready', schemaVersion: 1, pid, browserWindowId: 1,
+        evidenceMode: 'package-launch-smoke', userDataDir: profile, generatedAt,
+        rendererUrl: new URL(`file:///${path.join(s.identity.appContent.realPath, 'dist', 'renderer', 'index.html').replaceAll('\\', '/')}`).href });
+      return { startedAt, closedAt: `2026-07-29T00:${40 + index}:05.000Z`, pid, exitCode: 0,
+        runtimeMarker: binding(runtimePath), windowReadyMarker: binding(windowPath),
+        processObservation: { ProcessId: pid, ExecutablePath: s.identity.exe.realPath, MainWindowHandle: 123,
+          WindowVisible: true, CreationDate: startedAt } };
+    });
+    const receipt = { kind: 's7-package-upgrade-smoke', schemaVersion: 1, generatedAt: '2026-07-29T00:50:00.000Z',
+      formalAppReadiness: false, package: s.identity, sourceSnapshot: source, rehearsalManifestPath: s.manifest,
+      isolatedUserDataDir: profile, isolatedGenesisSha256: binding(isolatedPath).sha256,
+      isolatedDatabase: binding(isolatedPath), launches };
+    const authorityPath = path.join(s.root, 'original-authority-snapshot.db');
+    fs.copyFileSync(sourcePath, authorityPath);
+    const authorityDb = new Database(authorityPath); authorityDb.pragma('journal_mode = WAL'); authorityDb.close();
+    receipt.authoritySnapshot = binding(authorityPath);
+    const receiptPath = path.join(s.root, 'upgrade-smoke.json'); write(receiptPath, receipt);
+    const context = { ...s.context, verifyMigration: () => passingVerification(s.manifest),
+      captureAuthorityCurrentness: ({ sourceDatabasePath, expectedSnapshotArtifact }) => {
+        expect(sourceDatabasePath).toBe(s.db); expect(expectedSnapshotArtifact.sha256).toBe(receipt.authoritySnapshot.sha256);
+      } };
+    const artifact = gateArtifact(receiptPath);
+    expect(validatePackageUpgradeSmoke(receipt, artifact, s.identity, gateArtifact(s.db), context)).toMatchObject({
+      mode: 'package-upgrade-smoke', formalAppReadiness: false, launchCount: 2,
+    });
+    const changedPath = path.join(s.root, 'changed-authority-snapshot.db'); fs.copyFileSync(sourcePath, changedPath);
+    const changedDb = new Database(changedPath); changedDb.exec("UPDATE payload SET value = 'changed'"); changedDb.close();
+    const changed = clone(receipt); changed.authoritySnapshot = binding(changedPath);
+    expect(() => validatePackageUpgradeSmoke(changed, artifact, s.identity, gateArtifact(s.db), {
+      ...context, captureAuthorityCurrentness: () => {},
+    })).toThrow(/logical contents/);
+    const bad = clone(receipt); bad.launches[1].windowReadyMarker = bad.launches[0].windowReadyMarker;
+    expect(() => validatePackageUpgradeSmoke(bad, artifact, s.identity, gateArtifact(s.db), context)).toThrow(/startup\/reopen/);
+    const wrongPackage = clone(receipt); wrongPackage.package.main.sha256 = sha('old-main');
+    expect(() => validatePackageUpgradeSmoke(wrongPackage, artifact, s.identity, gateArtifact(s.db), context)).toThrow(/current package/);
+    expect(() => parseArgs([...prepareArgs(s, path.join(s.approvalOutputRoot, 'bad.json')), '--package-upgrade-smoke', receiptPath])).toThrow(/Exactly one/);
+  });
+
+  it('binds v11 rehearsal to the approved source and accepts its guarded child receipt', async () => {
+    const s = setup(11);
+    const prepared = await prepare(s);
+    expect(prepared.packet.bindings.schemaVersion).toBe(11);
+    const receipt = await run(executeArgs(prepared.packetPath, prepared.token, path.join(s.launchOutputRoot, 'v11-launch.json')), s.context);
+    expect(receipt.exitCode).toBe(0);
+    const bad = setup(11);
+    const manifest = JSON.parse(fs.readFileSync(bad.manifest, 'utf8'));
+    manifest.source.version = 0;
+    write(bad.manifest, manifest);
+    await expect(prepare(bad)).rejects.toThrow(/rehearsal for this DB/);
+  });
 
   it('keeps help side-effect free and prepares a full-payload, v0-only approval packet', async () => {
     const s = setup();
@@ -2570,6 +2718,60 @@ public static class S7SyntheticTarget {
     expect(result.receipt.packageLaunched).toBe('CONFIRMED_LAUNCHED');
   });
 
+  it('post-write recovery admits the new package without inventing CLOSED or altering the failed chain', async () => {
+    const { s, packetPath, prepared, holdPath } = await preparePostWriteRecoveryFixture();
+    const gate = s.getStartupGatePlan();
+    const preserved = [gate.activePath, gate.boundPath, gate.handoffReadyPath, gate.handoffReleasedPath,
+      gate.admissionPath, holdPath, s.db].map((file) => [file, fs.readFileSync(file)]);
+    const finalized = await run(finalizeArgs(packetPath, prepared.receipt.confirmation.token), s.context);
+    expect(finalized.receipt).toMatchObject({ status: 'RECOVERED_AFTER_FAILED_MIGRATION_PROCESS', closed: null,
+      formalAppReadiness: false, adsExecutionAuthorized: false, recovery: { exitCode: 1 } });
+    const app = { requestSingleInstanceLock: vi.fn(() => true) };
+    const io = {
+      inspectTrustedPowerShell: s.context.trustedPowerShellIdentity,
+      inspectPostMigrationAuthority: s.context.inspectPostMigrationAuthority,
+      inspectWindowsPathSecurity: (filePath, type) => ({ passed: true, path: filePath, type,
+        ownerSid: 'S-1-5-21-synthetic', currentUserSid: 'S-1-5-21-synthetic', inheritanceProtected: true, unauthorizedRules: [] }),
+      buildAppContentManifest: () => ({ realPath: s.identity.appContent.realPath,
+        sha256: s.identity.appContent.sha256, sizeBytes: s.identity.appContent.sizeBytes,
+        fileCount: s.identity.appContent.fileCount }),
+      writeProtectedExclusiveJson: write,
+    };
+    const options = { app, currentUserDataDir: s.userData, canonicalUserDataDir: s.userData,
+      evidenceUserDataIdentity: { mode: null, overridden: false, userDataDir: null }, isPackaged: true,
+      executablePath: s.exe, mainModulePath: s.identity.main.realPath, pid: 9321, platform: 'win32',
+      env: { COMPUTERNAME: 'SYNTHETIC-S7-HOST' }, io };
+    expect(enforceS7MainStartupGate(options).mode).toBe('NORMAL_POST_MIGRATION');
+    expect(enforceS7MainStartupGate(options).mode).toBe('NORMAL_POST_MIGRATION');
+    expect(fs.existsSync(gate.closedPath)).toBe(false);
+    for (const [file, bytes] of preserved) expect(fs.readFileSync(file)).toEqual(bytes);
+    expect(s.context.captureAuthorityCurrentness).toHaveBeenCalledTimes(2);
+    expect(EXCLUSIVE_WINDOW_HELPER_SCRIPT).toContain('exitCode=$observedExitCode');
+  });
+
+  it('post-write recovery rejects admission drift before publishing startup eligibility', async () => {
+    const { s, packetPath, prepared, holdPath, args } = await preparePostWriteRecoveryFixture();
+    const gate = s.getStartupGatePlan();
+    const inspectSecurity = s.context.inspectWindowsPathSecurity;
+    const deniedOutput = path.join(s.finalizationOutputRoot, 'inherited-hold-recovery.json');
+    s.context.inspectWindowsPathSecurity = (filePath, options) => {
+      const security = inspectSecurity(filePath, options);
+      return path.resolve(filePath) === path.resolve(holdPath)
+        ? { ...security, passed: true, inheritanceProtected: false } : security;
+    };
+    await expect(run(args.map((value) => value === packetPath ? deniedOutput : value), s.context))
+      .rejects.toThrow(/Recovery original HOLD.*defaultProtectWindowsFile/);
+    expect(fs.existsSync(deniedOutput)).toBe(false);
+    s.context.inspectWindowsPathSecurity = inspectSecurity;
+    const admission = JSON.parse(fs.readFileSync(gate.admissionPath, 'utf8'));
+    admission.pid += 1;
+    write(gate.admissionPath, admission);
+    await expect(run(finalizeArgs(packetPath, prepared.receipt.confirmation.token), s.context))
+      .rejects.toThrow(/ADMISSION binding is invalid/);
+    expect(fs.existsSync(gate.closedPath)).toBe(false);
+    expect(fs.existsSync(gate.finalizedPath)).toBe(false);
+  });
+
   it('requires a second explicit confirmation and atomically publishes FINALIZED exactly once', async () => {
     const s = setup();
     const approved = await prepare(s);
@@ -2666,7 +2868,7 @@ public static class S7SyntheticTarget {
     const acceptanceReceipt = writePassingAcceptance(s, approved.packet);
     s.context.inspectPostMigrationAuthority = () => {
       const contract = clone(postMigrationAuthorityContract());
-      contract.storeProviderIdentityV11.triggers.pop();
+      contract.requiredTables.pop();
       return contract;
     };
     const finalizationPacket = path.join(
@@ -2683,7 +2885,7 @@ public static class S7SyntheticTarget {
         finalizationPacket,
       ),
       s.context,
-    )).rejects.toThrow(/exact production v11 contract/i);
+    )).rejects.toThrow(/exact production v20 contract/i);
     expect(fs.existsSync(finalizationPacket)).toBe(false);
     expect(fs.existsSync(s.getStartupGatePlan().finalizedPath)).toBe(false);
   });
@@ -2737,7 +2939,7 @@ public static class S7SyntheticTarget {
       launchReceipt,
       acceptanceReceipt,
       finalizationPacket,
-    ), s.context)).rejects.toThrow(/exact production v11 contract/i);
+    ), s.context)).rejects.toThrow(/exact production v20 contract/i);
     expect(fs.existsSync(finalizationPacket)).toBe(false);
   });
 

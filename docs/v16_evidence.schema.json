@@ -1,180 +1,184 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://amazon-ai-ops.local/schemas/v16_evidence.schema.json",
-  "title": "V16 Evidence Record",
-  "description": "Common envelope for all v1.6.0 evidence files under output/v16-evidence/. Validated by scripts/verify-v16-l1-unit-contract.js, verify-v16-l2-static.js, verify-v16-l3-business-dev.js, etc. See docs/v16_companion_verification_traceability.md §4.",
+  "title": "V1.6 executed runner evidence",
+  "description": "Version 1 contract. Runtime verifiers additionally recompute runner results and bind current source, package and retained artifacts.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
-    "evidenceKind",
-    "producer",
-    "verifier",
-    "result",
-    "resultDetail",
+    "testId",
+    "layer",
     "identity",
-    "producedAt",
-    "consumedInputs"
+    "execution",
+    "artifact",
+    "result"
   ],
   "properties": {
     "schemaVersion": {
-      "const": "v16.evidence/0.1",
-      "description": "Evidence envelope schema version. Verifiers must refuse mismatched versions."
+      "const": "v16.evidence/1"
     },
-    "evidenceKind": {
+    "testId": {
       "type": "string",
+      "minLength": 1
+    },
+    "layer": {
       "enum": [
-        "manifest-validation",
-        "trace-closure",
-        "l1-unit-contract",
-        "l2-static-engineering",
-        "l3-business-integration-dev",
-        "l4-package-ui",
-        "l5-package-security",
-        "l6-formal-db",
-        "l7-canary",
-        "l8-readiness-aggregation"
+        "L1",
+        "L2",
+        "L3",
+        "L4",
+        "L5",
+        "L6",
+        "L7"
       ]
     },
-    "producer": {
+    "identity": {
+      "$ref": "#/definitions/identity"
+    },
+    "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["script", "command", "host", "exitCode"],
+      "required": [
+        "startedAt",
+        "finishedAt",
+        "exitCode"
+      ],
       "properties": {
-        "script": { "type": "string", "minLength": 1 },
-        "command": { "type": "string", "minLength": 1 },
-        "host": { "type": "string", "minLength": 1 },
-        "exitCode": { "type": "integer" }
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
       }
     },
-    "verifier": {
+    "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["script", "exitCode", "validatedAt"],
+      "required": [
+        "format",
+        "path",
+        "sha256"
+      ],
       "properties": {
-        "script": { "type": "string", "minLength": 1 },
-        "exitCode": { "type": "integer" },
-        "validatedAt": { "type": "string", "format": "date-time" }
+        "format": {
+          "enum": [
+            "vitest-json",
+            "checks-json"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
       }
     },
     "result": {
-      "type": "string",
-      "enum": ["PASS", "FAIL", "PENDING", "BLOCKED"]
-    },
-    "resultDetail": {
-      "type": "string",
-      "description": "Free-form diagnostic, verifier-set only. Operators must not edit this field."
-    },
-    "identity": { "$ref": "#/definitions/identity" },
-    "producedAt": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "consumedInputs": {
-      "type": "array",
-      "items": { "$ref": "#/definitions/consumedInput" }
-    },
-    "tests": {
-      "type": "array",
-      "items": { "$ref": "#/definitions/testResult" }
-    },
-    "blockers": {
-      "type": "array",
-      "items": { "$ref": "#/definitions/blocker" }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "success",
+        "total",
+        "passed",
+        "failed",
+        "skipped"
+      ],
+      "properties": {
+        "success": {
+          "type": "boolean"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "definitions": {
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sourceRevision", "packageVersion"],
+      "required": [
+        "sourceRevision",
+        "sourceSha256",
+        "packageVersion"
+      ],
       "properties": {
         "sourceRevision": {
           "type": "string",
-          "minLength": 1,
-          "description": "git commit SHA, or uncommitted:<ISO timestamp>."
+          "pattern": "^[a-fA-F0-9]{40}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
         },
         "packageVersion": {
           "type": "string",
-          "pattern": "^v16\\.\\d+\\.\\d+"
+          "minLength": 1
         },
-        "packageSha256": {
+        "packageHashes": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Required only for L4/L5/L8 evidence.",
+          "required": [
+            "installer",
+            "portable",
+            "zip",
+            "appContent",
+            "mainBundle"
+          ],
           "properties": {
-            "installer": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
-            "portable": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
-            "folderZip": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
-            "winUnpackedExe": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
-            "mainBundle": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+            "installer": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "portable": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "zip": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "appContent": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "mainBundle": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            }
           }
-        },
-        "dbIdentity": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Required only for L6 evidence.",
-          "properties": {
-            "path": { "type": "string", "minLength": 1 },
-            "sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
-            "schemaVersion": { "type": "string", "minLength": 1 },
-            "storeCount": { "type": "integer", "minimum": 0 },
-            "productionFullLineage": { "type": "boolean" }
-          }
-        }
-      }
-    },
-    "consumedInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "ref", "sha256"],
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": ["sourceRevision", "packageArtifact", "dbSnapshot", "fixture", "manifest"]
-        },
-        "ref": { "type": "string", "minLength": 1 },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[A-F0-9]{64}$",
-          "description": "Uppercase hex SHA-256 of the file content."
-        }
-      }
-    },
-    "testResult": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["testId", "result"],
-      "properties": {
-        "testId": {
-          "type": "string",
-          "pattern": "^V16-T-[A-Z0-9_-]+$"
-        },
-        "result": {
-          "type": "string",
-          "enum": ["PASS", "FAIL", "PENDING", "BLOCKED"]
-        },
-        "details": { "type": "string" },
-        "blockingGates": {
-          "type": "array",
-          "items": { "type": "string" }
-        }
-      }
-    },
-    "blocker": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "message", "target"],
-      "properties": {
-        "code": {
-          "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_]+$"
-        },
-        "message": { "type": "string", "minLength": 1 },
-        "target": {
-          "type": "string",
-          "minLength": 1,
-          "description": "testId, bucketId, or acceptanceId this blocker affects."
         }
       }
     }

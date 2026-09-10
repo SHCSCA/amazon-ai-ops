@@ -305,7 +305,8 @@
 .mission-control-shell .mission-control-mode {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr 1.18fr;
+  flex: 0 0 auto;
+  grid-template-columns: max-content max-content;
   height: 38px;
   border: 1px solid #d9e0e9;
   border-radius: 8px;
@@ -1086,23 +1087,31 @@
 /* Container queries make fixed descendants use the workspace as their
  * containing block. Release that containment while a modal is open so the
  * backdrop and its max-height are measured against the desktop viewport. */
+.mission-control-workspace-root:has(.store-fact-dialog-backdrop),
 .mission-control-workspace-root:has(.mission-control-dialog-backdrop) {
   container-type: normal;
 }
 
 .mission-control-workspace-root .mission-control-dialog {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(680px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   border: 1px solid var(--workspace-border-strong);
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 18px 44px rgb(15 23 42 / 0.18);
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .mission-control-dialog > :not(header):not(footer) {
+  min-height: 0;
   overflow: auto;
 }
 
 .mission-control-workspace-root .mission-control-dialog > header,
 .mission-control-workspace-root .mission-control-dialog > footer {
+  flex: none;
   display: flex;
   gap: 16px;
   justify-content: space-between;

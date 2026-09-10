@@ -34,10 +34,10 @@ describe('OperatorModuleSidebar', () => {
     ));
 
     expect(primaryButtons).toHaveLength(6);
-    expect(entryButtons).toHaveLength(7);
-    expect(markup).toContain('今日与决策');
-    expect(markup).toContain('运营任务队列');
-    expect(markup).toContain('待审批');
+    expect(entryButtons).toHaveLength(2);
+    expect(markup).toContain('今日任务');
+    expect(markup).toContain('今日总览');
+    expect(markup).toContain('运营事件');
     expect(markup).not.toContain('产品与目标');
     expect(markup).not.toMatch(/部分可用|PRODUCTION_NATIVE|LEGACY_ADAPTER|原型/);
   });
@@ -49,13 +49,13 @@ describe('OperatorModuleSidebar', () => {
       onNavigate: (intent) => visited.push(intent),
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const collection = buttons.find((button) => collectText(button).includes('数据采集'));
+    const collection = buttons.find((button) => collectText(button).includes('运营资产'));
     const scheduler = buttons.find((button) => collectText(button).includes('定时任务'));
 
     collection?.props.onClick();
     scheduler?.props.onClick();
     expect(visited).toEqual([
-      { workspace: 'collection', subview: 'scope' },
+      { workspace: 'objects', subview: 'products' },
       { workspace: 'settings', subview: 'scheduler' },
     ]);
   });

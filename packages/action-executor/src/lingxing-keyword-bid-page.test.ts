@@ -39,7 +39,7 @@ function command(): KeywordBidCommand {
   };
 }
 
-type LocatorKind = 'body' | 'marker' | 'row' | 'links' | 'bid' | 'save' | 'missing';
+type LocatorKind = 'body' | 'marker' | 'row' | 'links' | 'bid' | 'save' | 'missing' | 'campaign' | 'campaignState' | 'groupState';
 
 class FakeLocator {
   constructor(
@@ -49,6 +49,7 @@ class FakeLocator {
   ) {}
 
   async count(): Promise<number> {
+    if (['campaign', 'campaignState', 'groupState'].includes(this.kind)) return 1;
     if (this.kind === 'body') return 1;
     if (this.kind === 'marker' || this.kind === 'row') return this.page.keywordRowCount;
     if (this.kind === 'links') return this.page.adGroupHrefs.length;
@@ -65,6 +66,9 @@ class FakeLocator {
   }
 
   locator(selector: string): FakeLocator {
+    if (this.kind === 'campaign' && selector === '.fa-circle') return new FakeLocator(this.page, 'campaignState');
+    if (this.kind === 'row' && selector === 'a[href*="ad_group_id="] .fa-circle') return new FakeLocator(this.page, 'groupState');
+    if (this.kind === 'row' && selector === 'input.select-item') return new FakeLocator(this.page, 'marker');
     if (this.kind === 'marker' && selector === 'xpath=ancestor::tr[1]') {
       return new FakeLocator(this.page, 'row');
     }
@@ -81,6 +85,10 @@ class FakeLocator {
   }
 
   async getAttribute(name: string): Promise<string | null> {
+    if (this.kind === 'marker' && name === 'data-status') return this.page.keywordStatus;
+    if (this.kind === 'campaign' && name === 'href') return '/ad_report/ad_group/index/index?profile_id=profile-100&id=campaign-200';
+    if (this.kind === 'campaignState' && name === 'class') return this.page.campaignState;
+    if (this.kind === 'groupState' && name === 'class') return this.page.groupState;
     if (this.kind === 'marker' && name === 'value') return this.page.keywordId;
     if (this.kind === 'links' && name === 'href') return this.page.adGroupHrefs[this.index] ?? null;
     return null;
@@ -96,6 +104,10 @@ class FakeLocator {
 
   async click(): Promise<void> {
     if (this.kind === 'save') this.page.clickCount += 1;
+  }
+
+  async hover(): Promise<void> {
+    if (this.kind === 'bid') this.page.saveVisible = true;
   }
 
   async isVisible(): Promise<boolean> {
@@ -114,6 +126,9 @@ class FakeLocator {
 }
 
 class FakePlaywrightPage {
+  keywordStatus = 'enabled';
+  campaignState = 'fa fa-circle text-green';
+  groupState = 'fa fa-circle text-green';
   currentUrl = `https://ads.lingxing.com${TARGET_PATH}?profile_id=profile-100&id=campaign-200&token=must-not-leak#private`;
   bodyText = 'Amazon Ads account US currency USD';
   rowText = 'blue widget exact keyword';
@@ -134,8 +149,9 @@ class FakePlaywrightPage {
 
   locator(selector: string): FakeLocator {
     this.selectors.push(selector);
+    if (selector === 'a.Js-select-link[href*="/ad_report/ad_group/index/index?"]') return new FakeLocator(this, 'campaign');
     if (selector === 'body') return new FakeLocator(this, 'body');
-    if (selector === `input.select-item[value="${this.keywordId}"]`) {
+    if (selector === `tr:not([data-dt-row]) input.select-item[value="${this.keywordId}"]`) {
       return new FakeLocator(this, 'marker');
     }
     return new FakeLocator(this, 'missing');
@@ -153,6 +169,24 @@ class FakePlaywrightPage {
 }
 
 describe('PlaywrightLingxingKeywordBidPage', () => {
+  it('blocks disabled campaign, group or keyword before writing while preserving read-only reconciliation', async () => {
+    const page = new FakePlaywrightPage();
+    page.currentUrl = page.currentUrl.replace(TARGET_PATH, '/ad_report/keyword/index/index');
+    const port = new PlaywrightLingxingKeywordBidPage(page);
+    await expect(port.assertServing(page.keywordId)).resolves.toBeUndefined();
+    for (const field of ['campaignState', 'groupState', 'keywordStatus'] as const) {
+      const previous = page[field];
+      page[field] = field === 'keywordStatus' ? 'paused' : 'fa fa-circle text-gray';
+      const result = await new KeywordBidAdapter(port).preflight(command());
+      expect(result.status).toBe('BLOCKED');
+      await expect(port.fillBid(command(), 90)).rejects.toThrow('禁止改价');
+      await expect(port.prepareSave(command())).rejects.toThrow('禁止改价');
+      expect((await port.readSnapshot(command())).keyword.bidCents).toBe(100);
+      page[field] = previous;
+    }
+    expect(page.bidValue).toBe('$1.00');
+    expect(page.clickCount).toBe(0);
+  });
   it('read-only resolves one Stage 5 opaque id into a safe canonical keyword identity', async () => {
     const page = new FakePlaywrightPage();
     page.bodyText = 'Amazon Ads account · United States · bid $1.00';
@@ -224,11 +258,23 @@ describe('PlaywrightLingxingKeywordBidPage', () => {
     });
   });
 
+  it('waits for asynchronously loaded keyword rows without submitting', async () => {
+    const page = new FakePlaywrightPage();
+    page.keywordRowCount = 0;
+    const timer = setTimeout(() => { page.keywordRowCount = 1; }, 20);
+    try {
+      const result = await new PlaywrightLingxingKeywordBidPage(page, 1000)
+        .resolveCurrentKeywordIdentity({ adEntityId: 'keyword-400' });
+      expect(result.status).toBe('RESOLVED');
+      expect(page.clickCount).toBe(0);
+    } finally { clearTimeout(timer); }
+  });
+
   it.each([0, 2])('blocks a non-unique row count of %s without returning raw page content', async (rowCount) => {
     const page = new FakePlaywrightPage();
     page.keywordRowCount = rowCount;
     page.bodyText = 'US USD cookie=session-secret';
-    const port = new PlaywrightLingxingKeywordBidPage(page);
+    const port = new PlaywrightLingxingKeywordBidPage(page, 1);
 
     const result = await port.resolveCurrentKeywordIdentity({ adEntityId: 'keyword-400' });
 
@@ -256,6 +302,7 @@ describe('PlaywrightLingxingKeywordBidPage', () => {
 
   it('uses only the exact row controls for fill, one save click, reload, and screenshot', async () => {
     const page = new FakePlaywrightPage();
+    page.saveVisible = false;
     const port = new PlaywrightLingxingKeywordBidPage(page);
     const input = command();
 
@@ -263,6 +310,8 @@ describe('PlaywrightLingxingKeywordBidPage', () => {
     await port.fillBid(input, 90);
     const draft = await port.readSnapshot(input);
     const submitControl = await port.prepareSave(input);
+    expect(page.saveVisible).toBe(true);
+    expect(page.clickCount).toBe(0);
     await submitControl.clickOnce();
     await port.reload();
     await port.captureScreenshot('C:\\trusted\\after.png');
@@ -273,7 +322,7 @@ describe('PlaywrightLingxingKeywordBidPage', () => {
     expect(page.clickCount).toBe(1);
     expect(page.reloadCount).toBe(1);
     expect(page.screenshots).toEqual([{ path: 'C:\\trusted\\after.png', fullPage: false }]);
-    expect(page.selectors).toContain('input.select-item[value="keyword-400"]');
+    expect(page.selectors).toContain('tr:not([data-dt-row]) input.select-item[value="keyword-400"]');
   });
 
   it('surfaces production URL identity drift as a safe BLOCKED preflight', async () => {
@@ -285,7 +334,7 @@ describe('PlaywrightLingxingKeywordBidPage', () => {
 
     expect(result).toMatchObject({
       status: 'BLOCKED',
-      error: { code: 'COMMAND_IDENTITY_MISMATCH' },
+      error: { code: 'CAMPAIGN_STATE_UNAVAILABLE' },
     });
     expect(page.clickCount).toBe(0);
     expect(page.screenshots).toEqual([]);

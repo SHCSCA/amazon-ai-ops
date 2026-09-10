@@ -24,6 +24,7 @@ import {
   type PriorityDataTableColumn,
 } from '../../components/workspace';
 import './store-scoped-ad-listing-panel.css';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 
 export type AdObjectKind = 'campaign' | 'ad_group' | 'target' | 'search_term';
 
@@ -362,7 +363,7 @@ export function StoreScopedAdObjectsPanel({ storeContext, api }: StoreScopedPane
           <>
             <label className="store-fact-filter"><span>对象层级</span><select aria-label="广告对象层级" onChange={(event) => setKind(event.target.value as AdObjectKind)} value={kind}><option value="campaign">广告活动</option><option value="ad_group">广告组</option><option value="target">关键词/投放</option><option value="search_term">搜索词</option></select></label>
             <label className="store-fact-filter"><span>查询</span><input aria-label="查询广告对象" onChange={(event) => setQuery(event.target.value)} placeholder="名称 / 广告活动" value={query} /></label>
-            <button aria-busy={loading || undefined} className="workspace-button workspace-button--secondary" disabled={loading} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
+            <button aria-busy={loading || undefined} className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={loading} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
           </>
         )}
       >
@@ -473,14 +474,14 @@ export function StoreScopedKeywordFactsPanel({ storeContext, api }: StoreScopedP
       <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>当前店铺</strong><span>Amazon US · USD · 指标与机会合并</span></div>
       {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
       <WorkbenchPanel
-        description="把当前店铺 keyword_metrics 与 keyword_opportunities 合并；待归属历史行不会进入结果。"
+        description="汇总当前店铺的关键词指标与机会；尚未确认归属的历史数据不会进入结果。"
         status={<span>{loading ? '读取中…' : `${rows.length} 个关键词`}</span>}
         title="关键词事实与机会"
         toolbar={(
           <>
             <label className="store-fact-filter"><span>ASIN</span><input aria-label="按 ASIN 筛选关键词" onChange={(event) => setAsin(event.target.value)} placeholder="可选" value={asin} /></label>
             <label className="store-fact-filter"><span>关键词</span><input aria-label="查询关键词" onChange={(event) => setQuery(event.target.value)} placeholder="词根" value={query} /></label>
-            <button aria-busy={loading || undefined} className="workspace-button workspace-button--secondary" disabled={loading} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
+            <button aria-busy={loading || undefined} className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={loading} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
           </>
         )}
       >
@@ -582,6 +583,13 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
   const [feedback, setFeedback] = useState<string | null>(null);
   const [editor, setEditor] = useState<ListingEditor | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<StoreListingContentView | null>(null);
+  const dialogOpen = Boolean(editor || confirmDelete);
+  const errorFeedback = error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>;
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: dialogOpen,
+    dismissDisabled: Boolean(pending),
+    onDismiss: () => { setEditor(null); setConfirmDelete(null); },
+  });
   const [versionHistory, setVersionHistory] = useState<ListingVersionHistory | null>(null);
   const [versionLedger, setVersionLedger] = useState<StoreListingVersionLedger | null>(null);
   const requestRef = useRef(0);
@@ -896,7 +904,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
   return (
     <div className="store-scoped-ad-listing-panel" data-store-fact-surface="listing-content">
       <div className="store-fact-authority" role="note"><Database aria-hidden="true" size={15} /><strong>当前店铺</strong><span>Amazon US · USD · 本地内容库</span></div>
-      {error && <div className="store-fact-feedback store-fact-feedback--error" role="alert">{error}</div>}
+      {!dialogOpen && errorFeedback}
       {feedback && <div className="store-fact-feedback store-fact-feedback--success" role="status">{feedback}</div>}
       <WorkbenchPanel
         description="Listing 内容按当前店铺与 ASIN 管理；更新、删除必须通过界面读取版本的并发校验。"
@@ -907,7 +915,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
             <label className="store-fact-filter"><span>查询</span><input aria-label="查询 Listing" onChange={(event) => setQuery(event.target.value)} placeholder="ASIN / 标题" value={query} /></label>
             <button aria-busy={loading || undefined} className="workspace-button workspace-button--secondary" disabled={loading || Boolean(pending)} onClick={() => void load()} type="button"><ArrowsClockwise aria-hidden="true" size={16} />刷新</button>
             <button aria-label="查看当前店铺 Listing 版本账本" className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={openVersionLedger} type="button"><ClockCounterClockwise aria-hidden="true" size={16} />版本账本</button>
-            <button className="workspace-button workspace-button--primary" disabled={Boolean(pending)} onClick={() => setEditor({ current: null, draft: emptyListingDraft() })} type="button"><Plus aria-hidden="true" size={16} />新建 Listing</button>
+            <button className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={Boolean(pending)} onClick={() => setEditor({ current: null, draft: emptyListingDraft() })} type="button"><Plus aria-hidden="true" size={16} />新建 Listing</button>
           </>
         )}
       >
@@ -954,11 +962,11 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
       )}
 
       {editor && (
-        <div className="store-fact-dialog-backdrop">
-          <section aria-labelledby="store-listing-editor-title" aria-modal="true" className="store-fact-dialog" role="dialog">
+        <div className="store-fact-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+          <section aria-labelledby="store-listing-editor-title" aria-modal="true" className="store-fact-dialog" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
             <header><div><span>STORE-SCOPED LISTING</span><h2 id="store-listing-editor-title">{editor.current ? `编辑 ${editor.current.asin}` : '新建美国站 Listing'}</h2><p>内容只保存在当前店铺本地数据库；不会自动提交 Amazon 或改写领星。</p></div><button aria-label="关闭 Listing 编辑器" disabled={Boolean(pending)} onClick={() => setEditor(null)} type="button"><X aria-hidden="true" size={18} /></button></header>
-            <div className="store-listing-form">
-              <label><span>ASIN *</span><input autoFocus disabled={Boolean(editor.current)} onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, asin: event.target.value } } : current)} value={editor.draft.asin} /></label>
+            <div className="store-listing-form">{errorFeedback && <div className="store-listing-form__wide">{errorFeedback}</div>}
+              <label><span>ASIN *</span><input disabled={Boolean(editor.current)} onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, asin: event.target.value } } : current)} value={editor.draft.asin} /></label>
               <label><span>版本标签</span><input onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, versionLabel: event.target.value } } : current)} placeholder="例如 2026-07-22-v1" value={editor.draft.versionLabel} /></label>
               <label className="store-listing-form__wide"><span>标题</span><textarea onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, title: event.target.value } } : current)} rows={2} value={editor.draft.title} /></label>
               <label className="store-listing-form__wide"><span>Bullet Points（每行一条）</span><textarea onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, bulletsText: event.target.value } } : current)} rows={6} value={editor.draft.bulletsText} /></label>
@@ -975,7 +983,7 @@ export function StoreScopedListingContentPanel({ storeContext, api }: StoreScope
       )}
 
       {confirmDelete && (
-        <div className="store-fact-dialog-backdrop"><section aria-labelledby="store-listing-delete-title" aria-modal="true" className="store-fact-dialog store-fact-dialog--confirm" role="alertdialog"><header><div><span>删除商品内容</span><h2 id="store-listing-delete-title">删除 {confirmDelete.asin}？</h2><p>当前内容行会删除，版本历史保留；本机安全进程会通过版本校验阻止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmDelete(null)} type="button">取消</button><button aria-busy={pending === 'delete' || undefined} className="workspace-button workspace-button--danger" disabled={Boolean(pending)} onClick={() => void remove()} type="button"><Trash aria-hidden="true" size={16} />{pending === 'delete' ? '删除中…' : '确认删除'}</button></footer></section></div>
+        <div className="store-fact-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-listing-delete-title" aria-modal="true" className="store-fact-dialog store-fact-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>删除商品内容</span><h2 id="store-listing-delete-title">删除 {confirmDelete.asin}？</h2><p>当前内容行会删除，版本历史保留；本机安全进程会通过版本校验阻止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmDelete(null)} type="button">取消</button><button aria-busy={pending === 'delete' || undefined} className="workspace-button workspace-button--danger" disabled={Boolean(pending)} onClick={() => void remove()} type="button"><Trash aria-hidden="true" size={16} />{pending === 'delete' ? '删除中…' : '确认删除'}</button></footer></section></div>
       )}
     </div>
   );
@@ -1002,11 +1010,12 @@ export function ListingVersionHistoryDialog({
   onRetry,
   onClose,
 }: ListingVersionHistoryDialogProps) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({ open: true, onDismiss: onClose });
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
   const visibleError = error ? userError(error, '版本历史读取失败') : null;
   return (
-    <div className="store-fact-dialog-backdrop">
-      <section aria-labelledby="store-listing-version-title" aria-modal="true" className="store-fact-dialog" role="dialog">
+    <div className="store-fact-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="store-listing-version-title" aria-modal="true" className="store-fact-dialog" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header>
           <div>
             <span>当前店铺版本历史</span>
@@ -1088,11 +1097,12 @@ export function StoreListingVersionLedgerDialog({
   onLoadMore,
   onClose,
 }: StoreListingVersionLedgerDialogProps) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({ open: true, onDismiss: onClose });
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
   const visibleError = error ? userError(error, '版本记录读取失败') : null;
   return (
-    <div className="store-fact-dialog-backdrop">
-      <section aria-labelledby="store-listing-ledger-title" aria-modal="true" className="store-fact-dialog" role="dialog">
+    <div className="store-fact-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="store-listing-ledger-title" aria-modal="true" className="store-fact-dialog" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header>
           <div>
             <span>当前店铺版本记录</span>

@@ -271,11 +271,14 @@ describe('desktop scheduler scope contract', () => {
     expect(createWindowSource).not.toContain("void createdWindow.loadURL('http://localhost:5173')");
   });
 
-  it('fails the daily report task when no artifact can be produced and propagates failures', () => {
+  it('uses governed AI or a template summary and propagates artifact failures', () => {
     const body = between('async function runDailyReportGeneration', '// IPC Handlers');
 
-    expect(body).toContain("if (!settings.aiApiKey)");
-    expect(body).toContain("throw new Error('AI Key 未配置，无法生成每日运营报告。')");
+    expect(body).toContain('governedAiProvider(');
+    expect(body).toContain("'daily_summary'");
+    expect(body).toContain('未配置 AI，使用模板摘要。');
+    expect(body).not.toContain("throw new Error('AI Key 未配置，无法生成每日运营报告。')");
+    expect(body).toContain('fs.writeFileSync(');
     expect(body).toMatch(/catch \(err\) \{[\s\S]*?throw err;/);
   });
 });

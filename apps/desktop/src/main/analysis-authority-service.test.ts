@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import Database from 'better-sqlite3';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AnalysisAuthorityRepository,
   MissionDomainRepository,
@@ -23,746 +23,123 @@ import {
   type AnalysisRecommendationGenerationScope,
   type CapturedAnalysisGenerationAuthority,
 } from './analysis-authority-service';
-import { writeTestEvidence } from './test-evidence-writer';
-
-const NOW = '2026-07-22T12:00:00.000Z';
-const RULE_REVISION = 'a'.repeat(64);
-const tempDirs: string[] = [];
-const databases: Database.Database[] = [];
-let testStartTime = Date.now();
-let testStats = { total: 0, passed: 0, failed: 0, skipped: 0 };
-
-afterEach(() => {
-  while (databases.length > 0) {
-    const database = databases.pop();
-    if (database?.open) database.close();
-  }
-  while (tempDirs.length > 0) {
-    const directory = tempDirs.pop();
-    if (directory) fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-afterAll(() => {
-  const duration = Date.now() - testStartTime;
-  writeTestEvidence({
-    testId: 'V16-T-L1-ANALYSIS-AUTH',
-    title: 'Analysis Authority L1 主域不变量',
-    layer: 'L1',
-    testFile: 'apps/desktop/src/main/analysis-authority-service.test.ts',
-    totalTests: testStats.total,
-    passedTests: testStats.passed,
-    failedTests: testStats.failed,
-    skippedTests: testStats.skipped,
-    duration,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-interface Harness {
-  directory: string;
-  database: Database.Database;
-  context: StoreContextEnvelope;
-  analysisRepository: AnalysisAuthorityRepository;
-  missionRepository: MissionDomainRepository;
-  recommendationRepository: RecommendationRepository;
-  service: AnalysisAuthorityService;
-  missionId: string;
-  policyVersionId: string;
-  proofPath: string;
-  ruleRevision: { value: string };
-  modelRevision: { value: string };
-  recommendationMutation: { count: number };
-  generationScopes: AnalysisRecommendationGenerationScope[];
-}
-
-function createHarness(options: {
-  autonomyMode?: 'manual_approval' | 'policy_auto';
-  withWritableTarget?: boolean;
-  fallback?: boolean;
-  recommendationCount?: number;
-  proofAllowed?: boolean;
-  maxDailyActionCount?: number;
-  cooldownMinutes?: number;
-  executionWindow?: PolicyVersionRules['executionWindow'];
-  mutateMissionDuringGeneration?: boolean;
-  generationAuthorityFactory?: (
-    captured: CapturedAnalysisGenerationAuthority,
-  ) => CapturedAnalysisGenerationAuthority;
-  onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
-  batchStoreName?: string;
-  deduplicateRecommendations?: boolean;
-  recommendationEvidencePatch?: Partial<ActionRecommendation['evidence']>;
-  generationTimeoutMs?: number;
-} = {}): Harness {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
-  tempDirs.push(directory);
-  const database = initSqlite(path.join(directory, 'app.db'));
-  databases.push(database);
-  const context = normalizeStoreContextEnvelope({
-    storeId: 'store-one',
-    browserProfileId: 'profile-one',
-    marketplace: 'US',
-    currency: 'USD',
-    businessTimezone: 'America/Los_Angeles',
-    businessDate: '2026-07-22',
-    sessionGeneration: 4,
-  });
-  database.prepare(`
-    INSERT INTO stores (
-      store_id, browser_profile_id, marketplace, currency, display_name,
-      status, business_timezone, created_at, updated_at
-    ) VALUES ('store-one', 'profile-one', 'US', 'USD', 'US Store One',
-      'active', 'America/Los_Angeles', ?, ?)
-  `).run(NOW, NOW);
-  for (const provider of ['lingxing', 'amazon_ads']) {
-    database.prepare(`
-      INSERT INTO store_session_metadata (
-        store_id, provider, browser_profile_id, status, session_generation,
-        observed_at, verified_at, updated_at
-      ) VALUES ('store-one', ?, 'profile-one', 'ready', 4, ?, ?, ?)
-    `).run(provider, NOW, NOW, NOW);
-  }
-  database.prepare(`
-    INSERT INTO lingxing_report_batches (
-      id, date_start, date_end, store_name, marketplace_code, status,
-      download_dir, created_at, completed_at, store_id, request_id,
-      browser_profile_id, business_date, session_generation
-    ) VALUES ('batch-1', '2026-07-01', '2026-07-22', ?, 'US', 'completed',
-      ?, ?, ?, 'store-one', 'request-1', 'profile-one', '2026-07-22', 4)
-  `).run(options.batchStoreName ?? 'US Store One', path.join(directory, 'reports'), NOW, NOW);
-
-  // Seed a production_full collection job so requireCompletedDataBatch (via
-  // createMission) and formalBusinessDataGate (via getBusinessRecommendationGate)
-  // both pass with strict 18-condition checks.
-  const REQUIRED_COLLECTION_REPORT_TYPES = [
-    'campaign', 'ad_group', 'placement', 'advertised_product',
-    'auto_targeting', 'keyword', 'product_targeting', 'user_search_term',
-  ] as const;
-  // lingxing_report_batches.request_id below is 'request-1'; productionRootReady
-  // requires jobRequestId === persistedRequestId exactly.
-  const COLLECTION_REQUEST_ID = 'request-1';
-  const COLLECTION_JOB_ID = 'batch-1';
-  const collectionJobSnapshot = JSON.stringify({
-    jobId: COLLECTION_JOB_ID,
-    state: 'completed',
-    importState: 'succeeded',
-    request: {
-      requestId: COLLECTION_REQUEST_ID,
-      reportTypes: REQUIRED_COLLECTION_REPORT_TYPES,
-    },
-    lineage: {
-      lineageId: COLLECTION_JOB_ID,
-      rootJobId: COLLECTION_JOB_ID,
-      parentJobId: undefined,
-      purpose: 'production_full',
-      expectedReportTypes: REQUIRED_COLLECTION_REPORT_TYPES,
-    },
-    reports: [],
-    createdAt: NOW,
-    updatedAt: NOW,
-    completedAt: NOW,
-    importCompletedAt: NOW,
-  });
-  database.prepare(`
-    INSERT OR REPLACE INTO lingxing_collection_jobs (
-      store_id, job_id, request_id, browser_profile_id, marketplace,
-      currency, business_timezone, business_date, session_generation,
-      date_start, date_end, mode, report_types_json, state, snapshot_json,
-      created_at, updated_at, completed_at
-    ) VALUES (
-      'store-one', ?, ?, 'profile-one', 'US',
-      'USD', 'America/Los_Angeles', '2026-07-22', 4,
-      '2026-07-01', '2026-07-22', 'create-and-download', ?, 'completed', ?,
-      ?, ?, ?
-    )
-  `).run(
-    COLLECTION_JOB_ID,
-    COLLECTION_REQUEST_ID,
-    JSON.stringify(REQUIRED_COLLECTION_REPORT_TYPES),
-    collectionJobSnapshot,
-    NOW, NOW, NOW,
-  );
-  // Seed 8 'downloaded' checkpoints so checkpoint.total/distinctTypes/downloaded
-  // all equal 8. attempt_index and auto_retry_count are NOT NULL with CHECK >=0.
-  const insertCheckpoint = database.prepare(`
-    INSERT OR IGNORE INTO lingxing_collection_report_checkpoints (
-      store_id, job_id, report_type, state, attempt_index, auto_retry_count, updated_at
-    ) VALUES ('store-one', ?, ?, 'downloaded', 0, 0, ?)
-  `);
-  for (const reportType of REQUIRED_COLLECTION_REPORT_TYPES) {
-    insertCheckpoint.run(COLLECTION_JOB_ID, reportType, NOW);
-  }
-  const reportPaths = seedImportAuthority(database, directory);
-  const proofPath = path.join(directory, 'proof.png');
-  fs.writeFileSync(proofPath, Buffer.from('verified visible Ads identity proof'));
-
-  const analysisRepository = new AnalysisAuthorityRepository(database, { now: () => new Date(NOW) });
-  const missionRepository = new MissionDomainRepository(database, {
-    now: () => new Date(NOW),
-    references: {
-      productBelongsToStore: () => true,
-      adEntityBelongsToStore: (authorized, adEntityId) => (
-        analysisRepository.adEntityBelongsToStore(authorized, adEntityId)
-      ),
-      adEntitySupportsKeywordBid: (authorized, adEntityId) => {
-        const authority = analysisRepository.getLatestVerifiedAdEntityById(authorized, adEntityId);
-        return authority?.entityType === 'keyword' && authority.sourceReportType === 'keyword';
-      },
-    },
-  });
-  const recommendationRepository = new RecommendationRepository(database);
-  const rules: PolicyVersionRules = {
-    allowedActionTypes: ['set_keyword_bid'],
-    allowedAdEntityIds: ['opaque-keyword-1', 'opaque-keyword-2'],
-    maxChangePct: 10,
-    totalImpactBudget: 100,
-    maxDailyActionCount: options.maxDailyActionCount ?? 100,
-    cooldownMinutes: options.cooldownMinutes ?? 0,
-    executionWindow: options.executionWindow ?? {
-      timeZone: 'America/Los_Angeles',
-      daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
-      start: '00:00',
-      end: '23:59',
-    },
-    requiredEvidence: [
-      'page_identity', 'before_screenshot', 'after_screenshot',
-      'reload_screenshot', 'readback_value',
-    ],
-    stopConditions: [
-      { code: 'identity_drift', detail: 'stop' },
-      { code: 'expected_before_mismatch', detail: 'stop' },
-      { code: 'unknown_result', detail: 'stop' },
-      { code: 'data_stale', detail: 'stop' },
-      { code: 'impact_budget_exhausted', detail: 'stop' },
-      { code: 'kill_switch', detail: 'stop' },
-    ],
-    killSwitch: false,
-  };
-  seedBootstrapPolicyAuthorities({
-    database,
-    context,
-    analysisRepository,
-    missionRepository,
-    rules,
-    entities: [
-      { adEntityId: 'opaque-keyword-1', entityName: 'door lock', sourceRow: 7 },
-      { adEntityId: 'opaque-keyword-2', entityName: 'door lock 2', sourceRow: 8 },
-    ],
-  });
-  const policy = missionRepository.createPolicy(context, {
-    id: 'policy-1',
-    name: 'US keyword bid policy',
-    scope: 'store',
-    priority: 1,
-    actorId: 'operator',
-  });
-  const draftVersion = missionRepository.createPolicyVersion(context, {
-    id: 'policy-version-1',
-    policyId: policy.id,
-    version: 1,
-    rules,
-    actorId: 'operator',
-  });
-  const policyVersion = missionRepository.enablePolicyVersion(context, {
-    policyId: policy.id,
-    versionId: draftVersion.id,
-    expectedPolicyRevision: policy.revision,
-    expectedVersionRevision: draftVersion.revision,
-    actorId: 'operator',
-  });
-  const draftMission = missionRepository.createMission(context, {
-    id: 'mission-1',
-    dataBatchId: 'batch-1',
-    policyVersionId: policyVersion.id,
-    productId: 'B0TEST',
-    title: 'Reduce inefficient keyword bids',
-    objective: 'Improve ACOS while protecting orders',
-    observationStartsAt: '2026-07-22T00:00:00.000Z',
-    observationEndsAt: '2026-07-29T00:00:00.000Z',
-    successCriteria: ['ACOS improves'],
-    guardrails: ['Orders remain stable'],
-    actorId: 'operator',
-  });
-  const mission = missionRepository.transitionMission(context, {
-    id: draftMission.id,
-    expectedRevision: draftMission.revision,
-    status: 'active',
-    phase: 'analysis',
-    actorId: 'operator',
-  });
-  if (options.autonomyMode === 'policy_auto') {
-    const runtime = missionRepository.getPolicyRuntime(context);
-    missionRepository.updatePolicyRuntime(context, {
-      expectedRevision: runtime.revision,
-      actorId: 'operator',
-      patch: {
-        autonomyMode: 'policy_auto',
-        activePolicyVersionId: policyVersion.id,
-        killSwitch: false,
-        circuitBreakerState: 'closed',
-      },
-    });
-  }
-  const recommendationCount = options.recommendationCount ?? 1;
-  const ruleRevision = { value: RULE_REVISION };
-  const modelRevision = { value: 'gpt-5.6:ad_strategy_diagnosis_v1' };
-  const recommendationMutation = { count: recommendationCount };
-  const generationScopes: AnalysisRecommendationGenerationScope[] = [];
-  const deniedProofRoot = path.join(directory, 'denied-proof-root');
-  fs.mkdirSync(deniedProofRoot, { recursive: true });
-  let generationDelegate: CapturedAnalysisGenerationAuthority['generateRecommendations'] = async () => {
-    throw new Error('analysis generation delegate was not initialized');
-  };
-  const service = new AnalysisAuthorityService({
-    db: database,
-    repository: analysisRepository,
-    missionRepository,
-    recommendationRepository,
-    storeCoordinator: {
-      assertActiveStoreContext(input) {
-        expect(input).toEqual(context);
-        return context;
-      },
-    },
-    currentRuleRevision: () => ruleRevision.value,
-    currentModelRevision: () => modelRevision.value,
-    captureGenerationAuthority: () => {
-      const captured = Object.freeze({
-        ruleRevision: ruleRevision.value,
-        modelRevision: modelRevision.value,
-        generateRecommendations: generationDelegate,
-      });
-      return options.generationAuthorityFactory?.(captured) ?? captured;
-    },
-    allowedProofRoots: () => [options.proofAllowed === false ? deniedProofRoot : directory],
-    onAutomaticGrantIssued: options.onAutomaticGrantIssued,
-    generationTimeoutMs: options.generationTimeoutMs,
-    now: () => new Date(NOW),
-    generateRecommendations: generationDelegate = async (scope) => {
-      scope.signal.throwIfAborted();
-      generationScopes.push(scope);
-      expect(scope).toMatchObject({
-        storeName: 'US Store One',
-        marketplaceCode: 'US',
-        batchId: 'batch-1',
-      });
-      const recommendationIds: number[] = [];
-      let generated = 0;
-      let skippedDuplicates = 0;
-      let refreshedDuplicates = 0;
-      for (let index = 1; index <= recommendationMutation.count; index += 1) {
-        scope.signal.throwIfAborted();
-        const entityName = index === 1 ? 'door lock' : `door lock ${index}`;
-        const rec = recommendation({
-          entityName,
-          entityId: `synthetic-${index}`,
-          evidence: {
-            ...recommendation().evidence,
-            targeting: entityName,
-            sourceFile: reportPaths.keyword,
-            sourceFiles: [reportPaths.keyword],
-            sourceRow: 6 + index,
-            ...(options.withWritableTarget === false ? { writableTarget: undefined } : {
-              writableTarget: {
-                ...recommendation().evidence.writableTarget!,
-                entityId: `opaque-keyword-${index}`,
-                entityName,
-                sourceFile: reportPaths.keyword,
-                sourceRow: 6 + index,
-                identityProofPath: proofPath,
-              },
-            }),
-            ...(options.fallback ? {
-              decisionSource: 'rule',
-              aiFallbackReason: 'provider unavailable',
-            } : {}),
-            ...options.recommendationEvidencePatch,
-          },
-        });
-        if (options.deduplicateRecommendations) {
-          const persisted = recommendationRepository.insertIfNoDuplicateForStore(context.storeId, rec);
-          recommendationIds.push(persisted.id);
-          if (persisted.inserted) generated += 1;
-          else if (persisted.updated) refreshedDuplicates += 1;
-          else skippedDuplicates += 1;
-        } else {
-          recommendationIds.push(recommendationRepository.insertForStore(context.storeId, rec));
-          generated += 1;
-        }
-      }
-      if (options.mutateMissionDuringGeneration) {
-        const currentMission = missionRepository.getMission(context, mission.id)!;
-        missionRepository.updateMission(context, {
-          id: currentMission.id,
-          expectedRevision: currentMission.revision,
-          actorId: 'operator',
-          patch: { title: 'Mission changed while analysis was running' },
-        });
-      }
-      return {
-        generated,
-        metrics: 8,
-        skippedDuplicates,
-        refreshedDuplicates,
-        recommendationCandidates: recommendationIds.length,
-        recommendationIds,
-        aiExplanation: {
-          configured: !options.fallback,
-          invoked: !options.fallback,
-          reason: options.fallback ? 'AI unavailable; rule fallback.' : 'AI and rules aligned.',
-          model: 'gpt-5.6',
-          strategyDiagnosis: { source: options.fallback ? 'rule' : 'ai' },
-        },
-        scope: {
-          storeId: context.storeId,
-          storeName: 'US Store One',
-          marketplaceCode: 'US',
-          dateFrom: '2026-07-01',
-          dateTo: '2026-07-22',
-          asin: 'B0TEST',
-          batchId: 'batch-1',
-        },
-      };
-    },
-  });
-  return {
-    directory,
-    database,
-    context,
-    analysisRepository,
-    missionRepository,
-    recommendationRepository,
-    service,
-    missionId: mission.id,
-    policyVersionId: policyVersion.id,
-    proofPath,
-    ruleRevision,
-    modelRevision,
-    recommendationMutation,
-    generationScopes,
-  };
-}
-
-function seedImportAuthority(database: Database.Database, directory: string): Record<string, string> {
-  const reportDir = path.join(directory, 'reports');
-  fs.mkdirSync(reportDir, { recursive: true });
-  database.prepare(`
-    INSERT INTO report_import_runs (
-      store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
-      source_file_count, metric_row_count, reconciliation_count,
-      started_at, completed_at, created_at
-    ) VALUES ('store-one', 'run-1', 'idem-1', ?, 'batch-1', 'completed',
-      8, 9, 8, '2026-07-22T10:55:00.000Z', '2026-07-22T11:00:00.000Z', ?)
-  `).run('f'.repeat(64), NOW);
-  const reportPaths: Record<string, string> = {};
-  ANALYSIS_REQUIRED_REPORT_TYPES.forEach((reportType, index) => {
-    const filePath = path.join(reportDir, `${reportType}.xlsx`);
-    fs.writeFileSync(filePath, Buffer.from(`report:${reportType}`));
-    reportPaths[reportType] = filePath;
-    const fileHash = (index + 1).toString(16).repeat(64).slice(0, 64);
-    const reportFileId = Number(database.prepare(`
-      INSERT INTO report_files (
-        store_id, batch_id, report_type, file_path, file_name, file_size,
-        status, imported_rows, file_hash, import_error, last_imported_at,
-        created_at, updated_at
-      ) VALUES ('store-one', 'batch-1', ?, ?, ?, 100,
-        'imported', ?, ?, NULL, ?, ?, ?)
-    `).run(
-      reportType,
-      filePath,
-      `${reportType}.xlsx`,
-      reportType === 'keyword' ? 2 : 1,
-      fileHash,
-      NOW,
-      NOW,
-      NOW,
-    ).lastInsertRowid);
-    database.prepare(`
-      INSERT INTO report_import_file_snapshots (
-        store_id, snapshot_id, run_id, batch_id, report_file_id, report_type,
-        file_path, file_name, file_size_bytes, file_hash, imported_rows, captured_at
-      ) VALUES ('store-one', ?, 'run-1', 'batch-1', ?, ?, ?, ?, 100, ?, ?, ?)
-    `).run(
-      `snapshot-${reportType}`,
-      reportFileId,
-      reportType,
-      filePath,
-      `${reportType}.xlsx`,
-      fileHash,
-      reportType === 'keyword' ? 2 : 1,
-      NOW,
-    );
-    database.prepare(`
-      INSERT INTO report_import_reconciliations (
-        store_id, reconciliation_id, run_id, batch_id, metric_date, report_type,
-        currency, expected_rows, actual_rows, expected_cost_1e4, actual_cost_1e4,
-        absolute_cost_delta_1e4, tolerance_1e4, within_tolerance, status, reconciled_at
-      ) VALUES ('store-one', ?, 'run-1', 'batch-1', '2026-07-22', ?,
-        'USD', ?, ?, 10000, 10000, 0, 1, 1, 'matched', ?)
-    `).run(
-      `recon-${reportType}`,
-      reportType,
-      reportType === 'keyword' ? 2 : 1,
-      reportType === 'keyword' ? 2 : 1,
-      NOW,
-    );
-    database.prepare(`
-      INSERT INTO ad_daily_metrics (
-        store_id, batch_id, report_type, date, store_name, marketplace_code,
-        asin, msku, campaign_name, ad_group_name, targeting, search_term,
-        match_type, impressions, clicks, cost, orders, sales, currency,
-        acos, cpc, cvr, source_file, source_row, created_at
-      ) VALUES ('store-one', 'batch-1', ?, '2026-07-22', 'US Store One', 'US',
-        'B0TEST', 'MSKU-1', 'Campaign A', 'Ad Group A', 'door lock', '',
-        'exact', 1000, 30, 40, 1, 60, 'USD', 0.6667, 1.49, 0.0333, ?, ?, ?)
-    `).run(reportType, filePath, index + 2, NOW);
-    if (reportType === 'keyword') {
-      database.prepare(`
-        INSERT INTO ad_daily_metrics (
-          store_id, batch_id, report_type, date, store_name, marketplace_code,
-          asin, msku, campaign_name, ad_group_name, targeting, search_term,
-          match_type, impressions, clicks, cost, orders, sales, currency,
-          acos, cpc, cvr, source_file, source_row, created_at
-        ) VALUES ('store-one', 'batch-1', 'keyword', '2026-07-22', 'US Store One', 'US',
-          'B0TEST', 'MSKU-1', 'Campaign A', 'Ad Group A', 'door lock 2', '',
-          'exact', 800, 20, 30, 1, 50, 'USD', 0.6, 1.49, 0.05, ?, 8, ?)
-      `).run(filePath, NOW);
-    }
-  });
-  return reportPaths;
-}
-
-function seedBootstrapPolicyAuthorities(input: {
-  database: Database.Database;
-  context: StoreContextEnvelope;
-  analysisRepository: AnalysisAuthorityRepository;
-  missionRepository: MissionDomainRepository;
-  rules: PolicyVersionRules;
-  entities: ReadonlyArray<{ adEntityId: string; entityName: string; sourceRow: number }>;
-}): void {
-  const bootstrapPolicy = input.missionRepository.createPolicy(input.context, {
-    id: 'bootstrap-policy-analysis-authority',
-    name: 'Bootstrap verified keyword authority',
-    scope: 'store',
-    priority: 9_999,
-    actorId: 'fixture-bootstrap',
-  });
-  const bootstrapDraft = input.missionRepository.createPolicyVersion(input.context, {
-    id: 'bootstrap-policy-version-analysis-authority',
-    policyId: bootstrapPolicy.id,
-    version: 1,
-    rules: { ...input.rules, allowedAdEntityIds: [] },
-    actorId: 'fixture-bootstrap',
-  });
-  const bootstrapVersion = input.missionRepository.enablePolicyVersion(input.context, {
-    policyId: bootstrapPolicy.id,
-    versionId: bootstrapDraft.id,
-    expectedPolicyRevision: bootstrapPolicy.revision,
-    expectedVersionRevision: bootstrapDraft.revision,
-    actorId: 'fixture-bootstrap',
-  });
-  const bootstrapMission = input.missionRepository.createMission(input.context, {
-    id: 'bootstrap-mission-analysis-authority',
-    dataBatchId: 'batch-1',
-    policyVersionId: bootstrapVersion.id,
-    productId: 'B0TEST',
-    title: 'Bootstrap immutable Ads identity evidence',
-    objective: 'Bind imported keyword rows to verified opaque Ads entities.',
-    observationStartsAt: '2026-07-22T00:00:00.000Z',
-    observationEndsAt: '2026-07-29T00:00:00.000Z',
-    successCriteria: ['Verified keyword authority is materialized'],
-    guardrails: ['Bootstrap policy cannot authorize an Ads object'],
-    actorId: 'fixture-bootstrap',
-  });
-  const evidence = input.analysisRepository.sealEvidencePackage(input.context, {
-    missionId: bootstrapMission.id,
-    dateFrom: '2026-07-01',
-    dateTo: '2026-07-22',
-    asin: 'B0TEST',
-    freshnessWindowHours: 48,
-    ruleRevision: RULE_REVISION,
-    modelRevision: 'fixture-bootstrap-authority-v1',
-  });
-  const keywordSnapshot = input.database.prepare(`
-    SELECT file_hash AS fileHash
-    FROM report_import_file_snapshots
-    WHERE store_id = ? AND run_id = ? AND batch_id = ? AND report_type = 'keyword'
-      AND report_file_id IS NOT NULL
-    ORDER BY snapshot_id
-    LIMIT 1
-  `).get(
-    input.context.storeId,
-    evidence.importRunId,
-    evidence.dataBatchId,
-  ) as { fileHash: string } | undefined;
-  if (!keywordSnapshot) throw new Error('Expected imported keyword snapshot for bootstrap authority.');
-  input.entities.forEach((entity, index) => {
-    input.analysisRepository.registerVerifiedAdEntity(input.context, {
-      authorityId: `bootstrap-authority-${entity.adEntityId}`,
-      evidencePackageId: evidence.id,
-      adEntityId: entity.adEntityId,
-      entityType: 'keyword',
-      entityName: entity.entityName,
-      campaignName: 'Campaign A',
-      adGroupName: 'Ad Group A',
-      sourceReportType: 'keyword',
-      sourceFileHash: keywordSnapshot.fileHash,
-      sourceRow: entity.sourceRow,
-      identitySource: 'ads_ui',
-      proofSha256: (index + 10).toString(16).repeat(64).slice(0, 64),
-      verifiedBy: 'fixture-bootstrap',
-      verifiedAt: NOW,
-    });
-  });
-  input.missionRepository.archiveMission(input.context, {
-    id: bootstrapMission.id,
-    expectedRevision: bootstrapMission.revision,
-    actorId: 'fixture-bootstrap',
-    reason: 'Bootstrap identity evidence is complete.',
-  });
-  const activeBootstrapPolicy = input.missionRepository.getPolicy(input.context, bootstrapPolicy.id)!;
-  const disabledBootstrapPolicy = input.missionRepository.disablePolicy(input.context, {
-    id: activeBootstrapPolicy.id,
-    expectedRevision: activeBootstrapPolicy.revision,
-    actorId: 'fixture-bootstrap',
-    reason: 'Bootstrap identity evidence is complete.',
-  });
-  input.missionRepository.archivePolicy(input.context, {
-    id: disabledBootstrapPolicy.id,
-    expectedRevision: disabledBootstrapPolicy.revision,
-    actorId: 'fixture-bootstrap',
-    reason: 'Bootstrap identity evidence is complete.',
-  });
-}
-
-function recommendation(overrides: Partial<Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>> = {}): Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'> {
-  return {
-    taskId: 'task-1',
-    storeName: 'US Store One',
-    marketplaceCode: 'US',
-    asin: 'B0TEST',
-    msku: 'MSKU-1',
-    entityType: 'target',
-    entityId: 'synthetic-1',
-    entityName: 'door lock',
-    actionType: 'lower_bid',
-    currentValue: '1.49',
-    recommendedValue: '1.35',
-    reason: 'ACOS is above the configured guardrail.',
-    evidence: {
-      impressions: 1000,
-      clicks: 30,
-      cost: 40,
-      orders: 1,
-      sales: 60,
-      acos: 0.6667,
-      cpc: 1.49,
-      cvr: 0.0333,
-      batchId: 'batch-1',
-      reportType: 'keyword',
-      campaignName: 'Campaign A',
-      adGroupName: 'Ad Group A',
-      targeting: 'door lock',
-      sourceRow: 7,
-      decisionSource: 'rule_ai',
-      decisionAgreement: 'aligned',
-      writableTarget: {
-        entityType: 'keyword',
-        entityId: 'opaque-keyword-1',
-        entityName: 'door lock',
-        campaignName: 'Campaign A',
-        adGroupName: 'Ad Group A',
-        metricDate: '2026-07-22',
-        sourceFile: '',
-        sourceRow: 7,
-        identitySource: 'ads_ui',
-        verifiedBy: 'operator',
-        verifiedAt: NOW,
-        verificationNote: 'Matched the visible Ads row.',
-        identityProofPath: '',
-      },
-    },
-    confidence: 0.88,
-    riskLevel: 'APPROVAL',
-    status: 'pending',
-    ...overrides,
-  };
-}
-
-function runRequest(harness: Harness) {
-  return harness.service.runMissionAnalysis({
-    context: harness.context,
-    missionId: harness.missionId,
-    dateFrom: '2026-07-01',
-    dateTo: '2026-07-22',
-  });
-}
-
-function seedTrustedCausalMemory(
-  harness: Harness,
-  ordinal: number,
-  observedEffect = '关键词竞价降低后 ACOS 改善，广告订单保持稳定。',
-): void {
-  const event = harness.missionRepository.appendCausalEvent(harness.context, {
-    id: `trusted-analysis-memory-${ordinal}`,
-    stage: 'EFFECT',
-    eventType: 'experiment_effect_verified',
-    entityType: 'experiment',
-    entityId: `experiment-memory-${ordinal}`,
-    missionId: harness.missionId,
-    title: '经营实验效果已核验',
-    observedEffect,
-    status: 'verified',
-    source: 'experiment-evaluator',
-    actorId: 'experiment-evaluator',
-  });
-  harness.missionRepository.appendEvidenceRef(harness.context, {
-    id: `trusted-analysis-memory-proof-${ordinal}`,
-    eventId: event.id,
-    evidenceType: 'experiment_result',
-    evidenceRef: `artifact:experiment-result:${ordinal}`,
-    sha256: ordinal.toString(16).repeat(64),
-  });
-}
-
-function seedPriorGrant(
-  harness: Harness,
-  decisionId: string,
-  adEntityId: string,
-  issuedAt = NOW,
-): void {
-  const mission = harness.missionRepository.getMission(harness.context, harness.missionId)!;
-  const policy = harness.missionRepository.getPolicyVersion(harness.context, harness.policyVersionId)!;
-  harness.database.prepare(`
-    INSERT INTO mission_grants (
-      id, store_id, marketplace, currency, mission_id, mission_revision, decision_ids_json,
-      action_revision, allowed_action_types_json, allowed_ad_entity_ids_json,
-      max_change_pct, total_impact_budget, expires_at,
-      policy_version_id, policy_revision, required_evidence_json,
-      stop_conditions_json, issuer_type, issuer_actor_id,
-      issued_at, created_session_generation
-    ) VALUES (
-      'prior-rate-limit-grant', ?, 'US', 'USD', ?, ?, ?,
-      999, '["set_keyword_bid"]', ?, 10, 1, '2026-07-23T12:00:00.000Z',
-      ?, ?, ?, ?, 'human', 'operator', ?, ?
-    )
-  `).run(
-    harness.context.storeId,
-    mission.id,
-    mission.revision,
-    JSON.stringify([decisionId]),
-    JSON.stringify([adEntityId]),
-    policy.id,
-    policy.revision,
-    JSON.stringify(policy.rules.requiredEvidence),
-    JSON.stringify(policy.rules.stopConditions),
-    issuedAt,
-    harness.context.sessionGeneration,
-  );
-}
-
+import { approveHumanDecisions, NOW, RULE_REVISION, tempDirs, databases, Harness, createHarness, seedImportAuthority, seedBootstrapPolicyAuthorities, recommendation, runRequest, seedTrustedCausalMemory, seedPriorGrant } from './analysis-authority.test-support';
 describe('AnalysisAuthorityService', () => {
+  it.each(['manual_approval', 'policy_auto'] as const)('caps %s grant expiry at the temporary policy deadline', async (autonomyMode) => {
+    const policyValidUntil = '2026-07-22T13:00:00.000Z';
+    const h = createHarness({ autonomyMode, policyValidUntil });
+    const analysis = await runRequest(h);
+    if (autonomyMode === 'manual_approval') approveHumanDecisions(h);
+    const result = h.service.authorizeProposalBatch({ context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) });
+    expect(result.authorized).toBe(true);
+    expect(result.grant?.expiresAt).toBe(policyValidUntil);
+    expect(h.missionRepository.getMissionGrant(h.context, result.grant!.id)?.expiresAt).toBe(policyValidUntil);
+  });
+  it('upgrades legacy judgments without backfilling authority and retains readable approval history', async () => {
+    const h = createHarness();
+    seedTrustedCausalMemory(h, 1);
+    expect(h.missionRepository.listAnalysisCausalMemory(h.context, { productId: 'B0TEST' })).toHaveLength(1);
+    const analysis = await runRequest(h); approveHumanDecisions(h);
+    const original = h.service.authorizeProposalBatch({ context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) }).grant!;
+    const history = h.missionRepository.listDecisionHistory(h.context, original.decisionIds[0]);
+    const legacyPath = path.join(h.directory, 'legacy-no-authority.db');
+    await h.database.backup(legacyPath);
+    const legacy = new Database(legacyPath);
+    legacy.exec(`DROP TABLE ai_cost_records; DROP TABLE ai_spend_policies; DROP TABLE legacy_record_classifications;
+      DROP TRIGGER trg_decision_write_authority_immutable;
+      ALTER TABLE analysis_action_batches DROP COLUMN authority_json;
+      ALTER TABLE decisions DROP COLUMN authority_json;
+      ALTER TABLE mission_grants DROP COLUMN authority_json;
+      DELETE FROM schema_migrations WHERE version>=17;`);
+    legacy.close();
+    const upgraded = initSqlite(legacyPath); databases.push(upgraded);
+    const repository = new MissionDomainRepository(upgraded, { now: () => new Date(NOW) });
+    const historical = repository.getMissionGrant(h.context, original.id)!;
+    expect(historical.authority).toBeUndefined();
+    expect(repository.getDecision(h.context, original.decisionIds[0])?.authority).toBeUndefined();
+    expect(upgraded.prepare("SELECT classification,source_schema,reason FROM legacy_record_classifications WHERE source_table='mission_grants' AND record_id=?").get(original.id))
+      .toMatchObject({ classification: 'historical-read-only', source_schema: 16, reason: expect.any(String) });
+    expect(repository.listDecisionHistory(h.context, original.decisionIds[0])).toEqual(history);
+    expect(repository.listCausalEvents(h.context, { missionId: h.missionId }).some(event => event.id === 'trusted-analysis-memory-1')).toBe(true);
+    expect(repository.listAnalysisCausalMemory(h.context, { productId: 'B0TEST' })).toEqual([]);
+    expect(() => repository.assertWriteAuthority(h.context, historical.authority)).toThrow(/历史/);
+    expect(() => repository.issueMissionGrant(h.context, { ...original, id: 'cannot-reissue-legacy' })).toThrow(/历史/);
+    const before = upgraded.prepare('SELECT manifest_json FROM schema_migrations WHERE version=17').get();
+    upgraded.close();
+    const reopened = initSqlite(legacyPath); databases.push(reopened);
+    expect(reopened.prepare('SELECT manifest_json FROM schema_migrations WHERE version=17').get()).toEqual(before);
+    expect(reopened.pragma('foreign_key_check')).toEqual([]);
+  });
+  it('preserves prior human Decisions but refuses them after mode A-to-B-to-A before any grant exists', async () => {
+    const h = createHarness();
+    const analysis = await runRequest(h);
+    approveHumanDecisions(h);
+    const decisions = h.missionRepository.listDecisions(h.context, { missionId: h.missionId });
+    const history = h.missionRepository.listDecisionHistory(h.context, decisions[0].id);
+    for (const autonomyMode of ['policy_auto', 'manual_approval'] as const) {
+      const runtime = h.missionRepository.getPolicyRuntime(h.context);
+      h.missionRepository.updatePolicyRuntime(h.context, { expectedRevision: runtime.revision, actorId: 'operator',
+        patch: { autonomyMode, reason: '隔离模式变更样本：调整后重新核验授权。' } });
+      const result = h.service.authorizeProposalBatch({ context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) });
+      expect(result.authorized).toBe(false);
+      expect(result.blockers.join(' ')).toMatch(/授权模式版本/);
+    }
+    expect(h.missionRepository.listMissionGrants(h.context, h.missionId)).toHaveLength(0);
+    expect(h.missionRepository.listDecisionHistory(h.context, decisions[0].id)).toEqual(history);
+  });
+
+  it('binds complete context and issuer to immutable batch, Decision and Grant records', async () => {
+    const h = createHarness();
+    const analysis = await runRequest(h);
+    const batch = h.analysisRepository.getLatestActionBatch(h.context, h.missionId)!;
+    const decision = h.missionRepository.listDecisions(h.context, { missionId: h.missionId })[0];
+    expect(batch.authority).toMatchObject({ context: h.context, authorityMode: 'manual_approval',
+      authorizationPath: 'human', issuerType: 'human_operator', issuerRef: 'operator' });
+    expect(decision.authority).toEqual(batch.authority);
+    expect(() => h.missionRepository.resolveDecision(h.context, { id: decision.id, expectedRevision: decision.revision,
+      status: 'approved', actorId: 'policy-engine', reason: '策略不能替代人工判断。' })).toThrow(/判断来源/);
+    expect(() => h.missionRepository.resolveDecision(h.context, { id: decision.id, expectedRevision: decision.revision,
+      status: 'approved', actorId: 'operator', reason: '   ' })).toThrow();
+    expect(() => h.database.prepare("UPDATE decisions SET authority_json='{}' WHERE id=?").run(decision.id)).toThrow(/immutable/);
+    approveHumanDecisions(h);
+    const result = h.service.authorizeProposalBatch({ context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) });
+    expect(result.grant?.authority).toEqual(batch.authority);
+    expect(() => h.missionRepository.assertWriteAuthority({ ...h.context, businessDate: '2026-07-23' as never }, result.grant!.authority)).toThrow(/店铺、会话或授权模式版本/);
+    expect(() => h.missionRepository.assertWriteAuthority(h.context, undefined)).toThrow(/历史/);
+  });
+
+  it('will not issue a partial grant through the canonical repository after all human Decisions exist', async () => {
+    const h = createHarness({ recommendationCount: 2 });
+    const analysis = await runRequest(h); approveHumanDecisions(h);
+    const result = h.service.authorizeProposalBatch({ context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) });
+    const grant = result.grant!;
+    expect(() => h.missionRepository.issueMissionGrant(h.context, { ...grant, id: 'partial-direct-grant',
+      decisionIds: [grant.decisionIds[0]], allowedAdEntityIds: [grant.allowedAdEntityIds[0]] })).toThrow(/全部判断/);
+    expect(() => h.missionRepository.issueMissionGrant(h.context, { ...grant, id: 'mixed-issuer-grant',
+      issuer: { type: 'policy', actorId: 'policy-engine' } })).toThrow(/禁止混合/);
+    expect(h.missionRepository.listMissionGrants(h.context, h.missionId)).toHaveLength(1);
+  });
+  it('requires each human Decision and its reason before the explicit complete-batch grant', async () => {
+    const h = createHarness({ recommendationCount: 2 });
+    const analysis = await runRequest(h);
+    const request = { context: h.context, missionId: h.missionId, proposalIds: analysis.proposals.map(p => p.id) };
+    const links = h.service.getMissionAnalysisProjection(h.context, h.missionId).decisionLinks;
+    expect(h.service.authorizeProposalBatch(request).authorized).toBe(false);
+    expect(h.missionRepository.listMissionGrants(h.context, h.missionId)).toHaveLength(0);
+    for (const [index, link] of links.entries()) {
+      const decision = h.missionRepository.getDecision(h.context, link.decisionId)!;
+      expect(decision.status).toBe('needs_approval');
+      h.missionRepository.resolveDecision(h.context, {
+        id: decision.id, expectedRevision: decision.revision, status: 'approved',
+        reason: `人工样本判断 ${index + 1}：当前花费超限，核对证据后接受本条降价。`, actorId: 'operator',
+      });
+      if (index === 0) expect(h.service.authorizeProposalBatch(request).authorized).toBe(false);
+    }
+    const history = links.map(link => h.missionRepository.listDecisionHistory(h.context, link.decisionId));
+    expect(h.service.authorizeProposalBatch(request)).toMatchObject({ authorized: true, mode: 'manual_approval' });
+    expect(links.map(link => h.missionRepository.listDecisionHistory(h.context, link.decisionId))).toEqual(history);
+    expect(history.every(events => events.some(event => event.eventType === 'approved' && event.reason?.includes('核对证据后')))).toBe(true);
+  });
   it('times out a stalled analysis without advancing the Mission and can retry with a new run', async () => {
     let attempts = 0;
     let stalledSignal: AbortSignal | undefined;
@@ -1043,7 +420,8 @@ describe('AnalysisAuthorityService', () => {
     for (const phase of ['action', 'readback', 'effect'] as const) {
       const harness = createHarness({ deduplicateRecommendations: true });
       const first = await runRequest(harness);
-      const authorized = harness.service.authorizeProposalBatch({
+      approveHumanDecisions(harness);
+    const authorized = harness.service.authorizeProposalBatch({
         context: harness.context,
         missionId: harness.missionId,
         proposalIds: first.proposals.map((proposal) => proposal.id),
@@ -1085,6 +463,7 @@ describe('AnalysisAuthorityService', () => {
       });
       const generationCountBefore = harness.generationScopes.length;
       harness.recommendationMutation.count = 2;
+    harness.ruleRevision.value = 'b'.repeat(64);
 
       await expect(runRequest(harness)).rejects.toThrow(/请新建运营任务/);
 
@@ -1119,7 +498,7 @@ describe('AnalysisAuthorityService', () => {
     const repeated = await runRequest(harness);
     const repeatedMission = harness.missionRepository.getMission(harness.context, harness.missionId)!;
 
-    expect(harness.generationScopes).toHaveLength(2);
+    expect(harness.generationScopes).toHaveLength(1);
     expect(harness.generationScopes[0].causalMemory).toEqual([
       expect.objectContaining({
         stage: 'EFFECT',
@@ -1134,7 +513,7 @@ describe('AnalysisAuthorityService', () => {
     expect(first.ai.modelRevision).toBe(
       `${harness.modelRevision.value}|causal-memory:${harness.generationScopes[0].memoryDigest}`,
     );
-    expect(harness.generationScopes[1].memoryDigest).toBe(harness.generationScopes[0].memoryDigest);
+    expect(repeated.recommendationSummary.reused).toBe(1);
     expect(repeated.ai.modelRevision).toBe(first.ai.modelRevision);
     expect(repeated.proposals[0].id).toBe(first.proposals[0].id);
     expect(repeatedMission.revision).toBe(firstMission.revision);
@@ -1151,13 +530,13 @@ describe('AnalysisAuthorityService', () => {
     const changed = await runRequest(harness);
     const changedMission = harness.missionRepository.getMission(harness.context, harness.missionId)!;
 
-    expect(harness.generationScopes).toHaveLength(3);
-    expect(harness.generationScopes[2].causalMemory).toHaveLength(2);
-    expect(harness.generationScopes[2].causalMemory).toEqual(expect.arrayContaining([
+    expect(harness.generationScopes).toHaveLength(2);
+    expect(harness.generationScopes[1].causalMemory).toHaveLength(2);
+    expect(harness.generationScopes[1].causalMemory).toEqual(expect.arrayContaining([
       expect.objectContaining({ observedEffect: '关键词竞价降低后 ACOS 改善，广告订单保持稳定。' }),
       expect.objectContaining({ observedEffect: '关键词进一步降价后广告订单下降，需停止继续降价。' }),
     ]));
-    expect(harness.generationScopes[2].memoryDigest).not.toBe(harness.generationScopes[0].memoryDigest);
+    expect(harness.generationScopes[1].memoryDigest).not.toBe(harness.generationScopes[0].memoryDigest);
     expect(changed.ai.modelRevision).not.toBe(first.ai.modelRevision);
     expect(changed.proposals[0].modelRevision).toBe(changed.ai.modelRevision);
     expect(changed.proposals[0].id).not.toBe(first.proposals[0].id);
@@ -1170,7 +549,7 @@ describe('AnalysisAuthorityService', () => {
     harness = createHarness({
       generationAuthorityFactory: (captured) => Object.freeze({
         ...captured,
-        generateRecommendations: async (scope) => {
+        generateRecommendations: async (scope: AnalysisRecommendationGenerationScope) => {
           const result = await captured.generateRecommendations(scope);
           seedTrustedCausalMemory(harness, 2, '执行回读显示订单下滑，旧建议必须重新分析。');
           return result;
@@ -1214,6 +593,7 @@ describe('AnalysisAuthorityService', () => {
       .toBe('needs_approval');
 
     harness.recommendationMutation.count = 2;
+    harness.ruleRevision.value = 'b'.repeat(64);
     const second = await runRequest(harness);
     const secondProjection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
     const secondDecisionIds = second.proposals.map((proposal) => (
@@ -1252,6 +632,7 @@ describe('AnalysisAuthorityService', () => {
     });
 
     harness.recommendationMutation.count = 2;
+    harness.ruleRevision.value = 'b'.repeat(64);
     const second = await runRequest(harness);
     const secondProjection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
     const currentDecisionIds = second.proposals.map((proposal) => (
@@ -1272,6 +653,7 @@ describe('AnalysisAuthorityService', () => {
   it('invalidates an old grant by bumping the Mission revision when the action fingerprint changes', async () => {
     const harness = createHarness({ deduplicateRecommendations: true });
     const first = await runRequest(harness);
+    approveHumanDecisions(harness);
     const authorized = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
@@ -1280,6 +662,7 @@ describe('AnalysisAuthorityService', () => {
     expect(authorized).toMatchObject({ authorized: true, grant: { missionRevision: expect.any(Number) } });
 
     harness.recommendationMutation.count = 2;
+    harness.ruleRevision.value = 'b'.repeat(64);
     const second = await runRequest(harness);
     const currentMission = harness.missionRepository.getMission(harness.context, harness.missionId)!;
 
@@ -1333,10 +716,11 @@ describe('AnalysisAuthorityService', () => {
     )).toBeUndefined();
   });
 
-  it('uses one explicit manual batch confirmation to approve Decisions and issue one exact grant', async () => {
+  it('issues one exact grant after explicit individual human Decisions', async () => {
     const harness = createHarness({ recommendationCount: 2 });
     const result = await runRequest(harness);
     expect(result.proposals).toHaveLength(2);
+    approveHumanDecisions(harness);
     const authorized = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
@@ -1686,16 +1070,11 @@ describe('AnalysisAuthorityService', () => {
   });
 
   it('rolls back batch Decision approvals when immutable grant issuance fails', async () => {
-    const harness = createHarness({ recommendationCount: 2 });
-    const result = await runRequest(harness);
+    const harness = createHarness({ recommendationCount: 2, autonomyMode: 'policy_auto' });
     vi.spyOn(harness.missionRepository, 'issueMissionGrant').mockImplementation(() => {
       throw new Error('simulated grant insert failure');
     });
-    expect(() => harness.service.authorizeProposalBatch({
-      context: harness.context,
-      missionId: harness.missionId,
-      proposalIds: result.proposals.map((proposal) => proposal.id),
-    })).toThrow(/simulated grant insert failure/);
+    await expect(runRequest(harness)).rejects.toThrow(/simulated grant insert failure/);
     const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
     expect(projection.decisionLinks.map((link) => (
       harness.missionRepository.getDecision(harness.context, link.decisionId)?.status
@@ -1706,6 +1085,7 @@ describe('AnalysisAuthorityService', () => {
   it('does not resurrect a revoked grant for the same action revision', async () => {
     const harness = createHarness();
     const result = await runRequest(harness);
+    approveHumanDecisions(harness);
     const authorized = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
@@ -1737,6 +1117,7 @@ describe('AnalysisAuthorityService', () => {
       },
     });
     const result = await runRequest(harness);
+    approveHumanDecisions(harness);
     const blocked = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
@@ -1746,37 +1127,110 @@ describe('AnalysisAuthorityService', () => {
     expect(blocked.blockers.join(' ')).toMatch(/执行窗口/);
   });
 
-  it('enforces the per-business-day action limit before approving the batch', async () => {
+  it('does not charge daily action capacity for a previously issued but unused grant', async () => {
     const harness = createHarness({ maxDailyActionCount: 1 });
     const result = await runRequest(harness);
     const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
     seedPriorGrant(harness, projection.decisionLinks[0].decisionId, result.proposals[0].adEntityId!);
+    approveHumanDecisions(harness);
     const blocked = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
-    expect(blocked.blockers.join(' ')).toMatch(/单日动作数/);
+    expect(blocked).toMatchObject({ authorized: true, blockers: [] });
     expect(harness.missionRepository.getDecision(
       harness.context,
       projection.decisionLinks[0].decisionId,
-    )?.status).toBe('needs_approval');
+    )?.status).toBe('approved');
   });
 
-  it('enforces per-entity cooldown before approving the batch', async () => {
+  it('does not start entity cooldown from grant issuance without a submit intent', async () => {
     const harness = createHarness({ cooldownMinutes: 90 });
     const result = await runRequest(harness);
     const projection = harness.service.getMissionAnalysisProjection(harness.context, harness.missionId);
     seedPriorGrant(harness, projection.decisionLinks[0].decisionId, result.proposals[0].adEntityId!);
+    approveHumanDecisions(harness);
     const blocked = harness.service.authorizeProposalBatch({
       context: harness.context,
       missionId: harness.missionId,
       proposalIds: result.proposals.map((proposal) => proposal.id),
     });
-    expect(blocked.blockers.join(' ')).toMatch(/冷却期/);
+    expect(blocked).toMatchObject({ authorized: true, blockers: [] });
     expect(harness.missionRepository.getDecision(
       harness.context,
       projection.decisionLinks[0].decisionId,
-    )?.status).toBe('needs_approval');
+    )?.status).toBe('approved');
   });
+
+  it('persists a fresh receipt while reusing the same legal result without a second generator call', async () => {
+    const harness = createHarness();
+    const first = await runRequest(harness);
+    const firstRuns = harness.service.listAnalysisRuns(harness.context, { missionId: harness.missionId });
+    expect(firstRuns).toHaveLength(1);
+    expect(firstRuns[0]).toMatchObject({ status: 'completed', reportSnapshotId: 'run-1', metadata: {
+      storeContext: harness.context, provenance: 'analysis-authority/v16', historicalOnly: false,
+      evidencePackageId: first.evidencePackage.id, actionBatchId: first.proposals[0].actionBatchId,
+    } });
+    const repeated = await runRequest(harness);
+    const runs = harness.service.listAnalysisRuns(harness.context, { missionId: harness.missionId });
+    expect(runs).toHaveLength(2);
+    expect(new Set(runs.map(run => run.runId)).size).toBe(2);
+    expect(runs.some(run => run.metadata?.reusedFromRunId === firstRuns[0].runId)).toBe(true);
+    expect(harness.generationScopes).toHaveLength(1);
+    expect(repeated.proposals).toEqual(first.proposals);
+    expect(harness.service.getMissionAnalysisProjection(harness.context, harness.missionId).actionBatches).toHaveLength(1);
+    expect(JSON.stringify(runs)).not.toMatch(/recommendationFingerprint|generation|proofPath|signal|stack/);
+    const row = harness.database.prepare('SELECT * FROM analysis_runs WHERE run_id = ?').get(firstRuns[0].runId) as Record<string, unknown>;
+    expect(row.status).toBe('completed');
+  });
+
+  it('filters persisted analysis history before applying the requested limit and keeps interrupted runs visible', async () => {
+    const h = createHarness(); await runRequest(h);
+    const completed = h.service.listAnalysisRuns(h.context)[0];
+    h.database.prepare(`INSERT INTO analysis_runs (run_id,store_id,mission_id,report_snapshot_id,status,recommendations_count,metadata,created_at,updated_at)
+      SELECT 'newer-interrupted',store_id,mission_id,report_snapshot_id,'analyzing',0,metadata,'2099-01-01','2099-01-01' FROM analysis_runs WHERE run_id=?`).run(completed.runId);
+    expect(h.service.listAnalysisRuns(h.context, { status: 'completed', limit: 1 }).map(r => r.runId)).toEqual([completed.runId]);
+    expect(h.service.listAnalysisRuns(h.context, { status: 'blocked', limit: 1 })).toMatchObject([{ runId: 'newer-interrupted', status: 'blocked' }]);
+    h.database.prepare('UPDATE analysis_runs SET blocked_reason=?, metadata=? WHERE run_id=?').run(
+      'provider failed at C:/private/keys.json', JSON.stringify({ ...completed.metadata, aiSummary: { configured: true, invoked: true, source: 'ai', detail: 'C:/private/keys.json' }, rawCredential: 'legacy-secret' }), 'newer-interrupted');
+    const projected = h.service.getAnalysisRun(h.context, 'newer-interrupted');
+    expect(JSON.stringify(projected)).not.toMatch(/private|keys.json|legacy-secret/);
+    expect(h.database.prepare('SELECT metadata FROM analysis_runs WHERE run_id=?').get('newer-interrupted')).toMatchObject({ metadata: expect.stringContaining('legacy-secret') });
+  });
+  it('blocks duplicate clicks before generation and projects a crashed pending receipt as interrupted', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const harness = createHarness({ generationAuthorityFactory: captured => ({ ...captured, generateRecommendations: async scope => {
+      entered(); await hold; return captured.generateRecommendations(scope);
+    } }) });
+    const running = runRequest(harness);
+    await waiting;
+    await expect(runRequest(harness)).rejects.toThrow(/正在分析/);
+    const active = harness.service.listAnalysisRuns(harness.context, { missionId: harness.missionId });
+    expect(active).toHaveLength(1);
+    expect(active[0].status).toBe('analyzing');
+    release(); await running;
+    harness.database.prepare("UPDATE analysis_runs SET status = 'analyzing', completed_at = NULL WHERE run_id = ?").run(active[0].runId);
+    expect(harness.service.getAnalysisRun(harness.context, active[0].runId)).toMatchObject({ status: 'blocked', blockedReason: expect.stringMatching(/已中断/) });
+    expect(harness.database.prepare('SELECT status FROM analysis_runs WHERE run_id = ?').get(active[0].runId)).toEqual({ status: 'analyzing' });
+  });
+});
+
+
+it('rejects analysis finalization after a durable authority mode round trip', async () => {
+  let harness: Harness;
+  harness = createHarness({ generationAuthorityFactory: captured => ({ ...captured, generateRecommendations: async scope => {
+    const generated = await captured.generateRecommendations(scope);
+    for (const autonomyMode of ['policy_auto', 'manual_approval'] as const) {
+      const runtime = harness.missionRepository.getPolicyRuntime(harness.context);
+      harness.missionRepository.updatePolicyRuntime(harness.context, { expectedRevision: runtime.revision, actorId: 'operator', patch: { autonomyMode, reason: 'mode drift regression' } });
+    }
+    return generated;
+  } }) });
+  await expect(runRequest(harness)).rejects.toThrow(/模式或策略在分析期间已变化/);
+  expect(harness.service.getMissionAnalysisProjection(harness.context, harness.missionId).actionBatches).toHaveLength(0);
+  expect(harness.missionRepository.listMissionGrants(harness.context, harness.missionId)).toHaveLength(0);
 });

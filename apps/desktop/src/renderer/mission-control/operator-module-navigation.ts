@@ -1,14 +1,9 @@
 import type { MissionControlCapabilityProjection } from '@amazon-ai-ops/shared-types';
 import type { NavigationIntent } from '../navigation';
+import { V16_MODULE_INTENT_MAP, type V16ModuleId } from './workspaces/v16-module-router';
 import { subviewDefinitionForIntent } from './workspaces/registry';
 
-export type OperatorModuleId =
-  | 'today-decisions'
-  | 'products-ads'
-  | 'collection'
-  | 'policy-automation'
-  | 'experiments-execution'
-  | 'memory-settings';
+export type OperatorModuleId = V16ModuleId;
 
 export interface OperatorModuleEntry {
   intent: NavigationIntent;
@@ -48,78 +43,13 @@ function entry(intent: NavigationIntent): OperatorModuleEntry {
   };
 }
 
-export const OPERATOR_MODULES: readonly OperatorModuleDefinition[] = [
-  {
-    id: 'today-decisions',
-    label: '今日与决策',
-    description: '从今天要做的事进入任务、分析、建议与审批。',
-    defaultIntent: { workspace: 'today', subview: 'overview' },
-    entries: [
-      entry({ workspace: 'today', subview: 'overview' }),
-      entry({ workspace: 'today', subview: 'events' }),
-      entry({ workspace: 'missions', subview: 'overview' }),
-      entry({ workspace: 'missions', subview: 'facts' }),
-      entry({ workspace: 'decisions', subview: 'recommendations' }),
-      entry({ workspace: 'decisions', subview: 'approval' }),
-      entry({ workspace: 'decisions', subview: 'decided' }),
-    ],
-  },
-  {
-    id: 'products-ads',
-    label: '产品与广告',
-    description: '维护产品目标，并查看广告活动、广告组和关键词事实。',
-    defaultIntent: { workspace: 'objects', subview: 'products' },
-    entries: [
-      entry({ workspace: 'objects', subview: 'products' }),
-      entry({ workspace: 'objects', subview: 'targets' }),
-      entry({ workspace: 'objects', subview: 'keywords' }),
-      entry({ workspace: 'objects', subview: 'listing' }),
-    ],
-  },
-  {
-    id: 'collection',
-    label: '数据采集',
-    description: '选择范围、采集八类报表并核对真实入库结果。',
-    defaultIntent: { workspace: 'collection', subview: 'scope' },
-    entries: [
-      entry({ workspace: 'collection', subview: 'scope' }),
-      entry({ workspace: 'collection', subview: 'reports' }),
-      entry({ workspace: 'collection', subview: 'import-check' }),
-    ],
-  },
-  {
-    id: 'policy-automation',
-    label: '策略与自动化',
-    description: '配置策略边界、审批条件和定时任务。',
-    defaultIntent: { workspace: 'policy', subview: 'rules' },
-    entries: [
-      entry({ workspace: 'policy', subview: 'rules' }),
-      entry({ workspace: 'settings', subview: 'scheduler' }),
-    ],
-  },
-  {
-    id: 'experiments-execution',
-    label: '实验与执行',
-    description: '管理经营实验、可见执行和执行回读。',
-    defaultIntent: { workspace: 'experiments', subview: 'ledger' },
-    entries: [
-      entry({ workspace: 'experiments', subview: 'ledger' }),
-      entry({ workspace: 'execution', subview: 'live' }),
-      entry({ workspace: 'execution', subview: 'evidence' }),
-    ],
-  },
-  {
-    id: 'memory-settings',
-    label: '记忆与设置',
-    description: '追溯因果链并管理 AI、本地配置和交付检查。',
-    defaultIntent: { workspace: 'memory', subview: 'timeline' },
-    entries: [
-      entry({ workspace: 'memory', subview: 'timeline' }),
-      entry({ workspace: 'settings', subview: 'ai-and-local' }),
-      entry({ workspace: 'settings', subview: 'delivery' }),
-    ],
-  },
-];
+export const OPERATOR_MODULES: readonly OperatorModuleDefinition[] = V16_MODULE_INTENT_MAP.map(module => ({
+  id: module.id,
+  label: module.label,
+  description: module.description,
+  defaultIntent: module.intents[0]!,
+  entries: module.intents.map(entry),
+}));
 
 function intentKey(intent: NavigationIntent): string {
   return `${intent.workspace}/${intent.subview}`;

@@ -79,4 +79,4 @@ electronLanguages:
 asar: false
 
 npmRebuild: false
-afterPack: ../../scripts/electron-builder-after-pack.js
+afterPack: scripts/electron-builder-after-pack.js

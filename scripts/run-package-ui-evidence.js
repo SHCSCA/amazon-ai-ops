@@ -40,7 +40,7 @@ app.setPath('userData') before any app.getPath('userData') use; APPDATA is not
 used as an isolation mechanism. Before launch, profile/amazon-ai-ops.db must
 match the explicit protected DB through a WAL-aware read-only SQLite online
 backup while remaining a distinct file. Raw main-file hashes are auxiliary.
-Schema v8 writes immutable 100/125/wide checkpoints under one run group, binds
+Schema v9 writes immutable 100/125/wide checkpoints under one run group, binds
 the packaged Chromium hash and target root/child PID lineage, and proves target
 cleanup without treating unrelated daily Chrome/Edge processes as failures.
 A failed later profile can resume only with --resume-run-group plus the

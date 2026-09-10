@@ -38,6 +38,7 @@ import {
   type AppendExperimentObservationInput,
   type ExperimentDomainRendererApi,
 } from './mission-domain-window-api';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './experiments-workspace.css';
 
 const PAGE_SIZE = 6;
@@ -469,6 +470,9 @@ function ExperimentEditor({
   onNavigate: (target: unknown) => void;
   onSave: () => void;
 }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onCancel, dismissDisabled: busy,
+  });
   const change = <K extends keyof ExperimentDraft>(key: K, value: ExperimentDraft[K]) => {
     onChange({ ...editor.draft, [key]: value });
   };
@@ -478,8 +482,8 @@ function ExperimentEditor({
     onChange(bindExperimentDraftToMission(editor.draft, missionId, options));
   };
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="experiment-editor-title" aria-modal="true" className="mission-control-dialog experiment-editor" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="experiment-editor-title" aria-modal="true" className="mission-control-dialog experiment-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header>
           <div><span>经营实验 · Amazon 美国站 / USD</span><h2 id="experiment-editor-title">{editor.record ? '编辑经营实验' : '新建经营实验'}</h2><p>一次实验只允许一个主要变量；运营任务和对象只来自当前店铺。</p></div>
           <button aria-label="关闭实验编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button>
@@ -494,7 +498,7 @@ function ExperimentEditor({
           </div>}
           <SearchableOptionSelect disabled={Boolean(editor.record) || options.loading} label="运营任务" onChange={changeMission} options={options.missions} required value={editor.draft.missionId} />
           <SearchableOptionSelect disabled={options.loading} label="主指标" onChange={(value) => change('primaryMetric', value)} options={PRIMARY_METRIC_OPTIONS} required value={editor.draft.primaryMetric} />
-          <label className="experiment-form__wide"><span>实验名称 *</span><input autoFocus onChange={(event) => change('name', event.target.value)} placeholder="例如：核心词竞价 -12% 小步实验" value={editor.draft.name} /></label>
+          <label className="experiment-form__wide"><span>实验名称 *</span><input data-overlay-initial-focus onChange={(event) => change('name', event.target.value)} placeholder="例如：核心词竞价 -12% 小步实验" value={editor.draft.name} /></label>
           <label className="experiment-form__wide"><span>可证伪假设 *</span><textarea onChange={(event) => change('hypothesis', event.target.value)} rows={3} value={editor.draft.hypothesis} /></label>
           <SearchableOptionSelect disabled label="产品（由运营任务自动绑定）" onChange={(value) => change('productId', value)} options={missionScope.products} required value={editor.draft.productId} />
           <SearchableOptionSelect disabled={options.loading || !missionScope.productId} label="广告对象（活动 > 广告组 > 关键词/投放）" onChange={(value) => change('adEntityId', value)} options={missionScope.adObjects} required value={editor.draft.adEntityId} />
@@ -524,16 +528,19 @@ function ObservationEditor({
   onChange: (draft: ObservationDraft) => void;
   onSave: () => void;
 }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onCancel, dismissDisabled: busy,
+  });
   const change = <K extends keyof ObservationDraft>(key: K, value: ObservationDraft[K]) => onChange({ ...draft, [key]: value });
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="observation-editor-title" aria-modal="true" className="mission-control-dialog experiment-observation-editor" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="observation-editor-title" aria-modal="true" className="mission-control-dialog experiment-observation-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header><div><span>只追加的观察记录</span><h2 id="observation-editor-title">追加实验观察</h2><p>既有记录不可覆盖；错误内容必须追加修正并指向原记录。</p></div><button aria-label="关闭观察编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button></header>
         <div className="experiment-form">
           <label><span>记录类型 *</span><select onChange={(event) => change('observationType', event.target.value as ExperimentObservationType)} value={draft.observationType}>{(Object.keys(OBSERVATION_LABELS) as ExperimentObservationType[]).map((type) => <option key={type} value={type}>{OBSERVATION_LABELS[type]}</option>)}</select></label>
           <label><span>观察时间 *</span><input onChange={(event) => change('observedAt', event.target.value)} type="datetime-local" value={draft.observedAt} /></label>
           {draft.observationType === 'correction' && <label className="experiment-form__wide"><span>被修正记录 *</span><select onChange={(event) => change('correctsRecordId', event.target.value)} value={draft.correctsRecordId}><option value="">请选择原记录</option>{correctionTargets.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>}
-          <label className="experiment-form__wide"><span>标题 *</span><input autoFocus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
+          <label className="experiment-form__wide"><span>标题 *</span><input data-overlay-initial-focus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
           <label className="experiment-form__wide"><span>观察内容 *</span><textarea onChange={(event) => change('observation', event.target.value)} rows={5} value={draft.observation} /></label>
         </div>
         <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '追加中...' : '追加到因果链'}</button></footer>
@@ -642,12 +649,12 @@ export function ExperimentsWorkspace({
     setSelectorOptions({ missions: [], products: [], adObjects: [], loading: true });
     const surface = (window as any).electronAPI as {
       listStoreProducts?: (context: StoreContextEnvelope, input: { includeArchived: boolean }) => Promise<ExperimentProductOptionSource[]>;
-      listStoreAdObjects?: (context: StoreContextEnvelope, input: Record<string, never>) => Promise<ExperimentAdObjectOptionSource[]>;
+      listStoreAdObjects?: (context: StoreContextEnvelope, input: { kind: 'target' }) => Promise<ExperimentAdObjectOptionSource[]>;
     } | undefined;
     void Promise.all([
       missionApi?.listMissions(storeContext, { includeArchived: false }) ?? Promise.resolve([]),
       surface?.listStoreProducts?.(storeContext, { includeArchived: false }) ?? Promise.resolve([]),
-      surface?.listStoreAdObjects?.(storeContext, {}) ?? Promise.resolve([]),
+      surface?.listStoreAdObjects?.(storeContext, { kind: 'target' }) ?? Promise.resolve([]),
     ]).then(([missionRows, productRows, adObjectRows]) => {
       if (currentAuthorityKey.current !== capturedKey) return;
       missionRows.forEach((mission) => assertMissionBelongsToContext(mission, storeContext));
@@ -715,6 +722,9 @@ export function ExperimentsWorkspace({
   );
   const correctionTargets = observations;
   const busy = pending !== null;
+  const archiveFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: Boolean(archiveConfirm), onDismiss: () => setArchiveConfirm(null), dismissDisabled: busy,
+  });
   const blocked = phase === 'blocked' || phase === 'error';
 
   const runMutation = async <T,>(
@@ -869,8 +879,8 @@ export function ExperimentsWorkspace({
   const selectedAdObjectLabel = selected?.adEntityId
     ? optionLabel(selectorOptions.adObjects, selected.adEntityId, '关联广告对象不可用')
     : '未绑定广告对象';
-  const editAvailability = selected ? experimentEditAvailability(selected.status) : { enabled: false as const };
-  const resumeAvailability = selected ? experimentResumeAvailability(selected) : { enabled: false as const };
+  const editAvailability = selected ? experimentEditAvailability(selected.status) : { enabled: false as const, reason: '请先选择实验。' };
+  const resumeAvailability = selected ? experimentResumeAvailability(selected) : { enabled: false as const, reason: '请先选择实验。' };
   const visibleBlockedReason = operatorFacingBlocker(error ?? blockedReason, '经营实验');
 
   return (
@@ -901,7 +911,7 @@ export function ExperimentsWorkspace({
             <nav aria-label="经营实验分页" className="experiments-pagination"><button aria-label="上一页经营实验" className="workspace-button workspace-button--secondary" disabled={safePage <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button"><CaretLeft size={15} /></button><span>{safePage} / {pageCount}</span><button aria-label="下一页经营实验" className="workspace-button workspace-button--secondary" disabled={safePage >= pageCount || busy} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button"><CaretRight size={15} /></button></nav>
           </WorkbenchPanel>
 
-          <main className="experiment-detail">
+          <section className="experiment-detail" aria-label="经营实验详情">
             {selected ? <>
               <section className="experiment-detail-header"><div className="experiment-detail-context"><span>当前经营实验</span><strong>{selected.primaryMetric}</strong><ExperimentStatusTag status={selected.status} /></div><div className="experiment-actions" role="group" aria-label="经营实验增删改查与状态动作">
                 <button className="workspace-button workspace-button--primary" disabled={!actionReady('experiments.experiment.update') || busy || !editAvailability.enabled} onClick={() => storeContext && setEditor({ record: selected, draft: bindExperimentDraftToMission(buildExperimentDraft(storeContext, selected), selected.missionId, selectorOptions) })} title={editAvailability.enabled ? undefined : editAvailability.reason} type="button"><PencilSimple size={15} />编辑</button>
@@ -923,7 +933,7 @@ export function ExperimentsWorkspace({
               {selected.conclusion && <section className="experiment-conclusion"><span>实验结论</span><p>{selected.conclusion}</p></section>}
               <p className="experiment-no-delete">{selectEntityDeletePolicy('experiment').reason}</p>
             </> : phase === 'ready' ? <WorkspaceState description="从左侧选择经营实验，或新建当前店铺的第一个实验。" kind="empty" title="等待选择经营实验" /> : null}
-          </main>
+          </section>
         </div>
         {(error || feedback) && <p aria-live="polite" className="experiment-feedback" data-tone={error ? 'error' : 'success'}>{error ? operatorFacingBlocker(error, '经营实验') : feedback}</p>}
         {!previewMode && (!viewReady || error) && <details className="experiment-diagnostics"><summary>诊断详情</summary><code>{error ?? blockedReason}</code></details>}
@@ -931,7 +941,7 @@ export function ExperimentsWorkspace({
 
       {editor && <ExperimentEditor busy={pending === 'save'} editor={editor} onCancel={() => setEditor(null)} onChange={(draft) => setEditor((current) => current ? { ...current, draft } : current)} onNavigate={navigate} onSave={() => void save()} options={selectorOptions} />}
       {observationEditor && <ObservationEditor busy={pending === 'observation'} correctionTargets={correctionTargets} draft={observationEditor} onCancel={() => setObservationEditor(null)} onChange={setObservationEditor} onSave={() => void appendObservation()} />}
-      {archiveConfirm && <div className="mission-control-dialog-backdrop"><section aria-labelledby="experiment-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档经营实验</span><h2 id="experiment-archive-title">归档“{archiveConfirm.name}”？</h2><p>实验退出默认队列，但所有观察、修正和因果事件继续保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archive()} type="button">确认归档</button></footer></section></div>}
+      {archiveConfirm && <div className="mission-control-dialog-backdrop" ref={archiveFocus.overlayRootRef}><section aria-labelledby="experiment-archive-title" ref={archiveFocus.surfaceRef} tabIndex={-1} aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档经营实验</span><h2 id="experiment-archive-title">归档“{archiveConfirm.name}”？</h2><p>实验退出默认队列，但所有观察、修正和因果事件继续保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setArchiveConfirm(null)} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archive()} type="button">确认归档</button></footer></section></div>}
     </div>
   );
 }

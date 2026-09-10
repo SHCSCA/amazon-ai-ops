@@ -81,7 +81,7 @@ describe('V16ModuleBridge', () => {
     const entry = V16_OPERATOR_MODULES[0]!.entries[0]!;
     const capabilities = [
       {
-        view: entry.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: entry.view,
         state: 'BLOCKED' as const,
         blockerReason: 'test',
       },
@@ -93,7 +93,7 @@ describe('V16ModuleBridge', () => {
     const entry = V16_OPERATOR_MODULES[0]!.entries[0]!;
     const capabilities = [
       {
-        view: entry.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: entry.view,
         state: 'PROTOTYPE_ONLY' as const,
       },
     ];
@@ -109,7 +109,7 @@ describe('V16ModuleBridge', () => {
     const module = V16_OPERATOR_MODULES[0]!;
     const capabilities = [
       {
-        view: module.entries[0]!.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: module.entries[0]!.view,
         state: 'BLOCKED' as const,
         blockerReason: 'test',
       },
@@ -121,7 +121,7 @@ describe('V16ModuleBridge', () => {
     const module = V16_OPERATOR_MODULES[0]!;
     const capabilities = [
       {
-        view: module.entries[0]!.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: module.entries[0]!.view,
         state: 'PROTOTYPE_ONLY' as const,
       },
     ];
@@ -132,12 +132,12 @@ describe('V16ModuleBridge', () => {
     const module = V16_OPERATOR_MODULES[0]!;
     const capabilities = [
       {
-        view: module.entries[0]!.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: module.entries[0]!.view,
         state: 'BLOCKED' as const,
         blockerReason: 'test',
       },
       {
-        view: module.entries[1]!.view,
+        capabilityId: 'test.view', workspace: 'today' as const, action: 'view' as const, detail: 'test', view: module.entries[1]!.view,
         state: 'PROTOTYPE_ONLY' as const,
       },
     ];

@@ -12,7 +12,7 @@ import {
   type KeywordBidSubmitControl,
 } from './keyword-bid-adapter';
 
-const KEYWORD_ROW_SELECTOR_PREFIX = 'input.select-item[value="';
+const KEYWORD_ROW_SELECTOR_PREFIX = 'tr:not([data-dt-row]) input.select-item[value="';
 const KEYWORD_ROW_SELECTOR_SUFFIX = '"]';
 const ROW_ANCESTOR_SELECTOR = 'xpath=ancestor::tr[1]';
 const AD_GROUP_LINK_SELECTOR = 'a[href*="ad_group_id="]';
@@ -30,6 +30,7 @@ export interface PlaywrightKeywordBidLocatorLike {
   getAttribute(name: string): Promise<string | null>;
   inputValue(): Promise<string>;
   fill(value: string): Promise<void>;
+  hover(): Promise<void>;
   click(): Promise<void>;
   isVisible(): Promise<boolean>;
   isEnabled(): Promise<boolean>;
@@ -121,6 +122,32 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
   ) {}
 
+  async assertServing(keywordId: string): Promise<void> {
+    const { row, snapshot } = await this.resolveRow(keywordId, undefined, []);
+    const campaign = this.page.locator('a.Js-select-link[href*="/ad_report/ad_group/index/index?"]');
+    await assertExactCount(campaign, 1, 'CAMPAIGN_STATE_UNAVAILABLE', '无法唯一读取当前广告活动状态，禁止改价。');
+    const href = await campaign.getAttribute('href');
+    const url = new URL(href ?? '', this.page.url());
+    if (url.origin !== LINGXING_KEYWORD_BID_ORIGIN
+      || url.searchParams.get('id') !== snapshot.pageIdentity.campaignId
+      || url.searchParams.get('profile_id') !== snapshot.pageIdentity.adsAccountId) {
+      throw new LingxingPageContractError('CAMPAIGN_STATE_UNAVAILABLE', '活动状态与当前对象身份不一致，禁止改价。');
+    }
+    const parents = [
+      ['广告活动', campaign.locator('.fa-circle')],
+      ['广告组', row.locator('a[href*="ad_group_id="] .fa-circle')],
+    ] as const;
+    for (const [label, indicator] of parents) {
+      if (await indicator.count() !== 1
+        || !(await indicator.getAttribute('class') ?? '').split(/\s+/u).includes('text-green')) {
+        throw new LingxingPageContractError('AD_ENTITY_NOT_SERVING', `${label}已关闭、暂停或状态无法确认，禁止改价；请检查当前投放状态。`);
+      }
+    }
+    if (await row.locator('input.select-item').getAttribute('data-status') !== 'enabled') {
+      throw new LingxingPageContractError('AD_ENTITY_NOT_SERVING', '关键词已关闭、暂停或状态无法确认，禁止改价。');
+    }
+  }
+
   async resolveCurrentKeywordIdentity(
     input: ResolveCurrentKeywordIdentityInput,
   ): Promise<ResolveCurrentKeywordIdentityResult> {
@@ -182,6 +209,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
   }
 
   async fillBid(command: KeywordBidCommand, targetBidCents: number): Promise<void> {
+    await this.assertServing(command.keywordId);
     const resolved = await this.resolveRow(
       command.keywordId,
       undefined,
@@ -201,6 +229,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
   }
 
   async prepareSave(command: KeywordBidCommand): Promise<KeywordBidSubmitControl> {
+    await this.assertServing(command.keywordId);
     const resolved = await this.resolveRow(
       command.keywordId,
       undefined,
@@ -219,6 +248,8 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
       'SAVE_CONTROL_NOT_UNIQUE',
       '关键词行保存控件不是唯一目标。',
     );
+    // Lingxing reveals the save icon only while the bid cell is hovered.
+    await resolved.bidInput.hover();
     if (!await resolved.saveButton.isVisible() || !await resolved.saveButton.isEnabled()) {
       throw new LingxingPageContractError('SAVE_CONTROL_NOT_READY', '关键词行保存控件不可用。');
     }
@@ -259,6 +290,10 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
     const marker = this.page.locator(
       `${KEYWORD_ROW_SELECTOR_PREFIX}${keywordId}${KEYWORD_ROW_SELECTOR_SUFFIX}`,
     );
+    const deadline = Date.now() + this.timeoutMs;
+    while (await marker.count() === 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     await assertExactCount(
       marker,
       1,
@@ -345,7 +380,7 @@ function parseTargetUrl(rawUrl: string): URL {
   }
   if (url.username || url.password
     || url.origin !== LINGXING_KEYWORD_BID_ORIGIN
-    || url.pathname !== LINGXING_KEYWORD_BID_PATH) {
+    || ![LINGXING_KEYWORD_BID_PATH, '/ad_report/keyword/index/index'].includes(url.pathname)) {
     throw new LingxingPageContractError('PAGE_IDENTITY_MISMATCH', '当前页面不是目标关键词报表。');
   }
   return url;

@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { AiSpendPanel } from '../components/workspace/ai-spend-panel';
 import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
 import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -560,7 +562,7 @@ function api(): Record<string, any> {
   return ((window as any).electronAPI || {}) as Record<string, any>;
 }
 
-export function SettingsPage({ embedded = false }: { embedded?: boolean } = {}) {
+export function SettingsPage({ embedded = false, storeContext }: { embedded?: boolean; storeContext?: StoreContextEnvelope } = {}) {
   const [aiSettings, setAiSettings] = useState<AiProviderSettings>(DEFAULT_AI_SETTINGS);
   const [ruleConfig, setRuleConfig] = useState<SettingsRuleConfig>(DEFAULT_RULE_CONFIG);
   const [aiStatus, setAiStatus] = useState<AiConnectionStatus>('unconfigured');
@@ -763,7 +765,7 @@ export function SettingsPage({ embedded = false }: { embedded?: boolean } = {}) 
     setAiStatus('testing');
     setMessage('正在测试 AI 连接...');
     try {
-      const result = await apiSurface.testAiSettings(aiSettings);
+      const result = await apiSurface.testAiSettings({ ...aiSettings, storeContext });
       const success = Boolean(result?.success);
       const resultMessage = readString(result?.message, success ? 'AI 连接可用。' : 'AI 连接失败。');
       const refreshed = await refreshAiSettingsFromStore();
@@ -939,6 +941,7 @@ export function SettingsPage({ embedded = false }: { embedded?: boolean } = {}) 
           </div>
         </Panel>
 
+        {storeContext && <AiSpendPanel key={JSON.stringify(storeContext)} storeContext={storeContext} />}
         <Panel title="系统回退规则（兼容）">
           <div className="settings-rule-summary">
             <div>

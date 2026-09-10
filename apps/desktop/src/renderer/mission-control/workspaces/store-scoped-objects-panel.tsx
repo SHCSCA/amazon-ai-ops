@@ -26,6 +26,7 @@ import {
   WorkspaceState,
   type PriorityDataTableColumn,
 } from '../../components/workspace';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 
 export type VersionedProductView = {
   id: number;
@@ -434,6 +435,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   const [confirmProductArchive, setConfirmProductArchive] = useState<VersionedProductView | null>(null);
   const [confirmEventArchive, setConfirmEventArchive] = useState<VersionedOperationEventView | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const busy = pending !== null;
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
   const authorityKey = storeContext ? missionControlContextKey(storeContext) : '';
@@ -442,6 +444,18 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   const mutationSequence = useRef(0);
   currentAuthorityKey.current = authorityKey;
   const visibleSubview = fixedSubview ?? subview;
+  const dialogOpen = Boolean(productEditor || eventEditor || confirmProductArchive || confirmEventArchive);
+  const errorFeedback = error && <div className="store-object-feedback store-object-feedback--error" role="alert">{error}</div>;
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: dialogOpen,
+    dismissDisabled: busy,
+    onDismiss: () => {
+      setProductEditor(null);
+      setEventEditor(null);
+      setConfirmProductArchive(null);
+      setConfirmEventArchive(null);
+    },
+  });
 
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase('zh-CN');
@@ -710,7 +724,6 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
     );
   }
 
-  const busy = pending !== null;
   const productColumns: Array<PriorityDataTableColumn<VersionedProductView>> = [
     {
       key: 'product',
@@ -886,7 +899,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         <span className="store-object-authority">当前店铺 · 美国站 / USD</span>
       </div>}
 
-      {error && <div className="store-object-feedback store-object-feedback--error" role="alert">{error}</div>}
+      {!dialogOpen && errorFeedback}
       {feedback && !error && <div className="store-object-feedback" role="status" aria-live="polite">{feedback}</div>}
 
       {visibleSubview === 'products' ? (
@@ -922,7 +935,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
             <>
               <label className="store-object-toggle"><input checked={includeArchivedEvents} onChange={(event) => { setEventPage(1); setIncludeArchivedEvents(event.target.checked); }} type="checkbox" />查看已归档事件</label>
               <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</button>
-              <button className="workspace-button workspace-button--primary" disabled={busy} onClick={() => { setError(null); setEventEditor({ event: null, draft: eventDraft(storeContext.businessDate) }); }} type="button"><Plus aria-hidden="true" size={16} />记录事件</button>
+              <button className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setEventEditor({ event: null, draft: eventDraft(storeContext.businessDate) }); }} type="button"><Plus aria-hidden="true" size={16} />记录事件</button>
             </>
           )}
         >
@@ -944,14 +957,14 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )}
 
       {productEditor && (
-        <div className="mission-control-dialog-backdrop">
-          <section aria-labelledby="store-product-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" role="dialog">
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+          <section aria-labelledby="store-product-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
             <header>
               <div><span>当前店铺产品</span><h2 id="store-product-editor-title">{productEditor.product ? `编辑 ${productEditor.product.asin}` : '新建美国站产品'}</h2><p>站点固定 Amazon US，金额固定 USD；保存前本机安全进程会校验店铺范围和对象版本。</p></div>
               <button aria-label="关闭产品编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setProductEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
             </header>
-            <div className="store-object-form store-object-form--product">
-              <label><span>ASIN *</span><input autoFocus disabled={Boolean(productEditor.product)} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, asin: e.target.value } } : current)} value={productEditor.draft.asin} /></label>
+            <div className="store-object-form store-object-form--product">{errorFeedback && <div className="store-object-form__wide">{errorFeedback}</div>}
+              <label><span>ASIN *</span><input disabled={Boolean(productEditor.product)} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, asin: e.target.value } } : current)} value={productEditor.draft.asin} /></label>
               <label><span>产品标题</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, title: e.target.value } } : current)} value={productEditor.draft.title} /></label>
               <label><span>Parent ASIN</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, parentAsin: e.target.value } } : current)} value={productEditor.draft.parentAsin} /></label>
               <label><span>MSKU</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, msku: e.target.value } } : current)} value={productEditor.draft.msku} /></label>
@@ -973,12 +986,12 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )}
 
       {eventEditor && (
-        <div className="mission-control-dialog-backdrop">
-          <section aria-labelledby="store-event-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" role="dialog">
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+          <section aria-labelledby="store-event-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
             <header><div><span>CAUSAL CONTEXT</span><h2 id="store-event-editor-title">{eventEditor.event ? '编辑运营事件' : '记录运营事件'}</h2><p>只写入当前店铺；可限定到 ASIN、Campaign 或广告组。</p></div><button aria-label="关闭事件编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEventEditor(null)} type="button"><X aria-hidden="true" size={18} /></button></header>
-            <div className="store-object-form">
+            <div className="store-object-form">{errorFeedback && <div className="store-object-form__wide">{errorFeedback}</div>}
               <label><span>事件日期 *</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, eventDate: e.target.value } } : current)} type="date" value={eventEditor.draft.eventDate} /></label>
-              <label className="store-object-form__wide"><span>事件标题 *</span><input autoFocus onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, title: e.target.value } } : current)} value={eventEditor.draft.title} /></label>
+              <label className="store-object-form__wide"><span>事件标题 *</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, title: e.target.value } } : current)} value={eventEditor.draft.title} /></label>
               <label><span>事件类型</span><select onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, eventType: e.target.value } } : current)} value={eventEditor.draft.eventType}><option value="manual_note">运营备注</option><option value="coupon">Coupon</option><option value="deal">Deal</option><option value="price_change">改价</option><option value="listing_change">Listing 调整</option><option value="inventory_issue">库存异常</option><option value="external_traffic">站外流量</option></select></label>
               <label><span>影响预期</span><select onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, impactExpectation: e.target.value } } : current)} value={eventEditor.draft.impactExpectation}><option value="unknown">待观察</option><option value="conversion_up">转化上升</option><option value="conversion_down">转化下降</option><option value="traffic_up">流量上升</option><option value="traffic_down">流量下降</option><option value="acos_up">ACOS 上升</option><option value="acos_down">ACOS 下降</option></select></label>
               <label><span>ASIN</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, asin: e.target.value } } : current)} placeholder="留空表示全店" value={eventEditor.draft.asin} /></label>
@@ -992,11 +1005,11 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )}
 
       {confirmProductArchive && (
-        <div className="mission-control-dialog-backdrop"><section aria-labelledby="store-product-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>ARCHIVE PRODUCT</span><h2 id="store-product-archive-title">归档 {confirmProductArchive.asin}？</h2><p>产品会从默认列表隐藏，但历史数据、事件、决策与执行证据仍保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmProductArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-product' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveProduct()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-product' ? '归档中…' : '确认归档'}</button></footer></section></div>
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-product-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>ARCHIVE PRODUCT</span><h2 id="store-product-archive-title">归档 {confirmProductArchive.asin}？</h2><p>产品会从默认列表隐藏，但历史数据、事件、决策与执行证据仍保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmProductArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-product' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveProduct()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-product' ? '归档中…' : '确认归档'}</button></footer></section></div>
       )}
 
       {confirmEventArchive && (
-        <div className="mission-control-dialog-backdrop"><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="alertdialog"><header><div><span>归档运营事件</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。本机安全进程会通过版本校验防止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</button></footer></section></div>
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>归档运营事件</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。本机安全进程会通过版本校验防止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</button></footer></section></div>
       )}
     </div>
   );

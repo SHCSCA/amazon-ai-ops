@@ -25,8 +25,10 @@ import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager } from '@amazon-ai-ops/audit-log';
 import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetricObjectIdentity, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
-import { assertLingxingParsedReportImportable } from './lingxing-report-import-validation';
-import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
+import { importLingxingDownloadedReportMetrics, invalidLingxingImportReconciliationEvidence, type LingxingBatchFilesResult } from './lingxing-report-import';
+import { AdActionReasonExplainer, AdStrategyDiagnoser, DailyReportGenerator, assessAdEvidenceSufficiency, type AIConfig, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
+import { createGovernedAiProvider } from './ai-spend-governance';
+import type { PaidAiPurpose } from '@amazon-ai-ops/shared-types';
 import {
   initGuardedExistingSqlite,
   initSqlite,
@@ -51,16 +53,14 @@ import { StoreRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories
 import {
   fingerprintLingxingCollectionAuthorityProof,
   LingxingImportRepository,
-  type ReportImportReconciliationInput,
   type ReportImportRunRecord,
 } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
+import { registerV16ServicesIpc } from './v16-services-ipc';
 import {
   MissionDomainRepository,
   type AnalysisCausalMemoryItem,
 } from '@amazon-ai-ops/local-db/src/sqlite/repositories/mission-domain-repo';
 import { AnalysisAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-authority-repo';
-import { createAnalysisRunsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-runs-repo';
-import { AnalysisRunsService } from './analysis-runs-service';
 import { registerAnalysisRunsIpcHandlers } from './analysis-runs-ipc';
 import { ExecutionAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/execution-authority-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, parseExpectedLingxingGeneratedReportName, pollReportGenerationStatus, reconcileLingxingCreatedReportRows, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
@@ -168,6 +168,7 @@ import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from '.
 import { assertCurrentWritableAdTargetAuthority, resolveWritableAdTargetAuthority } from './writable-ad-target-resolution';
 import { resolveRecommendationReview } from './recommendation-review-resolution';
 import { bindRecommendationWritableTarget } from './recommendation-writable-target-binding';
+import { applyCurrentKeywordBids, type RecommendationBidObservation } from './recommendation-live-bid';
 import {
   getRecommendationWritableTargetOwnershipBlockers,
   type RecommendationMetricSourceAuthority,
@@ -263,6 +264,7 @@ import {
   buildCausalMemorySystemPersona,
   withCausalMemoryUserContext,
 } from './analysis-causal-memory-prompt';
+import { storeContextTracker } from './v16-store-context-guard';
 import {
   BUSINESS_REAL_REPORT_EXTENSIONS,
   BUSINESS_REJECTED_EVIDENCE_EXTENSIONS,
@@ -381,8 +383,6 @@ interface AppState {
   missionDomainService: MissionDomainService | null;
   analysisAuthorityRepo: AnalysisAuthorityRepository | null;
   analysisAuthorityService: AnalysisAuthorityService | null;
-  analysisRunsRepo: ReturnType<typeof createAnalysisRunsRepository> | null;
-  analysisRunsService: AnalysisRunsService | null;
   executionAuthorityRepo: ExecutionAuthorityRepository | null;
   executionAuthorityService: ExecutionAuthorityService | null;
   lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
@@ -399,6 +399,13 @@ interface AppState {
   isLoggedIn: boolean;
   currentStore: string;
   loginSession: BrowserLoginResult | null;
+  // V1.6 Services
+
+
+
+
+
+
 }
 
 const state: AppState = {
@@ -419,8 +426,6 @@ const state: AppState = {
   missionDomainService: null,
   analysisAuthorityRepo: null,
   analysisAuthorityService: null,
-  analysisRunsRepo: null,
-  analysisRunsService: null,
   executionAuthorityRepo: null,
   executionAuthorityService: null,
   lingxingCollectionCoordinator: null,
@@ -437,6 +442,13 @@ const state: AppState = {
   isLoggedIn: false,
   currentStore: '',
   loginSession: null,
+  // V1.6 Services
+
+
+
+
+
+
 };
 
 const browserOperationLeases = new BrowserLeaseManager();
@@ -571,7 +583,7 @@ const DOWNLOAD_CENTER_PAGE_MODEL_OVERRIDE_FILENAME = 'lingxing-download-center.o
 const DB_PATH = path.join(USER_DATA_DIR, 'amazon-ai-ops.db');
 const STORE_SESSION_GENERATION_SETTING_PREFIX = 'store_session_generation:';
 const OPERATOR_WORKSPACE_SELECTION_SETTING_KEY = 'operator_workspace_selection:v1';
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 const RECOMMENDATION_METRIC_LOAD_LIMIT = 5000;
 const LINGXING_REPORT_TYPE_SET = new Set<string>(LINGXING_AD_REPORTS.map((report) => report.type));
 type KeywordImportDuplicateStrategy = 'overwrite' | 'merge' | 'skip';
@@ -698,11 +710,6 @@ interface BusinessBatchResult {
   fileDownloadDirs?: Record<string, string>;
 }
 
-type LingxingBatchFilesResult = {
-  batch: LingxingReportBatch;
-  files: LingxingReportFile[];
-};
-
 interface BusinessMetricSource {
   batchId?: string;
   batchIds?: string[];
@@ -777,6 +784,10 @@ const STORE_BUSINESS_DATE_AUTHORITY_POLL_MS = 30_000;
 
 function publishStoreContextChanged(view: StoreWorkspaceView): void {
   lastPublishedStoreContext = Object.freeze({ ...view.context });
+  
+  // Phase 5: Sync tracker with current store context
+  storeContextTracker.setContext(view.context);
+  
   mainWindow?.webContents.send('store-context:changed', view);
 }
 
@@ -1049,6 +1060,7 @@ async function initApp(): Promise<void> {
   state.operationEventRepo = new OperationEventRepository(state.db);
   state.reportFileRepo = new ReportFileRepository(state.db);
   state.aiCallLogRepo = new AiCallLogRepository(state.db);
+  state.aiCallLogRepo.recoverInterruptedCosts();
   state.aiDiagnosisRunRepo = new AiDiagnosisRunRepository(state.db);
   state.storeRepo = new StoreRepository(state.db);
   state.lingxingImportRepo = new LingxingImportRepository(state.db);
@@ -1109,7 +1121,6 @@ async function initApp(): Promise<void> {
     readTransaction: (work) => state.db!.transaction(work).deferred(),
   });
   const analysisAuthorityRepo = new AnalysisAuthorityRepository(state.db);
-  const analysisRunsRepo = createAnalysisRunsRepository(state.db);
   const missionDomainRepo = new MissionDomainRepository(state.db, {
     references: {
       productBelongsToStore: (context, productId) => Boolean(
@@ -1126,6 +1137,7 @@ async function initApp(): Promise<void> {
   });
   const missionDomainService = new MissionDomainService({
     repository: missionDomainRepo,
+    aiCalls: state.aiCallLogRepo,
     storeCoordinator,
   });
   const storeRuntimeConfigService = new StoreRuntimeConfigService({
@@ -1257,8 +1269,6 @@ async function initApp(): Promise<void> {
   state.storeCoordinator = storeCoordinator;
   state.storeDailyStatusReader = storeDailyStatusReader;
   state.analysisAuthorityRepo = analysisAuthorityRepo;
-  state.analysisRunsRepo = analysisRunsRepo;
-  state.analysisRunsService = new AnalysisRunsService(analysisRunsRepo);
   state.missionDomainRepo = missionDomainRepo;
   state.missionDomainService = missionDomainService;
   state.analysisAuthorityService = analysisAuthorityService;
@@ -1386,6 +1396,19 @@ async function initApp(): Promise<void> {
     state.scheduler.start();
     packageUiSchedulerAudit.recordControl('storeSchedulerStart');
     state.storeCollectionMainRuntime!.start();
+  }
+
+  // Phase 5: Initialize tracker with the current store context if available
+  const initialView = state.storeCoordinator.getActiveStoreWorkspaceView();
+  if (initialView) {
+    storeContextTracker.setContext(initialView.context);
+    console.log('[StoreContextTracker] initialized with active store', JSON.stringify({
+      storeId: initialView.context.storeId,
+      sessionGeneration: initialView.context.sessionGeneration,
+      businessDate: initialView.context.businessDate,
+    }));
+  } else {
+    console.log('[StoreContextTracker] initialized with no active store');
   }
 
   console.log('[App] Initialized successfully');
@@ -4090,6 +4113,39 @@ async function handleDiscoverRecommendationTarget(input: DiscoverRecommendationT
   );
 }
 
+function createRecommendationBidReader(context: StoreContextEnvelope) {
+  const observations = new Map<string, RecommendationBidObservation>();
+  return async (recommendation: ActionRecommendation): Promise<RecommendationBidObservation> => {
+    const campaignName = String(recommendation.evidence.campaignName || '').trim();
+    const adGroupName = String(recommendation.evidence.adGroupName || '').trim();
+    const entityName = recommendation.entityName.trim();
+    const matchType = String(recommendation.evidence.matchType || '').trim();
+    const asin = canonicalizeAmazonAsin(recommendation.asin);
+    const key = JSON.stringify([asin, campaignName, adGroupName, entityName, matchType]);
+    state.storeCoordinator!.assertActiveStoreContext(context);
+    const cached = observations.get(key);
+    if (cached) return cached;
+    const observation = await withLegacyOperatorBrowserLease('amazon_ads', 'analysis-current-keyword-bid', async (access) => {
+      if (!sameExactStoreContext(access.context, context)) throw new Error('读取竞价时店铺会话已变化，请重新分析。');
+      const externalAccountId = access.runtime.connections?.amazonAds?.externalAccountId?.trim();
+      const expectedStoreAlias = access.runtime.connections?.lingxing?.collectionStoreName?.trim();
+      const page = access.controller.getPage();
+      if (!page || !externalAccountId || !expectedStoreAlias) throw new Error('请连接当前店铺 Ads 后再分析真实竞价；历史 CPC 不能作为竞价。');
+      await navigateToLingxingAdsCampaignKeywordTarget(page, { externalAccountId, campaignName, expectedStoreAlias });
+      const input = { externalAccountId, campaignName, adGroupName, entityName, matchType, currentBidCents: 'read_current' as const };
+      const identity = await discoverLingxingAdsKeywordTarget(page, input);
+      assertLegacyOperatorBrowserAccessCurrent(access);
+      const identityProofPath = await captureOperatorScreenshotCore(access, 'before');
+      const confirmed = await discoverLingxingAdsKeywordTarget(page, { ...input, currentBidCents: identity.bidCents });
+      assertLegacyOperatorBrowserAccessCurrent(access);
+      if (JSON.stringify(confirmed) !== JSON.stringify(identity)) throw new Error('读取竞价期间 Ads 对象变化，未生成建议。');
+      return { ...identity, storeContext: context, observedAt: new Date().toISOString(), identityProofPath };
+    });
+    observations.set(key, observation);
+    return observation;
+  };
+}
+
 function normalizeScreenshotLabel(value: unknown): 'before' | 'after' | 'error' {
   if (value !== 'before' && value !== 'after' && value !== 'error') {
     throw new TypeError('unsupported screenshot label');
@@ -4277,244 +4333,9 @@ function reportFileIndexKey(batchId: string, reportType: string, filePath: strin
   ].join('|');
 }
 
-function metricProductContextKey(metric: { date?: string; campaignName?: string; adGroupName?: string }, includeDate: boolean): string {
-  return [
-    includeDate ? metric.date || '' : '*',
-    (metric.campaignName || '').trim().toLowerCase(),
-    (metric.adGroupName || '').trim().toLowerCase(),
-  ].join('|');
-}
-
-function uniqueProductContext(
-  map: Map<string, Map<string, { asin: string; msku: string }>>,
-  key: string,
-): { asin: string; msku: string } | undefined {
-  const values = map.get(key);
-  if (!values || values.size !== 1) return undefined;
-  return Array.from(values.values())[0];
-}
-
-function attachUniqueProductContext(metrics: AdDailyMetrics[]): AdDailyMetrics[] {
-  const productByKey = new Map<string, Map<string, { asin: string; msku: string }>>();
-  const addContext = (key: string, metric: AdDailyMetrics) => {
-    if (!metric.asin) return;
-    const bucket = productByKey.get(key) ?? new Map<string, { asin: string; msku: string }>();
-    bucket.set(metric.asin.toUpperCase(), { asin: metric.asin, msku: metric.msku || '' });
-    productByKey.set(key, bucket);
-  };
-
-  for (const metric of metrics) {
-    addContext(metricProductContextKey(metric, true), metric);
-    addContext(metricProductContextKey(metric, false), metric);
-  }
-
-  return metrics.map((metric) => {
-    if (metric.asin) return metric;
-    const exact = uniqueProductContext(productByKey, metricProductContextKey(metric, true));
-    const fallback = exact ?? uniqueProductContext(productByKey, metricProductContextKey(metric, false));
-    return fallback
-      ? { ...metric, asin: fallback.asin, msku: metric.msku || fallback.msku }
-      : metric;
-  });
-}
-
-const LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING =
-  'LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING';
-const LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID =
-  'LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID';
-
-/**
- * Read provider-owned raw workbook control totals through a scanner that does
- * not consume mapped metrics or canonical parser output. The source SHA-256 is
- * checked before and after the scan, then committed with Store/Profile,
- * businessDate, exact batch window and file identity. Parsed rows never certify
- * themselves. metricDate remains the canonical window-end evidence date.
- */
-function readIndependentLingxingReportControlTotals(
-  result: LingxingBatchFilesResult,
-  importFiles: ReadonlyArray<{
-    lingxingFileId: string;
-    reportType: string;
-    filePath: string;
-    fileHash: string;
-  }>,
-): readonly ReportImportReconciliationInput[] | undefined {
-  if (importFiles.length !== LINGXING_AD_REPORTS.length) return undefined;
-  return importFiles.map((importFile) => {
-    const beforeHash = fileHashOrNull(importFile.filePath);
-    let totals: ReturnType<typeof ReportParser.readLingxingRawReportControlTotals>;
-    try {
-      totals = ReportParser.readLingxingRawReportControlTotals(importFile.filePath, {
-        dateStart: result.batch.dateStart,
-        dateEnd: result.batch.dateEnd,
-      });
-    } catch (error) {
-      throw invalidLingxingImportReconciliationEvidence(
-        `${importFile.reportType} 的原始报表 control total 无法独立读取：`
-        + `${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const afterHash = fileHashOrNull(importFile.filePath);
-    if (beforeHash !== importFile.fileHash || afterHash !== importFile.fileHash) {
-      throw invalidLingxingImportReconciliationEvidence(
-        `${importFile.reportType} 的原始报表在 control total 扫描前后发生变化。`,
-      );
-    }
-    return {
-      dateStart: result.batch.dateStart,
-      dateEnd: result.batch.dateEnd,
-      metricDate: result.batch.dateEnd,
-      reportType: importFile.reportType,
-      expectedRows: totals.expectedRows,
-      expectedCost: totals.expectedCost,
-      tolerance: 0,
-    };
-  });
-}
-
-function assertExactIndependentLingxingReportControlTotals(
-  result: LingxingBatchFilesResult,
-  reconciliations: readonly ReportImportReconciliationInput[],
-): void {
-  const requiredTypes = LINGXING_AD_REPORTS.map((report) => report.type);
-  const reportTypes = reconciliations.map((row) => row.reportType);
-  if (reconciliations.length !== requiredTypes.length
-    || new Set(reportTypes).size !== requiredTypes.length
-    || requiredTypes.some((reportType) => !reportTypes.includes(reportType))) {
-    throw invalidLingxingImportReconciliationEvidence(
-      `独立 control totals 必须逐报精确覆盖 ${requiredTypes.length} 类领星报表。`,
-    );
-  }
-  for (const reconciliation of reconciliations) {
-    if (reconciliation.dateStart !== result.batch.dateStart
-      || reconciliation.dateEnd !== result.batch.dateEnd
-      || reconciliation.metricDate !== result.batch.dateEnd
-      || !Number.isSafeInteger(reconciliation.expectedRows)
-      || reconciliation.expectedRows < 0
-      || !Number.isFinite(reconciliation.expectedCost)) {
-      throw invalidLingxingImportReconciliationEvidence(
-        `${reconciliation.reportType} 的独立 control total 完整窗口、行数或 USD 花费无效。`,
-      );
-    }
-  }
-}
-
-function importStoreScopedLingxingDownloadedReportMetrics(
-  result: LingxingBatchFilesResult,
-  options: { startedAt?: string } = {},
-): {
-  inserted: number;
-  parsedFiles: number;
-  skippedFiles: number;
-  deletedExisting: number;
-  deduplicated: boolean;
-  importRunId?: string;
-  errors: Array<{ reportType: string; filePath?: string; message: string }>;
-} {
-  if (!state.lingxingImportRepo || !state.storeRepo || !result.batch.storeId) {
-    throw new Error('店铺级领星导入仓库或批次 StoreContext 尚未就绪。');
-  }
-  const storeId = result.batch.storeId;
-  const store = state.storeRepo.getStore(storeId);
-  if (!store || store.status !== 'active') {
-    throw new Error(`店铺 ${storeId} 不存在或已停用，拒绝导入领星报表。`);
-  }
-  const parser = new ReportParser();
-  const errors: Array<{ reportType: string; filePath?: string; message: string }> = [];
-  const parsedMetrics: AdDailyMetrics[] = [];
-  const importFiles: Array<{
-    lingxingFileId: string;
-    reportType: string;
-    filePath: string;
-    fileName: string;
-    fileSizeBytes: number;
-    fileHash: string;
-    importedRows: number;
-  }> = [];
-  let skippedFiles = 0;
-
-  for (const file of result.files) {
-    if (file.status !== 'downloaded' || !file.filePath) {
-      skippedFiles += 1;
-      continue;
-    }
-    try {
-      const sourceFile = canonicalizeExistingPath(file.filePath);
-      const parsed = parser.autoParse(sourceFile, { reportType: file.reportType });
-      assertLingxingParsedReportImportable(parsed, {
-        dateStart: result.batch.dateStart,
-        dateEnd: result.batch.dateEnd,
-        sourceName: path.basename(sourceFile),
-      });
-      const fileHash = fileHashOrNull(sourceFile);
-      if (!fileHash) throw new Error(`无法计算报表 SHA-256：${path.basename(sourceFile)}。`);
-      importFiles.push({
-        lingxingFileId: file.id,
-        reportType: file.reportType,
-        filePath: sourceFile,
-        fileName: path.basename(sourceFile),
-        fileSizeBytes: file.fileSizeBytes ?? fileSizeOrZero(sourceFile),
-        fileHash,
-        importedRows: parsed.data.length,
-      });
-      parsedMetrics.push(...parsed.data.map((metric) => ({
-        ...metric,
-        batchId: result.batch.id,
-        reportType: file.reportType,
-        storeName: store.displayName,
-        marketplaceCode: 'US',
-        currency: 'USD',
-        sourceFile,
-      })));
-    } catch (error) {
-      errors.push({
-        reportType: file.reportType,
-        filePath: file.filePath,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  const metrics = attachUniqueProductContext(parsedMetrics);
-  if (errors.length > 0 || importFiles.length === 0) {
-    return {
-      inserted: 0,
-      parsedFiles: importFiles.length,
-      skippedFiles,
-      deletedExisting: 0,
-      deduplicated: false,
-      errors,
-    };
-  }
-
-  const reconciliations = readIndependentLingxingReportControlTotals(result, importFiles);
-  if (!reconciliations) {
-    throw new Error(
-      `${LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING}: `
-      + '当前采集器未捕获领星逐报独立行数/花费 control totals；拒绝由解析结果自证 matched，且未写入 completed import run。',
-    );
-  }
-  assertExactIndependentLingxingReportControlTotals(result, reconciliations);
-
-  const runId = `import_${result.batch.id}`;
-  const commit = state.lingxingImportRepo.commitImportForStore(storeId, {
-    runId,
-    idempotencyKey: `lingxing:${result.batch.id}`,
-    batchId: result.batch.id,
-    files: importFiles,
-    metrics,
-    reconciliations,
-    startedAt: options.startedAt ?? result.batch.completedAt ?? result.batch.createdAt,
-  });
-  return {
-    inserted: commit.run.metricRowCount,
-    parsedFiles: commit.run.sourceFileCount,
-    skippedFiles,
-    deletedExisting: 0,
-    deduplicated: commit.deduplicated,
-    importRunId: commit.run.runId,
-    errors,
-  };
+function importStoreScopedLingxingDownloadedReportMetrics(result: LingxingBatchFilesResult, options: { startedAt?: string } = {}) {
+  if (!state.lingxingImportRepo || !state.storeRepo) throw new Error('店铺级领星导入仓库尚未就绪。');
+  return importLingxingDownloadedReportMetrics(result, { repository: state.lingxingImportRepo, stores: state.storeRepo }, options);
 }
 
 function loadLatestImportableLingxingBatchForScope(scope: NormalizedBusinessUiScope): LingxingBatchFilesResult | undefined {
@@ -6117,7 +5938,7 @@ function assertVisibleLingxingCollectionSession(context: StoreContextEnvelope): 
 }
 
 function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreContextEnvelope) {
-  if (!state.storeCoordinator || !state.productRepo || !state.lingxingImportRepo || !state.db) {
+  if (!state.storeCoordinator || !state.productRepo || !state.lingxingImportRepo || !state.executionAuthorityRepo || !state.db) {
     throw new Error('MISSION_CONTROL_TODAY_DEPENDENCIES_UNAVAILABLE');
   }
   const context = state.storeCoordinator.assertActiveStoreContext(contextInput);
@@ -6180,6 +6001,7 @@ function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreCont
     importedMetricRows: Number(metricFacts.rowCount) || 0,
     ...(metricFacts.latestMetricDate ? { latestMetricDate: metricFacts.latestMetricDate } : {}),
     operationEventsToday: Number(eventFacts.rowCount) || 0,
+    executionBatches: state.executionAuthorityRepo.listExecutionBatchesForStoreReconciliation(context).map(item => item.batch),
     browserSessionReady,
   });
   const activeMission = state.missionDomainRepo?.listMissions(context, { includeArchived: false })
@@ -6896,10 +6718,6 @@ function persistLingxingCollectionImportState(
     // into a workspace selected while recovery was finishing.
   }
   return persisted;
-}
-
-function invalidLingxingImportReconciliationEvidence(detail: string): Error {
-  return new Error(`${LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID}: ${detail}`);
 }
 
 function assertPersistedFullLingxingReconciliationProof(
@@ -10909,7 +10727,7 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
   const aiApiKey = settings.aiApiKey;
 
   if (aiApiKey) {
-    drafts = await generateAiListingDrafts(drafts, settings, capturedStoreContext.storeId);
+    drafts = await generateAiListingDrafts(drafts, settings, capturedStoreContext);
   } else {
     drafts = drafts.map((draft) => ({
       ...draft,
@@ -10917,15 +10735,17 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
     }));
   }
 
+  state.storeCoordinator!.assertActiveStoreContext(capturedStoreContext);
   return persistListingDrafts(drafts);
 }
 
 async function generateAiListingDrafts(
   drafts: ListingDraft[],
   settings: Record<string, string>,
-  capturedStoreId: StoreContextEnvelope['storeId'],
+  capturedContext: StoreContextEnvelope,
 ): Promise<ListingDraft[]> {
-  const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
+  const capturedStoreId = capturedContext.storeId;
+  const provider = governedAiProvider(buildAiProviderConfig(settings), capturedContext, 'listing_draft');
   const promptTemplate = readPromptTemplate('listing-rewrite.md');
   const model = settings.aiModel || settings.ai_model || 'deepseek-v4-flash';
 
@@ -10953,6 +10773,7 @@ async function generateAiListingDrafts(
       continue;
     }
     if (!response.success || !response.content) {
+      response.reportOutput?.('invalid');
       recordListingAiCallLog({
         draft,
         model,
@@ -10968,6 +10789,7 @@ async function generateAiListingDrafts(
     }
 
     const parsed = parseAiDraftResponse(response.content);
+    response.reportOutput?.(parsed ? 'accepted' : 'invalid');
     recordListingAiCallLog({
       draft,
       model,
@@ -11019,7 +10841,14 @@ function buildAiProviderConfig(settings: Record<string, unknown>) {
   return buildSystemAiProviderConfig(resolveSystemAiRuntimeConfig(settings));
 }
 
-async function handleTestAiSettings(settings: Record<string, unknown>) {
+function governedAiProvider(config: AIConfig, context: StoreContextEnvelope, purpose: PaidAiPurpose, automatic = true) {
+  if (!state.aiCallLogRepo || !state.storeCoordinator) throw new Error('AI 费用服务尚未初始化。');
+  return createGovernedAiProvider({ config, context, purpose, automatic, repository: state.aiCallLogRepo,
+    assertCurrentContext: captured => state.storeCoordinator!.assertActiveStoreContext(captured) });
+}
+
+async function handleTestAiSettings(settings: Record<string, unknown>, context: StoreContextEnvelope) {
+  state.storeCoordinator!.assertActiveStoreContext(context);
   const runtime = resolveSystemAiRuntimeConfig(settings || {});
   const config = buildSystemAiProviderConfig(runtime);
   function persistTestStatus(status: 'available' | 'failed', message: string) {
@@ -11064,7 +10893,7 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
     };
   }
 
-  const provider = new OpenAICompatibleProvider(config);
+  const provider = governedAiProvider(config, context, 'connection_test', false);
   const response = await provider.complete('只回复 ok，用于连接测试。', {
     model: config.model,
     temperature: 0,
@@ -11072,6 +10901,7 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
   });
 
   if (!response.success || !response.content) {
+    response.reportOutput?.('invalid');
     const message = summarizeAiError(response.error || 'AI 未返回内容');
     persistTestStatus('failed', message);
     return {
@@ -11083,6 +10913,7 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
   }
 
   const message = `AI 连接测试通过：${config.model}`;
+  response.reportOutput?.('accepted');
   persistTestStatus('available', message);
   return {
     success: true,
@@ -12394,7 +12225,8 @@ function captureTrustedAnalysisCausalMemory(
     if (!Array.isArray(item.proofs) || !Object.isFrozen(item.proofs) || item.proofs.length === 0) {
       throw new Error(`分析记忆被阻断：第 ${itemIndex + 1} 条历史结果缺少只读证据。`);
     }
-    const proofs = item.proofs.map((proof, proofIndex) => {
+    const proofs = item.proofs.map((value: unknown, proofIndex: number) => {
+      const proof = value as Record<string, unknown> | null;
       if (!proof || typeof proof !== 'object' || !Object.isFrozen(proof)) {
         throw new Error(`分析记忆被阻断：第 ${itemIndex + 1} 条历史结果的第 ${proofIndex + 1} 条证据不是只读结构。`);
       }
@@ -12540,7 +12372,9 @@ async function runRecommendationGeneration(
   assertRuntimeAnalysisWindow(runtimeConfig, gate.scope.dateFrom, gate.scope.dateTo);
   const generator = new RecommendationGenerator(runtimeConfig.ruleConfig);
   const firstMetric = metrics[0];
-  const taskId = `task_${Date.now()}`;
+  const taskId = capturedRuntime && typeof submitted.missionId === 'string'
+    ? `mission_${submitted.missionId}`
+    : `task_${Date.now()}`;
   let recommendations = generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
@@ -12556,6 +12390,8 @@ async function runRecommendationGeneration(
       batchId: gate.scope.batchId,
     },
   }));
+  const readCurrentBid = createRecommendationBidReader(capturedAuthority.context);
+  recommendations = await applyCurrentKeywordBids(recommendations, readCurrentBid, runtimeConfig.ruleConfig, true);
   const strategyDiagnosisResult = await enrichAdRecommendationsWithStrategyDiagnosis(recommendations, metrics, gate.scope, {
     taskId,
     sourceFiles: gate.metricSource.sourceFiles,
@@ -12563,14 +12399,15 @@ async function runRecommendationGeneration(
     aiSettings: generationRuntime.aiSettings,
     causalMemoryPrompt,
     signal: analysisSignal,
+    storeContext: capturedAuthority.context,
   });
   analysisSignal?.throwIfAborted();
-  recommendations = strategyDiagnosisResult.recommendations;
+  recommendations = await applyCurrentKeywordBids(strategyDiagnosisResult.recommendations, readCurrentBid, runtimeConfig.ruleConfig, false);
   recommendations = await enrichAdRecommendationsWithAiExplanations(
     recommendations,
     runtimeConfig,
     generationRuntime.aiSettings,
-    gate.scope.storeId,
+    capturedAuthority.context,
     causalMemoryPrompt,
     analysisSignal,
   );
@@ -12621,9 +12458,10 @@ async function runRecommendationGeneration(
   for (const rec of recommendations) {
     analysisSignal?.throwIfAborted();
     const result = state.recommendationRepo?.insertIfNoDuplicateForStore
-      ? state.recommendationRepo.insertIfNoDuplicateForStore(gate.scope.storeId, rec)
+      // A Mission owns its output; reanalysis after object binding must retain that binding.
+      ? state.recommendationRepo.insertIfNoDuplicateForStore(gate.scope.storeId, rec, Boolean(capturedRuntime))
       : { id: state.recommendationRepo?.insertForStore(gate.scope.storeId, rec) || 0, inserted: true };
-    if (result.id > 0) recommendationIds.push(result.id);
+    if (result.id > 0 && !recommendationIds.includes(result.id)) recommendationIds.push(result.id);
     if (result.inserted) {
       inserted++;
     } else if (result.updated) {
@@ -12839,10 +12677,11 @@ async function enrichAdRecommendationsWithAiExplanations(
   recommendations: ActionRecommendation[],
   runtimeConfig: StoreRuntimeAnalysisConfig,
   settings: Record<string, string>,
-  capturedStoreId: StoreContextEnvelope['storeId'],
+  capturedContext: StoreContextEnvelope,
   causalMemoryPrompt?: string,
   signal?: AbortSignal,
 ): Promise<ActionRecommendation[]> {
+  const capturedStoreId = capturedContext.storeId;
   signal?.throwIfAborted();
   if (recommendations.length === 0) return recommendations;
 
@@ -12864,7 +12703,7 @@ async function enrichAdRecommendationsWithAiExplanations(
   }
 
   const provider = withCausalMemoryUserContext(
-    new OpenAICompatibleProvider(buildAiProviderConfig(settings)),
+    governedAiProvider(buildAiProviderConfig(settings), capturedContext, 'action_explanation'),
     causalMemoryPrompt,
   );
   const explainer = new AdActionReasonExplainer(provider, {
@@ -12886,7 +12725,9 @@ async function enrichAdRecommendationsWithAiExplanations(
           sales: rec.evidence.sales,
           acos: rec.evidence.acos,
         },
-        recommendedAction: rec.recommendedValue || rec.actionType,
+        recommendedAction: rec.evidence.currentValueSource === 'ads_ui'
+          ? `当前 Ads 已核验竞价 USD ${rec.currentValue}；建议竞价 USD ${rec.recommendedValue}；历史平均 CPC 为 USD ${rec.evidence.cpc}，不得用历史 CPC 计算竞价降幅。`
+          : rec.recommendedValue || rec.actionType,
       }, { signal });
       signal?.throwIfAborted();
       recordAdActionReasonAiCallLog({
@@ -12936,6 +12777,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     batchId?: string;
   },
   options: {
+    storeContext: StoreContextEnvelope;
     taskId: string;
     sourceFiles: string[];
     runtimeConfig: StoreRuntimeAnalysisConfig;
@@ -13005,7 +12847,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
   const settings = options.aiSettings;
   const diagnosis = options.runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
     ? await new AdStrategyDiagnoser(withCausalMemoryUserContext(
-        new OpenAICompatibleProvider(buildAiProviderConfig(settings)),
+        governedAiProvider(buildAiProviderConfig(settings), options.storeContext, 'strategy_analysis'),
         options.causalMemoryPrompt,
       ), {
         persona: buildCausalMemorySystemPersona(settings.aiPersona, Boolean(options.causalMemoryPrompt)),
@@ -13492,12 +13334,12 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
   assertRuntimeAnalysisWindow(runtimeConfig, gate.scope.dateFrom, gate.scope.dateTo);
   const generator = new RecommendationGenerator(runtimeConfig.ruleConfig);
   const firstMetric = metrics[0];
-  const ruleCandidates = bindRecommendationsToScopeAsin(generator.generateTimelineBatch(metrics, {
+  const ruleCandidates = await applyCurrentKeywordBids(bindRecommendationsToScopeAsin(generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
     config: runtimeConfig.ruleConfig,
     taskId: `strategy_${Date.now()}`,
-  }), gate.scope.asin);
+  }), gate.scope.asin), createRecommendationBidReader(resolveBusinessStoreAuthority().context), runtimeConfig.ruleConfig, true);
   const operationEvents = state.operationEventRepo?.findByScopeForStore(gate.scope.storeId, {
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
@@ -13577,7 +13419,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
       : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback',
   };
   const diagnosis = runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
-    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
+    ? await new AdStrategyDiagnoser(governedAiProvider(buildAiProviderConfig(settings), capturedAuthority.context, 'strategy_analysis'), {
         persona: settings.aiPersona,
         outputLanguage: settings.aiOutputLanguage,
         maxTokens: parseIntegerSetting(settings.aiMaxTokens || settings.ai_max_tokens, 8192),
@@ -14128,13 +13970,11 @@ async function runDailyReportGeneration(): Promise<void> {
     topRisks: [] as string[],
   };
 
-  // Generate AI report if configured
+  // Generate an AI or explicit template report; an unavailable budget never blocks the fact summary.
   const settings = readAiSettingsForMain();
-  if (!settings.aiApiKey) {
-    throw new Error('AI Key 未配置，无法生成每日运营报告。');
-  }
   try {
-    const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
+    const provider = settings.aiApiKey ? governedAiProvider(buildAiProviderConfig(settings), context, 'daily_summary')
+      : { chat: async () => ({ success: false, error: '未配置 AI，使用模板摘要。' }), complete: async () => ({ success: false }), healthCheck: async () => false };
     const reportGen = new DailyReportGenerator(provider);
     const report = await reportGen.generate(summary);
 
@@ -14306,7 +14146,16 @@ function registerIpcHandlers(): void {
   registerMissionDomainIpcHandlers(trackedIpcRegistrar, state.missionDomainService);
   registerAnalysisAuthorityIpcHandlers(trackedIpcRegistrar, state.analysisAuthorityService);
   registerExecutionAuthorityIpcHandlers(trackedIpcRegistrar, state.executionAuthorityService);
-  registerAnalysisRunsIpcHandlers(trackedIpcRegistrar, state.analysisRunsService!);
+  registerAnalysisRunsIpcHandlers(trackedIpcRegistrar, state.analysisAuthorityService!, state.storeCoordinator!);
+  
+  registerV16ServicesIpc(trackedIpcRegistrar, {
+    domain: state.missionDomainService,
+    analysis: state.analysisAuthorityService,
+    execution: state.executionAuthorityService,
+    storeCoordinator: state.storeCoordinator!,
+  });
+  console.log('[App] ipc:v16-services-registered');
+
   registerTrackedIpcHandler('execution-authority:discover-recommendation-target',
     (_, input: DiscoverRecommendationTargetRequest) => handleDiscoverRecommendationTarget(input),
   );
@@ -14409,7 +14258,9 @@ function registerIpcHandlers(): void {
     return { success: true };
   });
   registerTrackedIpcHandler('settings:test-ai', async (_, settings) => {
-    const result = await handleTestAiSettings(normalizeAiSettingsForTest(settings || {}));
+    const { context } = resolveBusinessStoreAuthority(settings?.storeContext);
+    if (!settings?.storeContext) throw new Error('AI 连接测试缺少当前店铺信息，请刷新设置页后重试。');
+    const result = await handleTestAiSettings(normalizeAiSettingsForTest(settings || {}), context);
     mainWindow?.webContents.send('business-ui:data-updated');
     return result;
   });
@@ -14674,6 +14525,11 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
   cleanupFailurePolicy: 'fail-closed',
   cleanup: async () => {
     stopStoreBusinessDateAuthorityMonitor();
+    
+    // Phase 5: Clear tracker state during shutdown
+    storeContextTracker.reset();
+    console.log('[StoreContextTracker] cleared during shutdown');
+    
     const shutdownTimeoutMs = 5_000;
     const mainRuntime = state.storeCollectionMainRuntime;
     const localScheduler = state.scheduler;

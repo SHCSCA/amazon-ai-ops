@@ -142,6 +142,7 @@ describe('MissionDomainService Main authority boundary', () => {
     expect(service.setAutonomyMode(active, {
       expectedRevision: 1,
       mode: 'policy_auto',
+      reason: '已复核当前店铺策略与执行范围',
     })).toEqual(expect.objectContaining({
       mode: 'policy_auto',
       status: 'APPLIED',
@@ -256,8 +257,11 @@ describe('MissionDomainService Main authority boundary', () => {
     })).toThrow(/only as approved/);
     expect(resolveDecision).not.toHaveBeenCalled();
 
+    expect(() => service.executeOperation('grants.revokeHuman', active, {
+      id: 'event-empty', grantId: 'grant-1', reason: '   ',
+    })).toThrow(/reason/);
     service.executeOperation('grants.revokeHuman', active, {
-      id: 'event-1', grantId: 'grant-1', eventType: 'consumed',
+      id: 'event-1', grantId: 'grant-1', eventType: 'consumed', reason: '停止剩余执行并复核业务条件。',
     });
     expect(appendMissionGrantEvent).toHaveBeenCalledWith(active, expect.objectContaining({
       eventType: 'revoked', actorId: 'operator',

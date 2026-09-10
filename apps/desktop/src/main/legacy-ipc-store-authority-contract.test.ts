@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8');
+const importSource = readFileSync(new URL('./lingxing-report-import.ts', import.meta.url), 'utf8');
 
-function between(startMarker: string, endMarker: string): string {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
+function between(startMarker: string, endMarker: string, content = source): string {
+  const start = content.indexOf(startMarker);
+  const end = content.indexOf(endMarker, start + startMarker.length);
   expect(start, `missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
   expect(end, `missing end marker: ${endMarker}`).toBeGreaterThan(start);
-  return source.slice(start, end);
+  return content.slice(start, end);
 }
 
 describe('legacy IPC store authority contract', () => {
@@ -93,7 +94,8 @@ describe('collection Renderer boundary contract', () => {
       'function initializeStoreCollectionProductionRuntime',
     );
 
-    expect(wiring).toContain('importResult: (result, options)');
+    expect(wiring).toContain("policy: 'exact-eight-lineage-v1'");
+    expect(wiring).toContain('run: (result, options)');
     expect(wiring).toContain('importStoreScopedLingxingDownloadedReportMetrics(result, options)');
   });
 
@@ -194,15 +196,15 @@ describe('collection Renderer boundary contract', () => {
     const evidenceReader = between(
       'function readIndependentLingxingReportControlTotals',
       'function assertExactIndependentLingxingReportControlTotals',
+      importSource,
     );
     const controlTotalGuard = between(
       'function assertExactIndependentLingxingReportControlTotals',
-      'function importStoreScopedLingxingDownloadedReportMetrics',
+      'export function importLingxingDownloadedReportMetrics',
+      importSource,
     );
-    const importer = between(
-      'function importStoreScopedLingxingDownloadedReportMetrics',
-      'function loadLatestImportableLingxingBatchForScope',
-    );
+    const importer = importSource.slice(importSource.indexOf('export function importLingxingDownloadedReportMetrics'));
+    expect(source).toContain('return importLingxingDownloadedReportMetrics(result, { repository: state.lingxingImportRepo, stores: state.storeRepo }, options)');
 
     const evidenceRead = importer.indexOf('readIndependentLingxingReportControlTotals');
     const missingGuard = importer.indexOf('LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING');

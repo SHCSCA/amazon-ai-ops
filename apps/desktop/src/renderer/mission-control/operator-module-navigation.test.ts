@@ -11,12 +11,12 @@ import {
 describe('operator module navigation facade', () => {
   it('presents six operator modules while preserving every canonical intent exactly once', () => {
     expect(OPERATOR_MODULES.map((module) => module.label)).toEqual([
-      '今日与决策',
-      '产品与广告',
-      '数据采集',
-      '策略与自动化',
-      '实验与执行',
-      '记忆与设置',
+      '今日任务',
+      '运营资产',
+      '决策中心',
+      '执行与实验',
+      '经营记忆',
+      '系统设置',
     ]);
 
     const intentKeys = OPERATOR_MODULES.flatMap((module) => (
@@ -25,29 +25,29 @@ describe('operator module navigation facade', () => {
     expect(intentKeys).toHaveLength(22);
     expect(new Set(intentKeys).size).toBe(22);
     expect(operatorModuleForIntent({ workspace: 'settings', subview: 'scheduler' }).id)
-      .toBe('policy-automation');
+      .toBe('system-settings');
     expect(operatorModuleForIntent({ workspace: 'settings', subview: 'ai-and-local' }).id)
-      .toBe('memory-settings');
+      .toBe('system-settings');
     expect(operatorModuleForIntent({ workspace: 'settings', subview: 'delivery' }).id)
-      .toBe('memory-settings');
+      .toBe('system-settings');
   });
 
   it('searches the same facade entries instead of returning the old ten workspaces', () => {
     expect(searchOperatorModuleEntries('')).toHaveLength(22);
     expect(searchOperatorModuleEntries('定时')).toEqual([
       expect.objectContaining({
-        moduleLabel: '策略与自动化',
+        moduleLabel: '系统设置',
         label: '定时任务',
         intent: { workspace: 'settings', subview: 'scheduler' },
       }),
     ]);
-    expect(searchOperatorModuleEntries('实验与执行').map((item) => item.label)).toEqual([
-      '实验台账', '可见执行', '执行回读',
+    expect(searchOperatorModuleEntries('执行与实验').map((item) => item.label)).toEqual([
+      '可见执行', '执行回读', '实验台账',
     ]);
   });
 
   it('summarizes capability reminders by operator module with fail-closed priority', () => {
-    const productsModule = OPERATOR_MODULES.find((module) => module.id === 'products-ads')!;
+    const productsModule = OPERATOR_MODULES.find((module) => module.id === 'operations-assets')!;
     const capabilities = [
       {
         capabilityId: 'objects.products.view', workspace: 'objects', view: 'objects/products',
@@ -70,7 +70,7 @@ describe('operator module navigation facade', () => {
   });
 
   it('routes a module reminder to the exact affected entry instead of the module default', () => {
-    const automationModule = OPERATOR_MODULES.find((module) => module.id === 'policy-automation')!;
+    const automationModule = OPERATOR_MODULES.find((module) => module.id === 'system-settings')!;
     const capabilities = [{
       capabilityId: 'settings.scheduler.run-now', workspace: 'settings', view: 'settings/scheduler',
       action: 'start', state: 'BLOCKED', blockerCode: 'SCHEDULE_NOT_READY', detail: '定时任务尚未就绪',

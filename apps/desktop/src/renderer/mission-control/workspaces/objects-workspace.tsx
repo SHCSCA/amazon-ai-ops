@@ -167,7 +167,7 @@ export function ObjectsWorkspace({
 
   return (
     <PageFrame
-      className="mission-control-objects-page"
+      className="mission-control-workspace-root mission-control-objects-page"
       description={surface.description}
       pageId={`mission-control-objects-${activeSubview}`}
       summary={(
@@ -202,7 +202,8 @@ export function ObjectsWorkspace({
     >
       <div className="mission-control-objects-flow">
         <section
-          aria-labelledby="mission-control-objects-product-title"
+          aria-labelledby={activeSubview === 'products' ? 'mission-control-objects-product-title' : undefined}
+          aria-label={activeSubview === 'products' ? undefined : surface.title}
           className="mission-control-objects-domain mission-control-objects-domain--products"
           data-capability-state={summary?.state ?? 'LOADING'}
           data-objects-domain={activeSubview}

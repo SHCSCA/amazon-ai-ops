@@ -2,6 +2,8 @@ import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { MissionDomainOperation, MissionDomainService } from './mission-domain-service';
 
 export const MISSION_DOMAIN_IPC_ROUTES = Object.freeze({
+  'mission-domain:ai-spend:get': 'aiSpend.get',
+  'mission-domain:ai-spend:save': 'aiSpend.save',
   'mission-domain:policies:create': 'policies.create',
   'mission-domain:policies:get': 'policies.get',
   'mission-domain:policies:list': 'policies.list',

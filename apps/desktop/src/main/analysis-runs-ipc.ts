@@ -1,228 +1,42 @@
-/**
- * Analysis Runs IPC Handlers
- *
- * Bridges Renderer requests to Main process through AnalysisRunsService,
- * which enforces store-scoped validation, fingerprint reuse detection,
- * and stage state-machine transitions.
- *
- * @module analysis-runs-ipc
- */
+import { V16_API_VERSION } from '@amazon-ai-ops/shared-types/src/v16-api';
+import type { AnalysisRunsApi, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { analysisRunFailureOperatorReason, type AnalysisAuthorityService } from './analysis-authority-service';
+import type { StoreCoordinator } from './store-coordinator';
+import { assertRendererPayloadIsPathFree } from './main-artifact-registry';
+import { assertValidStoreContext } from './v16-store-context-guard';
 
-import type {
-  AnalysisRunRecord,
-  StoreContextEnvelope,
-} from '@amazon-ai-ops/shared-types';
-import { AnalysisRunsService } from './analysis-runs-service';
-
-/**
- * IPC channel names for Analysis Runs operations
- */
-export const ANALYSIS_RUNS_CHANNELS = {
-  CREATE: 'analysis-runs:create',
-  UPDATE: 'analysis-runs:update',
-  QUERY: 'analysis-runs:query',
-  LIST: 'analysis-runs:list',
-} as const;
-
-/**
- * IPC registrar interface (mirrors trackedIpcRegistrar)
- */
-interface AnalysisRunsIpcRegistrar {
-  handle(channel: string, listener: (event: unknown, request?: unknown) => unknown): void;
-}
-
-/**
- * Error codes surfaced by AnalysisRunsService through IPC
- */
-export type AnalysisRunsIpcErrorCode =
-  | 'STORE_MISMATCH'
-  | 'RUN_NOT_FOUND'
-  | 'INVALID_TRANSITION'
-  | 'REUSE_DETECTED'
-  | 'SERVICE_ERROR';
-
-// ─── Request / Response types ────────────────────────────────────────────────────
-
-export interface CreateRunRequest {
-  storeContext: StoreContextEnvelope;
-  input: {
-    reportSnapshotId: string;
-    missionId?: string;
-    productId?: string;
-    policyRevision?: string;
-    modelRevision?: string;
-    metadata?: AnalysisRunRecord['metadata'];
-  };
-}
-
-export interface CreateRunResponse {
-  success: boolean;
-  run?: AnalysisRunRecord;
-  error?: { code: string; message: string };
-}
-
-export interface UpdateRunRequest {
-  storeContext: StoreContextEnvelope;
-  input: {
-    runId: string;
-    status?: AnalysisRunRecord['status'];
-    recommendationsCount?: number;
-    blockedReason?: string | null;
-    completedAt?: string;
-  };
-}
-
-export interface UpdateRunResponse {
-  success: boolean;
-  run?: AnalysisRunRecord;
-  error?: { code: string; message: string };
-}
-
-export interface QueryRunRequest {
-  storeContext: StoreContextEnvelope;
-  input: { runId: string };
-}
-
-export interface QueryRunResponse {
-  success: boolean;
-  run?: AnalysisRunRecord | null;
-  error?: { code: string; message: string };
-}
-
-export interface ListRunsRequest {
-  storeContext: StoreContextEnvelope;
-  input: {
-    missionId?: string;
-    status?: AnalysisRunRecord['status'];
-    limit?: number;
-  };
-}
-
-export interface ListRunsResponse {
-  success: boolean;
-  runs?: AnalysisRunRecord[];
-  error?: { code: string; message: string };
-}
-
-// ─── IPC Handlers ────────────────────────────────────────────────────────────────
-
-/**
- * Register all Analysis Runs IPC handlers.
- * All operations go through AnalysisRunsService to enforce store-scoped
- * authority, fingerprint reuse guard, and stage transitions.
- *
- * @param registrar - IPC registrar (trackedIpcRegistrar)
- * @param service - AnalysisRunsService instance (created from AnalysisRunsRepository)
- */
+export const ANALYSIS_RUNS_CHANNELS = { CREATE: 'analysis-runs:create', QUERY: 'analysis-runs:query', LIST: 'analysis-runs:list' } as const;
+type Service = Pick<AnalysisAuthorityService, 'runMissionAnalysis' | 'getAnalysisRun' | 'listAnalysisRuns'>;
 export function registerAnalysisRunsIpcHandlers(
-  registrar: AnalysisRunsIpcRegistrar,
-  service: AnalysisRunsService,
+  registrar: { handle(channel: string, listener: (event: unknown, request?: unknown) => unknown): void },
+  service: Service,
+  coordinator: Pick<StoreCoordinator, 'assertActiveStoreContext'>,
 ): void {
-
-  // CREATE
-  registrar.handle(ANALYSIS_RUNS_CHANNELS.CREATE, (_event, raw?: CreateRunRequest): CreateRunResponse => {
-    try {
-      if (!raw?.storeContext || !raw?.input) {
-        return { success: false, error: { code: 'SERVICE_ERROR', message: 'Missing storeContext or input.' } };
+  for (const [operation, channel] of Object.entries(ANALYSIS_RUNS_CHANNELS)) {
+    registrar.handle(channel, async (_event, raw) => {
+      try {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('分析请求格式无效。');
+        const request = raw as Record<string, unknown>;
+        if (request.apiVersion !== V16_API_VERSION) return { success: false, code: 'API_VERSION_MISMATCH', error: '分析接口版本不一致，请重新启动当前版本应用。' };
+        if (Object.keys(request).some(key => !['apiVersion', 'storeContext', 'input'].includes(key))) throw new Error('分析请求包含未支持的字段。');
+        const context: StoreContextEnvelope = assertValidStoreContext(request.storeContext);
+        coordinator.assertActiveStoreContext(context);
+        if (!request.input || typeof request.input !== 'object' || Array.isArray(request.input)) throw new Error('分析请求缺少输入。');
+        const input = request.input as Record<string, unknown>;
+        const fields = operation === 'CREATE' ? ['missionId'] : operation === 'QUERY' ? ['runId'] : ['missionId', 'status', 'limit'];
+        if (Object.keys(input).some(key => !fields.includes(key))) throw new Error('分析请求包含未支持的字段。');
+        const data = operation === 'CREATE' ? await service.runMissionAnalysis({ context, missionId: input.missionId as string })
+          : operation === 'QUERY' ? service.getAnalysisRun(context, input.runId as string)
+          : service.listAnalysisRuns(context, input as Parameters<Service['listAnalysisRuns']>[1]);
+        coordinator.assertActiveStoreContext(context);
+        assertRendererPayloadIsPathFree(data);
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, code: typeof (error as { code?: unknown })?.code === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test((error as { code: string }).code) ? (error as { code: string }).code : 'ANALYSIS_RUN_BLOCKED', error: analysisRunFailureOperatorReason(error) };
       }
-      const { storeContext, input } = raw;
-      const run = service.createRun({
-        storeContext,
-        reportSnapshotId: input.reportSnapshotId,
-        missionId: input.missionId,
-        productId: input.productId,
-        policyRevision: input.policyRevision,
-        modelRevision: input.modelRevision,
-        metadata: input.metadata,
-      });
-      return { success: true, run };
-    } catch (error: unknown) {
-      const code = error instanceof Error ? error.message : String(error);
-      return { success: false, error: { code, message: code } };
-    }
-  });
-
-  // UPDATE — maps to updateStage / completeRun / failRun / blockRun
-  registrar.handle(ANALYSIS_RUNS_CHANNELS.UPDATE, (_event, raw?: UpdateRunRequest): UpdateRunResponse => {
-    try {
-      if (!raw?.storeContext || !raw?.input) {
-        return { success: false, error: { code: 'SERVICE_ERROR', message: 'Missing storeContext or input.' } };
-      }
-      const { storeContext, input } = raw;
-
-      if (input.status === 'completed') {
-        const run = service.completeRun({
-          storeContext,
-          runId: input.runId,
-          recommendationsCount: input.recommendationsCount ?? 0,
-        });
-        return { success: true, run };
-      }
-      if (input.status === 'failed') {
-        const run = service.failRun({
-          storeContext,
-          runId: input.runId,
-          reason: input.blockedReason ?? 'Unknown failure',
-        });
-        return { success: true, run };
-      }
-      if (input.status === 'blocked') {
-        const run = service.blockRun({
-          storeContext,
-          runId: input.runId,
-          reason: input.blockedReason ?? 'Blocked',
-        });
-        return { success: true, run };
-      }
-
-      // Generic stage update
-      const run = service.updateStage({
-        storeContext,
-        runId: input.runId,
-        status: input.status,
-        recommendationsCount: input.recommendationsCount,
-        blockedReason: input.blockedReason,
-        completedAt: input.completedAt,
-      });
-      return { success: true, run };
-    } catch (error: unknown) {
-      const code = error instanceof Error ? error.message : String(error);
-      return { success: false, error: { code, message: code } };
-    }
-  });
-
-  // QUERY
-  registrar.handle(ANALYSIS_RUNS_CHANNELS.QUERY, (_event, raw?: QueryRunRequest): QueryRunResponse => {
-    try {
-      if (!raw?.storeContext || !raw?.input) {
-        return { success: false, error: { code: 'SERVICE_ERROR', message: 'Missing storeContext or input.' } };
-      }
-      const { storeContext, input } = raw;
-      const run = service.getRun({ storeContext, runId: input.runId });
-      return { success: true, run: run ?? null };
-    } catch (error: unknown) {
-      const code = error instanceof Error ? error.message : String(error);
-      return { success: false, error: { code, message: code } };
-    }
-  });
-
-  // LIST
-  registrar.handle(ANALYSIS_RUNS_CHANNELS.LIST, (_event, raw?: ListRunsRequest): ListRunsResponse => {
-    try {
-      if (!raw?.storeContext) {
-        return { success: false, error: { code: 'SERVICE_ERROR', message: 'Missing storeContext.' } };
-      }
-      const { storeContext, input = {} } = raw;
-      const runs = service.listRuns({
-        storeContext,
-        missionId: input.missionId,
-        status: input.status,
-        limit: input.limit,
-      });
-      return { success: true, runs };
-    } catch (error: unknown) {
-      const code = error instanceof Error ? error.message : String(error);
-      return { success: false, error: { code, message: code } };
-    }
-  });
+    });
+  }
 }
+export type CreateRunResponse = Awaited<ReturnType<AnalysisRunsApi['create']>>;
+export type QueryRunResponse = Awaited<ReturnType<AnalysisRunsApi['query']>>;
+export type ListRunsResponse = Awaited<ReturnType<AnalysisRunsApi['list']>>;

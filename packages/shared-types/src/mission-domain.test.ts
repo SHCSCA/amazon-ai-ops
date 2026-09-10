@@ -12,7 +12,7 @@ import {
   VALID_STAGE_TRANSITIONS,
   type MissionStage,
   type MissionStatus,
-} from './mission-domain';
+} from './v16-mission-domain';
 
 describe('MissionDomain', () => {
   describe('isValidStageTransition', () => {
@@ -38,11 +38,11 @@ describe('MissionDomain', () => {
       expect(isValidStageTransition('effect', 'analysis')).toBe(false);
     });
 
-    it('allows transitions to blocked from non-terminal stages', () => {
-      expect(isValidStageTransition('analysis', 'blocked')).toBe(true);
-      expect(isValidStageTransition('decision', 'blocked')).toBe(true);
-      expect(isValidStageTransition('action', 'blocked')).toBe(true);
-      expect(isValidStageTransition('readback', 'blocked')).toBe(true);
+    it('keeps blocked as a status rather than a seventh stage', () => {
+      expect(isValidStageTransition('analysis', 'blocked')).toBe(false);
+      expect(isValidStageTransition('decision', 'blocked')).toBe(false);
+      expect(isValidStageTransition('action', 'blocked')).toBe(false);
+      expect(isValidStageTransition('readback', 'blocked')).toBe(false);
     });
   });
 

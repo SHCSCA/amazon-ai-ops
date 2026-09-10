@@ -161,7 +161,7 @@ function LegacyRoutePage({
     case 'listing-optimization':
       return <ListingOptimizationPage />;
     case 'settings':
-      return <SettingsPage embedded />;
+      return <SettingsPage embedded storeContext={storeContext} />;
     case 'scheduler':
       return (
         <SchedulerPage

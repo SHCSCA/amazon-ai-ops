@@ -89,7 +89,7 @@ function createAuthoritySnapshotFixture() {
   fs.writeFileSync(path.join(appContentPath, 'package.json'), `${JSON.stringify({
     main: 'dist/main/index.js',
     name: '@amazon-ai-ops/desktop',
-    version: '1.5.0',
+    version: JSON.parse(fs.readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version,
   })}\n`);
   const packageContext = {
     appContentPath,

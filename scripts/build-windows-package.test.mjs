@@ -33,8 +33,8 @@ describe('single-lock isolated Windows package orchestration', () => {
       AAO_STAGED_SQLITE_BINDING: 'D:\\isolated\\better_sqlite3.node',
       AAO_STAGED_SQLITE_SHA256: 'A'.repeat(64),
       AAO_SOURCE_DUCKDB_SHA256: 'B'.repeat(64),
-      AAO_ELECTRON_VERSION: '28.3.3',
-      AAO_ELECTRON_MODULES_ABI: '119',
+      AAO_ELECTRON_VERSION: '44.2.0',
+      AAO_ELECTRON_MODULES_ABI: '149',
     };
     const steps = resolveWindowsBuildSteps(builderEnvironment);
     expect(steps.map((step) => step.name)).toEqual([
@@ -329,7 +329,7 @@ function nativeFixture() {
     preparePackage,
     writePackage,
     injections: {
-      electronMetadata: { version: '28.3.3' },
+      electronMetadata: { version: '44.2.0' },
       sourcePaths,
       packagePaths,
       packageOutputs,

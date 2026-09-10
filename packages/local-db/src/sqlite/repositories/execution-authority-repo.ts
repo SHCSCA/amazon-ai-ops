@@ -2,11 +2,15 @@ import { createHash } from 'crypto';
 import type Database from 'better-sqlite3';
 import {
   AD_EXECUTION_ACTION_TYPE,
+  AD_EXECUTION_RECONCILIATION_COPY,
   MAX_AD_EXECUTION_ACTIONS_PER_BATCH,
   assertOpaqueExecutionArtifactRef,
   isTerminalAdExecutionStatus,
   normalizeStoreContextEnvelope,
   type AdExecutionBatchProjection,
+  type AdExecutionReconciliationCase,
+  type AdExecutionReconciliationObservation,
+  type AdExecutionUnknownReconciliationStatus,
   type AdExecutionBatchRecord,
   type AdExecutionDomainReconciliationRecord,
   type AdExecutionEvidenceInput,
@@ -129,7 +133,7 @@ export interface PolicyGrantDispatchRecord {
   batchHasPersistedIntent: boolean;
   grantExpiresAt: string;
   grantSessionGeneration: number;
-  terminalGrantEventType?: 'revoked' | 'consumed' | 'expired';
+  terminalGrantEventType?: 'revoked' | 'consumed' | 'expired' | 'invalidated';
   updatedAt?: string;
 }
 
@@ -199,6 +203,26 @@ interface IdentityRow {
   resolved_at: string;
   resolved_by: string;
   created_at: string;
+}
+
+interface ReconciliationRow {
+  case_id: string;
+  store_id: string;
+  batch_id: string;
+  job_id: string;
+  submit_intent_id: string;
+  context_json: string;
+  started_at: string;
+  first_json: string | null;
+  reload_json: string | null;
+  outcome: AdExecutionUnknownReconciliationStatus | null;
+  completed_at: string | null;
+}
+
+function mapReconciliation(row: ReconciliationRow): AdExecutionReconciliationCase {
+  return { caseId: row.case_id, context: normalizeContext(JSON.parse(row.context_json)), batchId: row.batch_id, jobId: row.job_id,
+    submitIntentId: row.submit_intent_id, startedAt: row.started_at, first: row.first_json ? JSON.parse(row.first_json) : null,
+    reload: row.reload_json ? JSON.parse(row.reload_json) : null, outcome: row.outcome, completedAt: row.completed_at };
 }
 
 interface AliasRow {
@@ -775,7 +799,8 @@ export class ExecutionAuthorityRepository {
     return this.immediate(() => {
       this.assertContext(context);
       const job = this.requireMutableJob(context, input.jobId, input.expectedRevision, ['preflight']);
-      this.requireGrant(context, job.grant_id);
+      const grant = this.requireGrant(context, job.grant_id);
+      this.missionRepository.assertPolicyUsage(context, grant.policy_version_id, [job.ad_entity_id]);
       this.assertEvidenceMatchesJob(job, input.before);
       const submitIntentId = idOf(input.submitIntentId, 'submitIntentId');
       const commandFingerprint = sha256Of(input.commandFingerprint, 'commandFingerprint');
@@ -1171,6 +1196,8 @@ export class ExecutionAuthorityRepository {
   recoverInterruptedExecutions(): AdExecutionStartupRecoveryResult {
     return this.immediate(() => {
       const recoveredAt = this.timestamp();
+      const interruptedCases = this.db.prepare('SELECT * FROM ad_execution_reconciliation_cases WHERE outcome IS NULL').all() as ReconciliationRow[];
+      for (const row of interruptedCases) this.finishReconciliationInternal(row, 'inconclusive_permanent');
       const interrupted = this.db.prepare(`
         SELECT * FROM ad_execution_jobs
         WHERE status IN ('intent_written', 'submitted', 'verifying')
@@ -1187,6 +1214,7 @@ export class ExecutionAuthorityRepository {
             AND status IN ('intent_written', 'submitted', 'verifying')
         `).run(recoveredAt, recoveredAt, job.store_id, job.id, job.revision);
         if (changed.changes !== 1) throw revisionConflict('Interrupted execution recovery lost its CAS race.');
+        this.recordGrantSlot(job, 'spent', recoveredAt);
         const sequence = this.nextEventSequence(job.store_id, job.id);
         this.insertEvent({
           storeId: job.store_id,
@@ -1333,7 +1361,7 @@ export class ExecutionAuthorityRepository {
         batch.status,
         batch.terminal_at ?? this.timestamp(),
       );
-      const grantTerminal = batch.status === 'succeeded' ? 'consumed' : 'revoked';
+      const grantTerminal = batch.status === 'succeeded' ? 'consumed' : 'invalidated';
       const causalEventId = `causal:grant:${batch.grant_id}:${grantTerminal}`;
       if (!this.db.prepare(`
         SELECT 1 FROM causal_events WHERE store_id = ? AND id = ?
@@ -1420,7 +1448,8 @@ export class ExecutionAuthorityRepository {
       WHERE store_id = ? AND id = ? AND revision = ?
         AND status IN ('intent_written', 'submitted', 'verifying')
     `).run(updatedAt, updatedAt, context.storeId, job.id, job.revision);
-    if (changed.changes !== 1) throw revisionConflict(`Execution job ${job.id} lost its UNKNOWN CAS transition.`);
+      if (changed.changes !== 1) throw revisionConflict(`Execution job ${job.id} lost its UNKNOWN CAS transition.`);
+    this.recordGrantSlot(job, 'spent', updatedAt);
     this.insertEvent({
       storeId: context.storeId,
       batchId: job.batch_id,
@@ -1553,6 +1582,11 @@ export class ExecutionAuthorityRepository {
       times.terminalAt ?? null, context.storeId, job.id, job.revision, job.status,
     );
     if (changed.changes !== 1) throw revisionConflict(`Execution job ${job.id} lost its CAS transition.`);
+    if (toStatus === 'intent_written') {
+      this.recordGrantSlot({ ...job, submit_intent_id: times.submitIntentId! }, 'reserved', updatedAt);
+    } else if (toStatus === 'submitted') {
+      this.recordGrantSlot(job, 'spent', updatedAt);
+    }
     this.insertEvent({
       storeId: context.storeId,
       batchId: job.batch_id,
@@ -1586,6 +1620,38 @@ export class ExecutionAuthorityRepository {
       missionId: job.mission_id,
       grantId: job.grant_id,
     };
+  }
+
+  private recordGrantSlot(job: JobRow, eventType: 'reserved' | 'spent', createdAt: string): void {
+    if (!job.submit_intent_id) throw referenceConflict('Grant slot has no durable submit intent.');
+    const existing = this.db.prepare(`SELECT submit_intent_id AS intent FROM mission_grant_events
+      WHERE store_id=? AND grant_id=? AND job_id=? AND event_type=?`).get(job.store_id, job.grant_id, job.id, eventType) as { intent: string } | undefined;
+    if (existing) {
+      if (existing.intent !== job.submit_intent_id) throw referenceConflict('Grant slot intent changed.');
+      return;
+    }
+    if (eventType === 'spent' && !this.db.prepare(`SELECT 1 FROM mission_grant_events
+      WHERE store_id=? AND grant_id=? AND job_id=? AND event_type='reserved'`).get(job.store_id, job.grant_id, job.id)) {
+      // Historical intents remain auditable without minting a current slot reservation.
+      return;
+    }
+    this.db.prepare(`INSERT INTO mission_grant_events(id,store_id,grant_id,event_type,actor_id,reason,created_at,job_id,submit_intent_id,impact_cents)
+      VALUES(?,?,?,?,'execution-ledger',?,?,?,?,?)`).run(
+        `grant-slot:${job.id}:${eventType}`, job.store_id, job.grant_id, eventType,
+        eventType === 'reserved' ? '提交意图已持久化，单次提交额度已占用。' : '已提交或无法证明未提交，单次提交额度永久花费；不代表执行成功。',
+        createdAt, job.id, job.submit_intent_id, job.expected_bid_cents - job.target_bid_cents,
+      );
+    if (eventType === 'spent') {
+      const usage = this.db.prepare(`SELECT json_array_length(grant.allowed_ad_entity_ids_json) AS total,
+        (SELECT COUNT(*) FROM mission_grant_events event WHERE event.store_id=grant.store_id AND event.grant_id=grant.id AND event.event_type='spent') AS spent
+        FROM mission_grants grant WHERE store_id=? AND id=?`).get(job.store_id, job.grant_id) as { total: number; spent: number };
+      if (usage.spent === usage.total && !this.db.prepare(`SELECT 1 FROM mission_grant_events WHERE store_id=? AND grant_id=? AND event_type='consumed'`).get(job.store_id, job.grant_id)) {
+        const reason = '全部单次提交额度已花费；执行是否成功由独立回读确定。';
+        this.db.prepare(`INSERT INTO mission_grant_events(id,store_id,grant_id,event_type,actor_id,reason,created_at)
+          VALUES(?,?,?,'consumed','execution-ledger',?,?)`).run(`grant-slots-consumed:${job.grant_id}`, job.store_id, job.grant_id, reason, createdAt);
+        this.ensureExecutionGrantCausalEvent(job.store_id, job.grant_id, job.batch_id, 'consumed', 'execution-ledger', reason, createdAt);
+      }
+    }
   }
 
   private assertExactReadback(
@@ -1687,6 +1753,8 @@ export class ExecutionAuthorityRepository {
       SELECT * FROM mission_grants WHERE store_id = ? AND id = ?
     `).get(context.storeId, grantId) as GrantRow | undefined;
     if (!row) throw notFound(`Mission grant ${grantId} was not found.`);
+    this.missionRepository.assertMissionMayCreateAuthority(context, row.mission_id);
+    this.missionRepository.assertWriteAuthority(context, this.missionRepository.getMissionGrant(context, grantId)?.authority);
     if (row.marketplace !== 'US' || row.currency !== 'USD') throw stateConflict('Execution grant must use US/USD.');
     if (row.created_session_generation !== context.sessionGeneration) {
       throw new ExecutionAuthorityRepositoryError('STALE_CONTEXT', 'Execution grant belongs to a stale session generation.');
@@ -1695,7 +1763,7 @@ export class ExecutionAuthorityRepository {
     const grantEvents = this.db.prepare(`
       SELECT
         SUM(CASE WHEN event_type = 'issued' THEN 1 ELSE 0 END) AS issuedCount,
-        SUM(CASE WHEN event_type IN ('revoked', 'consumed', 'expired') THEN 1 ELSE 0 END) AS terminalCount
+        SUM(CASE WHEN event_type IN ('revoked', 'consumed', 'expired', 'invalidated') THEN 1 ELSE 0 END) AS terminalCount
       FROM mission_grant_events WHERE store_id = ? AND grant_id = ?
     `).get(context.storeId, grantId) as { issuedCount: number; terminalCount: number };
     if (Number(grantEvents.issuedCount) < 1 || Number(grantEvents.terminalCount) > 0) {
@@ -1819,25 +1887,20 @@ export class ExecutionAuthorityRepository {
     batchStatus: Extract<AdExecutionStatus, 'succeeded' | 'blocked' | 'unknown' | 'cancelled'>,
     createdAt: string,
   ): boolean {
-    const expectedEvent = batchStatus === 'succeeded' ? 'consumed' : 'revoked';
+    const expectedEvent = batchStatus === 'succeeded' ? 'consumed' : 'invalidated';
     const existing = this.db.prepare(`
       SELECT event_type AS eventType, actor_id AS actorId, reason, created_at AS createdAt
       FROM mission_grant_events
       WHERE store_id = ? AND grant_id = ?
-        AND event_type IN ('revoked', 'consumed', 'expired')
+        AND event_type = ?
       ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get(storeId, grantId) as {
+    `).get(storeId, grantId, expectedEvent) as {
       eventType: string;
       actorId: string;
       reason: string | null;
       createdAt: string;
     } | undefined;
     if (existing) {
-      if (existing.eventType !== expectedEvent) {
-        throw stateConflict(
-          `Execution batch ${batchId} is ${batchStatus}, but its grant is ${existing.eventType}.`,
-        );
-      }
       this.ensureExecutionGrantCausalEvent(
         storeId, grantId, batchId, expectedEvent,
         existing.actorId, existing.reason, existing.createdAt,
@@ -1854,8 +1917,8 @@ export class ExecutionAuthorityRepository {
       grantId,
       expectedEvent,
       batchStatus === 'succeeded'
-        ? 'Every execution job reached durable reload verification.'
-        : `Execution batch reached terminal ${batchStatus}; grant cannot be reused.`,
+        ? '授权额度已全部消费；执行效果以各动作的刷新回读为准。'
+        : `执行批次已终止（${batchStatus}），剩余授权失效，已提交额度不返还。`,
       createdAt,
     );
     this.ensureExecutionGrantCausalEvent(
@@ -1865,8 +1928,8 @@ export class ExecutionAuthorityRepository {
       expectedEvent,
       'execution-ledger',
       batchStatus === 'succeeded'
-        ? 'Every execution job reached durable reload verification.'
-        : `Execution batch reached terminal ${batchStatus}; grant cannot be reused.`,
+        ? '授权额度已全部消费；执行效果以各动作的刷新回读为准。'
+        : `执行批次已终止（${batchStatus}），剩余授权失效，已提交额度不返还。`,
       createdAt,
     );
     return true;
@@ -1876,7 +1939,7 @@ export class ExecutionAuthorityRepository {
     storeId: string,
     grantId: string,
     batchId: string,
-    eventType: 'consumed' | 'revoked',
+    eventType: 'consumed' | 'invalidated',
     actorId: string,
     reason: string | null,
     createdAt: string,
@@ -2076,10 +2139,10 @@ export class ExecutionAuthorityRepository {
       const terminal = this.db.prepare(`
         SELECT event_type AS eventType FROM mission_grant_events
         WHERE store_id = ? AND grant_id = ?
-          AND event_type IN ('revoked', 'consumed', 'expired')
+          AND event_type IN ('revoked', 'consumed', 'expired', 'invalidated')
         ORDER BY created_at DESC, id DESC LIMIT 1
       `).get(context.storeId, grant.id) as {
-        eventType: 'revoked' | 'consumed' | 'expired';
+        eventType: 'revoked' | 'consumed' | 'expired' | 'invalidated';
       } | undefined;
       const attemptCount = Number((this.db.prepare(`
         SELECT COUNT(*) AS count FROM causal_events
@@ -2359,7 +2422,105 @@ export class ExecutionAuthorityRepository {
         SELECT * FROM ad_execution_events WHERE store_id = ? AND job_id = ? ORDER BY sequence
       `).all(storeId, row.id) as EventRow[]).map(mapEvent),
     }));
-    return { batch: mapBatch(batchRow), jobs };
+    const row = this.db.prepare('SELECT * FROM ad_execution_reconciliation_cases WHERE store_id=? AND batch_id=?').get(storeId, batchId) as ReconciliationRow | undefined;
+    return { batch: mapBatch(batchRow), jobs, ...(row ? { reconciliation: mapReconciliation(row) } : {}) };
+  }
+
+  beginUnknownReconciliation(contextInput: StoreContextEnvelope, jobId: string): { created: boolean; record: AdExecutionReconciliationCase } {
+    const context = normalizeContext(contextInput);
+    return this.immediate(() => {
+      this.assertContext(context);
+      const job = this.db.prepare('SELECT * FROM ad_execution_jobs WHERE store_id=? AND id=?').get(context.storeId, idOf(jobId, 'jobId')) as JobRow | undefined;
+      if (!job || job.status !== 'unknown' || !job.submit_intent_id) throw stateConflict('只允许对账原 UNKNOWN 提交意图。');
+      const existing = this.db.prepare('SELECT * FROM ad_execution_reconciliation_cases WHERE store_id=? AND submit_intent_id=?').get(context.storeId, job.submit_intent_id) as ReconciliationRow | undefined;
+      if (existing) return { created: false, record: mapReconciliation(existing) };
+      const caseId = `reconciliation:${hashObject([context.storeId, job.submit_intent_id]).slice(0, 48)}`;
+      this.db.prepare(`INSERT INTO ad_execution_reconciliation_cases(case_id,store_id,batch_id,job_id,submit_intent_id,context_json,started_at)
+        VALUES(?,?,?,?,?,?,?)`).run(caseId, context.storeId, job.batch_id, job.id, job.submit_intent_id, JSON.stringify(context), this.timestamp());
+      return { created: true, record: mapReconciliation(this.reconciliationRow(caseId)) };
+    });
+  }
+
+  recordUnknownObservation(contextInput: StoreContextEnvelope, caseId: string, slot: 'first' | 'reload', input: AdExecutionReconciliationObservation): void {
+    const context = normalizeContext(contextInput);
+    if (slot !== 'first' && slot !== 'reload') throw invalid('对账只有首次和刷新后两个观察位置。');
+    this.immediate(() => {
+      this.assertContext(context);
+      const row = this.reconciliationRow(caseId);
+      if (row.context_json !== JSON.stringify(context) || row.outcome) throw stateConflict('对账上下文已变化或已永久结束。');
+      const job = this.db.prepare('SELECT * FROM ad_execution_jobs WHERE store_id=? AND id=?').get(context.storeId, row.job_id) as JobRow;
+      const observation: AdExecutionReconciliationObservation = {
+        artifactRef: assertOpaqueExecutionArtifactRef(input.artifactRef),
+        contentSha256: sha256Of(input.contentSha256, 'contentSha256'),
+        pageIdentityHash: sha256Of(input.pageIdentityHash, 'pageIdentityHash'),
+        capturedAt: timestampOf(input.capturedAt, 'capturedAt'),
+        canonicalKeywordId: idOf(input.canonicalKeywordId, 'canonicalKeywordId'),
+        objectRevision: positiveInt(input.objectRevision, 'objectRevision'),
+        adsAccountId: idOf(input.adsAccountId, 'adsAccountId'),
+        campaignId: idOf(input.campaignId, 'campaignId'),
+        adGroupId: idOf(input.adGroupId, 'adGroupId'),
+        keywordId: idOf(input.keywordId, 'keywordId'),
+        observedBidCents: positiveInt(input.observedBidCents, 'observedBidCents'),
+      };
+      if (observation.canonicalKeywordId !== job.canonical_keyword_id || observation.objectRevision !== job.object_revision
+        || observation.adsAccountId !== job.ads_account_id || observation.campaignId !== job.campaign_id
+        || observation.adGroupId !== job.ad_group_id || observation.keywordId !== job.keyword_id
+        || Date.parse(observation.capturedAt) < Date.parse(row.started_at)
+        || Date.parse(observation.capturedAt) > this.now().getTime()) throw referenceConflict('对账观察对象或时间不符合原 case。');
+      const first = row.first_json ? JSON.parse(row.first_json) as AdExecutionReconciliationObservation : null;
+      if (slot === 'reload' && (!first || Date.parse(observation.capturedAt) < Date.parse(first.capturedAt)
+        || observation.artifactRef === first.artifactRef)) throw referenceConflict('刷新后观察必须有独立证据，且晚于首次观察。');
+      const column = slot === 'first' ? 'first_json' : 'reload_json';
+      if (this.db.prepare(`UPDATE ad_execution_reconciliation_cases SET ${column}=? WHERE case_id=? AND ${column} IS NULL AND outcome IS NULL`)
+        .run(JSON.stringify(observation), caseId).changes !== 1) throw stateConflict('对账观察位置已使用，不允许再次观察。');
+    });
+  }
+
+  finishUnknownReconciliation(contextInput: StoreContextEnvelope, caseId: string, interrupted = false): AdExecutionReconciliationCase {
+    const context = normalizeContext(contextInput);
+    return this.immediate(() => {
+      const row = this.reconciliationRow(caseId);
+      // Terminalizing an already admitted read is safe even after logout/switch; never grants authority.
+      if (row.context_json !== JSON.stringify(context)) throw referenceConflict('对账 case 不属于该完整上下文。');
+      if (row.outcome) return mapReconciliation(row);
+      if (!interrupted) this.assertContext(context);
+      const first = row.first_json ? JSON.parse(row.first_json) as AdExecutionReconciliationObservation : null;
+      const reload = row.reload_json ? JSON.parse(row.reload_json) as AdExecutionReconciliationObservation : null;
+      const job = this.db.prepare('SELECT * FROM ad_execution_jobs WHERE store_id=? AND id=?').get(row.store_id, row.job_id) as JobRow;
+      const outcome: AdExecutionUnknownReconciliationStatus = interrupted || !first || !reload
+        || first.pageIdentityHash !== reload.pageIdentityHash || first.observedBidCents !== reload.observedBidCents
+        ? 'inconclusive_permanent'
+        : reload.observedBidCents === job.target_bid_cents ? 'target_stably_observed'
+          : reload.observedBidCents === job.expected_bid_cents ? 'original_stably_observed' : 'other_value_stably_observed';
+      return this.finishReconciliationInternal(row, outcome);
+    });
+  }
+
+  private reconciliationRow(caseId: string): ReconciliationRow {
+    const row = this.db.prepare('SELECT * FROM ad_execution_reconciliation_cases WHERE case_id=?').get(idOf(caseId, 'caseId')) as ReconciliationRow | undefined;
+    if (!row) throw notFound('对账 case 不存在。');
+    return row;
+  }
+
+  private finishReconciliationInternal(row: ReconciliationRow, outcome: AdExecutionUnknownReconciliationStatus): AdExecutionReconciliationCase {
+    const completedAt = this.timestamp();
+    this.db.prepare('UPDATE ad_execution_reconciliation_cases SET outcome=?,completed_at=? WHERE case_id=? AND outcome IS NULL').run(outcome, completedAt, row.case_id);
+    const record = mapReconciliation(this.reconciliationRow(row.case_id));
+    const eventId = `causal:execution-reconciliation:${hashObject([row.store_id, row.submit_intent_id]).slice(0, 40)}`;
+    this.db.prepare(`INSERT INTO causal_events(id,store_id,stage,event_type,entity_type,entity_id,mission_id,title,signal,observed_effect,
+      confidence,status,source,actor_id,business_date,session_generation,sequence,created_at)
+      SELECT ?,?,'READBACK','execution_unknown_reconciled','ad_execution_batch',?,mission_id,'结果不确定批次只读对账',?,?,0,?,
+        'execution-authority','execution-authority',?,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM causal_events WHERE store_id=?),?
+      FROM ad_execution_jobs WHERE store_id=? AND id=?`).run(eventId, row.store_id, row.batch_id,
+      `首次 ${record.first?.observedBidCents ?? '缺失'}；刷新后 ${record.reload?.observedBidCents ?? '缺失'}。`,
+      AD_EXECUTION_RECONCILIATION_COPY[outcome], outcome, record.context.businessDate, record.context.sessionGeneration,
+      row.store_id, completedAt, row.store_id, row.job_id);
+    for (const slot of ['first', 'reload'] as const) {
+      const observation = record[slot];
+      if (observation) this.db.prepare('INSERT INTO evidence_refs(id,store_id,event_id,evidence_type,evidence_ref,sha256,created_at) VALUES(?,?,?,?,?,?,?)')
+        .run(`${eventId}:${slot}`, row.store_id, eventId, `ad_execution_reconciliation_${slot}`, observation.artifactRef, observation.contentSha256, observation.capturedAt);
+    }
+    return record;
   }
 
   private insertEvent(input: {

@@ -2,6 +2,9 @@ import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import {
   CAUSAL_LEDGER_STAGES,
+  createMissionWriteAuthoritySnapshot,
+  missionWriteAuthorityMatches,
+  type MissionWriteAuthoritySnapshot,
   normalizeDomainIdentifier,
   normalizeOpaqueEvidenceRef,
   normalizeDomainRevision,
@@ -33,6 +36,7 @@ import {
   type ExperimentStatus,
   type MissionGrantEventRecord,
   type MissionGrantEventType,
+  type MissionGrantTerminalEventType,
   type MissionGrantRecord,
   type MissionLifecycleStatus,
   type MissionLinkRecord,
@@ -129,7 +133,7 @@ export interface AppendMissionLinkInput {
 export interface AppendMissionGrantEventInput {
   id: string;
   grantId: string;
-  eventType: Exclude<MissionGrantEventType, 'issued'>;
+  eventType: MissionGrantTerminalEventType;
   actorId: string;
   reason?: string;
 }
@@ -206,6 +210,7 @@ interface ExperimentMetricSourceRow {
   orders: number;
   sales: number;
   currency: string | null;
+  dateStart: string;
   dateEnd: string;
 }
 
@@ -346,6 +351,7 @@ interface PolicyRuntimeRow {
 }
 
 interface DecisionRow {
+  authority_json: string | null;
   id: string;
   store_id: string;
   mission_id: string;
@@ -396,6 +402,7 @@ interface ExperimentRow {
 }
 
 interface GrantRow {
+  authority_json: string | null;
   id: string;
   store_id: string;
   marketplace: UsMarketplace;
@@ -907,37 +914,38 @@ export class MissionDomainRepository {
     contextInput: StoreContextEnvelope,
     input: UpdatePolicyRuntimeInput,
   ): PolicyRuntimeRecord {
-    const context = this.assertContext(contextInput);
-    const current = this.getPolicyRuntime(context);
-    this.assertRevision(current.revision, input.expectedRevision, 'Policy runtime');
-    if (!input.patch || Object.keys(input.patch).length === 0) {
-      throw invalid('Policy runtime patch cannot be empty.');
-    }
-    const autonomyMode = input.patch.autonomyMode ?? current.autonomyMode;
-    const killSwitch = input.patch.killSwitch ?? current.killSwitch;
-    const circuitBreakerState = input.patch.circuitBreakerState ?? current.circuitBreakerState;
-    const activePolicyVersionId = input.patch.activePolicyVersionId === undefined
-      ? current.activePolicyVersionId ?? null
-      : optionalId(input.patch.activePolicyVersionId, 'activePolicyVersionId');
-    if (!['manual_approval', 'policy_auto'].includes(autonomyMode)) throw invalid('Unsupported autonomy mode.');
-    if (typeof killSwitch !== 'boolean') throw invalid('Policy runtime killSwitch must be boolean.');
-    if (!['closed', 'open', 'half_open'].includes(circuitBreakerState)) {
-      throw invalid('Unsupported circuit-breaker state.');
-    }
-    if (activePolicyVersionId) {
-      const version = this.requirePolicyVersion(context, activePolicyVersionId);
-      if (version.status !== 'enabled') {
-        throw stateConflict('Policy runtime can bind only an enabled immutable policy version.');
-      }
-    }
-    if (autonomyMode === 'policy_auto'
-      && (!activePolicyVersionId || killSwitch || circuitBreakerState !== 'closed')) {
-      throw stateConflict(
-        'Policy-auto requires an enabled policy version, kill switch off, and a closed circuit breaker.',
-      );
-    }
-    const updatedAt = nextTimestamp(current.updatedAt, this.now());
+    const context = normalizeStoreContextEnvelope(contextInput);
     const update = this.db.transaction(() => {
+      this.assertContext(context);
+      const current = this.getPolicyRuntime(context);
+      this.assertRevision(current.revision, input.expectedRevision, 'Policy runtime');
+      if (!input.patch || Object.keys(input.patch).length === 0) {
+        throw invalid('Policy runtime patch cannot be empty.');
+      }
+      const autonomyMode = input.patch.autonomyMode ?? current.autonomyMode;
+      const killSwitch = input.patch.killSwitch ?? current.killSwitch;
+      const circuitBreakerState = input.patch.circuitBreakerState ?? current.circuitBreakerState;
+      const activePolicyVersionId = input.patch.activePolicyVersionId === undefined
+        ? current.activePolicyVersionId ?? null
+        : optionalId(input.patch.activePolicyVersionId, 'activePolicyVersionId');
+      if (!['manual_approval', 'policy_auto'].includes(autonomyMode)) throw invalid('Unsupported autonomy mode.');
+      if (typeof killSwitch !== 'boolean') throw invalid('Policy runtime killSwitch must be boolean.');
+      if (!['closed', 'open', 'half_open'].includes(circuitBreakerState)) {
+        throw invalid('Unsupported circuit-breaker state.');
+      }
+      if (activePolicyVersionId) {
+        const version = this.requirePolicyVersion(context, activePolicyVersionId);
+        if (version.status !== 'enabled') {
+          throw stateConflict('Policy runtime can bind only an enabled immutable policy version.');
+        }
+      }
+      if (autonomyMode === 'policy_auto'
+        && (!activePolicyVersionId || killSwitch || circuitBreakerState !== 'closed')) {
+        throw stateConflict(
+          'Policy-auto requires an enabled policy version, kill switch off, and a closed circuit breaker.',
+        );
+      }
+      const updatedAt = nextTimestamp(current.updatedAt, this.now());
       const result = this.db.prepare(`
         UPDATE policy_runtime
         SET autonomy_mode = @autonomyMode,
@@ -960,6 +968,20 @@ export class MissionDomainRepository {
       });
       this.assertCas(result.changes, 'Policy runtime');
       const runtime = this.getPolicyRuntime(context);
+      // A mode/stop/policy round trip must never revive a previously issued grant.
+      const pendingGrants = this.db.prepare(`
+        SELECT id FROM mission_grants AS grants WHERE store_id = ?
+          AND NOT EXISTS (SELECT 1 FROM mission_grant_events AS events
+            WHERE events.store_id = grants.store_id AND events.grant_id = grants.id
+              AND events.event_type IN ('revoked', 'consumed', 'expired', 'invalidated'))
+      `).all(context.storeId) as Array<{ id: string }>;
+      for (const grant of pendingGrants) {
+        this.appendMissionGrantEvent(context, {
+          id: `grant-runtime-invalidated:${grant.id}:r${runtime.revision}`,
+          grantId: grant.id, eventType: 'invalidated', actorId: input.actorId,
+          reason: '执行模式或策略运行时已变化；请基于当前状态重新分析并签发授权。',
+        });
+      }
       this.appendPolicyAudit(context, {
         id: `causal:policy-runtime:${context.storeId}:r${runtime.revision}`,
         eventType: 'policy_runtime_updated', entityType: 'policy_runtime',
@@ -1183,6 +1205,7 @@ export class MissionDomainRepository {
     }
     const updatedAt = nextTimestamp(current.updatedAt, this.now());
     const transition = this.db.transaction(() => {
+      if (input.status === 'active') this.assertMissionMayCreateAuthority(context, current.id);
       const result = this.db.prepare(`
         UPDATE missions
         SET status = ?, phase = ?, revision = revision + 1, updated_at = ?
@@ -1275,6 +1298,27 @@ export class MissionDomainRepository {
     return { mission, checkpoints, links, decisions, experiments, grants, causalEvents };
   }
 
+  captureWriteAuthority(contextInput: StoreContextEnvelope): MissionWriteAuthoritySnapshot {
+    const context = this.assertContext(contextInput);
+    return createMissionWriteAuthoritySnapshot(context, this.getPolicyRuntime(context));
+  }
+
+  assertMissionMayCreateAuthority(contextInput: StoreContextEnvelope, missionId: string): void {
+    const context = this.assertContext(contextInput);
+    this.requireMission(context, missionId);
+    if (this.db.prepare(`SELECT 1 FROM ad_execution_batches batch
+      JOIN ad_execution_jobs job ON job.store_id=batch.store_id AND job.batch_id=batch.id
+      WHERE batch.store_id=? AND batch.mission_id=? AND job.status='unknown' LIMIT 1`).get(context.storeId, missionId)) {
+      throw stateConflict('本任务有执行结果未知的历史，仅可只读对账；后续操作请新建运营任务，重新分析、判断并取得执行授权。');
+    }
+  }
+
+  assertWriteAuthority(context: StoreContextEnvelope, authority: MissionWriteAuthoritySnapshot | undefined): void {
+    if (!missionWriteAuthorityMatches(authority, this.captureWriteAuthority(context))) {
+      throw stateConflict('店铺、会话或授权模式版本已变化，或记录仅为历史；请重新分析并逐条判断当前建议。');
+    }
+  }
+
   issueMissionGrant(
     contextInput: StoreContextEnvelope,
     input: CreateMissionGrantInput,
@@ -1290,6 +1334,7 @@ export class MissionDomainRepository {
       this.assertContext(context);
       const mission = this.requireMission(context, input.missionId);
       this.assertRevision(mission.revision, input.missionRevision, 'Mission');
+      this.assertMissionMayCreateAuthority(context, mission.id);
       if (mission.status !== 'active') {
         throw stateConflict('MissionGrant issuance requires an active Mission.');
       }
@@ -1323,15 +1368,18 @@ export class MissionDomainRepository {
       }
       const approvedDecisions = this.requireApprovedDecisionsForGrant(context, mission, input, issuedAt);
       const runtime = this.getPolicyRuntime(context);
+      const authority = this.captureWriteAuthority(context);
       if (runtime.killSwitch
         || runtime.circuitBreakerState !== 'closed'
         || !runtime.activePolicyVersionId
-        || (input.issuer.type === 'policy' && runtime.autonomyMode !== 'policy_auto')) {
+        || input.issuer.type !== authority.authorizationPath
+        || input.issuer.actorId !== (authority.authorizationPath === 'human' ? 'operator' : 'policy-engine')) {
         throw stateConflict(
           'MissionGrant issuer is blocked by autonomy mode, kill switch, circuit breaker, or an unarmed policy runtime.',
         );
       }
       this.assertGrantWithinPolicy(input, policyVersion, rules, issuedAt);
+      this.assertPolicyUsage(context, policyVersion.id, input.allowedAdEntityIds);
       if (Date.parse(input.expiresAt) <= Date.parse(issuedAt)) {
         throw invalid('MissionGrant expiresAt must be in the future.');
       }
@@ -1343,14 +1391,14 @@ export class MissionDomainRepository {
             max_change_pct, total_impact_budget, expires_at,
             policy_version_id, policy_revision, required_evidence_json,
             stop_conditions_json, issuer_type, issuer_actor_id,
-            issued_at, created_session_generation
+            issued_at, created_session_generation, authority_json
           ) VALUES (
             @id, @storeId, 'US', 'USD', @missionId, @missionRevision, @decisionIdsJson,
             @actionRevision, @allowedActionTypesJson, @allowedAdEntityIdsJson,
             @maxChangePct, @totalImpactBudget, @expiresAt,
             @policyVersionId, @policyRevision, @requiredEvidenceJson,
             @stopConditionsJson, @issuerType, @issuerActorId,
-            @issuedAt, @createdSessionGeneration
+            @issuedAt, @createdSessionGeneration, @authorityJson
           )
         `).run({
           id: grantId,
@@ -1372,6 +1420,7 @@ export class MissionDomainRepository {
           issuerActorId: idOf(input.issuer.actorId, 'issuer.actorId'),
           issuedAt,
           createdSessionGeneration: context.sessionGeneration,
+          authorityJson: json(authority),
         });
       } catch (error) {
         this.rethrowConstraint(error, 'MissionGrant identity or action revision already exists.');
@@ -1406,7 +1455,47 @@ export class MissionDomainRepository {
     const context = this.assertContext(contextInput);
     const row = this.db.prepare(`SELECT * FROM mission_grants WHERE store_id = ? AND id = ?`)
       .get(context.storeId, idOf(idInput, 'grantId')) as GrantRow | undefined;
-    return row ? mapGrant(row) : undefined;
+    return row ? this.projectGrant(context, row) : undefined;
+  }
+
+  /** Called inside the issuance/submit-intent IMMEDIATE transaction. Unused grants spend nothing. */
+  assertPolicyUsage(contextInput: StoreContextEnvelope, policyVersionId: string, entityIds: readonly string[]): void {
+    const context = this.assertContext(contextInput);
+    const policy = this.requirePolicyVersion(context, policyVersionId);
+    let rules: PolicyVersionRules;
+    try { rules = rulesOf(policy.rules); }
+    catch { throw stateConflict('当前策略版本缺少有效的每日动作数、冷却期或执行窗口；请新建并启用完整策略版本。'); }
+    const window = rules.executionWindow;
+    if (window.timeZone !== context.businessTimezone) {
+      throw stateConflict('策略执行窗口时区与当前店铺业务时区不一致；请新建并启用正确的店铺策略版本。');
+    }
+    const now = this.now();
+    const localNow = localPolicyClock(now, window.timeZone);
+    if (!window.daysOfWeek.includes(localNow.dayOfWeek)
+      || localNow.minuteOfDay < wallClockMinutes(window.start)
+      || localNow.minuteOfDay >= wallClockMinutes(window.end)) {
+      throw stateConflict(`当前不在策略执行窗口内（${window.timeZone} ${window.start}-${window.end}）。`);
+    }
+    const targets = new Set(entityIds.map(id => idOf(id, 'adEntityId')));
+    if (!targets.size || targets.size !== entityIds.length) throw invalid('Policy usage requires unique action targets.');
+    // An unresolved intent occupies capacity. A confirmed zero-click action releases its
+    // reservation; a spent/UNKNOWN slot remains charged regardless of later readback.
+    const slots = this.db.prepare(`
+      SELECT events.created_at AS reservedAt, job.ad_entity_id AS entityId
+      FROM mission_grant_events events
+      JOIN ad_execution_jobs job ON job.store_id=events.store_id AND job.id=events.job_id
+      WHERE events.store_id=? AND events.event_type='reserved'
+        AND (job.status='intent_written' OR EXISTS (SELECT 1 FROM mission_grant_events spent
+          WHERE spent.store_id=events.store_id AND spent.job_id=events.job_id AND spent.event_type='spent'))
+    `).all(context.storeId) as Array<{ reservedAt: string; entityId: string }>;
+    const usedToday = slots.filter(slot => localPolicyClock(new Date(slot.reservedAt), window.timeZone).businessDate === localNow.businessDate).length;
+    if (usedToday + targets.size > rules.maxDailyActionCount) {
+      throw stateConflict(`策略单日动作数将超限：已占用 ${usedToday}，本次 ${targets.size}，上限 ${rules.maxDailyActionCount}。`);
+    }
+    if (rules.cooldownMinutes > 0 && slots.some(slot => targets.has(slot.entityId)
+      && Date.parse(slot.reservedAt) > now.getTime() - rules.cooldownMinutes * 60_000)) {
+      throw stateConflict(`至少一个关键词仍在 ${rules.cooldownMinutes} 分钟冷却期内；请等待后重新分析。`);
+    }
   }
 
   listMissionGrants(contextInput: StoreContextEnvelope, missionIdInput: string): MissionGrantRecord[] {
@@ -1416,7 +1505,31 @@ export class MissionDomainRepository {
     return (this.db.prepare(`
       SELECT * FROM mission_grants WHERE store_id = ? AND mission_id = ?
       ORDER BY action_revision DESC, issued_at DESC, id
-    `).all(context.storeId, missionId) as GrantRow[]).map(mapGrant);
+    `).all(context.storeId, missionId) as GrantRow[]).map(row => this.projectGrant(context, row));
+  }
+
+  private projectGrant(context: StoreContextEnvelope, row: GrantRow): MissionGrantRecord {
+    const grant = mapGrant(row);
+    const events = this.db.prepare(`SELECT events.*, job.status AS job_status FROM mission_grant_events events
+      LEFT JOIN ad_execution_jobs job ON job.store_id=events.store_id AND job.id=events.job_id
+      WHERE events.store_id=? AND events.grant_id=?
+      ORDER BY CASE events.event_type WHEN 'invalidated' THEN 4 WHEN 'revoked' THEN 3 WHEN 'expired' THEN 2 WHEN 'consumed' THEN 1 ELSE 0 END DESC,
+        events.created_at DESC, events.id DESC`).all(context.storeId, grant.id) as Array<Record<string, unknown>>;
+    const terminal = events.find(event => ['invalidated','revoked','expired','consumed'].includes(String(event.event_type)));
+    const reserved = events.filter(event => event.event_type === 'reserved' && event.job_status === 'intent_written');
+    const spent = events.filter(event => event.event_type === 'spent');
+    let status: NonNullable<MissionGrantRecord['usage']>['status'] = 'available';
+    try { this.assertWriteAuthority(context, grant.authority); } catch { status = 'historical'; }
+    if (terminal) status = terminal.event_type as MissionGrantTerminalEventType;
+    else if (Date.parse(grant.expiresAt) <= this.now().getTime()) status = 'expired';
+    const spentImpactCents = spent.reduce((sum, event) => sum + Number(event.impact_cents), 0);
+    const reservedImpactCents = reserved.reduce((sum, event) => sum + Number(event.impact_cents), 0);
+    return { ...grant, usage: {
+      contractVersion: 'grant-usage/1', status, totalSlots: grant.allowedAdEntityIds.length,
+      reservedSlots: reserved.length, spentSlots: spent.length, spentImpactCents,
+      residualSlots: status === 'available' ? Math.max(0, grant.allowedAdEntityIds.length - reserved.length - spent.length) : 0,
+      residualImpactCents: status === 'available' ? Math.max(0, Math.round(grant.totalImpactBudget * 100) - reservedImpactCents - spentImpactCents) : 0,
+    } };
   }
 
   listMissionGrantEvents(
@@ -1434,7 +1547,7 @@ export class MissionDomainRepository {
         AND grants.id = events.grant_id
       WHERE events.store_id = ? AND grants.mission_id = ?
       ORDER BY events.created_at DESC,
-        CASE events.event_type WHEN 'issued' THEN 0 ELSE 1 END DESC,
+        CASE events.event_type WHEN 'invalidated' THEN 6 WHEN 'revoked' THEN 5 WHEN 'expired' THEN 4 WHEN 'consumed' THEN 3 WHEN 'spent' THEN 2 WHEN 'reserved' THEN 1 ELSE 0 END DESC,
         events.id DESC
     `).all(context.storeId, missionId) as Record<string, unknown>[]).map(mapGrantEvent);
   }
@@ -1448,8 +1561,8 @@ export class MissionDomainRepository {
     const row = this.db.prepare(`
       SELECT * FROM mission_grant_events
       WHERE store_id = ? AND grant_id = ?
-        AND event_type IN ('revoked', 'consumed', 'expired')
-      ORDER BY created_at DESC, id DESC
+        AND event_type IN ('revoked', 'consumed', 'expired', 'invalidated')
+      ORDER BY CASE event_type WHEN 'invalidated' THEN 3 WHEN 'revoked' THEN 2 WHEN 'expired' THEN 1 ELSE 0 END DESC, created_at DESC, id DESC
       LIMIT 1
     `).get(context.storeId, grant.id) as Record<string, unknown> | undefined;
     return row ? mapGrantEvent(row) : undefined;
@@ -1465,7 +1578,7 @@ export class MissionDomainRepository {
       const grant = this.requireMissionGrant(context, input.grantId);
       const existingTerminal = this.db.prepare(`
         SELECT event_type FROM mission_grant_events
-        WHERE store_id = ? AND grant_id = ? AND event_type IN ('revoked', 'consumed', 'expired')
+        WHERE store_id = ? AND grant_id = ? AND event_type IN ('revoked', 'consumed', 'expired', 'invalidated')
         ORDER BY created_at DESC, id LIMIT 1
       `).get(context.storeId, grant.id) as { event_type: string } | undefined;
       if (existingTerminal) throw stateConflict(`MissionGrant is already ${existingTerminal.event_type}.`);
@@ -1503,28 +1616,31 @@ export class MissionDomainRepository {
   }
 
   createDecision(contextInput: StoreContextEnvelope, input: CreateDecisionInput): DecisionRecord {
-    const context = this.assertContext(contextInput);
-    const mission = this.requireMission(context, input.missionId);
-    if (['completed', 'archived'].includes(mission.status)) throw stateConflict('Mission is closed to new decisions.');
-    if (mission.dataBatchId !== idOf(input.dataBatchId, 'dataBatchId')) {
-      throw referenceConflict('Decision data batch must match its Mission lineage.');
-    }
-    if (mission.policyVersionId !== idOf(input.policyVersionId, 'policyVersionId')) {
-      throw referenceConflict('Decision policy version must match its Mission lineage.');
-    }
-    const policyVersion = this.requirePolicyVersion(context, input.policyVersionId);
-    this.assertRevision(policyVersion.revision, input.policyRevision, 'Policy version');
-    const id = idOf(input.id, 'decisionId');
-    const decisionProductId = input.productId === undefined
-      ? mission.productId
-      : optionalId(input.productId, 'productId');
-    if (decisionProductId !== mission.productId) {
-      throw referenceConflict('Decision product must match its Mission product lineage.');
-    }
-    if (decisionProductId) this.assertProduct(context, decisionProductId);
-    if (input.adEntityId) this.assertAdEntity(context, input.adEntityId);
-    const now = this.timestamp();
+    const context = normalizeStoreContextEnvelope(contextInput);
     const create = this.db.transaction(() => {
+      this.assertContext(context);
+      const mission = this.requireMission(context, input.missionId);
+      this.assertMissionMayCreateAuthority(context, mission.id);
+      if (['completed', 'archived'].includes(mission.status)) throw stateConflict('Mission is closed to new decisions.');
+      if (mission.dataBatchId !== idOf(input.dataBatchId, 'dataBatchId')) {
+        throw referenceConflict('Decision data batch must match its Mission lineage.');
+      }
+      if (mission.policyVersionId !== idOf(input.policyVersionId, 'policyVersionId')) {
+        throw referenceConflict('Decision policy version must match its Mission lineage.');
+      }
+      const policyVersion = this.requirePolicyVersion(context, input.policyVersionId);
+      this.assertRevision(policyVersion.revision, input.policyRevision, 'Policy version');
+      const id = idOf(input.id, 'decisionId');
+      const decisionProductId = input.productId === undefined
+        ? mission.productId
+        : optionalId(input.productId, 'productId');
+      if (decisionProductId !== mission.productId) {
+        throw referenceConflict('Decision product must match its Mission product lineage.');
+      }
+      if (decisionProductId) this.assertProduct(context, decisionProductId);
+      if (input.adEntityId) this.assertAdEntity(context, input.adEntityId);
+      const now = this.timestamp();
+      const authority = this.captureWriteAuthority(context);
       try {
         this.db.prepare(`
           INSERT INTO decisions (
@@ -1532,13 +1648,13 @@ export class MissionDomainRepository {
             policy_revision, action_revision, title, rationale, recommendation,
             facts_json, alternatives_json, expected_effect, valid_until,
             action_type, ad_entity_id, product_id, current_value_json,
-            recommended_value_json, confidence, status, revision, created_at, updated_at
+            recommended_value_json, confidence, status, revision, created_at, updated_at, authority_json
           ) VALUES (
             @id, @storeId, @missionId, @dataBatchId, @policyVersionId,
             @policyRevision, @actionRevision, @title, @rationale, @recommendation,
             @factsJson, @alternativesJson, @expectedEffect, @validUntil,
             @actionType, @adEntityId, @productId, @currentValueJson,
-            @recommendedValueJson, @confidence, @status, 1, @createdAt, @updatedAt
+            @recommendedValueJson, @confidence, @status, 1, @createdAt, @updatedAt, @authorityJson
           )
         `).run({
           id,
@@ -1551,6 +1667,7 @@ export class MissionDomainRepository {
           title: textOf(input.title, 'title', 300),
           rationale: textOf(input.rationale, 'rationale', 4_000),
           recommendation: textOf(input.recommendation, 'recommendation', 2_000),
+          authorityJson: json(authority),
           factsJson: json(listOf(input.facts, 'facts', true)),
           alternativesJson: json(listOf(input.alternatives, 'alternatives', true)),
           expectedEffect: input.expectedEffect === undefined
@@ -1680,19 +1797,25 @@ export class MissionDomainRepository {
   }
 
   resolveDecision(contextInput: StoreContextEnvelope, input: ResolveDecisionInput): DecisionRecord {
-    const context = this.assertContext(contextInput);
-    const current = this.requireDecision(context, input.id);
-    this.assertRevision(current.revision, input.expectedRevision, 'Decision');
-    const allowed = input.status === 'executed'
-      ? current.status === 'approved'
-      : input.status === 'verified'
-        ? current.status === 'executed'
-        : ['proposed', 'needs_approval', 'blocked'].includes(current.status);
-    if (!allowed) throw stateConflict(`Decision cannot transition from ${current.status} to ${input.status}.`);
-    const actorId = idOf(input.actorId, 'actorId');
-    const reason = textOf(input.reason, 'reason', 2_000);
-    const now = nextTimestamp(current.updatedAt, this.now());
+    const context = normalizeStoreContextEnvelope(contextInput);
     const resolve = this.db.transaction(() => {
+      this.assertContext(context);
+      const current = this.requireDecision(context, input.id);
+      this.assertRevision(current.revision, input.expectedRevision, 'Decision');
+      const allowed = input.status === 'executed'
+        ? current.status === 'approved'
+        : input.status === 'verified'
+          ? current.status === 'executed'
+          : ['proposed', 'needs_approval', 'blocked'].includes(current.status);
+      if (!allowed) throw stateConflict(`Decision cannot transition from ${current.status} to ${input.status}.`);
+      const actorId = idOf(input.actorId, 'actorId');
+      const reason = textOf(input.reason, 'reason', 2_000);
+      if (input.status === 'approved' || input.status === 'rejected') {
+        this.assertWriteAuthority(context, current.authority);
+        const expectedActor = current.authority!.authorizationPath === 'human' ? 'operator' : 'policy-engine';
+        if (actorId !== expectedActor) throw stateConflict('判断来源与当前授权模式不一致；请刷新并使用对应的人工或策略流程。');
+      }
+      const now = nextTimestamp(current.updatedAt, this.now());
       const result = this.db.prepare(`
         UPDATE decisions
         SET status = ?, revision = revision + 1, updated_at = ?
@@ -1958,9 +2081,9 @@ export class MissionDomainRepository {
         && (current.status === 'draft' || !hasPriorRunningEvent)
         ? this.requireVerifiedExperimentBaseline(context, current)
         : undefined;
-      if (trustedBaseline && usesCanonicalExperimentMetrics(current)) {
+      if (trustedBaseline) {
         const mission = this.requireMission(context, current.missionId);
-        this.captureExperimentMetrics(context, current, mission.dataBatchId, 'baseline', now);
+        this.captureExperimentMetrics(context, current, mission.dataBatchId, 'baseline', now, String(trustedBaseline.adEntityAuthorityId));
       }
       const result = this.db.prepare(`
         UPDATE experiments
@@ -2360,6 +2483,11 @@ export class MissionDomainRepository {
         AND lower(trim(event.status)) NOT IN ('unknown', 'still_unknown')
         AND lower(trim(event.event_type)) NOT LIKE '%unknown%'
         AND NOT EXISTS (
+          SELECT 1 FROM legacy_record_classifications legacy
+          WHERE legacy.store_id=event.store_id AND legacy.source_table='causal_events'
+            AND legacy.record_id=event.id AND legacy.classification<>'validated-compatible'
+        )
+        AND NOT EXISTS (
           SELECT 1
           FROM causal_events correction
           WHERE correction.store_id = event.store_id
@@ -2373,6 +2501,11 @@ export class MissionDomainRepository {
             AND proof.sha256 IS NOT NULL
             AND length(proof.sha256) = 64
             AND lower(proof.sha256) NOT GLOB '*[^0-9a-f]*'
+            AND NOT EXISTS (
+              SELECT 1 FROM legacy_record_classifications legacy
+              WHERE legacy.store_id=proof.store_id AND legacy.source_table='evidence_refs'
+                AND legacy.record_id=proof.id AND legacy.classification<>'validated-compatible'
+            )
         )
       ORDER BY event.business_date DESC, event.sequence DESC, event.id DESC
       LIMIT ?
@@ -2464,7 +2597,7 @@ export class MissionDomainRepository {
     return mapEvidenceRef(row);
   }
 
-  private assertContext(contextInput: StoreContextEnvelope): StoreContextEnvelope {
+  assertContext(contextInput: StoreContextEnvelope): StoreContextEnvelope {
     let context: StoreContextEnvelope;
     try {
       context = normalizeStoreContextEnvelope(contextInput);
@@ -2943,7 +3076,7 @@ export class MissionDomainRepository {
     const row = this.db.prepare(`SELECT * FROM mission_grants WHERE store_id = ? AND id = ?`)
       .get(context.storeId, id) as GrantRow | undefined;
     if (!row) throw notFound(`MissionGrant ${id} was not found in store ${context.storeId}.`);
-    return mapGrant(row);
+    return this.projectGrant(context, row);
   }
 
   private requireDecision(context: StoreContextEnvelope, idInput: string): DecisionRecord {
@@ -2960,8 +3093,29 @@ export class MissionDomainRepository {
     input: CreateMissionGrantInput,
     issuedAt: string,
   ): DecisionRecord[] {
+    const latestBatch = this.db.prepare(`SELECT id,action_revision,authority_json FROM analysis_action_batches
+      WHERE store_id=? AND mission_id=? ORDER BY action_revision DESC LIMIT 1`)
+      .get(context.storeId, mission.id) as { id: string; action_revision: number; authority_json: string | null } | undefined;
+    if (!latestBatch || latestBatch.action_revision !== input.actionRevision) {
+      throw referenceConflict('授权必须来自当前任务的最新完整分析批次，请重新分析。');
+    }
+    this.assertWriteAuthority(context, latestBatch.authority_json ? parseJson(latestBatch.authority_json) : undefined);
+    const linkedDecisions = this.db.prepare(`SELECT links.decision_id AS id FROM analysis_proposal_snapshots proposal
+      LEFT JOIN analysis_proposal_decision_links links ON links.store_id=proposal.store_id AND links.proposal_id=proposal.id
+      WHERE proposal.store_id=? AND proposal.action_batch_id=?`).all(context.storeId, latestBatch.id) as Array<{ id: string | null }>;
+    if (!linkedDecisions.length || linkedDecisions.some(row => !row.id)
+      || !sameStringSet(input.decisionIds, linkedDecisions.map(row => row.id!))) {
+      throw referenceConflict('授权必须覆盖最新分析批次的全部判断，禁止拆批或组合授权。');
+    }
     const decisions = input.decisionIds.map((decisionId) => this.requireDecision(context, decisionId));
     for (const decision of decisions) {
+      this.assertWriteAuthority(context, decision.authority);
+      const approval = this.listDecisionHistory(context, decision.id)
+        .find(event => event.eventType === 'approved' && event.decisionRevision === decision.revision);
+      if (!approval?.reason?.trim() || approval.actorId !== input.issuer.actorId
+        || decision.authority!.authorizationPath !== input.issuer.type) {
+        throw stateConflict('每条判断必须具有同一授权路径的当前批准和业务原因，禁止混合人工与策略判断。');
+      }
       if (decision.missionId !== mission.id || decision.dataBatchId !== mission.dataBatchId) {
         throw referenceConflict('Every MissionGrant Decision must match the Mission and data-batch lineage.');
       }
@@ -3061,6 +3215,26 @@ export class MissionDomainRepository {
     if (!verifiedHistory) {
       throw referenceConflict('已验证决策缺少不可变回读历史；请先完成账本对账。');
     }
+    if (Date.parse(experiment.observationStartsAt) < Date.parse(verifiedHistory.createdAt)) {
+      throw stateConflict('实验观察起点不能早于已验证的竞价干预；请重新设置观察窗口。');
+    }
+    const proposals = this.db.prepare(`
+      SELECT proposal.ad_entity_authority_id AS authorityId
+      FROM analysis_proposal_decision_links link
+      JOIN analysis_proposal_snapshots proposal ON proposal.store_id = link.store_id AND proposal.id = link.proposal_id
+      JOIN verified_ad_entity_authority verified ON verified.store_id = proposal.store_id
+        AND verified.authority_id = proposal.ad_entity_authority_id
+        AND verified.ad_entity_id = proposal.ad_entity_id AND verified.entity_revision = proposal.ad_entity_revision
+      JOIN analysis_evidence_packages evidence ON evidence.store_id = verified.store_id AND evidence.id = verified.evidence_package_id
+      WHERE link.store_id = ? AND link.decision_id = ? AND proposal.mission_id = ?
+        AND proposal.action_revision = ? AND proposal.ad_entity_id = ? AND proposal.data_batch_id = ?
+        AND evidence.data_batch_id = proposal.data_batch_id
+        AND proposal.current_bid_cents = ? AND proposal.proposed_bid_cents = ?
+    `).all(context.storeId, decision.id, mission.id, decision.actionRevision, experiment.adEntityId,
+      mission.dataBatchId, Math.round(currentBidUsd * 100), Math.round(appliedBidUsd * 100)) as Array<{ authorityId: string }>;
+    if (proposals.length !== 1) {
+      throw referenceConflict('已验证决策缺少唯一的原始分析对象快照；请先完成证据对账。');
+    }
     return {
       source: 'verified_ads_readback',
       decisionId: decision.id,
@@ -3069,6 +3243,7 @@ export class MissionDomainRepository {
       dataBatchId: decision.dataBatchId,
       productId: experiment.productId,
       adEntityId: experiment.adEntityId,
+      adEntityAuthorityId: proposals[0].authorityId,
       currentBidUsd,
       appliedBidUsd,
       verifiedAt: verifiedHistory.createdAt,
@@ -3083,14 +3258,18 @@ export class MissionDomainRepository {
     dataBatchId: string,
     phase: 'baseline' | 'result',
     createdAt: string,
+    baselineAuthorityId?: string,
   ): void {
+    validateExperimentMeasurementContract(experiment.primaryMetric, experiment.guardrailMetrics, experiment.guardrailCriteria);
+    const importRunId = this.requireCompletedDataBatch(context, dataBatchId, true);
     const rows = this.db.prepare(`
       SELECT verified.entity_revision AS entityRevision,
-             metrics.clicks AS clicks,
-             metrics.cost AS cost,
-             metrics.orders AS orders,
-             metrics.sales AS sales,
+             SUM(metrics.clicks) AS clicks,
+             SUM(metrics.cost) AS cost,
+             SUM(metrics.orders) AS orders,
+             SUM(metrics.sales) AS sales,
              metrics.currency AS currency,
+             batch.date_start AS dateStart,
              batch.date_end AS dateEnd
       FROM verified_ad_entity_authority verified
       JOIN analysis_evidence_packages evidence
@@ -3108,12 +3287,23 @@ export class MissionDomainRepository {
        AND snapshots.report_type = verified.source_report_type
        AND snapshots.file_hash = verified.source_file_hash
        AND snapshots.report_file_id IS NOT NULL
+      JOIN ad_daily_metrics anchor
+        ON anchor.store_id = evidence.store_id
+       AND anchor.batch_id = evidence.data_batch_id
+       AND anchor.report_type = verified.source_report_type
+       AND anchor.source_file = snapshots.file_path
+       AND anchor.source_row = verified.source_row
+       AND anchor.store_authority_quarantined = 0
       JOIN ad_daily_metrics metrics
         ON metrics.store_id = evidence.store_id
        AND metrics.batch_id = evidence.data_batch_id
        AND metrics.report_type = verified.source_report_type
        AND metrics.source_file = snapshots.file_path
-       AND metrics.source_row = verified.source_row
+       AND lower(trim(COALESCE(metrics.match_type, ''))) = lower(trim(COALESCE(anchor.match_type, '')))
+       AND upper(trim(metrics.asin)) = upper(trim(anchor.asin))
+       AND lower(trim(metrics.campaign_name)) = lower(trim(anchor.campaign_name))
+       AND lower(trim(metrics.ad_group_name)) = lower(trim(anchor.ad_group_name))
+       AND lower(trim(metrics.targeting)) = lower(trim(anchor.targeting))
        AND metrics.store_authority_quarantined = 0
       JOIN lingxing_report_batches batch
         ON batch.store_id = evidence.store_id
@@ -3124,6 +3314,15 @@ export class MissionDomainRepository {
         AND verified.entity_type = 'keyword'
         AND verified.source_report_type = 'keyword'
         AND evidence.data_batch_id = ?
+        AND evidence.import_run_id = ?
+        AND (? IS NULL OR verified.authority_id = ?)
+        AND (? IS NOT NULL OR NOT EXISTS (
+          SELECT 1 FROM verified_ad_entity_authority newer
+          JOIN analysis_evidence_packages newer_evidence ON newer_evidence.store_id = newer.store_id
+            AND newer_evidence.id = newer.evidence_package_id
+          WHERE newer.store_id = verified.store_id AND newer.ad_entity_id = verified.ad_entity_id
+            AND newer_evidence.data_batch_id = evidence.data_batch_id AND newer.entity_revision > verified.entity_revision
+        ))
         AND upper(trim(metrics.asin)) = upper(trim(?))
         AND lower(trim(metrics.campaign_name)) = lower(trim(verified.campaign_name))
         AND lower(trim(metrics.ad_group_name)) = lower(trim(verified.ad_group_name))
@@ -3132,14 +3331,18 @@ export class MissionDomainRepository {
           SELECT 1
           FROM store_migration_quarantine quarantine
           WHERE quarantine.source_table = 'ad_daily_metrics'
-            AND quarantine.source_row_id = CAST(metrics.id AS TEXT)
+            AND quarantine.source_row_id IN (CAST(metrics.id AS TEXT), CAST(anchor.id AS TEXT))
             AND quarantine.status = 'pending'
         )
+      GROUP BY verified.authority_id, verified.entity_revision, metrics.currency, batch.date_start, batch.date_end
+      HAVING COUNT(DISTINCT anchor.id) = 1 AND COUNT(*) = COUNT(DISTINCT metrics.date)
       ORDER BY verified.entity_revision DESC, verified.authority_id DESC
     `).all(
       context.storeId,
       experiment.adEntityId,
       dataBatchId,
+      importRunId,
+      baselineAuthorityId ?? null, baselineAuthorityId ?? null, baselineAuthorityId ?? null,
       experiment.productId,
     ) as ExperimentMetricSourceRow[];
     if (rows.length !== 1) {
@@ -3149,15 +3352,19 @@ export class MissionDomainRepository {
     if (row.currency !== 'USD') {
       throw referenceConflict('经营实验 V1 只接受当前美国站 USD 指标；请检查报表币种后重试。');
     }
-    const observedAt = timestampOf(
-      `${row.dateEnd}T23:59:59.999Z`,
-      phase === 'baseline' ? 'baselineObservedAt' : 'resultObservedAt',
-    );
+    const observedAt = businessDayEnd(row.dateEnd, context.businessTimezone);
+    if (Date.parse(observedAt) > Date.parse(createdAt)) {
+      throw stateConflict('报表所含美国业务日尚未结束，不能形成完整实验指标；请等待并导入已完成业务日。');
+    }
     if (phase === 'baseline' && Date.parse(observedAt) > Date.parse(experiment.observationStartsAt)) {
       throw stateConflict('当前任务批次晚于实验观察起点，不能作为基线；请重新设置观察窗口。');
     }
     if (phase === 'result' && Date.parse(observedAt) < Date.parse(experiment.observationEndsAt)) {
       throw stateConflict('最新完成批次尚未覆盖实验观察终点；请等待并导入观察窗结束后的报表。');
+    }
+    if (phase === 'result' && (row.dateStart !== localPolicyClock(new Date(experiment.observationStartsAt), context.businessTimezone).businessDate
+      || row.dateEnd !== localPolicyClock(new Date(Date.parse(experiment.observationEndsAt) - 1), context.businessTimezone).businessDate)) {
+      throw stateConflict('结果批次必须精确覆盖观察窗口对应的美国业务日；请按实验窗口重新采集完整报表。');
     }
     const requiredMetrics = [...new Set([experiment.primaryMetric, ...experiment.guardrailMetrics])];
     requiredMetrics.forEach((metric, index) => {
@@ -3265,7 +3472,7 @@ export class MissionDomainRepository {
     `).get(
       context.storeId,
       mission.dataBatchId,
-      experiment.observationEndsAt.slice(0, 10),
+      localPolicyClock(new Date(Date.parse(experiment.observationEndsAt) - 1), context.businessTimezone).businessDate,
     ) as { batchId: string } | undefined;
     if (!row) {
       throw stateConflict('观察窗结束后还没有新的已完成导入；请先采集并导入覆盖观察终点的 8 类报表。');
@@ -3357,13 +3564,13 @@ export class MissionDomainRepository {
     return mapCausalEvent(row);
   }
 
-  private requireCompletedDataBatch(context: StoreContextEnvelope, idInput: string): void {
+  private requireCompletedDataBatch(context: StoreContextEnvelope, idInput: string, requireFormal = false): string | undefined {
     const id = idOf(idInput, 'dataBatchId');
     const row = this.db.prepare(`
-      SELECT status, request_id AS requestId
+      SELECT status, request_id AS requestId, date_end AS dateEnd
       FROM lingxing_report_batches
       WHERE store_id = ? AND id = ?
-    `).get(context.storeId, id) as { status: string; requestId: string | null } | undefined;
+    `).get(context.storeId, id) as { status: string; requestId: string | null; dateEnd: string } | undefined;
     if (!row) throw referenceConflict(`Data batch ${id} does not belong to store ${context.storeId}.`);
     if (row.status !== 'completed') throw stateConflict(`Data batch ${id} is ${row.status}; Mission authority requires completed data.`);
 
@@ -3405,7 +3612,25 @@ export class MissionDomainRepository {
     // Existing non-formal fixture/legacy batches can still be referenced by
     // local-only records, but a batch claiming exact-eight formal authority
     // must prove the Main-owned production collection root below.
-    if (!exactImport) return;
+    if (!exactImport) {
+      if (requireFormal) throw stateConflict('经营实验需要同批次完整 8 类报表入库与对账；请先完成正式采集。');
+      return;
+    }
+    if (requireFormal) {
+      const latest = this.db.prepare(`SELECT run_id AS runId FROM report_import_runs
+        WHERE store_id=? AND batch_id=? AND status='completed'
+        ORDER BY completed_at DESC, created_at DESC, run_id DESC LIMIT 1`).get(context.storeId, id) as { runId: string };
+      const reconciliations = this.db.prepare(`SELECT report_type AS reportType, metric_date AS metricDate,
+        status, within_tolerance AS withinTolerance, expected_rows AS expectedRows, actual_rows AS actualRows
+        FROM report_import_reconciliations WHERE store_id=? AND run_id=? AND batch_id=?`)
+        .all(context.storeId, exactImport.runId, id) as Array<{ reportType: string; metricDate: string; status: string; withinTolerance: number; expectedRows: number; actualRows: number }>;
+      if (latest.runId !== exactImport.runId || reconciliations.length !== 8
+        || new Set(reconciliations.map(item => item.reportType)).size !== 8
+        || reconciliations.some(item => !exactReportTypes.includes(item.reportType as typeof exactReportTypes[number])
+          || item.metricDate !== row.dateEnd || item.status !== 'matched' || item.withinTolerance !== 1 || item.expectedRows !== item.actualRows)) {
+        throw stateConflict('最新导入缺少完整八报表对账，不能沿用旧批次快照；请重新采集并核对。');
+      }
+    }
 
     const jobRow = this.db.prepare(`
       SELECT snapshot_json AS snapshotJson
@@ -3472,6 +3697,7 @@ export class MissionDomainRepository {
         + '请先启动完整 8 类采集并等待入库成功。',
       );
     }
+    return exactImport.runId;
   }
 
   private insertMissionEvent(
@@ -3642,7 +3868,7 @@ export class MissionDomainRepository {
     type: MissionLinkType,
     targetId: string,
   ): void {
-    if (type === 'data_batch') return this.requireCompletedDataBatch(context, targetId);
+    if (type === 'data_batch') { this.requireCompletedDataBatch(context, targetId); return; }
     if (type === 'policy_version') { this.requirePolicyVersion(context, targetId); return; }
     if (type === 'decision') { this.requireDecision(context, targetId); return; }
     if (type === 'experiment') { this.requireExperiment(context, targetId); return; }
@@ -3801,6 +4027,7 @@ function mapMissionCheckpoint(row: Record<string, unknown>): MissionCheckpointRe
 
 function mapGrant(row: GrantRow): MissionGrantRecord {
   return {
+    authority: row.authority_json ? parseJson(row.authority_json) : undefined,
     id: row.id,
     storeId: row.store_id as MissionGrantRecord['storeId'],
     marketplace: row.marketplace,
@@ -3826,6 +4053,7 @@ function mapGrant(row: GrantRow): MissionGrantRecord {
 
 function mapGrantEvent(row: Record<string, unknown>): MissionGrantEventRecord {
   return {
+    ...(row.job_id ? { slot: { jobId: String(row.job_id), submitIntentId: String(row.submit_intent_id), impactCents: Number(row.impact_cents) } } : {}),
     id: String(row.id),
     storeId: String(row.store_id) as MissionGrantEventRecord['storeId'],
     grantId: String(row.grant_id),
@@ -3838,6 +4066,7 @@ function mapGrantEvent(row: Record<string, unknown>): MissionGrantEventRecord {
 
 function mapDecision(row: DecisionRow): DecisionRecord {
   return {
+    authority: row.authority_json ? parseJson(row.authority_json) : undefined,
     id: row.id,
     storeId: row.store_id as DecisionRecord['storeId'],
     missionId: row.mission_id,
@@ -4122,6 +4351,38 @@ function wallClockMinutes(value: string): number {
   return (hours * 60) + minutes;
 }
 
+function localPolicyClock(date: Date, timeZone: string): {
+  businessDate: string;
+  dayOfWeek: number;
+  minuteOfDay: number;
+} {
+  if (!Number.isFinite(date.getTime())) throw new Error('Grant slot reservation time is invalid.');
+  const parts = new Intl.DateTimeFormat('en-US-u-ca-gregory', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string => (
+    parts.find((item) => item.type === type)?.value ?? ''
+  );
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(part('weekday'));
+  const hours = Number(part('hour'));
+  const minutes = Number(part('minute'));
+  if (weekday < 0 || !Number.isSafeInteger(hours) || !Number.isSafeInteger(minutes)) {
+    throw new Error('Policy execution-window clock could not be resolved.');
+  }
+  return {
+    businessDate: `${part('year')}-${part('month')}-${part('day')}`,
+    dayOfWeek: weekday,
+    minuteOfDay: (hours * 60) + minutes,
+  };
+}
+
 function assertMissionTransition(from: MissionLifecycleStatus, to: MissionLifecycleStatus): void {
   if (from === to) return;
   const allowed: Record<MissionLifecycleStatus, readonly MissionLifecycleStatus[]> = {
@@ -4259,18 +4520,26 @@ function validateExperimentMeasurementContract(
     throw invalid('每个经营实验守护指标必须且只能对应一个判断标准；请补齐或删除多余标准后重试。');
   }
   guardrailCriteria.forEach((criterion, index) => {
-    const parsed = criterion.match(/(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*%\s*$/);
-    const threshold = Number(parsed?.[2]);
-    if (!parsed || !Number.isFinite(threshold) || threshold < 0) {
+    const parsed = criterion.trim().match(/^(.*?)\s*(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*%$/);
+    const threshold = Number(parsed?.[3]);
+    if (!parsed || parsed[1].trim().toLocaleUpperCase('en-US') !== guardrailMetrics[index].trim().toLocaleUpperCase('en-US')
+      || !Number.isFinite(threshold) || threshold < 0) {
       throw invalid(`守护标准“${criterion}”无法安全解析；请使用例如“${guardrailMetrics[index]} >= 95%”的基线比例格式。`);
     }
   });
 }
 
-function usesCanonicalExperimentMetrics(experiment: ExperimentRecord): boolean {
-  const supported = new Set(['ACOS', 'CVR', '广告订单', '花费', 'TACOS']);
-  return [experiment.primaryMetric, ...experiment.guardrailMetrics]
-    .every((metric) => supported.has(metric.trim().toLocaleUpperCase('en-US')));
+export function businessDayEnd(date: string, timeZone: string): string {
+  const nextMidnight = Date.parse(timestampOf(`${date}T00:00:00.000Z`, 'report business date')) + 86_400_000;
+  let candidate = nextMidnight;
+  // Resolve local midnight using the existing IANA clock, including DST changes.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const local = localPolicyClock(new Date(candidate), timeZone);
+    const represented = Date.parse(`${local.businessDate}T00:00:00.000Z`) + local.minuteOfDay * 60_000;
+    if (represented === nextMidnight) return new Date(candidate).toISOString();
+    candidate += nextMidnight - represented;
+  }
+  throw referenceConflict('无法确定报表业务日边界；请检查店铺时区。');
 }
 
 function compareExperimentGuardrail(actual: number, comparator: string, threshold: number): boolean {
@@ -4331,7 +4600,8 @@ function optionalSha256(value: unknown): string | null {
 function nextTimestamp(previous: string, now: Date): string {
   const previousMillis = Date.parse(previous);
   const currentMillis = now.getTime();
-  return new Date(Number.isFinite(previousMillis) ? Math.max(currentMillis, previousMillis + 1) : currentMillis)
+  // CAS revisions order same-millisecond updates. Inventing +1ms can date an approval after its Grant.
+  return new Date(Number.isFinite(previousMillis) ? Math.max(currentMillis, previousMillis) : currentMillis)
     .toISOString();
 }
 

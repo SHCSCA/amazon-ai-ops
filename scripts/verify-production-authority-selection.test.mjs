@@ -411,6 +411,23 @@ describe('production authority selection preflight', () => {
     });
   });
 
+  it('selects only an intact v11 prefix for migration and rejects damaged prefixes', async () => {
+    for (const damage of [null, 'checksum', 'gap', 'schema']) {
+      const value = fixture();
+      const database = new Database(value.dbPath);
+      database.exec('DELETE FROM schema_migrations WHERE version > 11');
+      if (damage === 'checksum') database.exec("UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 5");
+      if (damage === 'gap') database.exec('DELETE FROM schema_migrations WHERE version = 5');
+      if (damage === 'schema') database.exec('DROP TRIGGER trg_store_connections_external_identity_insert');
+      database.close();
+      value.expectedSha256 = sha256(value.dbPath);
+      const result = await verifier.run(args(value), context(value));
+      expect(result.evidence.status).toBe(damage ? 'SELECTED_RECOVERY_REQUIRED' : 'SELECTED_MIGRATION_REQUIRED');
+      expect(result.evidence.selection.selected.offlineMigrationEligible).toBe(!damage);
+      expect(sha256(value.dbPath)).toBe(value.expectedSha256);
+    }
+  });
+
   it('classifies a checksum mismatch as recovery-required', async () => {
     const value = fixture();
     const database = new Database(value.dbPath);

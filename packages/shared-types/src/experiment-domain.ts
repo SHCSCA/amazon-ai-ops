@@ -8,7 +8,7 @@
  * @module experiment-domain
  */
 
-import type { MissionStage } from './mission-domain';
+import type { MissionStage } from './v16-mission-domain';
 
 /**
  * Experiment lifecycle

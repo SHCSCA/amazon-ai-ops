@@ -71,10 +71,26 @@ export class DailyReportGenerator {
     });
 
     if (!response.success) {
+      response.reportOutput?.('invalid');
       return this.generateFallbackReport(input);
     }
 
-    return response.content || this.generateFallbackReport(input);
+    try {
+      const parsed = JSON.parse(response.content || '');
+      const text = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= 4000;
+      if (!parsed || !text(parsed.title) || !parsed.title.startsWith(input.date) || !text(parsed.summary)
+        || parsed.generatedBy !== 'AI' || ['highlights','concerns','tomorrowFocus'].some(key => !Array.isArray(parsed[key])
+          || parsed[key].length > 20 || !parsed[key].every(text))) throw new Error('Invalid daily summary');
+      const report = { title: parsed.title, summary: parsed.summary, highlights: parsed.highlights,
+        concerns: parsed.concerns, tomorrowFocus: parsed.tomorrowFocus, generatedBy: 'AI' };
+      const content = JSON.stringify(report, null, 2);
+      if (!/[\u3400-\u9fff]/.test(report.summary) || /¥|RMB|CNY|人民币|\d\s*元/.test(content)) throw new Error('Invalid daily summary language or currency');
+      response.reportOutput?.('accepted');
+      return content;
+    } catch {
+      response.reportOutput?.('invalid');
+      return this.generateFallbackReport(input);
+    }
   }
 
   private generateFallbackReport(input: DailyReportSummaryInput): string {

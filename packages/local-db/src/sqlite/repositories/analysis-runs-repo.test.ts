@@ -1,3 +1,4 @@
+import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { createAnalysisRunsRepository } from './analysis-runs-repo';
@@ -11,11 +12,11 @@ describe('AnalysisRunsRepository', () => {
     db = new Database(':memory:');
     
     db.exec(`
+      CREATE TABLE stores (store_id TEXT PRIMARY KEY, marketplace TEXT NOT NULL, currency TEXT NOT NULL);
+      INSERT INTO stores VALUES ('store-001', 'US', 'USD'), ('store-002', 'US', 'USD');
       CREATE TABLE analysis_runs (
         run_id TEXT PRIMARY KEY,
         store_id TEXT NOT NULL,
-        marketplace TEXT NOT NULL,
-        currency TEXT NOT NULL,
         mission_id TEXT,
         report_snapshot_id TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -44,7 +45,7 @@ describe('AnalysisRunsRepository', () => {
     it('should create a new analysis run', () => {
       const run: Omit<AnalysisRunRecord, 'createdAt' | 'updatedAt'> = {
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -64,7 +65,7 @@ describe('AnalysisRunsRepository', () => {
     it('should create run with optional fields', () => {
       const run: Omit<AnalysisRunRecord, 'createdAt' | 'updatedAt'> = {
         runId: 'run-002',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         missionId: 'mission-001',
@@ -89,7 +90,7 @@ describe('AnalysisRunsRepository', () => {
     it('should validate run before creation', () => {
       const invalid = {
         runId: '',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -105,7 +106,7 @@ describe('AnalysisRunsRepository', () => {
     beforeEach(() => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -166,7 +167,7 @@ describe('AnalysisRunsRepository', () => {
     it('should find existing run', () => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -191,7 +192,7 @@ describe('AnalysisRunsRepository', () => {
     beforeEach(async () => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -203,7 +204,7 @@ describe('AnalysisRunsRepository', () => {
       
       repo.create({
         runId: 'run-002',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-002',
@@ -212,7 +213,7 @@ describe('AnalysisRunsRepository', () => {
       });
       repo.create({
         runId: 'run-003',
-        storeId: 'store-002',
+        storeId: normalizeStoreId('store-002'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-003',
@@ -253,7 +254,7 @@ describe('AnalysisRunsRepository', () => {
     beforeEach(() => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         missionId: 'mission-001',
@@ -263,7 +264,7 @@ describe('AnalysisRunsRepository', () => {
       });
       repo.create({
         runId: 'run-002',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         missionId: 'mission-001',
@@ -292,7 +293,7 @@ describe('AnalysisRunsRepository', () => {
     beforeEach(async () => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -304,7 +305,7 @@ describe('AnalysisRunsRepository', () => {
       
       repo.create({
         runId: 'run-002',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-002',
@@ -331,7 +332,7 @@ describe('AnalysisRunsRepository', () => {
     beforeEach(() => {
       repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -358,7 +359,7 @@ describe('AnalysisRunsRepository', () => {
     it('should serialize and deserialize metadata correctly', () => {
       const run = repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -385,7 +386,7 @@ describe('AnalysisRunsRepository', () => {
     it('should handle undefined metadata', () => {
       const run = repo.create({
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',

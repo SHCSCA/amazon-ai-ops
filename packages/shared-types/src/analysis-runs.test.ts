@@ -1,3 +1,4 @@
+import { normalizeStoreId } from './store';
 import { describe, it, expect } from 'vitest';
 import {
   validateAnalysisRunRecord,
@@ -10,7 +11,7 @@ describe('analysis-runs types', () => {
   describe('validateAnalysisRunRecord', () => {
     const validRun: AnalysisRunRecord = {
       runId: 'run-001',
-      storeId: 'store-001',
+      storeId: normalizeStoreId('store-001'),
       marketplace: 'US',
       currency: 'USD',
       reportSnapshotId: 'snapshot-001',
@@ -207,7 +208,7 @@ describe('analysis-runs types', () => {
     it('should include all required fields', () => {
       const run: AnalysisRunRecord = {
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         reportSnapshotId: 'snapshot-001',
@@ -239,7 +240,7 @@ describe('analysis-runs types', () => {
     it('should support optional fields', () => {
       const fullRun: AnalysisRunRecord = {
         runId: 'run-001',
-        storeId: 'store-001',
+        storeId: normalizeStoreId('store-001'),
         marketplace: 'US',
         currency: 'USD',
         missionId: 'mission-001',

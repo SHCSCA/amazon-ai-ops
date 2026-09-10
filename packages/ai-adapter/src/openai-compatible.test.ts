@@ -6,6 +6,17 @@ afterEach(() => {
 });
 
 describe('OpenAICompatibleProvider request body', () => {
+  it.each([
+    undefined,
+    { prompt_tokens: 12 },
+    { prompt_tokens: -1, completion_tokens: 1, total_tokens: 0 },
+    { prompt_tokens: 12, completion_tokens: 3, total_tokens: 99 },
+    { prompt_tokens: '12', completion_tokens: 3, total_tokens: 15 },
+  ])('keeps missing or invalid provider usage unknown: %j', async usage => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage }), { status: 200 })));
+    const provider = new OpenAICompatibleProvider({ apiKey: 'test-key', model: 'test-model' });
+    expect(await provider.chat([{ role: 'user', content: 'test' }])).toMatchObject({ success: true, usage: undefined });
+  });
   it('disables DeepSeek thinking and requests JSON object output for structured prompts', () => {
     const body = __test__.buildChatCompletionBody(
       { apiKey: 'test-key', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
@@ -80,6 +91,7 @@ describe('OpenAICompatibleProvider request body', () => {
     );
 
     expect(result.success).toBe(true);
+    expect(result.usage).toEqual({ promptTokens: 12, completionTokens: 3, totalTokens: 15 });
     expect(requestBodies[0]).toMatchObject({
       model: 'deepseek-v4-flash',
       temperature: 0.3,

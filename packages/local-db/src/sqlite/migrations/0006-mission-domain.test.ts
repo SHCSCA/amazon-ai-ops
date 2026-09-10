@@ -10,7 +10,7 @@ import {
   MISSION_DOMAIN_TABLES,
   MissionDomainMigrationError,
 } from './0006-mission-domain';
-import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
+import { SQLITE_SCHEMA_VERSION } from '../db';
 
 const tempDirs: string[] = [];
 
@@ -59,7 +59,7 @@ describe('Mission domain migration v6', () => {
         sql: expect.stringMatching(/UNIQUE\s*\(store_id,\s*mission_id,\s*action_revision\)/i),
       }));
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
+        .toEqual({ count: SQLITE_SCHEMA_VERSION });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

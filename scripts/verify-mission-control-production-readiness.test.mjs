@@ -1,3 +1,6 @@
+import { validPackageUiWorkspaceCheck, validPackageUiMinimumWindow } from './package-ui-evidence.test-fixture.mjs';
+import { bindPackageUiTestManifest } from './package-ui-evidence.test-fixture.mjs';
+import { addCurrentCanaryLineage } from './execution-canary-current.test-fixture.mjs';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -20,7 +23,7 @@ const Database = requireFromLocalDb('better-sqlite3');
 const verifierPath = path.join(root, 'scripts', 'verify-mission-control-production-readiness.js');
 const readinessVerifier = createRequire(import.meta.url)(verifierPath);
 const testTempRoot = path.join(root, 'output', 'codex-temp');
-const EXECUTION_CANARY_AUTHORITY_QUERY_CONTRACT = 'mission-control-execution-canary-authority/v1';
+const EXECUTION_CANARY_AUTHORITY_QUERY_CONTRACT = 'mission-control-execution-canary-authority/v2';
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
@@ -52,6 +55,7 @@ const {
   EXPECTED_PACKAGE_UI_SCALES,
   EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_PROFILE_SEQUENCE,
@@ -102,7 +106,7 @@ function createCanonicalPackageFixture(tempDir) {
   fs.mkdirSync(path.join(appContentPath, 'dist', 'renderer'), { recursive: true });
   fs.mkdirSync(path.join(appContentPath, 'playwright-browsers', 'chrome-win64'), { recursive: true });
   writeJson(path.join(appContentPath, 'package.json'), {
-    name: '@amazon-ai-ops/desktop', version: '1.5.0', main: 'dist/main/index.js',
+    name: '@amazon-ai-ops/desktop', version: JSON.parse(fs.readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8')).version, main: 'dist/main/index.js',
   });
   fs.mkdirSync(path.dirname(mainBundlePath), { recursive: true });
   fs.writeFileSync(executablePath, 'canonical-unpacked-package');
@@ -646,6 +650,8 @@ function validSchedulerIdentityEvidence(scalePercent) {
       busyControlCount: 0,
       confirmRunDialogCount: 0,
       fixedScopeText: 'US USD',
+        fixedScopeTexts: ['US USD'],
+        fixedScopeVisibleCount: 1,
       heading: schedulerSubview.heading,
       headingCount: 1,
       legacyBoundaryCount: 1,
@@ -762,7 +768,8 @@ function validPackageUiRun(scale, screenshotRoot) {
       postNavigation: schedulerReadOnlyRuntime.marker.databaseMutationAudit.checkpoints[1],
     },
     session: validPackageUiSession(profileId, { firstRun }),
-    screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+    minimumWindow: scale.scalePercent === 100 ? validPackageUiMinimumWindow(screenshotRoot) : null,
+    screenshots: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => ({
       ...writeArtifact(
         path.join(screenshotRoot, `${scale.scalePercent}`, 'workspaces', `${workspace.workspace}.png`),
         screenshotBytes(`package-ui:${scale.scalePercent}:workspace:${workspace.workspace}`),
@@ -786,12 +793,12 @@ function validPackageUiRun(scale, screenshotRoot) {
       settleEvidence: { passed: true },
       violations: schedulerIdentityCapabilityEvidence.violations,
     }],
-    viewport: { height: 700, width: 1200 },
-    workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+    viewport: { height: 768, width: 1366 },
+    workspaceChecks: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => ({
       compositeEvidence: { passed: true },
       experienceEvidence: null,
       inspectorEvidence: null,
-      keyboardEvidence: { passed: true },
+      ...validPackageUiWorkspaceCheck(workspace),
       passed: true,
       settleEvidence: { passed: true },
       subview: workspace.subview,
@@ -837,7 +844,7 @@ function validWideRun(screenshotRoot) {
       compositeEvidence: { passed: true },
       experienceEvidence: null,
       inspectorEvidence: null,
-      keyboardEvidence: { passed: true },
+      ...validPackageUiWorkspaceCheck(workspace, PACKAGE_UI_WIDE_PROFILE.viewport),
       passed: true,
       settleEvidence: { passed: true },
       subview: workspace.subview,
@@ -854,9 +861,9 @@ function validPackageUiManifest(packageIdentity, screenshotRoot) {
     runGroupId,
     runnerContract.sha256,
   );
-  return {
+  return bindPackageUiTestManifest({
     kind: 'package-ui-evidence',
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt: '2026-07-23T01:00:00.000Z',
     interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
     isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -905,7 +912,7 @@ function validPackageUiManifest(packageIdentity, screenshotRoot) {
     runs: EXPECTED_PACKAGE_UI_SCALES.map((scale) => validPackageUiRun(scale, screenshotRoot)),
     wideProfile: validWideRun(screenshotRoot),
     violations: [],
-  };
+  }, screenshotRoot);
 }
 
 function validSecurityEvidence(packageIdentity) {
@@ -1061,7 +1068,7 @@ function buildExecutionCanary(mode, storesRoot) {
   });
   return {
     kind: 'mission-control-execution-canary-evidence',
-    schemaVersion: 'mission-control-execution-canary-evidence/v1',
+    schemaVersion: 'mission-control-execution-canary-evidence/v2',
     generatedAt: `2026-07-23T01:${mode === 'manual_approval' ? '21' : '23'}:00.000Z`,
     status: 'PASSED',
     passed: true,
@@ -1533,6 +1540,7 @@ function createAuthorityDatabase(databasePath, canaries) {
       }
     }
     for (const canary of canaries) insertCanaryAuthority(database, canary);
+    addCurrentCanaryLineage(database);
   } finally {
     database.close();
   }
@@ -2124,7 +2132,7 @@ describe('Mission Control production readiness CLI', () => {
   });
 
   it('rejects historical v5/v6 package UI evidence and a stale scheduler subview screenshot', () => {
-    for (const schemaVersion of [5, 6, 7]) {
+    for (const schemaVersion of [5, 6, 7, 8]) {
       const legacyDir = makeTempDir(`mission-control-readiness-ui-v${schemaVersion}-`);
       const legacy = passingEvidenceChain(legacyDir);
       const legacyManifest = readJson(legacy.paths.packageUi);
@@ -2137,7 +2145,7 @@ describe('Mission Control production readiness CLI', () => {
         expect.objectContaining({
           id: 'package-ui',
           ok: false,
-          reason: expect.stringMatching(/schema v8/i),
+          reason: expect.stringMatching(/schema v9/i),
         }),
       ]));
     }
@@ -2196,7 +2204,7 @@ describe('Mission Control production readiness CLI', () => {
       },
       /WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING|own visible operator handoff/i,
     ],
-  ])('rejects schema v8 package UI evidence %s', (_caseName, mutateManifest, reasonPattern) => {
+  ])('rejects schema v9 package UI evidence %s', (_caseName, mutateManifest, reasonPattern) => {
     const tempDir = makeTempDir('mission-control-readiness-ui-interactive-contract-');
     const { paths } = passingEvidenceChain(tempDir);
     const manifest = readJson(paths.packageUi);

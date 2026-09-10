@@ -8,7 +8,7 @@
  * @module mission-grant-domain
  */
 
-import type { DecisionStatus } from './decision-domain';
+import { normalizeStoreContextEnvelope, type StoreContextEnvelope } from './store';
 
 /**
  * Grant issuer type
@@ -85,13 +85,7 @@ export interface MissionGrantRecord {
 
   // Context binding (Phase 5: prevent stale grants)
   readonly sessionGeneration: number;     // Store session when issued
-  readonly contextSnapshot: {             // Full context at issuance
-    readonly storeId: string;
-    readonly marketplace: string;
-    readonly currency: string;
-    readonly businessDate: string;
-    readonly sessionGeneration: number;
-  };
+  readonly contextSnapshot: StoreContextEnvelope;
   readonly adsAccountId?: string;         // Ads account ID for additional binding
 
   // Status and consumption
@@ -149,7 +143,8 @@ export interface CreateGrantInput {
   limits: GrantLimits;
   evidenceRequirement: GrantEvidenceRequirement;
   expiresAt?: string;
-  sessionGeneration?: number;
+  sessionGeneration: number;
+  contextSnapshot: StoreContextEnvelope;
   adsAccountId?: string;
   reason: string;
 }
@@ -361,9 +356,12 @@ export function buildMissionGrantRecord(
   grantId: string,
   input: CreateGrantInput
 ): MissionGrantRecord {
+  validateCreateGrantInput(input);
+  const contextSnapshot = normalizeStoreContextEnvelope(input.contextSnapshot);
+  if (contextSnapshot.storeId !== input.storeId || contextSnapshot.sessionGeneration !== input.sessionGeneration) throw new Error('Grant context mismatch');
   const now = new Date().toISOString();
-  
   return {
+    contextSnapshot,
     grantId,
     storeId: input.storeId,
     missionId: input.missionId,

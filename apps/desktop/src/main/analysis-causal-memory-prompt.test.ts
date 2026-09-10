@@ -6,7 +6,7 @@ import {
 } from './analysis-causal-memory-prompt';
 
 function captureProvider() {
-  const chat = vi.fn(async (): Promise<AIResponse> => ({ success: true, content: '{}' }));
+  const chat = vi.fn(async (_messages: ChatMessage[]): Promise<AIResponse> => ({ success: true, content: '{}' }));
   const provider: AIProvider = {
     chat,
     complete: vi.fn(async (): Promise<AIResponse> => ({ success: true, content: '{}' })),
@@ -22,7 +22,7 @@ describe('analysis causal memory prompt boundary', () => {
     const provider = withCausalMemoryUserContext(captured.provider, maliciousHistory);
 
     await provider.chat([
-      { role: 'system', content: buildCausalMemorySystemPersona('基础角色', true) },
+      { role: 'system', content: buildCausalMemorySystemPersona('基础角色', true)! },
       { role: 'user', content: '请分析当前八类报表。' },
     ]);
 

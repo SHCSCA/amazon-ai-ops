@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Secret-blind, source-read-only preflight for a paused Package UI evidence v8
+ * Secret-blind, source-read-only preflight for a paused Package UI evidence v9
  * run group. The inspector never launches Electron or a browser. SQLite source
  * files are opened only by the project's query-only online-backup helper; all
  * temporary backup files are created below the OS temp directory and removed
@@ -570,6 +570,7 @@ function attemptArtifactMembershipMatches(
         'failed-capture': 'failed-capture-artifact',
         inspector: 'inspector-screenshot',
         'main-runtime': 'main-runtime-artifact',
+        'minimum-window': 'minimum-window-screenshot',
         overlay: 'overlay-screenshot',
         subview: 'subview-screenshot',
         workspace: 'workspace-screenshot',
@@ -577,7 +578,7 @@ function attemptArtifactMembershipMatches(
       if (
         roleBySlot[reference.slot.kind] !== reference.role
         || (
-          ['workspace', 'subview', 'inspector'].includes(reference.slot.kind)
+          ['workspace', 'subview', 'inspector', 'minimum-window'].includes(reference.slot.kind)
           && (
             typeof reference.slot.workspace !== 'string'
             || reference.slot.workspace.length < 1
@@ -1167,7 +1168,7 @@ function validateManifests(
     const invocationReceiptPath = path.join(receiptDirectory, `${invocationId}.json`);
     if (
       manifest?.kind !== 'package-ui-evidence'
-      || manifest?.schemaVersion !== 8
+      || manifest?.schemaVersion !== 9
       || manifest?.runGroup?.attemptId !== stem
       || manifest?.runGroup?.runGroupId !== metadata.runGroupId
       || manifest?.runGroup?.invocationId !== invocationId
@@ -1227,7 +1228,7 @@ function validateManifests(
         })?.passed !== true
       )
     ) {
-      fail('MANIFEST_RECORD_INVALID', 'Successful Package UI manifest fails the complete current v8 evaluator.');
+      fail('MANIFEST_RECORD_INVALID', 'Successful Package UI manifest fails the complete current v9 evaluator.');
     }
     const invocationReceipt = readEnvelope(
       invocationReceiptPath,
@@ -1682,7 +1683,7 @@ function checkpointMatches({
   ) {
     fail(
       'CHECKPOINT_EVIDENCE_INCOMPLETE',
-      'Checkpoint runEvidence does not satisfy the current profile-specific schema-v8 validator.',
+      'Checkpoint runEvidence does not satisfy the current profile-specific schema-v9 validator.',
     );
   }
 }

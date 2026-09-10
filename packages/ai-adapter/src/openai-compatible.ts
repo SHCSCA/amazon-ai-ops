@@ -79,15 +79,15 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
         };
       };
       options?.signal?.throwIfAborted();
-      
+      const tokens = [data.usage?.prompt_tokens, data.usage?.completion_tokens, data.usage?.total_tokens];
+      const usage = tokens.every(value => Number.isSafeInteger(value) && value! >= 0)
+        && tokens[2]! === tokens[0]! + tokens[1]!
+        ? { promptTokens: tokens[0]!, completionTokens: tokens[1]!, totalTokens: tokens[2]! }
+        : undefined;
       return {
         success: true,
         content: data.choices?.[0]?.message?.content || '',
-        usage: {
-          promptTokens: data.usage?.prompt_tokens || 0,
-          completionTokens: data.usage?.completion_tokens || 0,
-          totalTokens: data.usage?.total_tokens || 0,
-        },
+        usage,
       };
     } catch (error) {
       if (options?.signal?.aborted) {

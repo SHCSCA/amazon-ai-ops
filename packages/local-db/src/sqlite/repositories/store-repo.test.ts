@@ -8,7 +8,7 @@ import {
   normalizeStoreCapabilityId,
   normalizeStoreId,
 } from '@amazon-ai-ops/shared-types';
-import { initSqlite } from '../db';
+import { initSqlite, SQLITE_MIGRATION_CONTRACT } from '../db';
 import { StoreRepository, StoreRepositoryError } from './store-repo';
 
 const tempDirs: string[] = [];
@@ -1280,7 +1280,7 @@ describe('StoreRepository', () => {
     const database = initSqlite(dbPath);
     try {
       const repo = new StoreRepository(database);
-      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual(SQLITE_MIGRATION_CONTRACT.map(row => row.version));
       expect(repo.getMigrationManifest()).toMatchObject({ version: 1, integrityCheck: 'ok' });
       expect(repo.getMigrationResult()).toMatchObject({ status: 'applied' });
       expect(repo.getMigrationRecoveryPreflight()).toMatchObject({ canRestore: true });

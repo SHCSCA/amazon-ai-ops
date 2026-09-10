@@ -1,3 +1,5 @@
+import { validPackageUiWorkspaceCheck, validPackageUiMinimumWindow } from './package-ui-evidence.test-fixture.mjs';
+import { bindPackageUiTestManifest } from './package-ui-evidence.test-fixture.mjs';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -22,6 +24,7 @@ const {
   EXPECTED_PACKAGE_UI_SCALES,
   EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_PROFILE_SEQUENCE,
@@ -279,6 +282,8 @@ function schedulerIdentityEvidence(pid) {
       busyControlCount: 0,
       confirmRunDialogCount: 0,
       fixedScopeText: 'US USD',
+        fixedScopeTexts: ['US USD'],
+        fixedScopeVisibleCount: 1,
       heading: expected.heading,
       headingCount: 1,
       legacyBoundaryCount: 1,
@@ -599,9 +604,9 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
       1_000 + index,
     )
   ));
-  writeJson(manifestPath, {
+  writeJson(manifestPath, bindPackageUiTestManifest({
     kind: 'package-ui-evidence',
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt: '2026-07-23T01:00:00.000Z',
     interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
     isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -655,10 +660,11 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
         postNavigation: runtimes[index].marker.databaseMutationAudit.checkpoints[1],
       },
       session: validPackageUiSession(`${scale.scalePercent}-compact`),
-      viewport: { width: 1200, height: 700 },
+      viewport: { width: 1366, height: 768 },
       scalePercent: scale.scalePercent,
       schedulerReadOnlyRuntime: runtimes[index],
-      screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace, workspaceIndex) => {
+      minimumWindow: scale.scalePercent === 100 ? validPackageUiMinimumWindow(runDir) : null,
+    screenshots: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace, workspaceIndex) => {
         const screenshotPath = index === 0 && workspaceIndex === 0 && extraScreenshot
           ? extraScreenshot
           : writePng(path.join(
@@ -671,10 +677,10 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
           subview: workspace.subview,
         };
       }),
-      workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+      workspaceChecks: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => ({
         ...workspace,
         compositeEvidence: { passed: true },
-        keyboardEvidence: { passed: true },
+        ...validPackageUiWorkspaceCheck(workspace),
         passed: true,
         settleEvidence: { passed: true },
       })),
@@ -735,12 +741,12 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
       workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
         ...workspace,
         compositeEvidence: { passed: true },
-        keyboardEvidence: { passed: true },
+        ...validPackageUiWorkspaceCheck(workspace, PACKAGE_UI_WIDE_PROFILE.viewport),
         passed: true,
         settleEvidence: { passed: true },
       })),
     },
-  });
+  }, runDir));
 }
 
 function writeReport(filePath) {
@@ -1434,7 +1440,7 @@ describe('export v15 delivery bundle', () => {
     });
     expect(manifest.files).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourcePath: packageUiManifest }),
-      expect.objectContaining({ sourcePath: packageUiScreenshot }),
+      expect.objectContaining({ sourcePath: JSON.parse(fs.readFileSync(packageUiManifest, 'utf8')).runs[0].screenshots[0].path }),
       expect.objectContaining({ sourcePath: workspaceUiManifest }),
       expect.objectContaining({ sourcePath: workspaceUiScreenshot }),
       expect.objectContaining({ sourcePath: workspaceTargetJson }),
@@ -1989,11 +1995,14 @@ describe('export v15 delivery bundle', () => {
       ...packageUi.wideProfile.screenshots[0],
       ...hashBoundFile(wideWorkspace),
     };
+    packageUi.wideProfile.workspaceChecks[0].screenshot = packageUi.wideProfile.screenshots[0];
     packageUi.wideProfile.workspaceChecks[0].inspectorEvidence = {
       screenshot: hashBoundFile(wideInspector),
     };
+    bindPackageUiTestManifest(packageUi, runDir);
     writeJson(packageUiManifest, packageUi);
     const schedulerSubviews = packageUi.runs.map((run) => run.subviewChecks[0].screenshot.path);
+    const minimumScreenshots = packageUi.runs.flatMap((run) => run.minimumWindow?.screenshots || []);
     const schedulerRuntimes = packageUi.runs.map((run) => run.schedulerReadOnlyRuntime);
     const wideSchedulerRuntime = packageUi.wideProfile.schedulerReadOnlyRuntime;
 
@@ -2005,21 +2014,22 @@ describe('export v15 delivery bundle', () => {
       '--out', outDir,
     ]);
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
     for (const sourcePath of [
-      regularInspector,
+      packageUi.runs[0].workspaceChecks[0].inspectorEvidence.screenshot.path,
+      ...minimumScreenshots.map((item) => item.path),
       ...schedulerSubviews,
       ...schedulerRuntimes.map((item) => item.artifact.path),
       wideSchedulerRuntime.artifact.path,
-      wideWorkspace,
-      wideInspector,
+      packageUi.wideProfile.screenshots[0].path,
+      packageUi.wideProfile.workspaceChecks[0].inspectorEvidence.screenshot.path,
     ]) {
       expect(manifest.files).toEqual(expect.arrayContaining([expect.objectContaining({ sourcePath })]));
     }
   });
 
-  it('refuses schema v8 package UI evidence without the bounded interactive-login attestation', () => {
+  it('refuses schema v9 package UI evidence without the bounded interactive-login attestation', () => {
     const runId = `${Date.now()}-${process.pid}`;
     const runDir = path.join(evidenceDir, `export-bundle-package-ui-login-attestation-${runId}`);
     cleanupPaths.push(runDir);
@@ -2076,7 +2086,7 @@ describe('export v15 delivery bundle', () => {
       ]);
       expect(historical.status).toBe(1);
       expect(`${historical.stdout}${historical.stderr}`).toMatch(
-        /schema v8.*schemas v5\/v6\/v7 are historical/i,
+        /schema v9.*schemas v5\/v6\/v7\/v8 are historical/i,
       );
     }
   });

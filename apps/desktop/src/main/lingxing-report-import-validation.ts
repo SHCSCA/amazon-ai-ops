@@ -18,13 +18,14 @@ function isIsoCalendarDate(value: string): boolean {
  * must independently satisfy the parser and the exact requested batch window.
  */
 export function assertLingxingParsedReportImportable(
-  parsed: Pick<ParseResult, 'schemaValid' | 'totalRows' | 'data' | 'validation'>,
+  parsed: Pick<ParseResult, 'schemaValid' | 'totalRows' | 'data' | 'validation' | 'templateError'>,
   window: LingxingImportWindow,
 ): void {
   if (!isIsoCalendarDate(window.dateStart) || !isIsoCalendarDate(window.dateEnd) || window.dateStart > window.dateEnd) {
     throw new Error(`采集日期窗无效：${window.dateStart} 至 ${window.dateEnd}。`);
   }
   if (!parsed.schemaValid) {
+    if (parsed.templateError) throw new Error(`${parsed.templateError.code}: ${parsed.templateError.message}（${window.sourceName}）`);
     throw new Error(`真实报表表头不符合广告报表契约：${window.sourceName}。`);
   }
   if (!parsed.validation.valid) {

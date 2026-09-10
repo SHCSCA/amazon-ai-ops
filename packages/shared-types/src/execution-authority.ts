@@ -232,6 +232,7 @@ export interface AdExecutionJobProjection extends AdExecutionJobRecord {
 export interface AdExecutionBatchProjection {
   batch: AdExecutionBatchRecord;
   jobs: readonly AdExecutionJobProjection[];
+  reconciliation?: AdExecutionReconciliationCase;
 }
 
 export interface CreateAdExecutionBatchRequest {
@@ -263,10 +264,44 @@ export interface CancelAdExecutionBatchRequest extends StartAdExecutionBatchRequ
 export interface ReconcileUnknownAdExecutionBatchRequest extends StartAdExecutionBatchRequest {}
 
 export type AdExecutionUnknownReconciliationStatus =
-  | 'CONFIRMED_TARGET'
-  | 'CONFIRMED_ORIGINAL'
-  | 'CURRENT_VALUE_DRIFT'
-  | 'STILL_UNKNOWN';
+  | 'target_stably_observed'
+  | 'original_stably_observed'
+  | 'other_value_stably_observed'
+  | 'inconclusive_permanent';
+
+export interface AdExecutionReconciliationObservation {
+  artifactRef: string;
+  contentSha256: string;
+  capturedAt: string;
+  pageIdentityHash: string;
+  canonicalKeywordId: string;
+  objectRevision: number;
+  adsAccountId: string;
+  campaignId: string;
+  adGroupId: string;
+  keywordId: string;
+  observedBidCents: number;
+}
+
+export interface AdExecutionReconciliationCase {
+  caseId: string;
+  context: StoreContextEnvelope;
+  batchId: string;
+  jobId: string;
+  submitIntentId: string;
+  startedAt: string;
+  first: AdExecutionReconciliationObservation | null;
+  reload: AdExecutionReconciliationObservation | null;
+  outcome: AdExecutionUnknownReconciliationStatus | null;
+  completedAt: string | null;
+}
+
+export const AD_EXECUTION_RECONCILIATION_COPY: Record<AdExecutionUnknownReconciliationStatus, string> = {
+  target_stably_observed: '两次当前观察均为目标竞价；原执行仍为未知，旧授权不可重试。',
+  original_stably_observed: '两次当前观察均为原竞价；原执行仍为未知，旧授权不可重试。',
+  other_value_stably_observed: '两次当前观察均为同一其他竞价，存在外部或未知漂移；需要重新分析。',
+  inconclusive_permanent: '对账证据不完整或不一致，已永久结束；原执行仍为未知，不再追加权威观察。',
+};
 
 /**
  * Read-only reconciliation result for a terminal UNKNOWN batch. The original
@@ -275,15 +310,16 @@ export type AdExecutionUnknownReconciliationStatus =
  */
 export interface AdExecutionUnknownReconciliationResult {
   status: AdExecutionUnknownReconciliationStatus;
+  caseId: string;
   batchId: string;
   jobId: string;
   originalStatus: 'unknown';
-  firstObservedBidCents: number;
-  reloadObservedBidCents: number;
-  observedBidCents: number;
+  firstObservedBidCents?: number;
+  reloadObservedBidCents?: number;
+  observedBidCents?: number;
   observedAt: string;
-  firstEvidenceRef: string;
-  reloadEvidenceRef: string;
+  firstEvidenceRef?: string;
+  reloadEvidenceRef?: string;
   detail: string;
 }
 

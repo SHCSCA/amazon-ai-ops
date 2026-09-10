@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@amazon-ai-ops/shared-types": "workspace:*",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

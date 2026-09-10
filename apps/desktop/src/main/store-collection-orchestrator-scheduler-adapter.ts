@@ -1157,7 +1157,8 @@ function sameCoordinatorAndDurableJob(
 }
 
 function canonicalJob(job: LingxingCollectionJobSnapshot): LingxingCollectionJobSnapshot {
-  return {
+  // Match the persisted JSON shape: a cleared optional field is absent on readback.
+  return JSON.parse(JSON.stringify({
     ...job,
     request: {
       ...job.request,
@@ -1173,7 +1174,7 @@ function canonicalJob(job: LingxingCollectionJobSnapshot): LingxingCollectionJob
     reports: [...job.reports].sort((left, right) => (
       codepointCompare(left.reportType, right.reportType)
     )),
-  };
+  }));
 }
 
 function cloneExactAuthority(value: StoreCollectionAuthorityReadback): StoreCollectionAuthorityReadback {

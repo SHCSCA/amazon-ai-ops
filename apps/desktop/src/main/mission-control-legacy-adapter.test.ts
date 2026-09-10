@@ -40,7 +40,7 @@ describe('Mission Control legacy adapter', () => {
         reportImportProofs: [],
         importedMetricRows: 0,
         operationEventsToday: 0,
-        browserSessionReady: false,
+        executionBatches: [], browserSessionReady: false,
       }),
       deliveryReadinessReady: true,
       executionAuthorityReady: true,
@@ -180,7 +180,7 @@ describe('Mission Control legacy adapter', () => {
         reportImportProofs: [],
         importedMetricRows: 0,
         operationEventsToday: 0,
-        browserSessionReady: false,
+        executionBatches: [], browserSessionReady: false,
       }),
     });
     const response = await adapter.query(normalizeMissionControlQueryRequest({

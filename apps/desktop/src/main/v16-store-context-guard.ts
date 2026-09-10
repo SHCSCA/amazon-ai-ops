@@ -6,13 +6,13 @@
  *  - marketplace must be US
  *  - currency must be USD
  *  - storeId must be a non-empty string
- *  - sessionGeneration must be a positive integer
+ *  - sessionGeneration must be a non-negative integer
  *  - businessDate must be YYYY-MM-DD
  *
  * @module v16-store-context-guard
  */
 
-import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { assertBusinessDate, normalizeBrowserProfileId, normalizeBusinessTimezone, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 
 export class StoreContextGuardError extends Error {
   constructor(
@@ -23,6 +23,8 @@ export class StoreContextGuardError extends Error {
       | 'NON_USD_CURRENCY'
       | 'INVALID_SESSION_GENERATION'
       | 'INVALID_BUSINESS_DATE'
+      | 'INVALID_BROWSER_PROFILE_ID'
+      | 'INVALID_BUSINESS_TIMEZONE'
       | 'STALE_SESSION'
       | 'STORE_MISMATCH',
   ) {
@@ -31,16 +33,15 @@ export class StoreContextGuardError extends Error {
   }
 }
 
-const BUSINESS_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * Validate that an envelope is shape-conformant and US/USD only.
  * Throws on any violation; returns the normalised envelope otherwise.
  */
-export function assertValidStoreContext(ctx: StoreContextEnvelope): StoreContextEnvelope {
-  if (!ctx || typeof ctx !== 'object') {
+export function assertValidStoreContext(value: unknown): StoreContextEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new StoreContextGuardError('StoreContext is required', 'MISSING_STORE_ID');
   }
+  const ctx = value as StoreContextEnvelope;
   if (!ctx.storeId || typeof ctx.storeId !== 'string' || !ctx.storeId.trim()) {
     throw new StoreContextGuardError('StoreContext.storeId is required', 'MISSING_STORE_ID');
   }
@@ -53,20 +54,28 @@ export function assertValidStoreContext(ctx: StoreContextEnvelope): StoreContext
   if (ctx.currency !== 'USD') {
     throw new StoreContextGuardError(
       `V1.6 only supports USD currency (got "${ctx.currency}")`,
-      'NON_US_CURRENCY',
+      'NON_USD_CURRENCY',
     );
   }
-  if (!Number.isInteger(ctx.sessionGeneration) || ctx.sessionGeneration < 1) {
+  if (!Number.isSafeInteger(ctx.sessionGeneration) || ctx.sessionGeneration < 0) {
     throw new StoreContextGuardError(
-      `sessionGeneration must be a positive integer (got ${ctx.sessionGeneration})`,
+      `sessionGeneration must be a non-negative integer (got ${ctx.sessionGeneration})`,
       'INVALID_SESSION_GENERATION',
     );
   }
-  if (!ctx.businessDate || !BUSINESS_DATE_REGEX.test(ctx.businessDate)) {
+  try {
+    assertBusinessDate(ctx.businessDate);
+  } catch {
     throw new StoreContextGuardError(
       `businessDate must be YYYY-MM-DD (got "${ctx.businessDate}")`,
       'INVALID_BUSINESS_DATE',
     );
+  }
+  if (!ctx.browserProfileId || normalizeBrowserProfileId(ctx.browserProfileId) !== ctx.browserProfileId) {
+    throw new StoreContextGuardError('StoreContext.browserProfileId is required', 'INVALID_BROWSER_PROFILE_ID');
+  }
+  if (!ctx.businessTimezone || normalizeBusinessTimezone(ctx.businessTimezone) !== ctx.businessTimezone) {
+    throw new StoreContextGuardError('StoreContext.businessTimezone is required', 'INVALID_BUSINESS_TIMEZONE');
   }
   return ctx;
 }
@@ -77,7 +86,11 @@ export function assertValidStoreContext(ctx: StoreContextEnvelope): StoreContext
  */
 export function sameStoreContext(a: StoreContextEnvelope, b: StoreContextEnvelope): boolean {
   return (
-    String(a.storeId) === String(b.storeId) &&
+    a.storeId === b.storeId &&
+    a.browserProfileId === b.browserProfileId &&
+    a.marketplace === b.marketplace &&
+    a.currency === b.currency &&
+    a.businessTimezone === b.businessTimezone &&
     a.sessionGeneration === b.sessionGeneration &&
     a.businessDate === b.businessDate
   );
@@ -91,9 +104,11 @@ export function classifyStoreSwitch(
   expected: StoreContextEnvelope,
   incoming: StoreContextEnvelope,
 ): 'match' | 'mismatch' | 'stale_session' | 'mismatched_date' {
-  if (String(expected.storeId) !== String(incoming.storeId)) return 'mismatch';
+  if (expected.storeId !== incoming.storeId || expected.browserProfileId !== incoming.browserProfileId
+    || expected.marketplace !== incoming.marketplace || expected.currency !== incoming.currency
+    || expected.businessTimezone !== incoming.businessTimezone) return 'mismatch';
   if (expected.businessDate !== incoming.businessDate) return 'mismatched_date';
-  if (incoming.sessionGeneration < expected.sessionGeneration) return 'stale_session';
+  if (incoming.sessionGeneration !== expected.sessionGeneration) return 'stale_session';
   return 'match';
 }
 
@@ -101,17 +116,22 @@ export function classifyStoreSwitch(
  * Throws when two envelopes refer to different stores.
  */
 export function assertSameStore(a: StoreContextEnvelope, b: StoreContextEnvelope): void {
-  if (String(a.storeId) !== String(b.storeId)) {
+  if (a.storeId !== b.storeId) {
     throw new StoreContextGuardError(
       `StoreContext mismatch: ${a.storeId} vs ${b.storeId}`,
       'STORE_MISMATCH',
     );
   }
-  if (a.sessionGeneration < b.sessionGeneration) {
+  if (a.sessionGeneration !== b.sessionGeneration) {
     throw new StoreContextGuardError(
-      `Stale session: incoming session ${a.sessionGeneration} < expected ${b.sessionGeneration}`,
+      `Stale session: incoming session ${a.sessionGeneration} does not match expected ${b.sessionGeneration}`,
       'STALE_SESSION',
     );
+  }
+  assertValidStoreContext(a);
+  assertValidStoreContext(b);
+  if (!sameStoreContext(a, b)) {
+    throw new StoreContextGuardError('StoreContext mismatch: profile, site, currency, date or timezone changed', 'STORE_MISMATCH');
   }
 }
 
@@ -132,10 +152,10 @@ export class StoreContextTracker {
    * Set the current active store context.
    * Throws if there are pending operations.
    */
-  setContext(ctx: StoreContextEnvelope): void {
-    assertValidStoreContext(ctx);
+  setContext(value: unknown): void {
+    const ctx = assertValidStoreContext(value);
 
-    if (this.pendingOperations.size > 0) {
+    if (this.pendingOperations.size > 0 && this.current && !sameStoreContext(this.current, ctx)) {
       throw new StoreContextGuardError(
         `Cannot switch store while ${this.pendingOperations.size} operations are pending: ${Array.from(this.pendingOperations).join(', ')}`,
         'STORE_MISMATCH',
@@ -143,12 +163,12 @@ export class StoreContextTracker {
     }
 
     const prev = this.current;
-    this.current = ctx;
+    this.current = Object.freeze({ ...ctx });
 
     // Notify all listeners
     if (prev && !sameStoreContext(prev, ctx)) {
       for (const cb of this.switchCallbacks) {
-        cb(ctx);
+        cb(this.current);
       }
     }
   }

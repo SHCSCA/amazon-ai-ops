@@ -585,19 +585,19 @@ function migrationContract(migrationsRoot = path.join(
     .sort()) {
     const source = fs.readFileSync(path.join(migrationsRoot, fileName), 'utf8');
     const version = source.match(
-      /export const [A-Z0-9_]+_MIGRATION_VERSION = (\d+);/,
+      /export const ([A-Z0-9_]+)_MIGRATION_VERSION = (\d+);/,
     );
     const name = source.match(
-      /export const [A-Z0-9_]+_MIGRATION_NAME\s*=\s*'([^']+)';/,
+      new RegExp(`export const ${version?.[1]}_MIGRATION_NAME\\s*=\\s*'([^']+)';`),
     );
     const checksums = [...source.matchAll(
-      /export const (?!LEGACY_)[A-Z0-9_]+_MIGRATION_CHECKSUM\s*=\s*'([^']+)';/g,
+      new RegExp(`export const ${version?.[1]}_MIGRATION_CHECKSUM\\s*=\\s*'([^']+)';`, 'g'),
     )];
     if (!version || !name || checksums.length !== 1) {
       fail(`Could not read the production migration contract from ${fileName}.`);
     }
     rows.push({
-      version: Number(version[1]),
+      version: Number(version[2]),
       name: name[1],
       checksum: checksums[0][1],
     });
@@ -768,14 +768,17 @@ function migrationInspection(database, tables, contract = migrationContract()) {
   const ledgerTargetReady = !duplicateVersions
     && extraVersions.length === 0
     && migrations.every((row) => row.status === 'APPLIED');
-  const v11Schema = ledgerTargetReady
+  const upgradeFromV11 = family === 'S7_SCHEMA_MIGRATIONS'
+    && migrationRowsMatchProductionContract(normalizedRows, contract.filter((row) => row.version <= 11), allowedV1Checksums);
+  const v11Schema = (ledgerTargetReady || upgradeFromV11)
     ? inspectStoreProviderIdentityV11Schema(database)
     : null;
   const targetReady = ledgerTargetReady && v11Schema?.passed === true;
 
   return {
     family,
-    state: targetReady ? 'READY' : 'RECOVERY_REQUIRED',
+    state: targetReady ? 'READY'
+      : upgradeFromV11 && v11Schema?.passed === true ? 'MIGRATION_REQUIRED' : 'RECOVERY_REQUIRED',
     tablePresent: true,
     columns,
     recordedVersions,

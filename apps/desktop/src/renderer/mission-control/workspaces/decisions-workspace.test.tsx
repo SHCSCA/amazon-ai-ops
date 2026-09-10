@@ -315,7 +315,7 @@ describe('DecisionsWorkspace', () => {
     if (view === 'decisions/decided') {
       expect(markup).toContain('选择授权运营任务');
       expect(markup).toContain('选择最新动作批次');
-      expect(markup).toContain('无需选中某条已决策记录');
+      expect(markup).toContain('逐条填写原因并批准');
       expect(markup).not.toContain('加入授权批次');
       expect(markup).not.toContain('允许对象 ID');
     }

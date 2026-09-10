@@ -1138,7 +1138,7 @@ describe('StoreScopedAdListingService', () => {
     expect(target).not.toHaveProperty('entityRevision');
   });
 
-  it('projects one current store stable Ads keyword authority as an executable target', () => {
+  it('projects one current store stable Ads keyword across dates but rejects duplicate daily rows', () => {
     const harness = createHarness();
     const batchId = 'production-stable-authority';
     insertProductionLineage(harness, {
@@ -1186,6 +1186,19 @@ describe('StoreScopedAdListingService', () => {
       nonExecutable: false,
     });
     expect(target).not.toHaveProperty('resolutionReason');
+    const dailyMetric = {
+      batchId, reportType: 'keyword' as const,
+      campaign: 'Stable Campaign', adGroup: 'Stable Ad Group',
+      targeting: 'stable keyword', searchTerm: '', matchType: 'exact',
+      spend: 25, sales: 100, sourceRow: 402, date: '2026-07-20',
+      sourceFile: `C:/reports/${batchId}/keyword.xlsx`,
+    };
+    insertAdMetric(harness, harness.firstStoreId, dailyMetric);
+    expect(harness.service.listAdObjects(harness.switchFirst(), { kind: 'target' })[0])
+      .toMatchObject({ entityId: 'opaque-keyword-401', resolved: true, nonExecutable: false, sourceRowCount: 2 });
+    insertAdMetric(harness, harness.firstStoreId, { ...dailyMetric, sourceRow: 403 });
+    expect(harness.service.listAdObjects(harness.switchFirst(), { kind: 'target' })[0])
+      .toMatchObject({ resolved: false, nonExecutable: true, sourceRowCount: 3 });
   });
 
   it.each(['auto_targeting', 'product_targeting'] as const)(

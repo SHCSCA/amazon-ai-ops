@@ -10,7 +10,7 @@ function writeWorkbook(rows: Record<string, unknown>[]): string {
   const filePath = path.join(dir, 'search-term-report.xlsx');
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'SearchTerms');
-  XLSX.writeFile(workbook, filePath);
+  fs.writeFileSync(filePath, XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
   return filePath;
 }
 

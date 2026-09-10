@@ -1,3 +1,4 @@
+import { assertRendererPayloadIsPathFree } from './main-artifact-registry';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,6 +26,8 @@ import {
   type WritableAdTargetEvidence,
 } from '@amazon-ai-ops/shared-types';
 import type { StoreCoordinator } from './store-coordinator';
+import { createAnalysisRunsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-runs-repo';
+import type { AnalysisRunRecord } from '@amazon-ai-ops/shared-types';
 import { assertCurrentWritableAdTargetAuthority } from './writable-ad-target-resolution';
 
 export interface RecommendationGenerationResultForAnalysis {
@@ -53,6 +56,8 @@ export interface RecommendationGenerationResultForAnalysis {
 }
 
 export interface AnalysisRecommendationGenerationScope {
+  missionId?: string;
+  storeContext: StoreContextEnvelope;
   dateFrom: string;
   dateTo: string;
   storeName: string;
@@ -108,12 +113,16 @@ export interface AnalysisAuthorityServiceOptions {
 }
 
 const ANALYSIS_EVIDENCE_FRESHNESS_HOURS = 48;
+const ANALYSIS_ACTION_CONTRACT_VERSION = 'keyword-bid-cents/v16-1';
 const MAX_IDENTITY_PROOF_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_ANALYSIS_GENERATION_TIMEOUT_MS = 120_000;
 const MAX_ANALYSIS_GENERATION_TIMEOUT_MS = 15 * 60_000;
 
 /** Main-only orchestrator for sealed analysis, Decision creation and grants. */
 export class AnalysisAuthorityService {
+  private readonly activeRuns = new Set<string>();
+  private readonly pendingMissions = new Set<string>();
+  private readonly analysisRuns: ReturnType<typeof createAnalysisRunsRepository>;
   private readonly db: Database.Database;
   private readonly repository: AnalysisAuthorityRepository;
   private readonly missionRepository: MissionDomainRepository;
@@ -130,6 +139,7 @@ export class AnalysisAuthorityService {
 
   constructor(options: AnalysisAuthorityServiceOptions) {
     this.db = options.db;
+    this.analysisRuns = createAnalysisRunsRepository(options.db);
     this.repository = options.repository;
     this.missionRepository = options.missionRepository;
     this.recommendationRepository = options.recommendationRepository;
@@ -152,8 +162,18 @@ export class AnalysisAuthorityService {
 
   async runMissionAnalysis(request: RunMissionAnalysisRequest): Promise<RunMissionAnalysisResult> {
     const context = this.assertContext(request.context);
+    const key = JSON.stringify([context, request.missionId]);
+    if (this.pendingMissions.has(key)) throw new Error('本任务正在分析，请等待当前运行完成后再试。');
+    this.pendingMissions.add(key);
+    try { return await this.performMissionAnalysis(request); }
+    finally { this.pendingMissions.delete(key); }
+  }
+
+  private async performMissionAnalysis(request: RunMissionAnalysisRequest): Promise<RunMissionAnalysisResult> {
+    const context = this.assertContext(request.context);
     const mission = this.missionRepository.getMission(context, requiredId(request.missionId, 'missionId'));
     if (!mission) throw new Error('Mission analysis blocked: Mission was not found in the active store.');
+    this.missionRepository.assertMissionMayCreateAuthority(context, mission.id);
     if (mission.status !== 'active') throw new Error('Mission analysis blocked: Mission must be active.');
     if (mission.phase === 'action' || mission.phase === 'readback' || mission.phase === 'effect') {
       throw new Error(
@@ -206,6 +226,14 @@ export class AnalysisAuthorityService {
       generateRecommendations: capturedAuthority.generateRecommendations,
     });
     const { ruleRevision, modelRevision } = generationAuthority;
+    const policyVersion = this.missionRepository.getPolicyVersion(context, mission.policyVersionId);
+    const policyRuntime = this.missionRepository.getPolicyRuntime(context);
+    const fingerprint = (missionRevision: number, evidenceHash: string) => createHash('sha256').update(JSON.stringify({
+      actionContractVersion: ANALYSIS_ACTION_CONTRACT_VERSION,
+      context, missionId: mission.id, missionRevision, productId: asin, dateFrom, dateTo,
+      evidenceHash, ruleRevision, modelRevision, policyVersion, policyRuntime,
+      memoryDigest: memorySnapshot.memoryDigest,
+    })).digest('hex');
     const analysisRunId = compactId('analysis-run', {
       missionId: mission.id,
       attempt: randomUUID(),
@@ -235,7 +263,24 @@ export class AnalysisAuthorityService {
       modelRevision,
     });
 
-    const generation = await generateRecommendationsWithinDeadline(generationAuthority.generateRecommendations, {
+    if (Date.parse(evidencePackage.freshUntil) <= this.now().getTime()) throw new Error('分析数据已过期，请重新采集并导入当前完整报表。');
+    const inputFingerprint = fingerprint(mission.revision, evidencePackage.packageHash);
+    const previous = this.analysisRuns.findByMissionId(mission.id).find(run => run.storeId === context.storeId
+      && run.status === 'completed' && run.metadata?.provenance === 'analysis-authority/v16'
+      && run.metadata.fingerprint === inputFingerprint);
+    const cachedGeneration = previous?.metadata?.generation as RecommendationGenerationResultForAnalysis | undefined;
+    const generationIsCurrent = cachedGeneration && previous?.metadata?.recommendationFingerprint === this.recommendationFingerprint(context, cachedGeneration.recommendationIds);
+    this.analysisRuns.create({ runId: analysisRunId, storeId: context.storeId, marketplace: 'US', currency: 'USD',
+      missionId: mission.id, reportSnapshotId: evidencePackage.importRunId, status: 'analyzing', recommendationsCount: 0,
+      startedAt: this.now().toISOString(), metadata: { provenance: 'analysis-authority/v16', storeContext: context,
+        missionRevision: mission.revision, policyRevision: policyVersion?.revision, fingerprint: inputFingerprint,
+        evidencePackageId: evidencePackage.id, evidencePackageHash: evidencePackage.packageHash,
+        productId: asin, dateFrom, dateTo, ruleRevision, modelRevision } });
+    this.activeRuns.add(analysisRunId);
+
+    const generation = generationIsCurrent ? { ...cachedGeneration, generated: 0, refreshedDuplicates: 0, skippedDuplicates: cachedGeneration.recommendationIds.length } : await generateRecommendationsWithinDeadline(generationAuthority.generateRecommendations, {
+      missionId: mission.id,
+      storeContext: context,
       dateFrom,
       dateTo,
       storeName: store.displayName,
@@ -260,6 +305,7 @@ export class AnalysisAuthorityService {
       .map((id) => this.recommendationRepository.findByIdForStore(context.storeId, id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
     const actionFingerprint = compactId('analysis-action-fingerprint', {
+      actionContractVersion: ANALYSIS_ACTION_CONTRACT_VERSION,
       memoryDigest: memorySnapshot.memoryDigest,
       recommendations: recommendations
         .map((row) => ({
@@ -280,6 +326,12 @@ export class AnalysisAuthorityService {
     });
     const finalizeAnalysis = this.db.transaction(() => {
       this.assertContext(context);
+      const currentRuntime = this.missionRepository.getPolicyRuntime(context);
+      const currentPolicy = this.missionRepository.getPolicyVersion(context, mission.policyVersionId);
+      if (currentRuntime.revision !== policyRuntime.revision
+        || currentPolicy?.revision !== policyVersion?.revision || currentPolicy?.status !== policyVersion?.status) {
+        throw new Error('执行模式或策略在分析期间已变化，请按当前策略重新运行分析。');
+      }
       const finalMemorySnapshot = this.captureAnalysisCausalMemory(context, mission.productId);
       if (finalMemorySnapshot.memoryDigest !== memorySnapshot.memoryDigest) {
         throw new Error('Trusted causal memory changed while Mission analysis was running.');
@@ -381,6 +433,17 @@ export class AnalysisAuthorityService {
         && generation.aiExplanation.strategyDiagnosis?.source === 'ai'
         ? '规则与 AI 一致'
         : '规则分析';
+      const run = this.analysisRuns.findById(analysisRunId)!;
+      this.analysisRuns.update(analysisRunId, { status: 'completed', completedAt: this.now().toISOString(), recommendationsCount: proposals.length,
+        metadata: { ...run.metadata, missionRevision: progressedMission.revision,
+          fingerprint: fingerprint(progressedMission.revision, evidencePackage.packageHash), actionBatchId: actionBatch.id,
+          reusedFromRunId: generationIsCurrent ? previous?.runId : undefined,
+          generation, recommendationFingerprint: this.recommendationFingerprint(context, generation.recommendationIds),
+          proposalsGenerated: proposals.length, skippedUnsupportedCount: skippedUnsupportedRecommendations,
+          recommendationSummary: { candidates: generation.recommendationCandidates, created: generation.generated, refreshed: generation.refreshedDuplicates, reused: generation.skippedDuplicates },
+          aiSummary: { configured: generation.aiExplanation.configured, invoked: generation.aiExplanation.invoked,
+            source: generation.aiExplanation.invoked && generation.aiExplanation.strategyDiagnosis?.source === 'ai' ? 'ai' : 'rule_fallback', detail: safeAiAnalysisDetail(generation.aiExplanation) },
+        } });
       this.missionRepository.appendCausalEvent(context, {
         id: compactId('analysis-run-event', [analysisRunId, 'completed']),
         stage: 'ANALYSIS',
@@ -422,7 +485,7 @@ export class AnalysisAuthorityService {
       },
     };
     if (proposals.length > 0
-      && this.missionRepository.getPolicyRuntime(context).autonomyMode === 'policy_auto') {
+      && policyRuntime.autonomyMode === 'policy_auto') {
       result.automaticAuthorization = this.authorizeProposalBatch({
         context,
         missionId: mission.id,
@@ -436,9 +499,66 @@ export class AnalysisAuthorityService {
     } catch (error) {
       if (!analysisCompleted) {
         this.appendAnalysisFailureReceiptBestEffort(context, mission.id, analysisRunId, error);
+        try {
+          this.assertContext(context);
+          this.analysisRuns.update(analysisRunId, { status: 'failed', completedAt: this.now().toISOString(), blockedReason: analysisRunFailureOperatorReason(error) });
+        } catch { /* The original store/session receipt remains interrupted and read-only. */ }
       }
       throw error;
+    } finally {
+      this.activeRuns.delete(analysisRunId);
     }
+  }
+
+  private recommendationFingerprint(context: StoreContextEnvelope, ids: readonly number[]): string {
+    return createHash('sha256').update(JSON.stringify(ids.map(id => this.recommendationRepository.findByIdForStore(context.storeId, id) ?? null))).digest('hex');
+  }
+
+  listAnalysisRuns(contextInput: StoreContextEnvelope, input: { missionId?: string; status?: AnalysisRunRecord['status']; limit?: number } = {}): AnalysisRunRecord[] {
+    const context = this.assertContext(contextInput);
+    const limit = input.limit ?? 50;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('分析记录数量必须在 1 至 200 之间。');
+    if (input.status && !['pending', 'analyzing', 'completed', 'failed', 'blocked'].includes(input.status)) throw new Error('分析记录状态无效。');
+    const missionId = input.missionId === undefined ? undefined : requiredId(input.missionId, 'missionId');
+    return this.db.transaction(() => {
+      const result: AnalysisRunRecord[] = [];
+      // ponytail: bounded pages scan historical statuses; index effective status if measured history latency exceeds budget.
+      for (let offset = 0; result.length < limit; offset += 200) {
+        const rows = this.analysisRuns.findByStoreId(context.storeId, 200, offset);
+        for (const row of rows) {
+          if (missionId && row.missionId !== missionId) continue;
+          const run = this.projectAnalysisRun(context, row);
+          if (!input.status || run.status === input.status) result.push(run);
+          if (result.length === limit) break;
+        }
+        if (rows.length < 200) break;
+      }
+      return result;
+    })();
+  }
+
+  getAnalysisRun(contextInput: StoreContextEnvelope, runId: string): AnalysisRunRecord | null {
+    const context = this.assertContext(contextInput);
+    const run = this.analysisRuns.findById(requiredId(runId, 'runId'));
+    return run?.storeId === context.storeId ? this.projectAnalysisRun(context, run) : null;
+  }
+
+  private projectAnalysisRun(context: StoreContextEnvelope, run: AnalysisRunRecord): AnalysisRunRecord {
+    const allowed = ['storeContext', 'missionRevision', 'policyRevision', 'fingerprint', 'evidencePackageId', 'evidencePackageHash', 'actionBatchId', 'reusedFromRunId', 'provenance', 'productId', 'dateFrom', 'dateTo', 'ruleRevision', 'modelRevision', 'proposalsGenerated', 'skippedUnsupportedCount', 'aiSummary', 'recommendationSummary'] as const;
+    const metadata = Object.fromEntries(allowed.flatMap(key => {
+      const value = run.metadata?.[key];
+      if (value === undefined) return [];
+      try { assertRendererPayloadIsPathFree({ [key]: value }); return [[key, value]]; }
+      catch { return []; } // Retain unsafe legacy metadata in Main, while history stays readable.
+    })) as NonNullable<AnalysisRunRecord['metadata']>;
+    let blockedReason = run.blockedReason;
+    try { assertRendererPayloadIsPathFree(blockedReason); }
+    catch { blockedReason = analysisRunFailureOperatorReason(new Error(blockedReason)); }
+    const interrupted = ['pending', 'analyzing'].includes(run.status) && (!this.activeRuns.has(run.runId)
+      || JSON.stringify(metadata.storeContext) !== JSON.stringify(context));
+    return { ...run, status: interrupted ? 'blocked' : run.status,
+      blockedReason: interrupted ? '上次分析已中断；刷新当前店铺后重新运行分析。' : blockedReason,
+      metadata: { ...metadata, historicalOnly: metadata.provenance !== 'analysis-authority/v16' } };
   }
 
   private appendAnalysisFailureReceiptBestEffort(
@@ -554,6 +674,8 @@ export class AnalysisAuthorityService {
         || proposals.some((proposal) => proposal.missionRevision !== mission.revision)) {
         return blockedResult(mode, selectedIds, [], 'Mission 已修订；旧分析建议必须重新运行后才能授权。');
       }
+      try { this.missionRepository.assertWriteAuthority(context, latestBatch.authority); }
+      catch { return blockedResult(mode, selectedIds, [], '动作批次的店铺、会话或授权模式版本已变化；请重新分析。'); }
       const currentRuleRevision = sha256Text(this.currentRuleRevision(), 'ruleRevision');
       const currentMemory = this.captureAnalysisCausalMemory(context, mission.productId);
       const currentModelRevision = effectiveModelRevision(
@@ -665,6 +787,19 @@ export class AnalysisAuthorityService {
           if (decision && !['proposed', 'needs_approval', 'approved'].includes(decision.status)) {
             blockers.push(`Decision ${decision.id} 当前状态 ${decision.status} 不可整批授权。`);
           }
+          if (!decision) continue;
+          try { this.missionRepository.assertWriteAuthority(context, decision.authority); }
+          catch { blockers.push(`${decision.title}：判断不属于当前店铺、会话和授权模式版本，请重新分析。`); }
+          if (mode === 'manual_approval' && decision.status !== 'approved') {
+            blockers.push(`${decision.title}：请先在待审批中逐条批准并填写业务原因，再整批签发授权。`);
+          }
+          if (decision.status === 'approved') {
+            const approval = this.missionRepository.listDecisionHistory(context, decision.id)
+              .find(event => event.eventType === 'approved' && event.decisionRevision === decision.revision);
+            if (!approval?.reason?.trim() || approval.actorId !== (mode === 'manual_approval' ? 'operator' : 'policy-engine')) {
+              blockers.push(`${decision.title}：缺少当前授权路径的判断和业务原因，禁止混合人工与策略授权。`);
+            }
+          }
         }
       }
       if (blockers.length > 0 || !policyVersion || !rules) {
@@ -674,6 +809,8 @@ export class AnalysisAuthorityService {
       const existing = this.missionRepository.listMissionGrants(context, mission.id)
         .find((grant) => grant.actionRevision === latestBatch.actionRevision);
       if (existing) {
+        try { this.missionRepository.assertWriteAuthority(context, existing.authority); }
+        catch { return blockedResult(mode, selectedIds, decisionIds, '历史授权不属于当前授权模式版本，请重新分析。'); }
         const existingMode = existing.issuer.type === 'policy' ? 'policy_auto' : 'manual_approval';
         const terminal = this.missionRepository.getMissionGrantTerminalEvent(context, existing.id);
         if (terminal || Date.parse(existing.expiresAt) <= now) {
@@ -696,92 +833,23 @@ export class AnalysisAuthorityService {
         };
       }
 
-      const rateLimits = normalizePolicyRateLimits(rules);
-      if (!rateLimits) {
-        return blockedResult(
-          mode,
-          selectedIds,
-          decisionIds,
-          '当前策略版本缺少有效的每日动作数、冷却期或执行窗口；请新建并启用完整策略版本。',
-        );
-      }
-      if (rateLimits.executionWindow.timeZone !== context.businessTimezone) {
-        return blockedResult(
-          mode,
-          selectedIds,
-          decisionIds,
-          '策略执行窗口时区与当前店铺业务时区不一致；请新建并启用正确的店铺策略版本。',
-        );
-      }
-      const localNow = localPolicyClock(new Date(now), rateLimits.executionWindow.timeZone);
-      const windowStart = wallClockMinutes(rateLimits.executionWindow.start);
-      const windowEnd = wallClockMinutes(rateLimits.executionWindow.end);
-      if (!rateLimits.executionWindow.daysOfWeek.includes(localNow.dayOfWeek)
-        || localNow.minuteOfDay < windowStart
-        || localNow.minuteOfDay >= windowEnd) {
-        return blockedResult(
-          mode,
-          selectedIds,
-          decisionIds,
-          `当前不在策略执行窗口内（${rateLimits.executionWindow.timeZone} ${rateLimits.executionWindow.start}-${rateLimits.executionWindow.end}）。`,
-        );
-      }
-      const priorGrantRows = this.db.prepare(`
-        SELECT id, allowed_ad_entity_ids_json AS allowedAdEntityIdsJson, issued_at AS issuedAt
-        FROM mission_grants
-        WHERE store_id = ?
-      `).all(context.storeId) as Array<{
-        id: string;
-        allowedAdEntityIdsJson: string;
-        issuedAt: string;
-      }>;
-      const priorGrants = priorGrantRows.map((row) => ({
-        ...row,
-        allowedAdEntityIds: parseGrantEntityIds(row.allowedAdEntityIdsJson),
-      }));
-      const authorizedToday = priorGrants
-        .filter((row) => localPolicyClock(new Date(row.issuedAt), rateLimits.executionWindow.timeZone).businessDate === localNow.businessDate)
-        .reduce((total, row) => total + row.allowedAdEntityIds.length, 0);
-      if (authorizedToday + proposals.length > rateLimits.maxDailyActionCount) {
-        return blockedResult(
-          mode,
-          selectedIds,
-          decisionIds,
-          `策略单日动作数将超限：已授权 ${authorizedToday}，本批 ${proposals.length}，上限 ${rateLimits.maxDailyActionCount}。`,
-        );
-      }
-      if (rateLimits.cooldownMinutes > 0) {
-        const cooldownCutoff = now - (rateLimits.cooldownMinutes * 60_000);
-        const targetIds = new Set(allowedAdEntityIds);
-        const cooling = priorGrants.find((row) => (
-          Date.parse(row.issuedAt) > cooldownCutoff
-          && row.allowedAdEntityIds.some((entityId) => targetIds.has(entityId))
-        ));
-        if (cooling) {
-          return blockedResult(
-            mode,
-            selectedIds,
-            decisionIds,
-            `至少一个关键词仍在 ${rateLimits.cooldownMinutes} 分钟冷却期内；最近授权 ${cooling.id}。`,
-          );
-        }
-      }
+      try { this.missionRepository.assertPolicyUsage(context, policyVersion.id, allowedAdEntityIds); }
+      catch (error) { return blockedResult(mode, selectedIds, decisionIds, error instanceof Error ? error.message : '策略额度校验未完成，请重试。'); }
 
       for (const decision of decisions) {
-        if (!decision || decision.status === 'approved') continue;
+        if (mode !== 'policy_auto' || !decision || decision.status === 'approved') continue;
         this.missionRepository.resolveDecision(context, {
           id: decision.id,
           expectedRevision: decision.revision,
           status: 'approved',
-          reason: mode === 'policy_auto'
-            ? 'policy_auto exact proposal batch authorization'
-            : 'operator exact proposal batch authorization',
-          actorId: mode === 'policy_auto' ? 'policy-engine' : 'operator',
+          reason: `当前策略已核验完整批次 ${proposals.length} 条关键词降价；本条从 ${decision.currentValue} USD 降至 ${decision.recommendedValue} USD，符合对象、证据、窗口及预算限制。`,
+          actorId: 'policy-engine',
         });
       }
       const evidenceExpiry = Math.min(...[...evidenceById.values()].map((evidence) => Date.parse(evidence.freshUntil)));
       const expiresAt = new Date(Math.min(
         evidenceExpiry,
+        policyVersion.validUntil ? Date.parse(policyVersion.validUntil) : Infinity,
         ...proposals.map((proposal) => Date.parse(proposal.validUntil)),
       )).toISOString();
       const grant = this.missionRepository.issueMissionGrant(context, {
@@ -1099,7 +1167,7 @@ function compareStableValues(left: unknown, right: unknown): number {
   return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
 }
 
-function analysisRunFailureOperatorReason(error: unknown): string {
+export function analysisRunFailureOperatorReason(error: unknown): string {
   if (error instanceof AnalysisGenerationTimeoutError) {
     return 'AI 分析等待超时，已安全停止且未生成建议；请检查网络、AI Key 与模型设置后重新运行分析。';
   }
@@ -1110,7 +1178,7 @@ function analysisRunFailureOperatorReason(error: unknown): string {
   if (/batch|evidence|report|import|lingxing|metric/i.test(message)) {
     return '当前任务的数据证据不完整或已变化；请先完成 8 类报表采集与导入，再重新分析。';
   }
-  if (/store|mission|context|session|scope|changed/i.test(message)) {
+  if (/store|mission|context|session|scope|changed|店铺|任务|上下文|会话|已变化/i.test(message)) {
     return '分析期间店铺、任务或会话已变化；请刷新当前店铺并重新运行分析。';
   }
   return '分析未完成；请刷新当前店铺确认数据与策略状态后重试。';
@@ -1205,86 +1273,4 @@ function sameSet(left: readonly string[], right: readonly string[]): boolean {
   const leftSet = new Set(left);
   const rightSet = new Set(right);
   return leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
-}
-
-function normalizePolicyRateLimits(rules: PolicyVersionRules): Pick<
-  PolicyVersionRules,
-  'maxDailyActionCount' | 'cooldownMinutes' | 'executionWindow'
-> | undefined {
-  const { maxDailyActionCount, cooldownMinutes, executionWindow } = rules;
-  if (!Number.isSafeInteger(maxDailyActionCount) || maxDailyActionCount <= 0
-    || !Number.isSafeInteger(cooldownMinutes) || cooldownMinutes < 0
-    || !executionWindow || typeof executionWindow !== 'object') {
-    return undefined;
-  }
-  const { timeZone, daysOfWeek, start, end } = executionWindow;
-  if (typeof timeZone !== 'string' || !timeZone.trim()
-    || !Array.isArray(daysOfWeek) || daysOfWeek.length === 0
-    || daysOfWeek.some((day) => !Number.isSafeInteger(day) || day < 0 || day > 6)
-    || typeof start !== 'string' || typeof end !== 'string'
-    || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(start)
-    || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(end)
-    || wallClockMinutes(start) >= wallClockMinutes(end)) {
-    return undefined;
-  }
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));
-  } catch {
-    return undefined;
-  }
-  return {
-    maxDailyActionCount,
-    cooldownMinutes,
-    executionWindow: { timeZone, daysOfWeek: [...daysOfWeek], start, end },
-  };
-}
-
-function wallClockMinutes(value: string): number {
-  const [hours, minutes] = value.split(':').map(Number);
-  return (hours * 60) + minutes;
-}
-
-function localPolicyClock(date: Date, timeZone: string): {
-  businessDate: string;
-  dayOfWeek: number;
-  minuteOfDay: number;
-} {
-  if (!Number.isFinite(date.getTime())) throw new Error('MissionGrant issued_at is invalid.');
-  const parts = new Intl.DateTimeFormat('en-US-u-ca-gregory', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes): string => (
-    parts.find((item) => item.type === type)?.value ?? ''
-  );
-  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(part('weekday'));
-  const hours = Number(part('hour'));
-  const minutes = Number(part('minute'));
-  if (weekday < 0 || !Number.isSafeInteger(hours) || !Number.isSafeInteger(minutes)) {
-    throw new Error('Policy execution-window clock could not be resolved.');
-  }
-  return {
-    businessDate: `${part('year')}-${part('month')}-${part('day')}`,
-    dayOfWeek: weekday,
-    minuteOfDay: (hours * 60) + minutes,
-  };
-}
-
-function parseGrantEntityIds(value: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error('Stored MissionGrant entity allowlist is invalid.');
-  }
-  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string' || !item.trim())) {
-    throw new Error('Stored MissionGrant entity allowlist is invalid.');
-  }
-  return parsed.map((item) => item.trim());
 }

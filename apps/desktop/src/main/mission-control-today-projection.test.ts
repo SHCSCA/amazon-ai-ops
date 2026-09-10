@@ -64,6 +64,35 @@ function importProofsFor(...jobs: LingxingCollectionJobSnapshot[]) {
 }
 
 describe('buildMissionControlTodayProjection', () => {
+  it.each([false, true])('prioritizes current-store UNKNOWN read-only reconciliation when other readiness is %s', (ready) => {
+    const projection = buildMissionControlTodayProjection({
+      context,
+      products: ready ? [{ status: 'active', cost: { currentPrice: 20, purchaseCost: 5, targetAcos: 0.25 } }] : [],
+      collectionJobs: ready ? [completedJob('succeeded')] : [],
+      reportImportProofs: ready ? importProofsFor(completedJob('succeeded')) : [],
+      importedMetricRows: 0,
+      operationEventsToday: 0,
+      browserSessionReady: ready,
+      executionBatches: [{ storeId: context.storeId, marketplace: 'US', currency: 'USD', status: 'unknown' }],
+    });
+    expect(projection.nextAction).toMatchObject({
+      id: 'reconcile-unknown-execution', targetView: 'execution/live',
+      requiredCapabilityId: 'execution.queue.view', available: false,
+    });
+    expect(projection.nextAction.detail).toContain('不得重试保存');
+    expect(projection.blockers.join(' ')).toContain('结果不确定');
+  });
+
+  it('does not use another store unknown execution to change the current next action', () => {
+    const projection = buildMissionControlTodayProjection({
+      context, products: [], collectionJobs: [], reportImportProofs: [],
+      importedMetricRows: 0, operationEventsToday: 0, browserSessionReady: false,
+      executionBatches: [{ storeId: 'another-store' as typeof context.storeId, marketplace: 'US', currency: 'USD', status: 'unknown' }],
+    });
+    expect(projection.nextAction.id).toBe('configure-products');
+    expect(projection.blockers.join(' ')).not.toContain('结果不确定');
+  });
+
   it('projects real store readiness and advances to facts only after import succeeds', () => {
     const projection = buildMissionControlTodayProjection({
       context,
@@ -76,7 +105,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 2,
-      browserSessionReady: false,
+      executionBatches: [], browserSessionReady: false,
       now: new Date('2026-07-22T09:00:00.000Z'),
     });
 
@@ -105,7 +134,7 @@ describe('buildMissionControlTodayProjection', () => {
       reportImportProofs: [],
       importedMetricRows: 0,
       operationEventsToday: 0,
-      browserSessionReady: false,
+      executionBatches: [], browserSessionReady: false,
     });
     expect(empty.facts.collectionJobCount).toBe(0);
     expect(empty.nextAction.id).toBe('configure-products');
@@ -117,7 +146,7 @@ describe('buildMissionControlTodayProjection', () => {
       reportImportProofs: [],
       importedMetricRows: 0,
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
     expect(failed.nextAction).toMatchObject({ id: 'recover-import', targetView: 'collection/reports' });
     expect(failed.readiness.find((item) => item.id === 'import')?.state).toBe('blocked');
@@ -132,7 +161,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-20',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(stale.readiness.find((item) => item.id === 'import')).toMatchObject({
@@ -154,7 +183,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 420,
       latestMetricDate: '2026-07-20',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'import')?.state).toBe('ready');
@@ -205,7 +234,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.facts).toMatchObject({
@@ -249,7 +278,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.facts).toMatchObject({
@@ -295,7 +324,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.facts).toMatchObject({
@@ -319,7 +348,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'import')).toMatchObject({
@@ -343,7 +372,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 6827,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.facts.collectionJobCount).toBe(0);
@@ -366,7 +395,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 100,
       latestMetricDate: '2026-07-20',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'collection')).toMatchObject({
@@ -415,7 +444,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 100,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'collection')?.state).toBe('ready');
@@ -433,7 +462,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 7,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'import')).toMatchObject({
@@ -456,7 +485,7 @@ describe('buildMissionControlTodayProjection', () => {
       reportImportProofs: malformedProofs,
       importedMetricRows: 0,
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'import')).toMatchObject({
@@ -477,7 +506,7 @@ describe('buildMissionControlTodayProjection', () => {
       reportImportProofs: proofs,
       importedMetricRows: 0,
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.readiness.find((item) => item.id === 'import')?.state).toBe('ready');
@@ -522,7 +551,7 @@ describe('buildMissionControlTodayProjection', () => {
       importedMetricRows: 8,
       latestMetricDate: '2026-07-21',
       operationEventsToday: 0,
-      browserSessionReady: true,
+      executionBatches: [], browserSessionReady: true,
     });
 
     expect(projection.facts.collectionJobCount).toBe(1);

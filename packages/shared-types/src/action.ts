@@ -1,4 +1,5 @@
 import type { RiskLevel, ExecutionStatus } from './common';
+import type { StoreContextEnvelope } from './store';
 
 export type AdActionType = 
   | 'add_negative_exact'
@@ -202,6 +203,17 @@ export interface AiEvidenceSufficiency {
 }
 
 export interface ActionEvidence {
+  currentValueSource?: 'historical_cpc_estimate' | 'ads_ui';
+  bidObservation?: {
+    storeContext: StoreContextEnvelope;
+    adsAccountId: string;
+    campaignId: string;
+    adGroupId: string;
+    keywordId: string;
+    bidCents: number;
+    observedAt: string;
+    identityProofPath: string;
+  };
   impressions: number;
   clicks: number;
   cost: number;

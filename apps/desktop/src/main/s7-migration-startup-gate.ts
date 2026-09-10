@@ -4,43 +4,18 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import Database from 'better-sqlite3';
 import {
-  ANALYSIS_AUTHORITY_MIGRATION_CHECKSUM,
-  ANALYSIS_AUTHORITY_MIGRATION_NAME,
-  ANALYSIS_AUTHORITY_MIGRATION_VERSION,
-  COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
-  COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
-  COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
   COLLECTION_RESUME_AUTHORITY_TABLES,
-  EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
-  EXECUTION_AUTHORITY_MIGRATION_NAME,
-  EXECUTION_AUTHORITY_MIGRATION_VERSION,
-  LISTING_STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  LISTING_STORE_AUTHORITY_MIGRATION_NAME,
-  LISTING_STORE_AUTHORITY_MIGRATION_VERSION,
-  MISSION_DOMAIN_MIGRATION_CHECKSUM,
-  MISSION_DOMAIN_MIGRATION_NAME,
-  MISSION_DOMAIN_MIGRATION_VERSION,
-  OPERATION_EVENT_ARCHIVE_MIGRATION_CHECKSUM,
-  OPERATION_EVENT_ARCHIVE_MIGRATION_NAME,
-  OPERATION_EVENT_ARCHIVE_MIGRATION_VERSION,
-  PRODUCT_STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  PRODUCT_STORE_AUTHORITY_MIGRATION_NAME,
-  PRODUCT_STORE_AUTHORITY_MIGRATION_VERSION,
-  REPORT_IMPORT_AUTHORITY_MIGRATION_CHECKSUM,
-  REPORT_IMPORT_AUTHORITY_MIGRATION_NAME,
-  REPORT_IMPORT_AUTHORITY_MIGRATION_VERSION,
-  STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  STORE_AUTHORITY_MIGRATION_NAME,
-  STORE_AUTHORITY_MIGRATION_VERSION,
-  STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
-  STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-  STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
-  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+  verifyAiSpendSchema,
+  verifyExecutionReconciliationSchema,
+  verifyMissionWriteAuthoritySchema,
+  verifyGrantSlotLedgerSchema,
+  verifyLegacyCompatibilitySchema,
   verifyCollectionResumeAuthoritySchema,
   verifyStoreProviderIdentityAuthoritySchema,
 } from '@amazon-ai-ops/local-db/src/sqlite/migrations';
+
+import { SQLITE_MIGRATION_CONTRACT, SQLITE_SCHEMA_VERSION } from '@amazon-ai-ops/local-db/src/sqlite/db';
 
 export const S7_STARTUP_GATE_DIRECTORY = '.s7-main-startup-gate';
 export const S7_STARTUP_GATE_ACTIVE_FILE = 'ACTIVE.json';
@@ -94,65 +69,9 @@ const WINDOWS_TRUSTED_INSTALLER_SID =
 const FULL_CONTROL_MASK = 2032127n;
 const WINDOWS_WRITE_RIGHTS_MASK =
   0x00000002n | 0x00000004n | 0x00000100n | 0x00010000n | 0x00040000n | 0x00080000n;
-const POST_MIGRATION_TARGET_VERSION = STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION;
-
-const POST_MIGRATION_CONTRACT = Object.freeze([
-  {
-    version: STORE_AUTHORITY_MIGRATION_VERSION,
-    name: STORE_AUTHORITY_MIGRATION_NAME,
-    checksum: STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: REPORT_IMPORT_AUTHORITY_MIGRATION_VERSION,
-    name: REPORT_IMPORT_AUTHORITY_MIGRATION_NAME,
-    checksum: REPORT_IMPORT_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: PRODUCT_STORE_AUTHORITY_MIGRATION_VERSION,
-    name: PRODUCT_STORE_AUTHORITY_MIGRATION_NAME,
-    checksum: PRODUCT_STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: LISTING_STORE_AUTHORITY_MIGRATION_VERSION,
-    name: LISTING_STORE_AUTHORITY_MIGRATION_NAME,
-    checksum: LISTING_STORE_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: OPERATION_EVENT_ARCHIVE_MIGRATION_VERSION,
-    name: OPERATION_EVENT_ARCHIVE_MIGRATION_NAME,
-    checksum: OPERATION_EVENT_ARCHIVE_MIGRATION_CHECKSUM,
-  },
-  {
-    version: MISSION_DOMAIN_MIGRATION_VERSION,
-    name: MISSION_DOMAIN_MIGRATION_NAME,
-    checksum: MISSION_DOMAIN_MIGRATION_CHECKSUM,
-  },
-  {
-    version: ANALYSIS_AUTHORITY_MIGRATION_VERSION,
-    name: ANALYSIS_AUTHORITY_MIGRATION_NAME,
-    checksum: ANALYSIS_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: EXECUTION_AUTHORITY_MIGRATION_VERSION,
-    name: EXECUTION_AUTHORITY_MIGRATION_NAME,
-    checksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
-    name: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-    checksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
-  },
-  {
-    version: COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
-    name: COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
-    checksum: COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-  {
-    version: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
-    name: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
-    checksum: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
-  },
-]);
+const SUPPORTED_MIGRATION_SOURCE_VERSIONS = [0, 11];
+const POST_MIGRATION_TARGET_VERSION = SQLITE_SCHEMA_VERSION;
+const POST_MIGRATION_CONTRACT = SQLITE_MIGRATION_CONTRACT;
 
 const POST_MIGRATION_REQUIRED_TABLES = Object.freeze([
   'schema_migrations',
@@ -180,6 +99,22 @@ const POST_MIGRATION_REQUIRED_TABLES = Object.freeze([
   'ad_execution_jobs',
   'ad_execution_evidence',
   ...COLLECTION_RESUME_AUTHORITY_TABLES,
+  'analysis_runs',
+  'v16_missions',
+  'decisions_v16',
+  'decision_history_v16',
+  'mission_grants_v16',
+  'grant_lifecycle_events',
+  'execution_slots',
+  'execution_batches',
+  'reconciliation_cases',
+  'experiments_v16',
+  'experiment_snapshots_v16',
+  'causal_events_v16',
+  'ad_execution_reconciliation_cases',
+  'legacy_record_classifications',
+  'ai_spend_policies',
+  'ai_cost_records',
 ]);
 
 export interface S7FileIdentity {
@@ -403,8 +338,8 @@ interface BoundGateDocument {
 
 interface FinalizedGateDocument {
   kind: typeof S7_STARTUP_GATE_FINALIZED_KIND;
-  schemaVersion: typeof S7_STARTUP_GATE_FINALIZED_SCHEMA;
-  status: 'FINALIZED_FOR_POST_MIGRATION_STARTUP';
+  schemaVersion: typeof S7_STARTUP_GATE_FINALIZED_SCHEMA | 's7-main-startup-gate-finalized/v2';
+  status: 'FINALIZED_FOR_POST_MIGRATION_STARTUP' | 'RECOVERED_AFTER_FAILED_MIGRATION_PROCESS';
   finalizedAt: string;
   gateId: string;
   invocationId: string;
@@ -419,7 +354,8 @@ interface FinalizedGateDocument {
   handoffReady: GateArtifactBinding;
   handoffReleased: GateArtifactBinding;
   admission: GateArtifactBinding;
-  closed: GateArtifactBinding;
+  closed: GateArtifactBinding | null;
+  recovery?: S7PostWriteRecovery;
   databaseAfterMigration: GateArtifactBinding;
   packageAtMigration: GatePackageBinding;
   shellAtMigration: GateTrustedShellBinding;
@@ -435,6 +371,14 @@ interface FinalizedGateDocument {
   adsExecutionAuthorized: false;
 }
 
+interface S7PostWriteRecovery {
+  failurePhase: 'child-exit-failed-before-closed-receipt';
+  exitCode: number | null;
+  backup: GateArtifactBinding;
+  intent: GateArtifactBinding;
+  package: GatePackageBinding;
+}
+
 interface PostMigrationAdmissionDocument {
   kind: typeof S7_STARTUP_GATE_POST_MIGRATION_ADMITTED_KIND;
   schemaVersion: typeof S7_STARTUP_GATE_POST_MIGRATION_ADMITTED_SCHEMA;
@@ -445,7 +389,7 @@ interface PostMigrationAdmissionDocument {
   canonicalUserDataDir: string;
   finalized: GateArtifactBinding;
   activeGate: GateArtifactBinding;
-  closed: GateArtifactBinding;
+  closed: GateArtifactBinding | null;
   acceptanceReceipt: GateArtifactBinding;
   databaseAtFirstAdmission: GateArtifactBinding;
   databaseIdentity: {
@@ -788,6 +732,17 @@ function defaultReadAuthoritySchemaVersion(filePath: string): number {
   }
 }
 
+export function s7PostMigrationAuthorityContract(): S7PostMigrationAuthorityState {
+  return {
+    targetVersion: POST_MIGRATION_TARGET_VERSION,
+    integrityCheck: 'ok',
+    foreignKeyViolationCount: 0,
+    migrationRows: POST_MIGRATION_CONTRACT.map((row) => ({ ...row, status: 'applied' })),
+    requiredTables: [...POST_MIGRATION_REQUIRED_TABLES],
+    contractSha256: postMigrationContractSha256(),
+  };
+}
+
 function postMigrationContractSha256(): string {
   return sha256(stableJson({
     targetVersion: POST_MIGRATION_TARGET_VERSION,
@@ -796,7 +751,7 @@ function postMigrationContractSha256(): string {
   }));
 }
 
-function defaultInspectPostMigrationAuthority(filePath: string): S7PostMigrationAuthorityState {
+export function defaultInspectPostMigrationAuthority(filePath: string): S7PostMigrationAuthorityState {
   const database = new Database(path.resolve(filePath), {
     readonly: true,
     fileMustExist: true,
@@ -854,12 +809,17 @@ function defaultInspectPostMigrationAuthority(filePath: string): S7PostMigration
       );
     }
     try {
+      verifyAiSpendSchema(database);
+      verifyExecutionReconciliationSchema(database);
+      verifyMissionWriteAuthoritySchema(database);
+      verifyGrantSlotLedgerSchema(database);
+      verifyLegacyCompatibilitySchema(database);
       verifyCollectionResumeAuthoritySchema(database);
       verifyStoreProviderIdentityAuthoritySchema(database);
     } catch {
       fail(
         'S7_STARTUP_GATE_AUTHORITY_DRIFT',
-        'Authority v10/v11 exact schema contract drifted.',
+        'Authority exact schema contract drifted.',
       );
     }
     return {
@@ -1022,13 +982,14 @@ function defaultInspectTrustedPowerShell(): GateTrustedShellBinding {
   }
   const command = String.raw`
 $ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:AAO_S7_TRUSTED_SHELL_B64))
 $acl=[IO.File]::GetAccessControl($p)
 $sidType=[Security.Principal.SecurityIdentifier]
 $rules=@($acl.GetAccessRules($true,$true,$sidType) | ForEach-Object { [ordered]@{ sid=$_.IdentityReference.Value; type=$_.AccessControlType.ToString(); rights=([int64]$_.FileSystemRights).ToString(); inherited=[bool]$_.IsInherited } })
 $signature=Get-AuthenticodeSignature -LiteralPath $p
 $version=[Diagnostics.FileVersionInfo]::GetVersionInfo($p)
-[ordered]@{ ownerSid=$acl.GetOwner($sidType).Value; inheritanceProtected=[bool]$acl.AreAccessRulesProtected; rules=$rules; signatureStatus=$signature.Status.ToString(); signatureSubject=$signature.SignerCertificate.Subject; signatureThumbprint=$signature.SignerCertificate.Thumbprint; companyName=$version.CompanyName; fileVersion=$version.FileVersion; productName=$version.ProductName; originalFilename=$version.OriginalFilename } | ConvertTo-Json -Compress -Depth 6
+[ordered]@{ ownerSid=$acl.GetOwner($sidType).Value; inheritanceProtected=[bool]$acl.AreAccessRulesProtected; rules=$rules; signatureStatus=$signature.Status.ToString(); signatureSubject=$signature.SignerCertificate.Subject; signatureThumbprint=$signature.SignerCertificate.Thumbprint; companyName=$version.CompanyName; fileVersion=([string]::Join('.',@($version.FileMajorPart,$version.FileMinorPart,$version.FileBuildPart,$version.FilePrivatePart))); productName=$version.ProductName; originalFilename=$version.OriginalFilename } | ConvertTo-Json -Compress -Depth 6
 `;
   const result = spawnSync(executablePath, ['-NoProfile', '-NonInteractive', '-Command', command], {
     encoding: 'utf8',
@@ -1915,10 +1876,11 @@ function requireFinalizedGate(
     handoffReady: S7StableFileArtifact;
     handoffReleased: S7StableFileArtifact;
     admission: S7StableFileArtifact;
-    closed: S7StableFileArtifact;
+    closed: S7StableFileArtifact | null;
   },
 ): FinalizedGateDocument {
   const record = value as Record<string, unknown> | null;
+  const recovering = record?.schemaVersion === 's7-main-startup-gate-finalized/v2';
   const keys = [
     'kind',
     'schemaVersion',
@@ -1948,10 +1910,11 @@ function requireFinalizedGate(
     'adsExecutionAuthorized',
   ] as const;
   if (
-    !exactKeys(record, keys)
+    !exactKeys(record, recovering ? [...keys, 'recovery'] : keys)
     || record?.kind !== S7_STARTUP_GATE_FINALIZED_KIND
-    || record?.schemaVersion !== S7_STARTUP_GATE_FINALIZED_SCHEMA
-    || record?.status !== 'FINALIZED_FOR_POST_MIGRATION_STARTUP'
+    || (!recovering && record?.schemaVersion !== S7_STARTUP_GATE_FINALIZED_SCHEMA)
+    || record?.status !== (recovering
+      ? 'RECOVERED_AFTER_FAILED_MIGRATION_PROCESS' : 'FINALIZED_FOR_POST_MIGRATION_STARTUP')
     || record?.gateId !== active.gateId
     || record?.invocationId !== active.invocationId
     || !samePath(record?.canonicalUserDataDir, active.canonicalUserDataDir)
@@ -1973,7 +1936,10 @@ function requireFinalizedGate(
     'FINALIZED RELEASED',
   );
   const admission = requireStrictArtifactBinding(record.admission, 'FINALIZED ADMISSION');
-  const closed = requireStrictArtifactBinding(record.closed, 'FINALIZED CLOSED');
+  const closed = recovering ? null : requireStrictArtifactBinding(record.closed, 'FINALIZED CLOSED');
+  if (recovering && (record.closed !== null || artifacts.closed !== null)) {
+    fail('S7_STARTUP_GATE_INVALID', 'Post-write recovery must preserve the missing CLOSED state.');
+  }
   for (const [label, expected, actual] of [
     ['ACTIVE', artifacts.active, activeGate],
     ['BOUND', artifacts.bound, boundGate],
@@ -1982,7 +1948,7 @@ function requireFinalizedGate(
     ['ADMISSION', artifacts.admission, admission],
     ['CLOSED', artifacts.closed, closed],
   ] as const) {
-    if (!sameArtifact(expected, actual)) {
+    if ((expected === null || actual === null) ? expected !== actual : !sameArtifact(expected, actual)) {
       fail('S7_STARTUP_GATE_BINDING_MISMATCH', `FINALIZED ${label} binding drifted.`);
     }
   }
@@ -2003,6 +1969,26 @@ function requireFinalizedGate(
   }
   const machine = requireFinalizedMachine(record.machine, databaseAfterMigration);
   const authority = requirePostMigrationAuthorityState(record.authority);
+  let recovery: S7PostWriteRecovery | undefined;
+  if (recovering) {
+    const value = record.recovery as Record<string, unknown> | null;
+    if (!exactKeys(value, ['failurePhase', 'exitCode', 'backup', 'intent', 'package'])
+      || value?.failurePhase !== 'child-exit-failed-before-closed-receipt'
+      || (value.exitCode !== null && (!Number.isInteger(value.exitCode)
+        || Number(value.exitCode) < 1 || Number(value.exitCode) > 0xffffffff))) {
+      fail('S7_STARTUP_GATE_INVALID', 'Post-write recovery failure identity is invalid.');
+    }
+    recovery = {
+      failurePhase: 'child-exit-failed-before-closed-receipt',
+      exitCode: value.exitCode as number | null,
+      backup: requireStrictArtifactBinding(value.backup, 'Recovery WAL-safe backup'),
+      intent: requireStrictArtifactBinding(value.intent, 'Recovery original intent'),
+      package: requireStrictPackageBinding(value.package),
+    };
+    if (stableJson(recovery.intent) !== stableJson(active.bindings.intent)) {
+      fail('S7_STARTUP_GATE_BINDING_MISMATCH', 'Recovery original intent drifted.');
+    }
+  }
   const finalizationPayloadSha256 = normalizeSha(
     record.finalizationPayloadSha256,
     'FINALIZED payload',
@@ -2012,8 +1998,8 @@ function requireFinalizedGate(
   }
   return {
     kind: S7_STARTUP_GATE_FINALIZED_KIND,
-    schemaVersion: S7_STARTUP_GATE_FINALIZED_SCHEMA,
-    status: 'FINALIZED_FOR_POST_MIGRATION_STARTUP',
+    schemaVersion: recovering ? 's7-main-startup-gate-finalized/v2' : S7_STARTUP_GATE_FINALIZED_SCHEMA,
+    status: recovering ? 'RECOVERED_AFTER_FAILED_MIGRATION_PROCESS' : 'FINALIZED_FOR_POST_MIGRATION_STARTUP',
     finalizedAt: String(record.finalizedAt),
     gateId: active.gateId,
     invocationId: active.invocationId,
@@ -2038,6 +2024,7 @@ function requireFinalizedGate(
     handoffReleased,
     admission,
     closed,
+    ...(recovery ? { recovery } : {}),
     databaseAfterMigration,
     packageAtMigration,
     shellAtMigration,
@@ -2056,7 +2043,7 @@ interface CompletedS7Chain {
   handoffReadyArtifact: S7StableFileArtifact;
   handoffReleasedArtifact: S7StableFileArtifact;
   admissionArtifact: S7StableFileArtifact;
-  closedArtifact: S7StableFileArtifact;
+  closedArtifact: S7StableFileArtifact | null;
   finalized: FinalizedGateDocument;
   finalizedArtifact: S7StableFileArtifact;
 }
@@ -2172,7 +2159,7 @@ function requireAdmissionDocument(
     || sqlite.beginMode !== 'exclusive'
     || sqlite.transactionActive !== true
     || sqlite.sameConnectionRequiredForMigration !== true
-    || Number(sqlite.schemaVersionBefore) !== 0
+    || !SUPPORTED_MIGRATION_SOURCE_VERSIONS.includes(Number(sqlite.schemaVersionBefore))
   ) {
     fail('S7_STARTUP_GATE_ADMISSION_UNTRUSTED', 'ADMISSION binding is invalid.');
   }
@@ -2231,12 +2218,12 @@ function assertExternalArtifactBinding(
   }
 }
 
-function inspectCompletedS7Chain(
+function inspectAdmittedS7Chain(
   io: S7StartupGateIo,
   canonicalUserDataDir: string,
   activePath: string,
   trustedShell: GateTrustedShellBinding,
-): CompletedS7Chain {
+) {
   const activeRead = readSecureGateJson(
     io,
     activePath,
@@ -2310,31 +2297,73 @@ function inspectCompletedS7Chain(
     },
     pid,
   );
-  const closedRead = readSecureGateJson(
-    io,
-    active.paths.closed,
-    'Post-migration CLOSED',
-    trustedShell,
-  );
-  const databaseAfterClose = requireClosedDocument(
-    closedRead.value,
-    active,
-    {
-      active: activeRead.artifact,
-      bound: boundRead.artifact,
-      ready: readyRead.artifact,
-      released: releasedRead.artifact,
-      admission: admissionRead.artifact,
-    },
-    pid,
-    released.helperPid,
-  );
+  return { active, activeRead, boundRead, readyRead, releasedRead, admissionRead,
+    pid, helperPid: released.helperPid };
+}
+
+export function inspectS7AdmittedRecoveryChain(options: {
+  canonicalUserDataDir: string; io?: Partial<S7StartupGateIo>;
+}) {
+  const io = { ...DEFAULT_IO, ...options.io };
+  const trustedShell = requireStrictTrustedShellBinding(io.inspectTrustedPowerShell());
+  return inspectAdmittedS7Chain(io, options.canonicalUserDataDir,
+    path.join(options.canonicalUserDataDir, S7_STARTUP_GATE_DIRECTORY, S7_STARTUP_GATE_ACTIVE_FILE),
+    trustedShell);
+}
+
+export function requireS7PostWriteHold(
+  value: unknown,
+  chain: ReturnType<typeof inspectAdmittedS7Chain>,
+  approvalPayloadSha256: string,
+): number | null {
+  const hold = value as Record<string, any> | null;
+  const proof = hold?.launch?.result?.errorProof;
+  if (hold?.kind !== 's7-live-migration-launch-operator'
+    || hold?.schemaVersion !== 's7-live-migration-launch-operator/v2'
+    || hold?.status !== 'HOLD' || hold?.passed !== false || hold?.formalAcceptance !== false
+    || hold?.packageLaunched !== 'CONFIRMED_LAUNCHED'
+    || hold?.approvalPayloadSha256 !== approvalPayloadSha256
+    || hold?.startupGate?.gateId !== chain.active.gateId
+    || hold?.startupGate?.invocationId !== chain.active.invocationId
+    || stableJson(hold?.startupGate?.activeDocument) !== stableJson(chain.activeRead.value)
+    || proof?.status !== 'ERROR' || proof?.protocol !== 's7-live-migration-exclusive-window/v1'
+    || proof?.phase !== 'child-exit-failed-before-closed-receipt'
+    || proof?.pid !== chain.pid || proof?.helperPid !== chain.helperPid
+    || proof?.processCreated !== true || proof?.processResumed !== true
+    || proof?.databaseHandleAcquired !== true || proof?.databaseHandleReleased !== true
+    || proof?.databaseHandleExclusive !== false || proof?.releaseState !== 'RELEASED'
+    || (proof.exitCode != null && (!Number.isInteger(proof.exitCode)
+      || proof.exitCode < 1 || proof.exitCode > 0xffffffff))) {
+    fail('S7_STARTUP_GATE_RECOVERY_UNTRUSTED', 'Recovery requires the exact post-write nonzero-exit HOLD.');
+  }
+  // Earlier helpers proved this nonzero-exit phase but omitted its numeric code.
+  return proof.exitCode ?? null;
+}
+
+function inspectCompletedS7Chain(
+  io: S7StartupGateIo,
+  canonicalUserDataDir: string,
+  activePath: string,
+  trustedShell: GateTrustedShellBinding,
+): CompletedS7Chain {
+  const admitted = inspectAdmittedS7Chain(io, canonicalUserDataDir, activePath, trustedShell);
+  const { active, activeRead, boundRead, readyRead, releasedRead, admissionRead, pid, helperPid } = admitted;
   const finalizedRead = readSecureGateJson(
     io,
     active.paths.finalized,
     'Post-migration FINALIZED',
     trustedShell,
   );
+  const recovering = finalizedRead.value.schemaVersion === 's7-main-startup-gate-finalized/v2';
+  if (recovering && io.existsSync(active.paths.closed)) {
+    fail('S7_STARTUP_GATE_RECOVERY_UNTRUSTED', 'Recovery cannot replace an existing CLOSED receipt.');
+  }
+  const closedRead = recovering ? null : readSecureGateJson(io, active.paths.closed,
+    'Post-migration CLOSED', trustedShell);
+  const databaseAfterClose = closedRead ? requireClosedDocument(closedRead.value, active, {
+    active: activeRead.artifact, bound: boundRead.artifact, ready: readyRead.artifact,
+    released: releasedRead.artifact, admission: admissionRead.artifact,
+  }, pid, helperPid) : null;
   const finalized = requireFinalizedGate(
     finalizedRead.value,
     active,
@@ -2344,17 +2373,26 @@ function inspectCompletedS7Chain(
       handoffReady: readyRead.artifact,
       handoffReleased: releasedRead.artifact,
       admission: admissionRead.artifact,
-      closed: closedRead.artifact,
+      closed: closedRead?.artifact ?? null,
     },
   );
   if (
-    stableJson(databaseAfterClose) !== stableJson(finalized.databaseAfterMigration)
+    (!recovering && stableJson(databaseAfterClose) !== stableJson(finalized.databaseAfterMigration))
     || !samePath(finalized.databaseAfterMigration.realPath, active.bindings.database.realPath)
   ) {
     fail(
       'S7_STARTUP_GATE_BINDING_MISMATCH',
       'FINALIZED database does not match the helper CLOSED receipt.',
     );
+  }
+  if (finalized.recovery) {
+    const hold = readSecureGateJson(io, finalized.launchReceipt.realPath, 'Recovery original HOLD', trustedShell);
+    const exitCode = requireS7PostWriteHold(hold.value, admitted, finalized.approvalPayloadSha256);
+    if (!sameArtifact(hold.artifact, finalized.launchReceipt) || exitCode !== finalized.recovery.exitCode) {
+      fail('S7_STARTUP_GATE_RECOVERY_UNTRUSTED', 'Recovery HOLD or observed exit code drifted.');
+    }
+    assertExternalArtifactBinding(io, finalized.recovery.backup, 'Recovery WAL-safe backup');
+    assertExternalArtifactBinding(io, finalized.recovery.intent, 'Recovery consumed intent');
   }
   for (const [label, binding] of [
     ['S7 approval packet', finalized.approvalPacket],
@@ -2371,7 +2409,7 @@ function inspectCompletedS7Chain(
     handoffReadyArtifact: readyRead.artifact,
     handoffReleasedArtifact: releasedRead.artifact,
     admissionArtifact: admissionRead.artifact,
-    closedArtifact: closedRead.artifact,
+    closedArtifact: closedRead?.artifact ?? null,
     finalized,
     finalizedArtifact: finalizedRead.artifact,
   };
@@ -2421,7 +2459,7 @@ function requirePostMigrationAdmission(
   requireFiniteTimestamp(record.admittedAt, 'Post-migration admission');
   const finalized = requireStrictArtifactBinding(record.finalized, 'Completion FINALIZED');
   const activeGate = requireStrictArtifactBinding(record.activeGate, 'Completion ACTIVE');
-  const closed = requireStrictArtifactBinding(record.closed, 'Completion CLOSED');
+  const closed = chain.finalized.recovery ? null : requireStrictArtifactBinding(record.closed, 'Completion CLOSED');
   const acceptanceReceipt = requireStrictArtifactBinding(
     record.acceptanceReceipt,
     'Completion acceptance receipt',
@@ -2433,7 +2471,8 @@ function requirePostMigrationAdmission(
   if (
     !sameArtifact(finalized, chain.finalizedArtifact)
     || !sameArtifact(activeGate, chain.activeArtifact)
-    || !sameArtifact(closed, chain.closedArtifact)
+    || (closed === null ? record.closed !== null || chain.closedArtifact !== null
+      : !chain.closedArtifact || !sameArtifact(closed, chain.closedArtifact))
     || stableJson(acceptanceReceipt) !== stableJson(chain.finalized.acceptanceReceipt)
     || stableJson(databaseAtFirstAdmission) !== stableJson(chain.finalized.databaseAfterMigration)
   ) {
@@ -2660,7 +2699,7 @@ export function enforceS7MainStartupGate(
       } catch {
         fail(
           'S7_STARTUP_GATE_LEGACY_DATABASE_BLOCKED',
-          'Existing authority is not the complete current v11 schema/ledger contract and requires the approved S7 migration operator.',
+          'Existing authority requires the approved migration operator to reach the current schema/ledger contract.',
         );
       }
     }
@@ -2859,11 +2898,11 @@ export function enforceS7MainStartupGate(
         const currentPackage = {
           exe: requireArtifactBinding(publicArtifact(executable), 'First post-migration executable'),
           appContent: io.buildAppContentManifest(
-            chain.finalized.packageAtMigration.appContent.realPath,
+            (chain.finalized.recovery?.package ?? chain.finalized.packageAtMigration).appContent.realPath,
           ),
           main: requireArtifactBinding(publicArtifact(main), 'First post-migration Main'),
         };
-        if (stableJson(currentPackage) !== stableJson(chain.finalized.packageAtMigration)) {
+        if (stableJson(currentPackage) !== stableJson(chain.finalized.recovery?.package ?? chain.finalized.packageAtMigration)) {
           fail(
             'S7_STARTUP_GATE_BINDING_MISMATCH',
             'First post-migration admission package differs from the migration package.',
@@ -2930,10 +2969,9 @@ export function enforceS7MainStartupGate(
           afterLock.chain.activeArtifact,
           'Completion ACTIVE',
         ),
-        closed: requireArtifactBinding(
-          afterLock.chain.closedArtifact,
-          'Completion CLOSED',
-        ),
+        closed: afterLock.chain.closedArtifact ? requireArtifactBinding(
+          afterLock.chain.closedArtifact, 'Completion CLOSED',
+        ) : null,
         acceptanceReceipt: afterLock.chain.finalized.acceptanceReceipt,
         databaseAtFirstAdmission: requireArtifactBinding(
           afterLock.database,
@@ -3263,12 +3301,19 @@ function schemaVersionOnConnection(database: Database.Database): number {
     WHERE type = 'table' AND name = 'schema_migrations'
   `).get() as { count: number };
   if (table.count === 0) return 0;
-  const row = database.prepare(`
-    SELECT COALESCE(MAX(version), 0) AS version
-    FROM schema_migrations
-    WHERE status = 'applied'
-  `).get() as { version: number };
-  return Number(row.version);
+  const rows = database.prepare(`
+    SELECT version, name, checksum, status FROM schema_migrations ORDER BY version
+  `).all() as Array<{ version: number; name: string; checksum: string; status: string }>;
+  const expected = SQLITE_MIGRATION_CONTRACT.filter((row) => row.version <= 11);
+  if (rows.length !== expected.length || rows.some((row, index) => (
+    row.version !== expected[index].version || row.name !== expected[index].name
+    || row.status !== 'applied'
+    || (row.checksum !== expected[index].checksum
+      && !(row.version === 1 && row.checksum === LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM))
+  ))) {
+    fail('S7_STARTUP_GATE_SQLITE_TAKEOVER_UNTRUSTED', 'Migration source must contain the exact applied v1..v11 ledger prefix.');
+  }
+  return 11;
 }
 
 export function completeS7MainStartupAdmission(
@@ -3314,10 +3359,10 @@ export function completeS7MainStartupAdmission(
     );
   }
   const schemaVersionBefore = schemaVersionOnConnection(database);
-  if (schemaVersionBefore !== 0) {
+  if (!SUPPORTED_MIGRATION_SOURCE_VERSIONS.includes(schemaVersionBefore)) {
     fail(
       'S7_STARTUP_GATE_SQLITE_TAKEOVER_UNTRUSTED',
-      `Approved migration source must still be schema v0, observed v${schemaVersionBefore}.`,
+      `Approved migration source must still be schema v0 or v11, observed v${schemaVersionBefore}.`,
     );
   }
   const databaseArtifact = io.readStableFile(

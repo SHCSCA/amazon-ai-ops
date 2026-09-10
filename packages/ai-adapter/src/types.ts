@@ -10,6 +10,8 @@ export interface AIResponse {
   success: boolean;
   content?: string;
   error?: string;
+  /** Main-owned accounting callback; called by the structured-output consumer, never by model text or Renderer. */
+  reportOutput?: (status: 'accepted' | 'invalid' | 'discarded') => void;
   usage?: {
     promptTokens: number;
     completionTokens: number;

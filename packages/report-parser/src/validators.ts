@@ -113,6 +113,9 @@ export function validateMetrics(row: Record<string, any>, rowIndex: number): Val
   // 检查数值字段
   for (const [key, value] of Object.entries(row)) {
     if (isNumericField(key) && value !== null && value !== undefined && value !== '') {
+      // Observed Lingxing label for an undefined ratio; metrics derive ACOS from cost/sales.
+      if (key.toLowerCase() === 'acos' && String(value).trim() === '有花费无销售额'
+        && parseNumeric(valueForField(row, 'cost')) > 0 && parseNumeric(valueForField(row, 'sales')) === 0) continue;
       const parsed = parseNumeric(value);
       if (!Number.isFinite(parsed)) {
         errors.push({

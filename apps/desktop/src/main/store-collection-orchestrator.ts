@@ -1567,7 +1567,7 @@ export class StoreCollectionOrchestrator {
         && error.code === 'SAFETY_STATE_UNKNOWN') {
         throw error;
       }
-      throw new StoreCollectionOrchestratorError('RUNTIME_CLOSE_FAILED', '无法证明可见采集运行时已关闭。');
+      throw Object.assign(new StoreCollectionOrchestratorError('RUNTIME_CLOSE_FAILED', '无法证明可见采集运行时已关闭。'), { cause: error });
     }
     try {
       const leaseResult = await this.dependencies.assertCollectionLeaseReleased({
@@ -1585,7 +1585,7 @@ export class StoreCollectionOrchestrator {
         && error.code === 'SAFETY_STATE_UNKNOWN') {
         throw error;
       }
-      throw new StoreCollectionOrchestratorError('COLLECTION_LEASE_ACTIVE', '无法证明采集租约已释放。');
+      throw Object.assign(new StoreCollectionOrchestratorError('COLLECTION_LEASE_ACTIVE', '无法证明采集租约已释放。'), { cause: error });
     }
     const finalReadback = await this.readTransitionAuthority(auth, expectedAuthority);
     this.assertAuthorityExact(finalReadback, expectedAuthority);
@@ -2985,7 +2985,9 @@ export class StoreCollectionOrchestrator {
       && error.code === 'SAFETY_STATE_UNKNOWN'
       ? error
       : new StoreCollectionOrchestratorError('SAFETY_STATE_UNKNOWN', '编排器无法证明 authority/runtime/persistence 安全状态。');
-    (safety as StoreCollectionOrchestratorError & { cause?: unknown }).cause ??= error;
+    if (safety !== error) {
+      (safety as StoreCollectionOrchestratorError & { cause?: unknown }).cause ??= error;
+    }
     return safety;
   }
 

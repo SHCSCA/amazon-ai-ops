@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { ReportParser } from './parser';
+import { LINGXING_TEMPLATE_MANIFEST } from './lingxing-template-manifest';
 
 function parseRows(
   rows: Array<Record<string, unknown>>,
@@ -18,6 +19,38 @@ function parseRows(
 }
 
 describe('ReportParser Lingxing ad report rows', () => {
+  it('accepts the observed search-term shape with both keyword and targeting and rejects changed templates or currency', () => {
+    const template = LINGXING_TEMPLATE_MANIFEST.find(item => item.reportType === 'user_search_term')!;
+    const record: Record<string, unknown> = { '店铺名称': 'FT-US', '国家': 'US', '广告活动': 'Campaign A', '广告组': 'Group A',
+      '关键词': 'door lock', '投放': 'separate expression', '用户搜索词': 'door lock', '日期': '2026-09-01', '花费-本币': 3, '广告销售额-本币': 30 };
+    const parse = (headers: readonly string[], row = record, reportType = 'user_search_term') => (new ReportParser() as any).parseSheet(
+      XLSX.utils.aoa_to_sheet([headers, headers.map(header => row[header] ?? '')]), 'report.xlsx', { reportType, requireRegisteredTemplate: true });
+    expect(parse(template.headers)).toMatchObject({ success: true, templateRevision: template.revision,
+      data: [expect.objectContaining({ targeting: 'door lock', searchTerm: 'door lock', cost: 3 })] });
+    for (const headers of [template.headers.filter(h => h !== '花费-本币'), [...template.headers, '未知字段'], [...template.headers, '花费']]) {
+      expect(parse(headers)).toMatchObject({ success: false, schemaValid: false, data: [], templateError: { code: expect.stringMatching(/^REPORT_TEMPLATE_/) } });
+    }
+    expect(parse(template.headers, { ...record, '国家': 'CA' }).templateError.code).toBe('REPORT_TEMPLATE_CURRENCY');
+    expect(parse(template.headers, { ...record, '花费-本币': '￥3' }).templateError.code).toBe('REPORT_TEMPLATE_CURRENCY');
+    expect(parse(template.headers, record, 'keyword').templateError.code).toBe('REPORT_TEMPLATE_TYPE_MISMATCH');
+    expect(parse(template.headers, { ...record, 'ACoS': '有花费无销售额', '广告销售额-本币': 0 }))
+      .toMatchObject({ success: true, data: [expect.objectContaining({ cost: 3, sales: 0 })] });
+    expect(parse(template.headers, { ...record, 'ACoS': '有花费无销售额' }).success).toBe(false);
+  });
+
+  it('preserves canonical fields and rejects duplicate source columns before SheetJS renames them', () => {
+    const row = { date: '2026-05-25', storeName: 'FT-US', campaignName: 'Campaign A', impressions: 20, clicks: 2, cost: 3, orders: 1, sales: 30, ACOS: '10%', ROAS: 10 };
+    const result = parseRows([row]);
+    expect(result).toMatchObject({ success: true, schemaValid: true });
+    expect(result.data[0]).toMatchObject({ cost: 3, impressions: 20, sales: 30, acos: 0.1 });
+    expect(parseRows([{ ...row, '花费': 99 }])).toMatchObject({ success: false, schemaValid: false, data: [] });
+    for (const rows of [[], [Object.values(row).concat(99)]]) {
+      const worksheet = XLSX.utils.aoa_to_sheet([Object.keys(row).concat('cost'), ...rows]);
+      expect((new ReportParser() as any).parseSheet(worksheet, 'duplicate.xlsx', {}))
+        .toMatchObject({ success: false, schemaValid: false, data: [] });
+    }
+  });
+
   it('keeps executable search-term rows even when the report has no ASIN column', () => {
     const result = parseRows([
       {
@@ -291,7 +324,7 @@ describe('ReportParser Lingxing ad report rows', () => {
       ['NOVA-US', 'Campaign A', 'Ad Group A', '商品:"B0ABCDEF12"', '2026-08-21', 20, '3.1200'],
       ['NOVA-US', 'Campaign A', 'Ad Group A', '商品:"B0ZYXWVU98"', '2026-08-22', 10, '1.5600'],
     ]), 'sheet1');
-    XLSX.writeFile(workbook, filePath);
+    fs.writeFileSync(filePath, XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
 
     try {
       expect(ReportParser.readLingxingRawReportControlTotals(filePath, {

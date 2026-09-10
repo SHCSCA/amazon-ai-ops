@@ -33,6 +33,7 @@ import {
   readMemoryDomainWindowApi,
   type MemoryDomainRendererApi,
 } from './mission-domain-window-api';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './memory-workspace.css';
 
 const PAGE_SIZE = 10;
@@ -307,15 +308,18 @@ export function MemoryEditor({
   onChange: (draft: MemoryDraft) => void;
   onSave: () => void;
 }) {
+  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    open: true, onDismiss: onCancel, dismissDisabled: busy,
+  });
   const correction = Boolean(draft.correctsEventId);
   const change = <K extends keyof MemoryDraft>(key: K, value: MemoryDraft[K]) => onChange({ ...draft, [key]: value });
   return (
-    <div className="mission-control-dialog-backdrop">
-      <section aria-labelledby="memory-editor-title" aria-modal="true" className="mission-control-dialog memory-editor" role="dialog">
+    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
+      <section aria-labelledby="memory-editor-title" aria-modal="true" className="mission-control-dialog memory-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
         <header><div><span>{correction ? '补充更正记录' : '补充经营记忆'}</span><h2 id="memory-editor-title">{correction ? '追加修正事件' : '记录事实或分析'}</h2><p>{correction ? '原记录保持不变，本次内容将作为新的修正记录保存。' : '运营者可补充事实或分析；决策、执行、结果核验和经营效果由系统按业务过程记录。'}</p></div><button aria-label="关闭因果记忆编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button></header>
         <div className="memory-form">
           <label><span>阶段 *</span><select disabled={correction} onChange={(event) => change('stage', event.target.value as MemoryDraft['stage'])} value={draft.stage}><option value="FACT">事实</option><option value="ANALYSIS">分析</option></select></label>
-          <label className="memory-form__wide"><span>标题 *</span><input autoFocus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
+          <label className="memory-form__wide"><span>标题 *</span><input data-overlay-initial-focus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
           <label className="memory-form__wide"><span>信号 / 依据</span><textarea onChange={(event) => change('signal', event.target.value)} rows={4} value={draft.signal} /></label>
           <label className="memory-form__wide"><span>预期效果</span><textarea onChange={(event) => change('expectedEffect', event.target.value)} rows={3} value={draft.expectedEffect} /></label>
           <label><span>置信度（0–1）</span><input inputMode="decimal" onChange={(event) => change('confidence', event.target.value)} value={draft.confidence} /></label>

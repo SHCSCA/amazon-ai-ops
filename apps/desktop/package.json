@@ -1,6 +1,6 @@
 {
   "name": "@amazon-ai-ops/desktop",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Amazon AI Ops Agent - 亚马逊广告运营自动化工具",
   "author": "Amazon AI Ops Team",
   "private": true,
@@ -18,7 +18,7 @@
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
     "@tanstack/react-virtual": "^3.14.3",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "13.0.3",
     "bindings": "^1.5.0",
     "duckdb": "^1.1.0",
     "file-uri-to-path": "^1.0.0",
@@ -44,8 +44,8 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.0",
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3",
     "esbuild": "^0.20.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

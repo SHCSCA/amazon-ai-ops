@@ -20,13 +20,9 @@ const {
 } = require('./package-ui-evidence');
 const {
   PACKAGED_APP_NAME,
-  REQUIRED_TABLES,
-  assertStoreProviderIdentityV11Schema,
   inspectProductionAuthoritySelection,
   migrationContract,
   migrationRowsMatchProductionContract,
-  migrationV1ChecksumWhitelist,
-  storeProviderIdentityV11SchemaContract,
 } = require('./verify-production-authority-selection');
 const {
   readJsonArtifact,
@@ -39,8 +35,12 @@ const {
   TARGET_VERSION,
   requireSqlite,
   readAppliedVersion,
+  collectRowCounts,
 } = require('./migrate-current-user-db');
 
+const { captureAuthoritySnapshotCurrentness } = require('./sqlite-authority-currentness');
+const { validateEvidenceUserDataPath } = require('./evidence-user-data');
+const { validatePackageLaunchWindowReadyMarker } = require('./smoke-package-launch');
 const ROOT = path.resolve(__dirname, '..');
 const CANONICAL_EXE = path.join(
   ROOT,
@@ -64,7 +64,7 @@ const KIND = 's7-live-migration-launch-operator';
 const SCHEMA_VERSION = 's7-live-migration-launch-operator/v2';
 const PACKET_KIND = 's7-live-migration-approval-packet';
 const PACKET_SCHEMA_VERSION = 's7-live-migration-approval-packet/v2';
-const REQUIRED_SOURCE_VERSION = 0;
+const SUPPORTED_SOURCE_VERSIONS = Object.freeze([0, 11]);
 const SIDECARS = Object.freeze(['-wal', '-shm', '-journal']);
 const MAX_PACKAGE_UI_AGE_MS = 48 * 60 * 60 * 1000;
 const DEFAULT_SPAWN_TIMEOUT_MS = 15_000;
@@ -155,15 +155,18 @@ const WINDOWS_WRITE_RIGHTS_MASK =
   2n | 4n | 16n | 64n | 256n | 65_536n | 262_144n | 524_288n;
 const USAGE = [
   'Usage:',
-  '  pnpm run operate:s7-live-migration -- --prepare --db <absolute canonical live v0 db> --authority-selection <absolute json> --migration-manifest <absolute json> --migration-verification <absolute json> --package-ui-manifest <absolute passed v8 json> --recovery-root <absolute isolated existing directory> --out <absolute new approval packet json under recovery root>',
+  '  pnpm run operate:s7-live-migration -- --prepare --db <absolute canonical live v0 or v11 db> --authority-selection <absolute json> --migration-manifest <absolute json> --migration-verification <absolute json> --package-ui-manifest <absolute passed v9 json> --recovery-root <absolute isolated existing directory> --out <absolute new approval packet json under recovery root>',
+  '  --prepare accepts exactly one of --package-ui-manifest <passed v9 json> or --package-upgrade-smoke <isolated upgrade/start/reopen receipt>; the latter is not L4 acceptance.',
   '  pnpm run operate:s7-live-migration -- --execute-approved --approval-packet <absolute approval packet json> --confirm-live-migration <exact packet confirmation token> --recovery-root <absolute isolated existing directory> --out <absolute new launch receipt json under recovery root>',
   '  pnpm run operate:s7-live-migration -- --prepare-finalization --approval-packet <absolute approval packet json> --launch-receipt <absolute successful launch receipt json> --acceptance-receipt <absolute passed readonly acceptance json> --recovery-root <absolute isolated existing directory> --out <absolute new finalization packet json under recovery root>',
+  '  pnpm run operate:s7-live-migration -- --prepare-recovery --approval-packet <original approval json> --launch-receipt <original post-write HOLD json> --acceptance-receipt <current passed readonly acceptance json> --recovery-snapshot <current WAL-safe backup db> --recovery-root <absolute isolated existing directory> --out <absolute new recovery packet json>',
   '  pnpm run operate:s7-live-migration -- --finalize-approved --finalization-packet <absolute finalization packet json> --confirm-finalization <exact finalization token>',
   '',
   'Windows only. No mode and --help are side-effect free.',
   '--prepare is read-only apart from its exclusive approval packet output.',
   '--execute-approved writes a complete launch intent before one controlled launch attempt.',
   '--prepare-finalization is read-only apart from one protected finalization packet.',
+  '--prepare-recovery validates the retained failed chain and current authority/backup; finalization records RECOVERED_AFTER_FAILED_MIGRATION_PROCESS with closed:null, never creates CLOSED, and binds the new recovery package separately.',
   '--finalize-approved revalidates the complete chain and atomically publishes protected FINALIZED.json; it does not declare APP_READY or authorize Ads execution.',
   '--recovery-root must be current-user-owned, inheritance-protected, and writable only by the current user, SYSTEM, and Administrators.',
   'While that complete intent exists the packet cannot be reused. Deleting or rolling it back is evidence destruction, forces HOLD, and requires a new packet and approval; this local operator cannot absolutely detect administrator deletion.',
@@ -240,11 +243,11 @@ function exists(value) {
   }
 }
 
-function directPath(value, label, type) {
+function directPath(value, label, type, { bigint = false } = {}) {
   const resolved = cleanAbsolute(value, label);
   let lstat;
   try {
-    lstat = fs.lstatSync(resolved);
+    lstat = fs.lstatSync(resolved, { bigint });
   } catch (error) {
     if (error && error.code === 'ENOENT') fail(`${label} does not exist: ${resolved}`);
     throw error;
@@ -256,16 +259,16 @@ function directPath(value, label, type) {
   if (!samePath(resolved, realPath)) {
     fail(`${label} may not traverse a symbolic link, junction, or reparse point: ${resolved}`);
   }
-  const stat = fs.statSync(realPath);
+  const stat = fs.statSync(realPath, { bigint });
   if (type === 'file' && !stat.isFile()) fail(`${label} must be a regular file.`);
   if (type === 'directory' && !stat.isDirectory()) fail(`${label} must be a directory.`);
   return { resolved, realPath, stat };
 }
 
 function sameStat(left, right) {
-  return Number(left.dev) === Number(right.dev)
-    && Number(left.ino) === Number(right.ino)
-    && Number(left.nlink) === Number(right.nlink)
+  return String(left.dev) === String(right.dev)
+    && String(left.ino) === String(right.ino)
+    && String(left.nlink) === String(right.nlink)
     && left.birthtimeMs === right.birthtimeMs
     && left.size === right.size
     && left.mtimeMs === right.mtimeMs
@@ -275,16 +278,16 @@ function sameStat(left, right) {
 function identity(stat, realPath) {
   return {
     realPath,
-    dev: Number(stat.dev),
-    ino: Number(stat.ino),
-    birthtimeMs: stat.birthtimeMs,
+    dev: stat.dev.toString(),
+    ino: stat.ino.toString(),
+    birthtimeMs: Number(stat.birthtimeNs) / 1_000_000,
     nlink: Number(stat.nlink),
   };
 }
 
 function fileArtifact(value, label) {
-  const before = directPath(value, label, 'file');
-  if (before.stat.nlink !== 1) fail(`${label} must have exactly one hard link.`);
+  const before = directPath(value, label, 'file', { bigint: true });
+  if (before.stat.nlink !== 1n) fail(`${label} must have exactly one hard link.`);
   const handle = fs.openSync(before.realPath, 'r');
   const hash = crypto.createHash('sha256');
   const buffer = Buffer.allocUnsafe(1024 * 1024);
@@ -293,7 +296,7 @@ function fileArtifact(value, label) {
   let end;
   let after;
   try {
-    start = fs.fstatSync(handle);
+    start = fs.fstatSync(handle, { bigint: true });
     if (!sameStat(before.stat, start)) {
       fail(`${label} changed identity before its stable read began.`);
     }
@@ -305,11 +308,11 @@ function fileArtifact(value, label) {
         total += bytes;
       }
     } while (bytes > 0);
-    end = fs.fstatSync(handle);
-    if (!sameStat(start, end) || total !== start.size) {
+    end = fs.fstatSync(handle, { bigint: true });
+    if (!sameStat(start, end) || BigInt(total) !== start.size) {
       fail(`${label} changed while it was being read.`);
     }
-    after = directPath(value, label, 'file');
+    after = directPath(value, label, 'file', { bigint: true });
     if (!sameStat(end, after.stat) || !samePath(before.realPath, after.realPath)) {
       fail(`${label} path was replaced while it was being read.`);
     }
@@ -322,7 +325,7 @@ function fileArtifact(value, label) {
     identity: identity(end, after.realPath),
     sha256: hash.digest('hex').toUpperCase(),
     sizeBytes: total,
-    mtimeMs: end.mtimeMs,
+    mtimeMs: Number(end.mtimeNs) / 1_000_000,
   });
 }
 
@@ -644,13 +647,14 @@ function resolveTrustedWindowsPowerShell(
 
   const identityCommand = [
     "$ErrorActionPreference='Stop'",
+    "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
     "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:AAO_S7_TRUSTED_SHELL_B64))",
     '$acl=[IO.File]::GetAccessControl($p)',
     '$sidType=[Security.Principal.SecurityIdentifier]',
     '$rules=@($acl.GetAccessRules($true,$true,$sidType) | ForEach-Object { [ordered]@{ sid=$_.IdentityReference.Value; type=$_.AccessControlType.ToString(); rights=([int64]$_.FileSystemRights).ToString(); inherited=[bool]$_.IsInherited } })',
     '$signature=Get-AuthenticodeSignature -LiteralPath $p',
     '$version=[Diagnostics.FileVersionInfo]::GetVersionInfo($p)',
-    '[ordered]@{ ownerSid=$acl.GetOwner($sidType).Value; inheritanceProtected=[bool]$acl.AreAccessRulesProtected; rules=$rules; signatureStatus=$signature.Status.ToString(); signatureSubject=$signature.SignerCertificate.Subject; signatureThumbprint=$signature.SignerCertificate.Thumbprint; companyName=$version.CompanyName; fileVersion=$version.FileVersion; productName=$version.ProductName; originalFilename=$version.OriginalFilename } | ConvertTo-Json -Compress -Depth 6',
+    '[ordered]@{ ownerSid=$acl.GetOwner($sidType).Value; inheritanceProtected=[bool]$acl.AreAccessRulesProtected; rules=$rules; signatureStatus=$signature.Status.ToString(); signatureSubject=$signature.SignerCertificate.Subject; signatureThumbprint=$signature.SignerCertificate.Thumbprint; companyName=$version.CompanyName; fileVersion=([string]::Join(\'.\',@($version.FileMajorPart,$version.FileMinorPart,$version.FileBuildPart,$version.FilePrivatePart))); productName=$version.ProductName; originalFilename=$version.OriginalFilename } | ConvertTo-Json -Compress -Depth 6',
   ].join('\n');
   const identityResult = run(
     executablePath,
@@ -1254,81 +1258,36 @@ function defaultReadSchema(dbPath) {
   }
 }
 
+let mainStartupGateRuntime;
+function loadMainStartupGateRuntime() {
+  if (mainStartupGateRuntime) return mainStartupGateRuntime;
+  const cache = path.join(ROOT, 'apps', 'desktop', 'node_modules', '.cache', 's7-migration');
+  fs.mkdirSync(cache, { recursive: true });
+  const outfile = path.join(cache, `startup-gate-${process.pid}.cjs`);
+  require(path.join(ROOT, 'apps', 'desktop', 'node_modules', 'esbuild')).buildSync({
+    entryPoints: [path.join(ROOT, 'apps', 'desktop', 'src', 'main', 's7-migration-startup-gate.ts')],
+    tsconfig: path.join(ROOT, 'apps', 'desktop', 'tsconfig.json'),
+    bundle: true, platform: 'node', format: 'cjs', outfile,
+    external: ['better-sqlite3'], logLevel: 'silent',
+  });
+  mainStartupGateRuntime = require(outfile);
+  return mainStartupGateRuntime;
+}
+
 function postMigrationAuthorityContract(actualRows) {
-  const productionContract = migrationContract();
-  const rows = (actualRows ?? productionContract).map((row) => ({
-    version: Number(row.version),
-    name: String(row.name),
-    checksum: String(row.checksum),
+  const contract = loadMainStartupGateRuntime().s7PostMigrationAuthorityContract();
+  const rows = (actualRows ?? contract.migrationRows).map((row) => ({
+    version: Number(row.version), name: String(row.name), checksum: String(row.checksum),
     status: String(row.status ?? 'applied').toLowerCase(),
   }));
-  if (!migrationRowsMatchProductionContract(
-    rows,
-    productionContract,
-    migrationV1ChecksumWhitelist(productionContract),
-  )) {
+  if (!migrationRowsMatchProductionContract(rows, migrationContract())) {
     fail(`Post-migration authority ledger is not the exact allowed v1..v${TARGET_VERSION} contract.`);
   }
-  const storeProviderIdentityV11 = storeProviderIdentityV11SchemaContract();
-  return {
-    targetVersion: TARGET_VERSION,
-    integrityCheck: 'ok',
-    foreignKeyViolationCount: 0,
-    migrationRows: rows,
-    requiredTables: [...REQUIRED_TABLES],
-    storeProviderIdentityV11,
-    contractSha256: sha256(stableJson({
-      targetVersion: TARGET_VERSION,
-      migrationRows: rows,
-      requiredTables: REQUIRED_TABLES,
-      storeProviderIdentityV11,
-    })),
-  };
+  return { ...contract, migrationRows: rows };
 }
 
 function defaultInspectPostMigrationAuthority(dbPath) {
-  const Database = requireSqlite();
-  const database = new Database(dbPath, { readonly: true, fileMustExist: true });
-  try {
-    database.pragma('query_only = ON');
-    const integrityRows = database.pragma('integrity_check');
-    const integrityCheck = String(
-      Object.values(integrityRows?.[0] || {})[0] || '',
-    ).toLowerCase();
-    const foreignKeyViolations = database.pragma('foreign_key_check');
-    const tableNames = new Set(database.prepare(`
-      SELECT name
-      FROM sqlite_master
-      WHERE type = 'table'
-      ORDER BY name
-    `).all().map((row) => String(row.name)));
-    const migrationRows = database.prepare(`
-      SELECT version, name, checksum, status
-      FROM schema_migrations
-      ORDER BY version
-    `).all().map((row) => ({
-      version: Number(row.version),
-      name: String(row.name),
-      checksum: String(row.checksum),
-      status: String(row.status),
-    }));
-    assertStoreProviderIdentityV11Schema(
-      database,
-      'Post-migration authority v11 store provider identity schema',
-    );
-    const expected = postMigrationAuthorityContract(migrationRows);
-    if (
-      integrityRows.length !== 1
-      || integrityCheck !== 'ok'
-      || foreignKeyViolations.length !== 0
-      || REQUIRED_TABLES.some((name) => !tableNames.has(name))
-    ) {
-      fail('Post-migration authority schema/ledger/checksum/invariants are not current.');
-    }
-    return expected;
-  } finally {
-    database.close();
-  }
+  return loadMainStartupGateRuntime().defaultInspectPostMigrationAuthority(dbPath);
 }
 
 function parsePowerShellJson(result, label) {
@@ -1600,9 +1559,10 @@ function validateMigrationInputs(migration, verification, db, context) {
     || Number(manifest?.targetVersion) !== TARGET_VERSION
     || !samePath(manifest?.source?.path, db.realPath)
     || normalizeSha(manifest?.source?.sha256, 'Offline migration source SHA') !== db.sha256
-    || manifest?.source?.version !== REQUIRED_SOURCE_VERSION
+    || !SUPPORTED_SOURCE_VERSIONS.includes(manifest?.source?.version)
+    || manifest.source.version !== context.readSchemaVersion(db.realPath)
   ) {
-    fail(`Offline migration manifest is not a passing exact v0-to-v${TARGET_VERSION} rehearsal for this DB.`);
+    fail(`Offline migration manifest is not a passing bound v0/v11-to-v${TARGET_VERSION} rehearsal for this DB.`);
   }
   exactPassingChecks(verification.value, 'Supplied migration verification receipt');
   if (
@@ -1639,6 +1599,122 @@ function validateMigrationInputs(migration, verification, db, context) {
   };
 }
 
+function sqliteLogicalDigest(filePath) {
+  const database = new (requireSqlite())(filePath, { readonly: true, fileMustExist: true });
+  try {
+    database.pragma('query_only = ON');
+    database.defaultSafeIntegers(true);
+    const schema = database.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name').all();
+    const hash = crypto.createHash('sha256').update(stableJson(schema));
+    for (const table of schema.filter((row) => row.type === 'table')) {
+      const name = String(table.name).replaceAll('"', '""');
+      const rows = database.prepare(`SELECT * FROM "${name}"`).raw().all().map((row) => stableJson(row.map((value) => (
+        typeof value === 'bigint' ? { integer: value.toString() }
+          : Buffer.isBuffer(value) ? { blob: value.toString('hex') } : value
+      )))).sort();
+      hash.update(stableJson([table.name, rows]));
+    }
+    return hash.digest('hex').toUpperCase();
+  } finally { database.close(); }
+}
+
+function validatePackageUpgradeSmoke(receipt, artifact, currentPackage, db, context) {
+  const generatedAt = Date.parse(receipt?.generatedAt || '');
+  if (receipt?.kind !== 's7-package-upgrade-smoke' || receipt.schemaVersion !== 1
+    || receipt.formalAppReadiness !== false || !Number.isFinite(generatedAt)
+    || generatedAt > context.now().valueOf() + 60_000
+    || context.now().valueOf() - generatedAt > MAX_PACKAGE_UI_AGE_MS) {
+    fail('Package upgrade smoke receipt is invalid or stale.');
+  }
+  for (const key of ['exe', 'main', 'appContent']) {
+    const bound = receipt.package?.[key];
+    if (!samePath(bound?.realPath, currentPackage[key].realPath)
+      || normalizeSha(bound?.sha256, `Upgrade smoke ${key}`) !== currentPackage[key].sha256
+      || Number(bound?.sizeBytes) !== currentPackage[key].sizeBytes) {
+      fail('Package upgrade smoke does not bind the current package.');
+    }
+  }
+  const boundFile = (binding, label) => {
+    const actual = fileArtifact(binding?.path, label);
+    if (actual.sha256 !== normalizeSha(binding.sha256, label) || actual.sizeBytes !== binding.sizeBytes) {
+      fail(`${label} file changed since smoke capture.`);
+    }
+    return actual;
+  };
+  const source = boundFile(receipt.sourceSnapshot, 'Upgrade source snapshot');
+  const authoritySnapshot = receipt.authoritySnapshot
+    ? boundFile(receipt.authoritySnapshot, 'Original authority snapshot') : source;
+  context.captureAuthorityCurrentness({ sourceDatabasePath: db.realPath, expectedSnapshotArtifact: authoritySnapshot });
+  const logicalDigest = sqliteLogicalDigest(source.realPath);
+  if (authoritySnapshot.sha256 !== source.sha256 && sqliteLogicalDigest(authoritySnapshot.realPath) !== logicalDigest) {
+    fail('Rehearsal source logical contents differ from the authority snapshot.');
+  }
+  const rehearsal = readJsonStable(receipt.rehearsalManifestPath, 'Upgrade smoke rehearsal');
+  const verified = context.verifyMigration(rehearsal.artifact.realPath);
+  exactPassingChecks(verified, 'Upgrade smoke rehearsal verification');
+  if (!samePath(verified.sourceManifestPath, rehearsal.artifact.realPath)
+    || normalizeSha(verified.sourceManifestSha256, 'Upgrade smoke rehearsal hash') !== rehearsal.artifact.sha256
+    || !samePath(rehearsal.value.source?.path, source.realPath)
+    || normalizeSha(rehearsal.value.source?.sha256, 'Rehearsal source') !== source.sha256
+    || rehearsal.value.source?.version !== 11 || rehearsal.value.targetVersion !== TARGET_VERSION
+    || normalizeSha(receipt.isolatedGenesisSha256, 'Isolated genesis') !== normalizeSha(rehearsal.value.workingDatabase?.upgradedSha256, 'Rehearsal upgraded database')) {
+    fail('Package smoke is not bound to the verified v11 rehearsal and isolated genesis.');
+  }
+  const profile = validateEvidenceUserDataPath(receipt.isolatedUserDataDir);
+  const isolated = boundFile(receipt.isolatedDatabase, 'Smoke isolated database');
+  if (!samePath(isolated.realPath, path.join(profile, 'amazon-ai-ops.db')) || pathsOverlap(profile, path.dirname(db.realPath))) {
+    fail('Package smoke database must be in its isolated profile.');
+  }
+  noSidecars(isolated.realPath, 'Closed smoke database');
+  const authority = context.inspectPostMigrationAuthority(isolated.realPath);
+  if (stableJson(authority) !== stableJson(postMigrationAuthorityContract(authority.migrationRows))) {
+    fail('Package smoke isolated database contract is not current.');
+  }
+  const Database = requireSqlite();
+  const snapshot = new Database(source.realPath, { readonly: true, fileMustExist: true });
+  const upgraded = new Database(isolated.realPath, { readonly: true, fileMustExist: true });
+  let sourceRows;
+  try {
+    snapshot.pragma('query_only = ON'); upgraded.pragma('query_only = ON');
+    sourceRows = collectRowCounts(snapshot);
+    const rowsAfter = collectRowCounts(upgraded);
+    if (stableJson(sourceRows) !== stableJson(receipt.sourceSnapshot.tableRowCounts)
+      || Object.entries(sourceRows).some(([table, count]) => table !== 'schema_migrations' && !(rowsAfter[table] >= count))) {
+      fail('Package smoke logical summary or preserved business rows differ.');
+    }
+  } finally { snapshot.close(); upgraded.close(); }
+  if (!Array.isArray(receipt.launches) || receipt.launches.length !== 2) fail('Package smoke requires startup and reopen.');
+  let previousClose = 0;
+  const pids = new Set();
+  for (const launch of receipt.launches) {
+    const startedAt = Date.parse(launch.startedAt || '');
+    const closedAt = Date.parse(launch.closedAt || '');
+    const runtimeFile = boundFile(launch.runtimeMarker, 'Smoke runtime marker');
+    const readyFile = boundFile(launch.windowReadyMarker, 'Smoke window marker');
+    const runtime = JSON.parse(fs.readFileSync(runtimeFile.realPath, 'utf8'));
+    const ready = JSON.parse(fs.readFileSync(readyFile.realPath, 'utf8'));
+    const process = launch.processObservation;
+    const window = validatePackageLaunchWindowReadyMarker(ready, {
+      expectedPid: launch.pid, expectedRendererPath: path.join(currentPackage.appContent.realPath, 'dist', 'renderer', 'index.html'),
+      expectedUserDataDir: profile, notBeforeMs: startedAt, runtimeMarkerGeneratedAt: runtime.generatedAt,
+    });
+    if (!Number.isFinite(startedAt) || !Number.isFinite(closedAt) || startedAt < previousClose
+      || closedAt < Date.parse(ready.generatedAt) || closedAt > generatedAt
+      || launch.exitCode !== 0 || pids.has(launch.pid) || !window.passed
+      || runtime.pid !== launch.pid || runtime.mode !== 'package-launch-smoke' || !samePath(runtime.userDataDir, profile)
+      || process?.ProcessId !== launch.pid || !samePath(process?.ExecutablePath, currentPackage.exe.realPath)
+      || !(process?.MainWindowHandle > 0) || process?.WindowVisible !== true
+      || !Number.isFinite(Date.parse(process?.CreationDate)) || Date.parse(process.CreationDate) < startedAt - 2000) {
+      fail('Package smoke startup/reopen window, process, timing or close proof is invalid.');
+    }
+    previousClose = closedAt; pids.add(launch.pid);
+  }
+  return { artifact: publicArtifact(artifact), mode: 'package-upgrade-smoke', generatedAt: new Date(generatedAt).toISOString(),
+    formalAppReadiness: false, sourceSnapshot: publicArtifact(source), authoritySnapshot: publicArtifact(authoritySnapshot),
+    sourceLogicalDigest: logicalDigest, isolatedDatabase: publicArtifact(isolated),
+    rehearsal: publicArtifact(rehearsal.artifact), authorityContractSha256: authority.contractSha256, launchCount: 2 };
+}
+
 function packageUiFileMatchesDb(record, db) {
   return samePath(record?.path, db.realPath)
     && normalizeSha(record?.sha256, 'Package UI protected DB SHA') === db.sha256
@@ -1654,7 +1730,7 @@ function validatePackageUi(manifest, artifact, currentPackage, db, context) {
   }
   if (
     manifest?.kind !== 'package-ui-evidence'
-    || Number(manifest?.schemaVersion) !== 8
+    || Number(manifest?.schemaVersion) !== 9
     || manifest?.passed !== true
     || !Number.isFinite(generatedAt)
     || generatedAt > currentTime.valueOf() + 60_000
@@ -1668,7 +1744,7 @@ function validatePackageUi(manifest, artifact, currentPackage, db, context) {
     || !Array.isArray(formal?.violations)
     || formal.violations.length !== 0
   ) {
-    fail('Formal Package UI v8 completeness evaluation failed.');
+    fail('Formal Package UI v9 completeness evaluation failed.');
   }
   const requested = manifest.requested || {};
   const before = manifest.artifactsBefore || {};
@@ -1701,7 +1777,7 @@ function validatePackageUi(manifest, artifact, currentPackage, db, context) {
   return {
     artifact: publicArtifact(artifact),
     generatedAt: new Date(generatedAt).toISOString(),
-    schemaVersion: 8,
+    schemaVersion: 9,
     passed: true,
     runGroupId: manifest.runGroup?.runGroupId ?? null,
     formalEvaluation: {
@@ -2139,6 +2215,8 @@ function Assert-S7TrustedShellBinding([object]$expected) {
   ) { throw 'trusted-shell-artifact-binding-mismatch' }
   $signature=Get-AuthenticodeSignature -LiteralPath $trustedShellPath
   $version=[Diagnostics.FileVersionInfo]::GetVersionInfo($trustedShellPath)
+  # Localized MUI FileVersion text may differ from the signed executable's fixed version.
+  $fixedFileVersion=[string]::Join('.',@($version.FileMajorPart,$version.FileMinorPart,$version.FileBuildPart,$version.FilePrivatePart))
   if (
     $signature.Status.ToString() -ne 'Valid' -or
     [string]$signature.SignerCertificate.Subject -ne [string]$expected.signature.subject -or
@@ -2147,7 +2225,7 @@ function Assert-S7TrustedShellBinding([object]$expected) {
       [string]$expected.signature.thumbprint
     ) -or
     [string]$version.CompanyName -ne [string]$expected.version.companyName -or
-    [string]$version.FileVersion -ne [string]$expected.version.fileVersion -or
+    [string]$fixedFileVersion -ne [string]$expected.version.fileVersion -or
     [string]$version.OriginalFilename -ne [string]$expected.version.originalFilename
   ) { throw 'trusted-shell-signature-version-binding-mismatch' }
   $acl=[System.IO.File]::GetAccessControl($trustedShellPath)
@@ -2175,6 +2253,7 @@ $databaseHandleAcquired=$false
 $databaseHandleReleased=$false
 $processInformation=New-Object S7NativeLaunch+PROCESS_INFORMATION
 $processCreated=$false
+$observedExitCode=$null
 $processResumed=$false
 try {
   $phase='open-exclusive-database'
@@ -2593,6 +2672,7 @@ try {
   if (![S7NativeLaunch]::GetExitCodeProcess($processInformation.hProcess,[ref]$exitCode)) {
     throw ('GetExitCodeProcess-failed-' + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
   }
+  $observedExitCode=[long]$exitCode
   if ($exitCode -ne 0) {
     $phase='child-exit-failed-before-closed-receipt'
     throw ('approved-child-exit-code-' + $exitCode)
@@ -2635,7 +2715,7 @@ try {
     [string]$admission.sqliteTakeover.beginMode -ne 'exclusive' -or
     $admission.sqliteTakeover.transactionActive -ne $true -or
     $admission.sqliteTakeover.sameConnectionRequiredForMigration -ne $true -or
-    [int]$admission.sqliteTakeover.schemaVersionBefore -ne 0
+    @(0, 11) -notcontains [int]$admission.sqliteTakeover.schemaVersionBefore
   ) {
     throw 'main-admission-sqlite-takeover-invalid'
   }
@@ -2721,6 +2801,7 @@ try {
     databaseHandleReleased=$databaseHandleReleased
     releaseState=$releaseState
     errorType=$_.Exception.GetType().Name
+    exitCode=$observedExitCode
     observedAt=(Get-Date).ToUniversalTime().ToString('o')
   })
   exit 1
@@ -3508,7 +3589,7 @@ function validateControlledCloseProof(result, ready, suspended, resumed, context
     || admissionDocument?.sqliteTakeover?.beginMode !== 'exclusive'
     || admissionDocument?.sqliteTakeover?.transactionActive !== true
     || admissionDocument?.sqliteTakeover?.sameConnectionRequiredForMigration !== true
-    || Number(admissionDocument?.sqliteTakeover?.schemaVersionBefore) !== 0
+    || !SUPPORTED_SOURCE_VERSIONS.includes(Number(admissionDocument?.sqliteTakeover?.schemaVersionBefore))
     || closedDocument?.kind !== STARTUP_GATE_CLOSED_KIND
     || closedDocument?.schemaVersion !== STARTUP_GATE_CLOSED_SCHEMA
     || closedDocument?.status !== 'CLOSED_AFTER_GUARDED_MIGRATION'
@@ -3639,6 +3720,15 @@ function defaultContext(injected = {}) {
     listSuspendedProcesses: defaultListSuspendedSameNameProcesses,
     readSchemaVersion: defaultReadSchema,
     inspectPostMigrationAuthority: defaultInspectPostMigrationAuthority,
+    captureAuthorityCurrentness: captureAuthoritySnapshotCurrentness,
+    assertProcessAbsent: (pid) => {
+      if (!Number.isInteger(pid) || pid < 1) fail('Recovery process identity is invalid.');
+      try { process.kill(pid, 0); } catch (error) {
+        if (error.code === 'ESRCH') return;
+        fail('Recovery cannot establish that the original process exited.');
+      }
+      fail('Recovery requires the original Main and helper processes to have exited.');
+    },
     resolveRoamingAppData: defaultResolveRoamingAppData,
     resolveUserProfile: defaultResolveUserProfile,
     inspectAuthority: defaultInspectAuthority,
@@ -3716,8 +3806,8 @@ function validateStage2Inputs(input, context) {
   );
   noSidecars(db.realPath, 'Live authority database');
   const version = context.readSchemaVersion(db.realPath);
-  if (version !== REQUIRED_SOURCE_VERSION) {
-    fail(`Live authority schema must be exactly v${REQUIRED_SOURCE_VERSION}; v1-v8 require recovery.`);
+  if (!SUPPORTED_SOURCE_VERSIONS.includes(version)) {
+    fail('Live authority schema must be exactly v0 or v11; other versions require recovery.');
   }
 
   const selection = readJsonStable(input.authoritySelection, 'Authority selection receipt');
@@ -3742,9 +3832,12 @@ function validateStage2Inputs(input, context) {
     context,
   );
 
-  const packageUiRead = readJsonStable(input.packageUiManifest, 'Package UI manifest');
+  if (Boolean(input.packageUiManifest) === Boolean(input.packageUpgradeSmoke)) {
+    fail('Exactly one package UI manifest or package upgrade smoke receipt is required.');
+  }
+  const packageUiRead = readJsonStable(input.packageUiManifest || input.packageUpgradeSmoke, 'Package migration prerequisite');
   const packageIdentity = context.packageIdentity();
-  const packageUi = validatePackageUi(
+  const packageUi = (input.packageUpgradeSmoke ? validatePackageUpgradeSmoke : validatePackageUi)(
     packageUiRead.value,
     packageUiRead.artifact,
     packageIdentity,
@@ -3929,6 +4022,7 @@ function readGateJson(artifact, label) {
 }
 
 function collectFinalizationEvidence(input, context) {
+  const recovering = Boolean(input.recoverySnapshot);
   const approvalRead = readJsonStable(input.approvalPacket, 'Finalization approval packet');
   const packetIdentity = validatePacket(
     approvalRead.value,
@@ -3950,8 +4044,22 @@ function collectFinalizationEvidence(input, context) {
     'Finalization readonly acceptance receipt',
   );
   const launch = launchRead.value;
+  if (recovering) {
+    try {
+      const security = context.inspectWindowsPathSecurity(launchRead.artifact.realPath, {
+        label: 'Recovery original HOLD', type: 'file', requireProtected: true,
+      });
+      if (security?.passed !== true || security.inheritanceProtected !== true
+        || security.ownerSid !== security.currentUserSid) {
+        throw new Error('Recovery HOLD protected owner/ACL mismatch.');
+      }
+    } catch {
+      fail('Recovery original HOLD requires its own current-user-owned, inheritance-protected ACL. '
+        + 'Protect this existing HOLD file separately with defaultProtectWindowsFile, preserving its contents and file identity, then prepare recovery again.');
+    }
+  }
   const acceptance = validateS7LiveMigrationAcceptanceReceipt(acceptanceRead.value);
-  if (
+  if (!recovering && (
     launch?.kind !== KIND
     || launch?.schemaVersion !== SCHEMA_VERSION
     || launch?.status !== 'LAUNCHED_AWAITING_READONLY_ACCEPTANCE'
@@ -3975,12 +4083,12 @@ function collectFinalizationEvidence(input, context) {
     || launch?.postCloseEvidence?.processes?.passed !== true
     || launch?.postCloseEvidence?.database?.passed !== true
     || launch?.remainingAcceptanceDependencies?.separateReadonlyAcceptanceRequired !== true
-  ) {
+  )) {
     fail('Launch receipt is not the exact successful migration handoff awaiting acceptance.');
   }
   const currentPackage = context.packageIdentity();
-  assertPacketPackageIdentity(approvalRead.value, currentPackage);
-  const packageAtMigration = startupGatePackageBinding(currentPackage);
+  if (!recovering) assertPacketPackageIdentity(approvalRead.value, currentPackage);
+  const packageAtMigration = startupGatePackageBinding(recovering ? bindings.package : currentPackage);
   const shellAtMigration = startupGateTrustedShellBinding(
     context.trustedPowerShellIdentity(),
   );
@@ -4050,7 +4158,57 @@ function collectFinalizationEvidence(input, context) {
     fail(`Finalization authority contract is not the exact production v${TARGET_VERSION} contract.`);
   }
 
-  const startupGate = launch.startupGate;
+  let recovery = null;
+  let admittedChain = null;
+  let startupGate = launch.startupGate;
+  if (recovering) {
+    const runtime = loadMainStartupGateRuntime();
+    admittedChain = runtime.inspectS7AdmittedRecoveryChain({
+      canonicalUserDataDir: canonical.userDataDir,
+      io: {
+        inspectTrustedPowerShell: () => shellAtMigration,
+        inspectWindowsPathSecurity: (filePath, type, label) => {
+          const security = context.inspectWindowsPathSecurity(filePath, { type, label, requireProtected: true });
+          return { ...security, unauthorizedRules: security.passed ? [] : ['untrusted'] };
+        },
+      },
+    });
+    const exitCode = runtime.requireS7PostWriteHold(launch, admittedChain, packetIdentity.hash);
+    context.assertProcessAbsent(admittedChain.pid);
+    context.assertProcessAbsent(admittedChain.helperPid);
+    if (context.exclusiveDbPreflight(database.realPath)?.passed !== true) fail('Recovery database is still in use.');
+    if (stableJson(startupGateArtifactBinding(launch.approvalPacket, 'HOLD approval'))
+      !== stableJson(startupGateArtifactBinding(approvalRead.artifact, 'Original approval'))) {
+      fail('Recovery HOLD does not bind the original approval packet.');
+    }
+    const originalIntent = validateBoundGateArtifact(admittedChain.active.bindings.intent,
+      admittedChain.active.bindings.intent.realPath, 'Recovery original consumed intent', context);
+    const intentDocument = readGateJson(originalIntent.artifact, 'Recovery original consumed intent');
+    if (intentDocument.kind !== 's7-live-migration-launch-intent'
+      || intentDocument.status !== 'CONSUMED_BEFORE_SPAWN'
+      || intentDocument.approvalPayloadSha256 !== packetIdentity.hash
+      || stableJson(startupGateArtifactBinding(launch.launchIntent, 'HOLD intent')) !== stableJson(originalIntent.binding)
+      || stableJson(startupGateArtifactBinding(intentDocument.packet, 'Intent approval'))
+        !== stableJson(startupGateArtifactBinding(approvalRead.artifact, 'Original approval'))
+      || stableJson(startupGatePackageBinding(intentDocument.package)) !== stableJson(packageAtMigration)
+      || stableJson(startupGateArtifactBinding(intentDocument.database, 'Intent database'))
+        !== stableJson(admittedChain.active.bindings.database)) {
+      fail('Recovery original intent/approval binding drifted.');
+    }
+    const snapshot = startupGateFileArtifact(input.recoverySnapshot, 'Recovery WAL-safe snapshot');
+    if (samePath(snapshot.realPath, database.realPath)) fail('Recovery backup must be distinct from live authority.');
+    context.captureAuthorityCurrentness({ sourceDatabasePath: database.realPath, expectedSnapshotArtifact: snapshot });
+    recovery = {
+      failurePhase: 'child-exit-failed-before-closed-receipt', exitCode,
+      backup: startupGateArtifactBinding(snapshot, 'Recovery WAL-safe snapshot'),
+      intent: originalIntent.binding, package: startupGatePackageBinding(currentPackage),
+    };
+    startupGate = Object.fromEntries([
+      ['active', admittedChain.activeRead], ['bound', admittedChain.boundRead],
+      ['handoffReady', admittedChain.readyRead], ['handoffReleased', admittedChain.releasedRead],
+      ['admission', admittedChain.admissionRead],
+    ].map(([key, value]) => [key, value.artifact]));
+  }
   const gateDirectory = path.join(canonical.userDataDir, STARTUP_GATE_DIRECTORY_NAME);
   const expectedPaths = {
     active: path.join(gateDirectory, STARTUP_GATE_ACTIVE_FILE),
@@ -4084,6 +4242,10 @@ function collectFinalizationEvidence(input, context) {
   const chain = {};
   for (const [name, expectedPath] of Object.entries(expectedPaths)) {
     if (name === 'finalized' || name === 'completion') continue;
+    if (recovering && name === 'closed') {
+      if (exists(expectedPath)) fail('Recovery cannot replace an existing CLOSED receipt.');
+      continue;
+    }
     chain[name] = validateBoundGateArtifact(
       startupGate?.[name],
       expectedPath,
@@ -4092,7 +4254,7 @@ function collectFinalizationEvidence(input, context) {
     );
   }
   const activeDocument = readGateJson(chain.active.artifact, 'Finalization ACTIVE');
-  const closedDocument = readGateJson(chain.closed.artifact, 'Finalization CLOSED');
+  const closedDocument = recovering ? null : readGateJson(chain.closed.artifact, 'Finalization CLOSED');
   if (
     activeDocument?.kind !== STARTUP_GATE_ACTIVE_KIND
     || activeDocument?.schemaVersion !== STARTUP_GATE_ACTIVE_SCHEMA
@@ -4109,16 +4271,16 @@ function collectFinalizationEvidence(input, context) {
       !== stableJson(packageAtMigration)
     || stableJson(startupGateTrustedShellBinding(activeDocument?.bindings?.shell))
       !== stableJson(shellAtMigration)
-    || closedDocument?.kind !== STARTUP_GATE_CLOSED_KIND
+    || (!recovering && (closedDocument?.kind !== STARTUP_GATE_CLOSED_KIND
     || closedDocument?.schemaVersion !== STARTUP_GATE_CLOSED_SCHEMA
     || closedDocument?.status !== 'CLOSED_AFTER_GUARDED_MIGRATION'
     || closedDocument?.gateId !== activeDocument?.gateId
     || closedDocument?.invocationId !== activeDocument?.invocationId
-    || Number(closedDocument?.exitCode) !== 0
+    || Number(closedDocument?.exitCode) !== 0))
   ) {
     fail('Finalization ACTIVE/CLOSED chain is invalid.');
   }
-  const closedDatabase = startupGateArtifactBinding(
+  const closedDatabase = recovering ? null : startupGateArtifactBinding(
     closedDocument.databaseAfterClose,
     'CLOSED database after migration',
   );
@@ -4126,16 +4288,16 @@ function collectFinalizationEvidence(input, context) {
     database,
     'Current database after migration',
   );
-  if (
+  if (!recovering && (
     stableJson(closedDatabase) !== stableJson(currentDatabaseBinding)
     || stableJson(startupGateArtifactBinding(
       startupGate.databaseAfterClose,
       'Launch receipt database after close',
     )) !== stableJson(currentDatabaseBinding)
-  ) {
+  )) {
     fail('Finalization database differs from CLOSED and launch receipt bindings.');
   }
-  for (const [label, actual, expected] of [
+  for (const [label, actual, expected] of recovering ? [] : [
     ['ACTIVE', closedDocument.activeGate, chain.active.binding],
     ['BOUND', closedDocument.boundGate, chain.bound.binding],
     ['HANDOFF_READY', closedDocument.handoffReady, chain.handoffReady.binding],
@@ -4153,6 +4315,16 @@ function collectFinalizationEvidence(input, context) {
   if (!computerName || computerName.includes('\0')) {
     fail('Finalization Windows machine name is unavailable.');
   }
+  if (recovering) {
+    noSidecars(database.realPath, 'Recovery authority after backup');
+    if (!sameArtifact(database, startupGateFileArtifact(database.realPath, 'Recovery stable authority'))
+      || context.exclusiveDbPreflight(database.realPath)?.passed !== true) {
+      fail('Recovery database drifted during validation.');
+    }
+    validateProcessState(context.listProcesses(), 'Recovery final process preflight');
+    context.assertProcessAbsent(admittedChain.pid);
+    context.assertProcessAbsent(admittedChain.helperPid);
+  }
   return {
     canonical: {
       userDataDir: canonical.userDataDir,
@@ -4169,7 +4341,7 @@ function collectFinalizationEvidence(input, context) {
       handoffReady: chain.handoffReady.binding,
       handoffReleased: chain.handoffReleased.binding,
       admission: chain.admission.binding,
-      closed: chain.closed.binding,
+      closed: chain.closed?.binding ?? null,
     },
     approvalPayloadSha256: packetIdentity.hash,
     approvalPacket: startupGateArtifactBinding(
@@ -4194,6 +4366,7 @@ function collectFinalizationEvidence(input, context) {
       databaseFileId: currentDatabaseBinding.identity.fileId,
     },
     authority,
+    ...(recovery ? { recovery } : {}),
   };
 }
 
@@ -4201,7 +4374,7 @@ function finalizationPayload(bindings, generatedAt) {
   return {
     kind: FINALIZATION_PACKET_KIND,
     schemaVersion: FINALIZATION_PACKET_SCHEMA,
-    status: 'AWAITING_EXPLICIT_FINALIZATION_CONFIRMATION',
+    status: bindings.recovery ? 'AWAITING_POST_WRITE_RECOVERY_CONFIRMATION' : 'AWAITING_EXPLICIT_FINALIZATION_CONFIRMATION',
     generatedAt,
     bindings,
     safety: finalizationSafety(),
@@ -4235,7 +4408,7 @@ function validateFinalizationPacket(packet, confirmation) {
     ])
     || packet?.kind !== FINALIZATION_PACKET_KIND
     || packet?.schemaVersion !== FINALIZATION_PACKET_SCHEMA
-    || packet?.status !== 'AWAITING_EXPLICIT_FINALIZATION_CONFIRMATION'
+    || packet?.status !== (packet?.bindings?.recovery ? 'AWAITING_POST_WRITE_RECOVERY_CONFIRMATION' : 'AWAITING_EXPLICIT_FINALIZATION_CONFIRMATION')
     || stableJson(packet?.safety) !== stableJson(finalizationSafety())
     || !exactKeys(packet?.confirmation, [
       'finalizationPayloadSha256',
@@ -4273,12 +4446,14 @@ function parseArgs(argv) {
     'migration-manifest',
     'migration-verification',
     'package-ui-manifest',
+    'package-upgrade-smoke',
     'approval-packet',
     'confirm-live-migration',
     'launch-receipt',
     'acceptance-receipt',
     'finalization-packet',
     'confirm-finalization',
+    'recovery-snapshot',
     'recovery-root',
     'out',
   ]);
@@ -4288,6 +4463,7 @@ function parseArgs(argv) {
       '--prepare',
       '--execute-approved',
       '--prepare-finalization',
+      '--prepare-recovery',
       '--finalize-approved',
     ].includes(token)) {
       if (mode) fail('Exactly one mode is required.');
@@ -4313,6 +4489,7 @@ function parseArgs(argv) {
       'migration-manifest',
       'migration-verification',
       'package-ui-manifest',
+    'package-upgrade-smoke',
       'recovery-root',
       'out',
     ],
@@ -4329,6 +4506,10 @@ function parseArgs(argv) {
       'recovery-root',
       'out',
     ],
+    'prepare-recovery': [
+      'approval-packet', 'launch-receipt', 'acceptance-receipt',
+      'recovery-snapshot', 'recovery-root', 'out',
+    ],
     'finalize-approved': [
       'finalization-packet',
       'confirm-finalization',
@@ -4336,7 +4517,13 @@ function parseArgs(argv) {
   };
   const required = permittedByMode[mode];
   if (!required) fail(`Unsupported mode: --${mode}.`);
-  for (const key of required) if (!values[key]) fail(`--${key} is required for --${mode}.`);
+  for (const key of required) {
+    if (mode === 'prepare' && ['package-ui-manifest', 'package-upgrade-smoke'].includes(key)) continue;
+    if (!values[key]) fail(`--${key} is required for --${mode}.`);
+  }
+  if (mode === 'prepare' && Boolean(values['package-ui-manifest']) === Boolean(values['package-upgrade-smoke'])) {
+    fail('Exactly one of --package-ui-manifest or --package-upgrade-smoke is required.');
+  }
   for (const key of Object.keys(values)) {
     if (!required.includes(key)) fail(`--${key} is not permitted for --${mode}.`);
   }
@@ -4642,6 +4829,8 @@ function boundedUntrustedCandidate(error, exclusiveWindow, launch) {
     databaseHandleReleased: booleanOrNull(errorProof?.databaseHandleReleased),
     releaseState: textOrNull(errorProof?.releaseState, 40),
     errorType: textOrNull(errorProof?.errorType),
+    exitCode: Number.isInteger(errorProof?.exitCode) && errorProof.exitCode >= 0
+      && errorProof.exitCode <= 0xffffffff ? errorProof.exitCode : null,
     observedAt: textOrNull(errorProof?.observedAt, 40),
     scriptSha256: /^[A-F0-9]{64}$/.test(String(errorProof?.scriptSha256 || ''))
       ? String(errorProof.scriptSha256)
@@ -4831,6 +5020,7 @@ function prepareFinalization(values, context) {
       values['approval-packet'],
       values['launch-receipt'],
       values['acceptance-receipt'],
+      ...(values['recovery-snapshot'] ? [values['recovery-snapshot']] : []),
     ],
     context.inspectWindowsPathSecurity,
   );
@@ -4839,6 +5029,7 @@ function prepareFinalization(values, context) {
       approvalPacket: values['approval-packet'],
       launchReceipt: values['launch-receipt'],
       acceptanceReceipt: values['acceptance-receipt'],
+      recoverySnapshot: values['recovery-snapshot'],
     },
     context,
   );
@@ -4885,6 +5076,7 @@ function finalizeApproved(values, context) {
       approvalPacket: saved?.approvalPacket?.realPath,
       launchReceipt: saved?.launchReceipt?.realPath,
       acceptanceReceipt: saved?.acceptanceReceipt?.realPath,
+      recoverySnapshot: saved?.recovery?.backup?.realPath,
     },
     context,
   );
@@ -4897,8 +5089,8 @@ function finalizeApproved(values, context) {
   );
   const finalizedBase = {
     kind: STARTUP_GATE_FINALIZED_KIND,
-    schemaVersion: STARTUP_GATE_FINALIZED_SCHEMA,
-    status: 'FINALIZED_FOR_POST_MIGRATION_STARTUP',
+    schemaVersion: current.recovery ? 's7-main-startup-gate-finalized/v2' : STARTUP_GATE_FINALIZED_SCHEMA,
+    status: current.recovery ? 'RECOVERED_AFTER_FAILED_MIGRATION_PROCESS' : 'FINALIZED_FOR_POST_MIGRATION_STARTUP',
     finalizedAt: nowIso(context.now),
     gateId: current.gate.gateId,
     invocationId: current.gate.invocationId,
@@ -4921,6 +5113,7 @@ function finalizeApproved(values, context) {
     authority: current.authority,
     formalAppReadiness: false,
     adsExecutionAuthorized: false,
+    ...(current.recovery ? { recovery: current.recovery } : {}),
   };
   const finalized = {
     ...finalizedBase,
@@ -5006,7 +5199,8 @@ async function executeApproved(values, context) {
         authoritySelection: saved?.authoritySelection?.realPath,
         migrationManifest: saved?.migrationManifest?.realPath,
         migrationVerification: saved?.migrationVerification?.realPath,
-        packageUiManifest: saved?.packageUi?.artifact?.realPath,
+        packageUiManifest: saved?.packageUi?.mode === 'package-upgrade-smoke' ? undefined : saved?.packageUi?.artifact?.realPath,
+        packageUpgradeSmoke: saved?.packageUi?.mode === 'package-upgrade-smoke' ? saved?.packageUi?.artifact?.realPath : undefined,
       },
       context,
     );
@@ -5464,6 +5658,7 @@ async function run(argv = process.argv.slice(2), injected = {}) {
         migrationManifest: parsed.values['migration-manifest'],
         migrationVerification: parsed.values['migration-verification'],
         packageUiManifest: parsed.values['package-ui-manifest'],
+        packageUpgradeSmoke: parsed.values['package-upgrade-smoke'],
       },
       context,
     );
@@ -5476,7 +5671,7 @@ async function run(argv = process.argv.slice(2), injected = {}) {
         parsed.values['authority-selection'],
         parsed.values['migration-manifest'],
         parsed.values['migration-verification'],
-        parsed.values['package-ui-manifest'],
+        parsed.values['package-ui-manifest'] || parsed.values['package-upgrade-smoke'],
       ],
       context.inspectWindowsPathSecurity,
     );
@@ -5489,7 +5684,7 @@ async function run(argv = process.argv.slice(2), injected = {}) {
     context.writeStdout(`${JSON.stringify(packet, null, 2)}\n`);
     return { exitCode: 0, packet, outputPath };
   }
-  if (parsed.mode === 'prepare-finalization') {
+  if (parsed.mode === 'prepare-finalization' || parsed.mode === 'prepare-recovery') {
     const result = prepareFinalization(parsed.values, context);
     context.writeStdout(`${JSON.stringify(result.receipt, null, 2)}\n`);
     return result;
@@ -5550,4 +5745,5 @@ module.exports = {
   run,
   stableJson,
   validatePackageUi,
+  validatePackageUpgradeSmoke,
 };

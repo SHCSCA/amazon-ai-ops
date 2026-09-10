@@ -13,7 +13,7 @@
  *  4. afterAttached    — "after" evidence slot is populated for the selected job
  *  5. reloadAttached   — "reload" evidence slot is populated for the selected job
  *  6. distinctEvidence — the three evidence entries come from different artifact refs
- *  7. valuesMatch      — the saved (after) bid equals the reload bid within 1 cent
+ *  7. valuesMatch      — the saved (after) bid equals the reload bid exactly
  *
  * The selector only reads already-fetched renderer state. It does NOT:
  *   - trigger new IPC calls
@@ -92,10 +92,10 @@ export function selectExecutionReadbackGate(
   const slots = evidenceBySlot(evidence, selectedJobId, batch.id);
 
   // Gate 1: authority bound
-  const authorityBound = Boolean(grantId) && Boolean(batch.grantId);
+  const authorityBound = Boolean(grantId) && grantId === batch.grantId && selectedJob?.grantId === batch.grantId;
 
   // Gate 2: identity verified (all jobs in batch must have resolved IDs)
-  const identityVerified = jobs.every(
+  const identityVerified = jobs.length > 0 && jobs.every(
     (job) =>
       Boolean(job.identity?.campaignId) &&
       Boolean(job.identity?.adGroupId) &&
@@ -113,11 +113,11 @@ export function selectExecutionReadbackGate(
     .map((e) => e!.artifactRef);
   const distinctEvidence = new Set(artifactRefs).size === artifactRefs.length;
 
-  // Gate 7: values match (after bid === reload bid within 1 cent)
+  // Gate 7: values match (after bid === reload bid exactly)
   const valuesMatch =
     Boolean(slots.after) &&
     Boolean(slots.reload) &&
-    Math.abs(slots.after!.observedBidCents - slots.reload!.observedBidCents) <= 1;
+    Number.isSafeInteger(slots.after!.observedBidCents) && slots.after!.observedBidCents === slots.reload!.observedBidCents;
 
   // Build blockers list
   const blockers: string[] = [];

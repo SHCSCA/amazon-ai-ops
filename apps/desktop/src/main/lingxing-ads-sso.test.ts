@@ -701,7 +701,7 @@ describe('Lingxing Ads navigation continuity', () => {
       const erpPage = {
         url: () => 'https://erp.lingxing.com/erp/home',
         isClosed: () => closed,
-        once: vi.fn((event: string, listener: () => void) => {
+        once: vi.fn((event: string, listener: () => void): unknown => {
           if (event === 'close') closeListener = listener;
           return erpPage;
         }),
@@ -744,11 +744,11 @@ describe('Lingxing Ads navigation continuity', () => {
       };
       let pageListener: ((page: unknown) => void) | undefined;
       const context = {
-        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+        on: vi.fn((event: string, listener: (page: unknown) => void): unknown => {
           if (event === 'page') pageListener = listener;
           return context;
         }),
-        off: vi.fn(() => context),
+        off: vi.fn((): unknown => context),
       };
       const onTrustedPage = vi.fn();
       const onUnsafeCandidates = vi.fn();
@@ -791,11 +791,11 @@ describe('Lingxing Ads navigation continuity', () => {
       };
       let pageListener: ((page: unknown) => void) | undefined;
       const context = {
-        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+        on: vi.fn((event: string, listener: (page: unknown) => void): unknown => {
           if (event === 'page') pageListener = listener;
           return context;
         }),
-        off: vi.fn(() => context),
+        off: vi.fn((): unknown => context),
       };
       const onTrustedPage = vi.fn();
 
@@ -838,11 +838,11 @@ describe('Lingxing Ads navigation continuity', () => {
       };
       let pageListener: ((page: unknown) => void) | undefined;
       const context = {
-        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+        on: vi.fn((event: string, listener: (page: unknown) => void): unknown => {
           if (event === 'page') pageListener = listener;
           return context;
         }),
-        off: vi.fn(() => context),
+        off: vi.fn((): unknown => context),
       };
       const onTrustedPage = vi.fn();
       const onUnsafeCandidates = vi.fn();
@@ -884,11 +884,11 @@ describe('Lingxing Ads navigation continuity', () => {
       ];
       let pageListener: ((page: unknown) => void) | undefined;
       const context = {
-        on: vi.fn((event: string, listener: (page: unknown) => void) => {
+        on: vi.fn((event: string, listener: (page: unknown) => void): unknown => {
           if (event === 'page') pageListener = listener;
           return context;
         }),
-        off: vi.fn(() => context),
+        off: vi.fn((): unknown => context),
       };
       const onTrustedPage = vi.fn();
       const onUnsafeCandidates = vi.fn();

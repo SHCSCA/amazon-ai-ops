@@ -12,7 +12,7 @@ import {
   OPERATION_EVENT_ARCHIVE_MIGRATION_VERSION,
   OperationEventArchiveMigrationError,
 } from './0005-operation-event-archive';
-import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
+import { SQLITE_SCHEMA_VERSION } from '../db';
 
 const tempDirs: string[] = [];
 
@@ -93,7 +93,7 @@ describe('operation event archive migration v5', () => {
         sql: expect.stringMatching(/store_id, archived_at, event_date DESC, id DESC/i),
       }));
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
+        .toEqual({ count: SQLITE_SCHEMA_VERSION });
     } finally {
       database.close();
     }
@@ -224,6 +224,11 @@ describe('operation event archive migration v5', () => {
       database.close();
     }
 
-    expect(() => initSqlite(databasePath)).toThrow(OperationEventArchiveMigrationError);
+    expect(() => initSqlite(databasePath)).toThrow(/ledger.*checksum/i);
+    const inspected = new Database(databasePath, { readonly: true });
+    try {
+      expect(inspected.prepare('SELECT checksum FROM schema_migrations WHERE version = 5').get())
+        .toEqual({ checksum: 'tampered-v5' });
+    } finally { inspected.close(); }
   });
 });

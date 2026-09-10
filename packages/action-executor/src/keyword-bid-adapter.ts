@@ -87,6 +87,7 @@ export interface KeywordBidScreenshotEvidence {
 
 /** Narrow browser boundary; a Playwright-backed implementation is supplied below. */
 export interface KeywordBidPagePort {
+  assertServing(keywordId: string): Promise<void>;
   readSnapshot(command: KeywordBidCommand): Promise<KeywordBidPageSnapshot>;
   fillBid(command: KeywordBidCommand, targetBidCents: number): Promise<void>;
   prepareSave(command: KeywordBidCommand): Promise<KeywordBidSubmitControl>;
@@ -149,6 +150,8 @@ export interface KeywordBidIntentReceipt {
 
 export interface KeywordBidApplyHooks {
   beforeSubmit(intent: KeywordBidBeforeSubmitIntent): Promise<KeywordBidIntentReceipt>;
+  /** Persist the completed click before awaiting any evidence capture. Failure is UNKNOWN. */
+  afterSubmit?(receipt: KeywordBidIntentReceipt): void;
 }
 
 export type KeywordBidApplyResult =
@@ -228,6 +231,7 @@ export class KeywordBidAdapter {
     const observedAt = this.timestamp();
     try {
       assertCommand(command);
+      await this.page.assertServing(command.keywordId);
       let snapshot = await this.page.readSnapshot(command);
       assertSnapshotMatchesCommand(snapshot, command, command.expectedBeforeBidCents);
       await this.page.captureScreenshot(command.evidencePaths.before);
@@ -312,6 +316,7 @@ export class KeywordBidAdapter {
       };
       submitAttempted = true;
       await submitControl.clickOnce();
+      hooks.afterSubmit?.(intentReceipt);
       afterSnapshot = await this.page.readSnapshot(command);
       assertSnapshotIdentityMatchesCommand(afterSnapshot, command);
       await this.page.captureScreenshot(command.evidencePaths.after);

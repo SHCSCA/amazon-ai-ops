@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { EXPECTED_ELECTRON_MODULES_ABI } = require('../../../scripts/prepare-native-runtime.js');
 
 const MARKER_NAME = '.amazon-ai-ops-native-runtime.json';
 const REQUIRED_ENV_KEYS = Object.freeze([
@@ -21,9 +22,9 @@ async function afterPack(context) {
     if (!value) throw new Error(`Missing isolated native package input: ${key}`);
     settings[key] = value;
   }
-  if (settings.AAO_ELECTRON_MODULES_ABI !== '119') {
+  if (settings.AAO_ELECTRON_MODULES_ABI !== EXPECTED_ELECTRON_MODULES_ABI) {
     throw new Error(
-      `Isolated native package ABI must be 119, received ${settings.AAO_ELECTRON_MODULES_ABI}.`,
+      `Isolated native package ABI must be ${EXPECTED_ELECTRON_MODULES_ABI}, received ${settings.AAO_ELECTRON_MODULES_ABI}.`,
     );
   }
   const stagedBindingPath = regularFile(
@@ -36,14 +37,9 @@ async function afterPack(context) {
   }
 
   const appRoot = path.join(path.resolve(context.appOutDir), 'resources', 'app');
-  const targetBindingPath = path.join(
-    appRoot,
-    'node_modules',
-    'better-sqlite3',
-    'build',
-    'Release',
-    'better_sqlite3.node',
-  );
+  const sqliteRoot = path.join(appRoot, 'node_modules', 'better-sqlite3');
+  const napiBindingPath = path.join(sqliteRoot, 'prebuilds', 'win32-x64.node');
+  const targetBindingPath = fs.existsSync(napiBindingPath) ? napiBindingPath : path.join(sqliteRoot, 'build', 'Release', 'better_sqlite3.node');
   const duckdbBindingPath = path.join(
     appRoot,
     'node_modules',

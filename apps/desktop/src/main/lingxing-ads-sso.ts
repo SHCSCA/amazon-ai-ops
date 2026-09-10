@@ -3,6 +3,7 @@ import {
   normalizeProviderExternalAccountId,
 } from '@amazon-ai-ops/shared-types';
 import type { BrowserContext, Locator, Page, Response } from 'playwright';
+import { PlaywrightLingxingKeywordBidPage } from '@amazon-ai-ops/action-executor';
 import { isLingxingAdsLoggedInPage } from './lingxing-session-flow';
 import type { ProviderCredentialSubmission } from './provider-active-identity';
 
@@ -24,7 +25,7 @@ export interface DiscoverLingxingAdsKeywordTargetInput {
   readonly adGroupName: string;
   readonly entityName: string;
   readonly matchType: string;
-  readonly currentBidCents: number;
+  readonly currentBidCents: number | 'read_current';
 }
 
 export interface LingxingKeywordTargetRowSnapshot {
@@ -203,8 +204,8 @@ type LingxingAdsPageState = Readonly<{
   url: string;
   title?: string;
   bodyText?: string;
-  hasAccountInput?: true;
-  hasPasswordInput?: true;
+  hasAccountInput?: boolean;
+  hasPasswordInput?: boolean;
 }>;
 
 const ADS_SSO_TIMEOUT_MS = 45_000;
@@ -289,7 +290,7 @@ export function resolveLingxingKeywordTargetRows(
   };
   if (!expected.campaignName || !expected.adGroupName || !expected.entityName
     || !expected.matchType
-    || !Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0) {
+    || (input.currentBidCents !== 'read_current' && (!Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0))) {
     throw new Error('待识别关键词的活动、广告组、关键词、匹配方式或竞价权威不完整，操作已阻断。');
   }
   const normalizedRows = rows.map((row) => ({
@@ -353,7 +354,7 @@ export function resolveLingxingKeywordTargetRows(
   }));
   if (identities.length === 1 && identities[0].bidValues.length === 1) {
     const observedBid = identities[0].bidValues[0];
-    if (observedBid !== expected.currentBidCents) {
+    if (input.currentBidCents !== 'read_current' && observedBid !== expected.currentBidCents) {
       throw new Error(
         `领星 Ads 关键词 ${input.entityName} 当前竞价已变化：`
         + `报表 $${(expected.currentBidCents / 100).toFixed(2)}，页面 $${(observedBid / 100).toFixed(2)}；`
@@ -674,7 +675,7 @@ export async function discoverLingxingAdsKeywordTarget(
     currentBidCents: Number(input.currentBidCents),
   };
   if (!expected.campaignName || !expected.adGroupName || !expected.entityName || !expected.matchType
-    || !Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0) {
+    || (input.currentBidCents !== 'read_current' && (!Number.isSafeInteger(expected.currentBidCents) || expected.currentBidCents < 0))) {
     throw new Error('待识别关键词的活动、广告组、关键词、匹配方式或竞价权威不完整，操作已阻断。');
   }
 
@@ -726,6 +727,7 @@ export async function discoverLingxingAdsKeywordTarget(
   )).catch(() => [])));
   const rows = frameRows.flat();
   const identity = resolveLingxingKeywordTargetRows(rows, input);
+  await new PlaywrightLingxingKeywordBidPage(page).assertServing(identity.keywordId);
   return {
     adsAccountId: expectedProfileId,
     campaignId,
@@ -980,8 +982,8 @@ export async function readLingxingAdsPageStateAfterNavigation(
   url: string;
   title: string;
   bodyText: string;
-  hasAccountInput?: true;
-  hasPasswordInput?: true;
+  hasAccountInput?: boolean;
+  hasPasswordInput?: boolean;
 }>> {
   for (let attempt = 0; attempt < ADS_NAVIGATION_CONTEXT_READ_ATTEMPTS; attempt += 1) {
     try {

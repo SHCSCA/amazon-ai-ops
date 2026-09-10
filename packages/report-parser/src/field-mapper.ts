@@ -39,9 +39,9 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   '关键词': 'targeting',
   '关键词/ASIN': 'targeting',
   '投放关键词': 'targeting',
-  '投放': 'targeting',
-  'Target': 'targeting',
-  'target': 'targeting',
+  '投放': 'targetingExpression',
+  'Target': 'targetingExpression',
+  'target': 'targetingExpression',
   'Search Term': 'searchTerm',
   'search term': 'searchTerm',
   '搜索词': 'searchTerm',
@@ -98,7 +98,8 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   'ACOS': 'acos',
   'acos': 'acos',
   'Acos': 'acos',
-  'ROAS': 'acos',
+  'ROAS': 'roas',
+  'roas': 'roas',
   
   // CPC
   'CPC': 'cpc',
@@ -123,12 +124,7 @@ export function mapRowFields(row: Record<string, any>): Record<string, any> {
   const mapped: Record<string, any> = {};
   for (const [key, value] of Object.entries(row)) {
     const normalizedKey = normalizeFieldName(key);
-    if (normalizedKey && normalizedKey !== key) {
-      mapped[normalizedKey] = value;
-    } else if (!Object.values(AD_REPORT_FIELD_MAPPING).includes(key)) {
-      // 非标准字段保留原名
-      mapped[key] = value;
-    }
+    mapped[normalizedKey] = value;
   }
   return mapped;
 }

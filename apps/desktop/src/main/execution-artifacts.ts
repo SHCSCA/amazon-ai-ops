@@ -73,6 +73,7 @@ export function executionReconciliationEvidencePath(
   jobId: string,
   observation: 'first' | 'reload',
   sessionGeneration: number,
+  caseId?: string,
 ): string {
   const reconciliationDirectory = `batch-${sha256(requiredText(batchId, 'batchId')).slice(0, 24)}`;
   const jobDirectory = `job-${sha256(requiredText(jobId, 'jobId')).slice(0, 24)}`;
@@ -82,7 +83,7 @@ export function executionReconciliationEvidencePath(
     'ad-execution-reconciliation',
     reconciliationDirectory,
     jobDirectory,
-    `session-${nonNegativeInteger(sessionGeneration, 'sessionGeneration')}-${observation}.png`,
+    `${caseId ? `case-${sha256(caseId).slice(0, 24)}-` : ''}session-${nonNegativeInteger(sessionGeneration, 'sessionGeneration')}-${observation}.png`,
   );
 }
 

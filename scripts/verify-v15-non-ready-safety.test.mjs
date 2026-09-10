@@ -1,3 +1,5 @@
+import { validPackageUiWorkspaceCheck, validPackageUiMinimumWindow } from './package-ui-evidence.test-fixture.mjs';
+import { bindPackageUiTestManifest, packageUiBindingFixture } from './package-ui-evidence.test-fixture.mjs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -32,6 +34,7 @@ const {
   EXPECTED_PACKAGE_UI_SCALES,
   EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_PROFILE_SEQUENCE,
@@ -674,6 +677,8 @@ function validSchedulerSubviewEvidence(userDataDir) {
       busyControlCount: 0,
       confirmRunDialogCount: 0,
       fixedScopeText: 'US USD',
+        fixedScopeTexts: ['US USD'],
+        fixedScopeVisibleCount: 1,
       heading: expected.heading,
       headingCount: 1,
       legacyBoundaryCount: 1,
@@ -801,7 +806,8 @@ function validPackageUiRun(
     profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
     scalePercent: scale.scalePercent,
     schedulerReadOnlyRuntime,
-    screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+    minimumWindow: scale.scalePercent === 100 ? validPackageUiMinimumWindow(dir) : null,
+    screenshots: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => ({
       ...artifactRecord(writePng(path.join(
         dir,
         'package-ui-artifacts',
@@ -814,16 +820,16 @@ function validPackageUiRun(
       firstRun: scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent,
     }),
     subviewChecks: [validPackageUiSubviewCheck(dir, scale, userDataDir)],
-    viewport: { width: 1200, height: 700 },
+    viewport: { width: 1366, height: 768 },
     viewportContract: {
-      actual: { width: 1200, height: 700, deviceScaleFactor: scale.deviceScaleFactor },
+      actual: { width: 1366, height: 768, deviceScaleFactor: scale.deviceScaleFactor },
       delta: { width: 0, height: 0, deviceScaleFactor: 0 },
       passed: true,
-      requested: { width: 1200, height: 700, deviceScaleFactor: scale.deviceScaleFactor },
+      requested: { width: 1366, height: 768, deviceScaleFactor: scale.deviceScaleFactor },
       tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
       violations: [],
     },
-    workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => {
+    workspaceChecks: EXPECTED_PACKAGE_UI_ENTRIES.map((workspace) => {
       const objectWorkspace = workspace.workspace === 'product' || workspace.workspace === 'diagnosis';
       return {
         compositeEvidence: { passed: true },
@@ -833,7 +839,7 @@ function validPackageUiRun(
           inspector: { mode: 'drawer', ariaModal: 'true' },
           screenshot: { sha256: HASH_B },
         } : null,
-        keyboardEvidence: { passed: true },
+        ...validPackageUiWorkspaceCheck(workspace),
         passed: true,
         settleEvidence: { passed: true },
         subview: workspace.subview,
@@ -895,7 +901,7 @@ function validWidePackageUiRun(
       compositeEvidence: { passed: true },
       experienceEvidence: null,
       inspectorEvidence: null,
-      keyboardEvidence: { passed: true },
+      ...validPackageUiWorkspaceCheck(workspace, PACKAGE_UI_WIDE_PROFILE.viewport),
       passed: true,
       settleEvidence: { passed: true },
       subview: workspace.subview,
@@ -996,7 +1002,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   );
   const packageUi = {
     kind: 'package-ui-evidence',
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt: '2026-07-16T08:08:00.000Z',
     completedAt: '2026-07-16T08:09:00.000Z',
     passed: true,
@@ -1021,7 +1027,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
       userDataDir,
       scales: EXPECTED_PACKAGE_UI_SCALES,
       subviewChecks: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
-      viewport: { width: 1200, height: 700 },
+      viewport: { width: 1366, height: 768 },
       wideProfile: {
         id: PACKAGE_UI_WIDE_PROFILE.id,
         viewport: { width: 1400, height: 900 },
@@ -1089,6 +1095,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
     artifactHashesStable: true,
     freshness: { passed: true, violations: [] },
   };
+  bindPackageUiTestManifest(packageUi, dir);
   packageUi.completeness = evaluatePackageUiEvidenceCompleteness(packageUi);
   packageUi.passed = packageUi.completeness.passed;
   packageUi.violations = packageUi.completeness.violations;
@@ -1113,6 +1120,7 @@ function bundlePackageUiReferencedArtifacts(packageUi, bundleManifest) {
   };
   for (const run of packageUi.runs || []) {
     for (const screenshot of run.screenshots || []) pushArtifact(screenshot);
+    for (const screenshot of run.minimumWindow?.screenshots || []) pushArtifact(screenshot);
     for (const overlay of run.overlayChecks || []) pushArtifact(overlay?.screenshot);
     for (const workspace of run.workspaceChecks || []) {
       pushArtifact(workspace?.inspectorEvidence?.screenshot);
@@ -1460,7 +1468,7 @@ function validReadbackEvidence(dir) {
 }
 
 describe('verify v15 non-ready safety', () => {
-  it('binds every schema v8 scheduler screenshot and runtime attestation to its bundle copy', () => {
+  it('binds every schema v9 scheduler screenshot and runtime attestation to its bundle copy', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-package-ui-bundle-binding-'));
     try {
       const bundleDir = path.join(dir, 'bundle');
@@ -1498,7 +1506,7 @@ describe('verify v15 non-ready safety', () => {
         ],
       };
       const packageUi = {
-        schemaVersion: 8,
+        schemaVersion: 9,
         runs: [{
           screenshots: [],
           overlayChecks: [],
@@ -1579,15 +1587,21 @@ describe('verify v15 non-ready safety', () => {
       mutateAfterWrite(context) {
         mutatePackageUiFixture(context, (packageUi) => {
           const run125 = packageUi.runs.find((run) => run.scalePercent === 125);
-          run125.viewport.height = 702;
+          run125.viewport.height = 770;
           run125.viewportContract = {
-            actual: { width: 1200, height: 702, deviceScaleFactor: 1.25 },
+            actual: { width: 1366, height: 770, deviceScaleFactor: 1.25 },
             delta: { width: 0, height: 2, deviceScaleFactor: 0 },
             passed: true,
-            requested: { width: 1200, height: 700, deviceScaleFactor: 1.25 },
+            requested: { width: 1366, height: 768, deviceScaleFactor: 1.25 },
             tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
             violations: [],
           };
+          // This passing fixture represents a fresh run at the tolerated size.
+          const binding = packageUiBindingFixture(path.dirname(context.paths.packageUiManifest), packageUi.requested.userDataDir);
+          packageUi.checkpointComposition = binding.validCheckpointComposition(
+            packageUi.runGroup.runGroupId, packageUi.runGroup.runnerContractSha256,
+            [...packageUi.runs, packageUi.wideProfile], packageUi.checkpointComposition,
+          );
         });
       },
     });
@@ -1625,12 +1639,12 @@ describe('verify v15 non-ready safety', () => {
       mutateAfterWrite(context) {
         mutatePackageUiFixture(context, (packageUi) => {
           const run125 = packageUi.runs.find((run) => run.scalePercent === 125);
-          run125.viewport.height = 703;
+          run125.viewport.height = 771;
           run125.viewportContract = {
-            actual: { width: 1200, height: 703, deviceScaleFactor: 1.25 },
+            actual: { width: 1366, height: 771, deviceScaleFactor: 1.25 },
             delta: { width: 0, height: 3, deviceScaleFactor: 0 },
             passed: true,
-            requested: { width: 1200, height: 700, deviceScaleFactor: 1.25 },
+            requested: { width: 1366, height: 768, deviceScaleFactor: 1.25 },
             tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
             violations: [],
           };

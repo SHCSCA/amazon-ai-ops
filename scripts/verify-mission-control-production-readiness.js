@@ -17,8 +17,8 @@ const requireFromLocalDb = createRequire(path.join(ROOT, 'packages', 'local-db',
 const OUTPUT_KIND = 'mission-control-production-readiness';
 const OUTPUT_SCHEMA_VERSION = 'mission-control-production-readiness/v1';
 const EXECUTION_CANARY_KIND = 'mission-control-execution-canary-evidence';
-const EXECUTION_CANARY_SCHEMA_VERSION = 'mission-control-execution-canary-evidence/v1';
-const EXECUTION_CANARY_AUTHORITY_QUERY_CONTRACT = 'mission-control-execution-canary-authority/v1';
+const EXECUTION_CANARY_SCHEMA_VERSION = 'mission-control-execution-canary-evidence/v2';
+const EXECUTION_CANARY_AUTHORITY_QUERY_CONTRACT = 'mission-control-execution-canary-authority/v2';
 const S7_CONTINUOUS_OPERATION_KIND = 's7-continuous-operation-evidence';
 const S7_CONTINUOUS_OPERATION_SCHEMA_VERSION = 's7-continuous-operation-evidence/v1';
 const V15_GATE_IDS = Object.freeze([
@@ -58,7 +58,7 @@ const GATE_SPECS = Object.freeze([
     option: 'v15-final-readiness',
   }),
   Object.freeze({ id: 'package-launch', name: 'Current package launch', option: 'package-launch-smoke' }),
-  Object.freeze({ id: 'package-ui', name: 'Package UI ten-workspace 100%/125%', option: 'package-ui-manifest' }),
+  Object.freeze({ id: 'package-ui', name: 'Package UI six-module 22-entry 100%/125%', option: 'package-ui-manifest' }),
   Object.freeze({ id: 'package-security', name: 'Package security boundaries', option: 'package-security-evidence' }),
   Object.freeze({ id: 'package-adversarial-node-env', name: 'Adversarial NODE_ENV package smoke', option: 'package-adversarial-node-env-evidence' }),
   Object.freeze({ id: 's7-continuous-operation', name: 'Stage 7 two-store seven-US-business-day operation', option: 's7-continuous-operation-evidence' }),
@@ -808,8 +808,8 @@ function validatePackageUi(evidence) {
   pushReason(reasons, evidence.kind === 'package-ui-evidence', 'unexpected package UI evidence kind');
   pushReason(
     reasons,
-    evidence.schemaVersion === 8,
-    'package UI evidence must use current production two-phase interactive-login schema v8; schemas v5/v6/v7 are historical only',
+    evidence.schemaVersion === 9,
+    'package UI evidence must use current production two-phase interactive-login schema v9; schemas v5/v6/v7/v8 are historical only',
   );
   pushReason(reasons, validTimestamp(evidence.generatedAt), 'package UI generatedAt is invalid');
   pushReason(reasons, evidence.passed === true, 'package UI evidence did not pass');
@@ -835,7 +835,7 @@ function validatePackageUi(evidence) {
   let packageUiContract = null;
   try {
     packageUiContract = require('./package-ui-evidence');
-    expectedWorkspaces = packageUiContract.EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => item.workspace);
+    expectedWorkspaces = packageUiContract.EXPECTED_PACKAGE_UI_ENTRIES.map((item) => `${item.workspace}/${item.subview}`);
     expectedSubviews = packageUiContract.EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS.map(
       (item) => `${item.workspace}/${item.subview}`,
     );
@@ -843,19 +843,19 @@ function validatePackageUi(evidence) {
   } catch (error) {
     reasons.push(`package UI workspace contract could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
   }
-  pushReason(reasons, expectedWorkspaces.length === 10, 'repository package UI contract is not the ten-workspace Stage 7 matrix');
+  pushReason(reasons, expectedWorkspaces.length === 22, 'repository package UI contract is not the complete V1.6 entry matrix');
   pushReason(reasons, stableEqual(expectedSubviews, ['settings/scheduler']), 'repository package UI scheduler subview contract is invalid');
   for (const run of runs) {
     pushReason(reasons, run?.passed === true, `${run?.scalePercent || 'unknown'}% package UI run did not pass`);
     pushReason(
       reasons,
-      uniqueExactStrings((run?.workspaceChecks || []).map((item) => item?.workspace), expectedWorkspaces),
-      `${run?.scalePercent || 'unknown'}% package UI workspace checks are not the exact ten-workspace matrix`,
+      uniqueExactStrings((run?.workspaceChecks || []).map((item) => `${item?.workspace}/${item?.subview}`), expectedWorkspaces),
+      `${run?.scalePercent || 'unknown'}% package UI workspace checks are not the exact 22-entry matrix`,
     );
     pushReason(
       reasons,
-      uniqueExactStrings((run?.screenshots || []).map((item) => item?.workspace), expectedWorkspaces),
-      `${run?.scalePercent || 'unknown'}% package UI screenshots are not the exact ten-workspace matrix`,
+      uniqueExactStrings((run?.screenshots || []).map((item) => `${item?.workspace}/${item?.subview}`), expectedWorkspaces),
+      `${run?.scalePercent || 'unknown'}% package UI screenshots are not the exact 22-entry matrix`,
     );
     pushReason(
       reasons,
@@ -1370,10 +1370,135 @@ function validateExecutionArtifact(record, databaseRecord, artifactContext, labe
   });
 }
 
+// Read immutable authorization and submission history. Live revisions advance on successful readback.
+// Both the exporter and the final verifier use this check; neither can invent a missing legacy snapshot.
+function verifyExecutionCanaryLineage(database, { storeId, missionGrantId, batchId, jobId, mode }) {
+  const reasons = [];
+  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  const one = (sql, ...args) => {
+    const rows = database.prepare(sql).all(...args);
+    check(rows.length === 1, 'Current execution lineage requires exactly one bound record.');
+    return rows[0];
+  };
+  const parse = value => { const result = parseJsonObject(value); check(result, 'Current execution lineage has no immutable snapshot.'); return result; };
+  const time = value => { check(validTimestamp(value), 'Current execution lineage has an invalid timestamp.'); return Date.parse(value); };
+  try {
+    check(['manual_approval', 'policy_auto'].includes(mode), 'Canary authorization mode is invalid.');
+    const job = one('SELECT * FROM ad_execution_jobs WHERE store_id=? AND id=?', storeId, jobId);
+    const grant = one('SELECT * FROM mission_grants WHERE store_id=? AND id=?', storeId, missionGrantId);
+    const store = one('SELECT * FROM stores WHERE store_id=?', storeId);
+    const mission = one('SELECT * FROM missions WHERE store_id=? AND id=?', storeId, job.mission_id);
+    const decision = one('SELECT * FROM decisions WHERE store_id=? AND id=?', storeId, job.decision_id);
+    check(job.batch_id === batchId && job.grant_id === grant.id && job.mission_id === grant.mission_id
+      && job.status === 'succeeded', 'Canary job is not the bound succeeded execution.');
+    const authority = parse(grant.authority_json);
+    const ctx = authority.context;
+    const human = mode === 'manual_approval';
+    const actor = human ? 'operator' : 'policy-engine';
+    check(ctx && stableEqual(Object.keys(ctx).sort(), ['storeId', 'browserProfileId', 'marketplace', 'currency', 'businessTimezone', 'businessDate', 'sessionGeneration'].sort())
+      && ctx.storeId === storeId && ctx.browserProfileId === store.browser_profile_id && ctx.marketplace === 'US' && ctx.currency === 'USD'
+      && ctx.businessTimezone === store.business_timezone && isUsBusinessDate(ctx.businessDate)
+      && isPositiveInteger(ctx.sessionGeneration) && ctx.sessionGeneration === job.created_session_generation
+      && ctx.sessionGeneration === grant.created_session_generation
+      && authority.authorityMode === mode && isPositiveInteger(authority.authorityModeRevision)
+      && authority.authorizationPath === (human ? 'human' : 'policy')
+      && authority.issuerType === (human ? 'human_operator' : 'policy_runtime')
+      && authority.issuerRef === (human ? 'operator' : `policy-runtime:${storeId}:${authority.authorityModeRevision}`)
+      && grant.issuer_type === authority.authorizationPath && grant.issuer_actor_id === actor
+      && stableEqual(authority, parse(decision.authority_json)),
+    'Grant/Decision full context, authority mode revision or single issuer is not exact.');
+
+    const proposal = one('SELECT * FROM analysis_proposal_snapshots WHERE store_id=? AND id=?', storeId, job.proposal_id);
+    const actionBatch = one('SELECT * FROM analysis_action_batches WHERE store_id=? AND id=?', storeId, proposal.action_batch_id);
+    const proposals = database.prepare('SELECT id FROM analysis_proposal_snapshots WHERE store_id=? AND action_batch_id=?').all(storeId, actionBatch.id);
+    check(actionBatch.mission_id === grant.mission_id && actionBatch.mission_revision === grant.mission_revision
+      && actionBatch.action_revision === job.action_revision && actionBatch.created_session_generation === ctx.sessionGeneration
+      && stableEqual(authority, parse(actionBatch.authority_json)) && proposals.length === 1 && proposals[0].id === job.proposal_id,
+    'Canary must cover the entire immutable action batch with the same write authority.');
+
+    const missionHistory = database.prepare(`SELECT * FROM mission_events WHERE store_id=? AND mission_id=?
+      AND mission_revision>=? ORDER BY mission_revision,created_at,id`).all(storeId, mission.id, grant.mission_revision);
+    check(isPositiveInteger(mission.revision) && mission.revision >= grant.mission_revision
+      && missionHistory.length === mission.revision - grant.mission_revision + 1, 'Mission revision history is missing or duplicated.');
+    let previousMissionTime = 0;
+    for (const [index, event] of missionHistory.entries()) {
+      const snapshot = parse(event.snapshot_json);
+      const stamp = time(event.created_at);
+      check(event.mission_revision === grant.mission_revision + index && snapshot.revision === event.mission_revision
+        && snapshot.id === mission.id && snapshot.storeId === storeId && snapshot.marketplace === 'US' && snapshot.currency === 'USD'
+        && snapshot.policyVersionId === grant.policy_version_id && ['active', 'completed'].includes(snapshot.status)
+        && stamp >= previousMissionTime && (index !== 0 || (snapshot.status === 'active' && stamp <= time(grant.issued_at))),
+      'Mission immutable granted revision does not match the execution history.');
+      if (index === missionHistory.length - 1) check(snapshot.status === mission.status && snapshot.phase === mission.phase,
+        'Current Mission does not match its final immutable snapshot.');
+      previousMissionTime = stamp;
+    }
+
+    const history = database.prepare(`SELECT * FROM decision_history WHERE store_id=? AND decision_id=?
+      AND decision_revision>=? ORDER BY decision_revision,created_at,id`).all(storeId, decision.id, job.decision_revision);
+    check(history.length === 3 && decision.status === 'verified' && decision.revision === job.decision_revision + 2,
+      'Succeeded canary requires exact approved, executed and verified Decision history.');
+    let approved;
+    let previousDecisionTime = 0;
+    const immutableDecision = ({ status, revision, updatedAt, ...rest }) => rest;
+    for (const [index, event] of history.entries()) {
+      const snapshot = parse(event.snapshot_json);
+      const status = ['approved', 'executed', 'verified'][index];
+      const stamp = time(event.created_at);
+      if (!index) approved = snapshot;
+      check(event.decision_revision === job.decision_revision + index && snapshot.revision === event.decision_revision
+        && event.event_type === status && snapshot.status === status && snapshot.id === decision.id && snapshot.storeId === storeId
+        && snapshot.missionId === mission.id && snapshot.policyVersionId === grant.policy_version_id && snapshot.policyRevision === grant.policy_revision
+        && snapshot.actionRevision === job.action_revision && snapshot.actionType === 'set_keyword_bid' && snapshot.adEntityId === job.ad_entity_id
+        && snapshot.currentValue === job.expected_bid_cents / 100 && snapshot.recommendedValue === job.target_bid_cents / 100
+        && stableEqual(snapshot.authority, authority) && stableEqual(immutableDecision(snapshot), immutableDecision(approved))
+        && event.actor_id === (index ? 'execution-authority' : actor) && typeof event.reason === 'string' && event.reason.trim().length > 0
+        && stamp >= previousDecisionTime && (index ? stamp >= time(job.terminal_at) : stamp <= time(grant.issued_at)),
+      'Decision approval issuer, immutable values or verified revision history is not exact.');
+      previousDecisionTime = stamp;
+    }
+    check(previousDecisionTime === time(decision.updated_at), 'Decision current timestamp differs from verified history.');
+
+    check(typeof job.submit_intent_id === 'string' && job.submit_intent_id.trim().length > 0 && /^[a-f0-9]{64}$/i.test(job.command_fingerprint),
+      'Succeeded canary has no durable submit intent or command fingerprint.');
+    one('SELECT id FROM ad_execution_jobs WHERE submit_intent_id=?', job.submit_intent_id);
+    const events = database.prepare('SELECT * FROM mission_grant_events WHERE store_id=? AND grant_id=?').all(storeId, grant.id);
+    const slot = type => { const items = events.filter(event => event.event_type === type); check(items.length === 1, `Grant requires one ${type} event.`); return items[0]; };
+    check(!events.some(event => ['invalidated', 'revoked', 'expired'].includes(event.event_type)), 'Grant was invalidated, revoked or expired.');
+    const issued = slot('issued'); const consumed = slot('consumed'); const reserved = slot('reserved'); const spent = slot('spent');
+    check(issued.actor_id === actor && time(issued.created_at) === time(grant.issued_at), 'Grant issued event has the wrong authority actor.');
+    for (const event of [reserved, spent]) check(event.job_id === job.id && event.submit_intent_id === job.submit_intent_id
+      && event.impact_cents === job.expected_bid_cents - job.target_bid_cents && event.impact_cents > 0 && event.actor_id === 'execution-ledger',
+    'Grant slot is not bound to the exact job, submit intent and impact.');
+    const intent = one("SELECT * FROM ad_execution_events WHERE store_id=? AND job_id=? AND event_type='submit_intent_recorded'", storeId, job.id);
+    const submitted = one("SELECT * FROM ad_execution_events WHERE store_id=? AND job_id=? AND event_type='submitted'", storeId, job.id);
+    check(intent.batch_id === batchId && submitted.batch_id === batchId && intent.to_status === 'intent_written'
+      && submitted.from_status === 'intent_written' && submitted.to_status === 'submitted' && submitted.sequence === intent.sequence + 1
+      && intent.session_generation === ctx.sessionGeneration && submitted.session_generation === ctx.sessionGeneration,
+    'Canary submission event order or session is not exact.');
+    const before = one("SELECT * FROM ad_execution_evidence WHERE store_id=? AND job_id=? AND slot='before'", storeId, job.id);
+    const after = one("SELECT * FROM ad_execution_evidence WHERE store_id=? AND job_id=? AND slot='after'", storeId, job.id);
+    const intentAt = time(job.intent_written_at); const submittedAt = time(job.submitted_at);
+    check(time(before.created_at) <= intentAt && intentAt <= time(intent.created_at) && time(intent.created_at) === time(reserved.created_at)
+      && time(reserved.created_at) <= submittedAt && submittedAt <= time(submitted.created_at)
+      && time(submitted.created_at) === time(spent.created_at) && time(spent.created_at) === time(consumed.created_at)
+      && time(spent.created_at) <= time(after.captured_at) && submittedAt < time(grant.expires_at)
+      && submittedAt < time(proposal.valid_until) && submittedAt < time(approved.validUntil),
+    'Submit intent, reserved/spent/consumed or authority expiry timestamps do not match the submit boundary.');
+  } catch (error) {
+    reasons.push(`Current execution lineage: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { passed: reasons.length === 0, reasons };
+}
+
 function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label, reasons, context = {}) {
   const scope = evidence.scope;
   const authority = evidence.authority;
   const object = evidence.object;
+  reasons.push(...verifyExecutionCanaryLineage(database, {
+    storeId: scope?.storeId, missionGrantId: authority?.missionGrantId,
+    batchId: authority?.batchId, jobId: authority?.jobId, mode: expectedMode,
+  }).reasons);
   const records = Array.isArray(evidence.execution?.evidence) ? evidence.execution.evidence : [];
   const bySlot = new Map(records.map((item) => [item?.slot, item]));
   const proof = evidence.database?.authorityProof;
@@ -1475,7 +1600,6 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
   const allowedEntities = parseJsonArray(grant?.allowedAdEntityIdsJson);
   const requiredEvidence = parseJsonArray(grant?.requiredEvidenceJson);
   const stopConditions = parseStopConditionCodes(grant?.stopConditionsJson);
-  const reloadRecord = bySlot.get('reload');
   const changePct = Number.isInteger(object?.expectedBidCents) && object.expectedBidCents > 0
     ? ((object.expectedBidCents - object.targetBidCents) / object.expectedBidCents) * 100
     : Number.POSITIVE_INFINITY;
@@ -1501,9 +1625,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && ['identity_drift', 'expected_before_mismatch', 'unknown_result', 'data_stale', 'impact_budget_exhausted', 'kill_switch']
         .every((item) => stopConditions?.includes(item))
       && validTimestamp(grant?.issuedAt)
-      && validTimestamp(grant?.expiresAt)
-      && validTimestamp(reloadRecord?.capturedAt)
-      && Date.parse(reloadRecord.capturedAt) <= Date.parse(grant.expiresAt),
+      && validTimestamp(grant?.expiresAt),
     `${label} MissionGrant issuer/policy/scope does not authorize this exact execution`,
   );
   const grantEvents = database.prepare(`
@@ -1520,7 +1642,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && validTimestamp(issuedEvents[0].createdAt)
       && validTimestamp(consumedEvents[0].createdAt)
       && Date.parse(issuedEvents[0].createdAt) < Date.parse(consumedEvents[0].createdAt)
-      && !grantEvents.some((event) => event.eventType === 'revoked' || event.eventType === 'expired'),
+      && !grantEvents.some((event) => ['invalidated', 'revoked', 'expired'].includes(event.eventType)),
     `${label} MissionGrant is not one exact issued then consumed terminal authority`,
   );
 
@@ -1609,7 +1731,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && mission?.marketplace === 'US'
       && mission?.currency === 'USD'
       && mission?.policyVersionId === authority?.policyVersionId
-      && mission?.revision === authority?.missionRevision
+      && mission?.revision >= authority?.missionRevision
       && ['active', 'completed'].includes(mission?.status),
     `${label} Mission revision/policy binding does not match the execution`,
   );
@@ -1664,8 +1786,8 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && decision?.actionRevision === authority?.actionRevision
       && decision?.actionType === 'set_keyword_bid'
       && decision?.adEntityId === object?.adEntityId
-      && decision?.revision === authority?.decisionRevision
-      && ['approved', 'executed', 'verified'].includes(decision?.status),
+      && decision?.revision === authority?.decisionRevision + 2
+      && decision?.status === 'verified',
     `${label} decision revision/action/entity/policy binding is not exact`,
   );
   const decisionApproval = exactDatabaseRow(database, `
@@ -1834,15 +1956,17 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && jobTerminalAtMs <= jobUpdatedAtMs
       && jobTerminalAtMs <= batchTerminalAtMs
       && batchTerminalAtMs <= batchUpdatedAtMs
-      && Math.max(jobUpdatedAtMs, batchUpdatedAtMs) <= consumedAtMs
+      && jobSubmittedAtMs <= consumedAtMs
+      && consumedAtMs <= afterCapturedAtMs
+      && Math.max(jobUpdatedAtMs, batchUpdatedAtMs) <= snapshotExportedAtMs
       && snapshotExportedAtMs >= consumedAtMs
       && decisionUpdatedAtMs <= snapshotExportedAtMs
       && queryExecutedAtMs >= snapshotExportedAtMs
       && queryExecutedAtMs >= terminalAtMs
       && generatedAtMs >= queryExecutedAtMs
-      && Date.parse(grant?.expiresAt) >= Date.parse(reloadRecord?.capturedAt)
-      && (!decision?.validUntil || Date.parse(decision.validUntil) >= Date.parse(reloadRecord?.capturedAt))
-      && Date.parse(proposal?.validUntil) >= Date.parse(reloadRecord?.capturedAt),
+      && Date.parse(grant?.expiresAt) > jobSubmittedAtMs
+      && (!decision?.validUntil || Date.parse(decision.validUntil) > jobSubmittedAtMs)
+      && Date.parse(proposal?.validUntil) > jobSubmittedAtMs,
     `${label} authorization/captured/terminal/snapshot/query/generated timestamps are stale, replayed, or out of order`,
   );
 
@@ -2898,6 +3022,7 @@ module.exports = {
   validateContinuousOperation,
   validateAuthoritySnapshotManifest,
   validateExecutionCanary,
+  verifyExecutionCanaryLineage,
   validatePackageAdversarialNodeEnv,
   validatePackageLaunch,
   validatePackageSecurity,

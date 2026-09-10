@@ -5,12 +5,14 @@ import { normalizeFieldName, mapRowFields } from './field-mapper';
 import { validateBatch, cleanNumericFields } from './validators';
 import type { AdDailyMetrics, LingxingReportType } from '@amazon-ai-ops/shared-types';
 import type { ValidationResult } from './validators';
+import { matchLingxingTemplate, validateLingxingTemplateRows, type TemplateCompatibility } from './lingxing-template-manifest';
 
 export interface ParseOptions {
   skipHeaderRows?: number;  // 跳过前几行表头，默认 0
   requiredFields?: string[]; // 额外必填字段
   dateFormat?: string;      // 日期格式，默认 'YYYY-MM-DD'
   reportType?: string;      // 调用方声明类型；必须与内容列语义一致
+  requireRegisteredTemplate?: boolean; // 正式领星入库必须登记模板；普通文件预览保留兼容读取。
 }
 
 export interface ParseResult {
@@ -23,6 +25,8 @@ export interface ParseResult {
   parsedAt: string;
   totalRows: number;
   headers: string[];
+  templateRevision?: string;
+  templateError?: TemplateCompatibility['error'];
 }
 
 export interface LingxingRawReportControlTotals {
@@ -55,7 +59,7 @@ export class ReportParser {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const workbook = XLSX.readFile(filePath);
+    const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     
@@ -96,10 +100,17 @@ export class ReportParser {
     const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, {
       defval: '',  // 默认值为空字符串
     });
+    const compatibility = options.requireRegisteredTemplate ? matchLingxingTemplate(rawHeaders, options.reportType) : undefined;
+    if (compatibility?.error) return {
+      success: false, schemaValid: false, data: [], headers: rawHeaders,
+      validation: { valid: false, errors: [], validCount: 0, invalidCount: jsonData.length },
+      sourceFile, parsedAt: new Date().toISOString(), totalRows: jsonData.length, templateError: compatibility.error,
+    };
 
     if (jsonData.length === 0) {
-      const reportType = resolveSemanticReportType(rawHeaders, options.reportType, []);
-      const schemaValid = isAdvertisingReportSchema(rawHeaders, options.requiredFields)
+      const reportType = compatibility?.reportType ?? resolveSemanticReportType(rawHeaders, options.reportType, []);
+      const schemaValid = hasUnambiguousHeaders(rawHeaders)
+        && isAdvertisingReportSchema(rawHeaders, options.requiredFields)
         && reportType !== undefined;
       return {
         success: schemaValid,
@@ -110,6 +121,7 @@ export class ReportParser {
         parsedAt: new Date().toISOString(),
         totalRows: 0,
         headers: rawHeaders,
+        templateRevision: compatibility?.revision,
       };
     }
 
@@ -118,8 +130,9 @@ export class ReportParser {
     
     // 获取表头
     const headers = Object.keys(dataRows[0] || {});
-    const reportType = resolveSemanticReportType(headers, options.reportType, dataRows);
-    const schemaValid = isAdvertisingReportSchema(headers, options.requiredFields)
+    const reportType = compatibility?.reportType ?? resolveSemanticReportType(headers, options.reportType, dataRows);
+    const schemaValid = hasUnambiguousHeaders(rawHeaders)
+      && isAdvertisingReportSchema(headers, options.requiredFields)
       && reportType !== undefined;
 
     // 字段名标准化，并在任何过滤前固定原始 Excel 行号。
@@ -132,6 +145,7 @@ export class ReportParser {
       !isLingxingPausedZeroActivityPlaceholder(rawRow, mappedRow)
     ));
     const mappedRows = importRows.map(({ mappedRow }) => mappedRow);
+    const templateError = compatibility ? validateLingxingTemplateRows(mappedRows) : undefined;
 
     // 数据校验
     const validation = validateBatch(mappedRows);
@@ -151,14 +165,16 @@ export class ReportParser {
     )); // 无效行绝不进入导入候选；Main 仍会对整文件 validation fail closed。
 
     return {
-      success: schemaValid && validation.valid && metrics.length > 0,
-      schemaValid,
-      data: schemaValid ? metrics : [],
+      success: schemaValid && !templateError && validation.valid && metrics.length > 0,
+      schemaValid: schemaValid && !templateError,
+      data: schemaValid && !templateError ? metrics : [],
       validation,
       sourceFile,
       parsedAt: new Date().toISOString(),
       totalRows: dataRows.length,
       headers,
+      templateRevision: compatibility?.revision,
+      templateError,
     };
   }
 
@@ -202,7 +218,7 @@ export class ReportParser {
       msku: String(getValue('msku') || getValue('MSKU') || ''),
       campaignName: String(getValue('campaignName') || getValue('广告活动') || ''),
       adGroupName: String(getValue('adGroupName') || getValue('广告组') || ''),
-      targeting: String(getValue('targeting') || getValue('关键词') || ''),
+      targeting: String(getValue('targeting') || getValue('targetingExpression') || getValue('关键词') || ''),
       searchTerm: String(getValue('searchTerm') || getValue('搜索词') || ''),
       matchType: (String(getValue('matchType') || getValue('匹配方式') || 'exact') as 'broad' | 'phrase' | 'exact' | 'auto'),
       impressions,
@@ -312,7 +328,7 @@ function readLingxingRawReportControlTotals(
   const extension = path.extname(filePath).toLowerCase();
   const workbook = extension === '.csv'
     ? XLSX.read(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''), { type: 'string' })
-    : XLSX.readFile(filePath, { cellDates: false, raw: true });
+    : XLSX.read(fs.readFileSync(filePath), { type: 'buffer', cellDates: false, raw: true });
   const worksheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!worksheet) throw new Error('领星原始报表 control total 缺少工作表。');
   const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
@@ -387,6 +403,12 @@ function isLingxingPausedZeroActivityPlaceholder(
       Object.prototype.hasOwnProperty.call(mappedRow, field)
       && isStrictZeroMetric(mappedRow[field])
     ));
+}
+
+function hasUnambiguousHeaders(headers: readonly string[]): boolean {
+  // Inspect original cells: SheetJS renames duplicate headers before creating objects.
+  const canonical = headers.map((header) => normalizeFieldName(header).toLowerCase());
+  return new Set(canonical).size === canonical.length;
 }
 
 function isAdvertisingReportSchema(

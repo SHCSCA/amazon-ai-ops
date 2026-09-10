@@ -564,7 +564,7 @@ function validateOperationalEvidenceSemantics(selectedEvidence) {
     if (!record?.ok) continue;
     if (
       record.sourceJson?.kind !== 'mission-control-execution-canary-evidence'
-      || record.sourceJson?.schemaVersion !== 'mission-control-execution-canary-evidence/v1'
+      || record.sourceJson?.schemaVersion !== 'mission-control-execution-canary-evidence/v2'
       || record.sourceJson?.passed !== true
       || record.sourceJson?.status !== 'PASSED'
       || record.sourceJson?.mode !== mode

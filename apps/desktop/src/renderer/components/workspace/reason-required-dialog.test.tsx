@@ -13,6 +13,7 @@ import { ReasonRequiredDialog } from './reason-required-dialog';
 function render(props: Partial<React.ComponentProps<typeof ReasonRequiredDialog>>) {
   return renderToStaticMarkup(
     <ReasonRequiredDialog
+      open={true}
       title="确认操作"
       description="需要填理由"
       confirmLabel="确认"
