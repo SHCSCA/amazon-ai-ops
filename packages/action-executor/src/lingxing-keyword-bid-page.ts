@@ -106,6 +106,7 @@ export type ResolveCurrentKeywordIdentityResult =
 
 interface ResolvedKeywordRow {
   snapshot: KeywordBidPageSnapshot;
+  marker: PlaywrightKeywordBidLocatorLike;
   row: PlaywrightKeywordBidLocatorLike;
   bidInput: PlaywrightKeywordBidLocatorLike;
   saveButton: PlaywrightKeywordBidLocatorLike;
@@ -123,7 +124,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
   ) {}
 
   async assertServing(keywordId: string): Promise<void> {
-    const { row, snapshot } = await this.resolveRow(keywordId, undefined, []);
+    const { row, marker, snapshot } = await this.resolveRow(keywordId, undefined, []);
     const campaign = this.page.locator('a.Js-select-link[href*="/ad_report/ad_group/index/index?"]');
     await assertExactCount(campaign, 1, 'CAMPAIGN_STATE_UNAVAILABLE', '无法唯一读取当前广告活动状态，禁止改价。');
     const href = await campaign.getAttribute('href');
@@ -143,7 +144,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
         throw new LingxingPageContractError('AD_ENTITY_NOT_SERVING', `${label}已关闭、暂停或状态无法确认，禁止改价；请检查当前投放状态。`);
       }
     }
-    if (await row.locator('input.select-item').getAttribute('data-status') !== 'enabled') {
+    if (await marker.getAttribute('data-status') !== 'enabled') {
       throw new LingxingPageContractError('AD_ENTITY_NOT_SERVING', '关键词已关闭、暂停或状态无法确认，禁止改价。');
     }
   }
@@ -287,9 +288,12 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
     const campaignId = singleQueryId(url, 'id');
     const matchedTextMarkers = await this.assertPageMarkers(requiredTextMarkers);
 
-    const marker = this.page.locator(
-      `${KEYWORD_ROW_SELECTOR_PREFIX}${keywordId}${KEYWORD_ROW_SELECTOR_SUFFIX}`,
-    );
+    const legacyMarkerSelector = `${KEYWORD_ROW_SELECTOR_PREFIX}${keywordId}${KEYWORD_ROW_SELECTOR_SUFFIX}`;
+    const checkboxMarkerSelector = `tr:not([data-dt-row]) input[type="checkbox"][value="${keywordId}"]`;
+    // 同一原生控件按并集去重；不同控件持有相同身份时仍必须拒绝。
+    const marker = await this.page.locator(checkboxMarkerSelector).count() > 0
+      ? this.page.locator(`${legacyMarkerSelector}, ${checkboxMarkerSelector}`)
+      : this.page.locator(legacyMarkerSelector);
     const deadline = Date.now() + this.timeoutMs;
     while (await marker.count() === 0 && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -320,7 +324,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
     }
 
     const adGroupId = await readUniqueAdGroupId(row, url.origin);
-    const bidInput = row.locator(BID_INPUT_SELECTOR);
+    const bidInput = await resolveBidInputForRow(row);
     await assertExactCount(
       bidInput,
       1,
@@ -345,6 +349,7 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
         keyword: { keywordId, adGroupId, bidCents: bid.cents },
       },
       row,
+      marker,
       bidInput,
       saveButton: row.locator(SAVE_BUTTON_SELECTOR),
       observedCurrencySymbol: bid.currencySymbol,
@@ -362,6 +367,27 @@ export class PlaywrightLingxingKeywordBidPage implements KeywordBidPagePort {
     }
     return [...requiredMarkers];
   }
+}
+
+async function resolveBidInputForRow(
+  row: PlaywrightKeywordBidLocatorLike,
+): Promise<PlaywrightKeywordBidLocatorLike> {
+  const headers = row.locator('xpath=ancestor::table[1]/thead/tr[last()]/th');
+  const count = await headers.count();
+  if (count > 128) {
+    throw new LingxingPageContractError('BID_INPUT_NOT_UNIQUE', '竞价列结构超出可核验范围。');
+  }
+  const bidColumns: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (normalizeHumanText(await headers.nth(index).innerText()) === '竞价') bidColumns.push(index);
+  }
+  if (bidColumns.length > 1) {
+    throw new LingxingPageContractError('BID_INPUT_NOT_UNIQUE', '竞价列不是唯一目标。');
+  }
+  // 表头只接受精确“竞价”，避免误用建议竞价；并集保留旧控件与当前列冲突的拒绝语义。
+  return bidColumns.length === 1
+    ? row.locator(`${BID_INPUT_SELECTOR}, :scope > td:nth-child(${bidColumns[0] + 1}) input`)
+    : row.locator(BID_INPUT_SELECTOR);
 }
 
 class LingxingPageContractError extends KeywordBidBlockedError {

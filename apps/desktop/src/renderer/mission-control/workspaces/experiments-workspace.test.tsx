@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../../styles/css-source.test-support';
 import React from 'react';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -38,7 +39,7 @@ function ordinaryText(markup: string): string {
 
 describe('ExperimentsWorkspace', () => {
   it('uses searchable owned-object selectors and a structured guardrail condition', () => {
-    const source = readFileSync(new URL('./experiments-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['experiments-workspace.tsx', 'experiment-workspace-contracts.tsx', 'experiment-workspace-model.tsx', 'experiment-workspace-inputs.tsx', 'experiment-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('SearchableOptionSelect');
     expect(source).toContain('比较符');
     expect(source).toContain('阈值');
@@ -48,7 +49,7 @@ describe('ExperimentsWorkspace', () => {
   });
 
   it('gives an actionable next step when the current store has no mission to bind', () => {
-    const source = readFileSync(new URL('./experiments-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['experiments-workspace.tsx', 'experiment-workspace-contracts.tsx', 'experiment-workspace-model.tsx', 'experiment-workspace-inputs.tsx', 'experiment-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('当前店铺没有可用运营任务，经营实验必须先绑定运营任务。');
     expect(source).toContain('先创建运营任务');
     expect(source).toContain("{ workspace: 'missions', subview: 'overview' }");
@@ -61,7 +62,7 @@ describe('ExperimentsWorkspace', () => {
   });
 
   it('keeps long editor bodies scrollable while their action footers stay reachable', () => {
-    const css = readFileSync(new URL('./experiments-workspace.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('./experiments-workspace.css', import.meta.url));
     expect(css).toMatch(/\.experiment-observation-editor\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[^}]*overflow:\s*hidden;/s);
     expect(css).toMatch(/\.experiment-complete-dialog\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[^}]*overflow:\s*hidden;/s);
     expect(css).toMatch(/\.experiment-form\s*\{[^}]*overflow-y:\s*auto;/s);
@@ -69,7 +70,7 @@ describe('ExperimentsWorkspace', () => {
   });
 
   it('leaves long diagnostic variable JSON to the page scroll owner', () => {
-    const css = readFileSync(new URL('./experiments-workspace.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('./experiments-workspace.css', import.meta.url));
     const rules = [...css.matchAll(/\.experiment-variables pre\s*\{([^}]*)\}/g)]
       .map((match) => match[1]);
 
@@ -130,7 +131,7 @@ describe('ExperimentsWorkspace', () => {
   });
 
   it('requests a machine evaluation without accepting a free-text result and explains every outcome', () => {
-    const source = readFileSync(new URL('./experiments-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['experiments-workspace.tsx', 'experiment-workspace-contracts.tsx', 'experiment-workspace-model.tsx', 'experiment-workspace-inputs.tsx', 'experiment-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const running = { id: 'EXPERIMENT-001', revision: 4, status: 'running' } as ExperimentRecord;
 
     expect(buildEvaluateExperimentInput(running)).toEqual({
@@ -214,7 +215,7 @@ describe('ExperimentsWorkspace', () => {
   });
 
   it('requires a product and ad object and withholds TACOS until product total sales is trusted', () => {
-    const source = readFileSync(new URL('./experiments-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['experiments-workspace.tsx', 'experiment-workspace-contracts.tsx', 'experiment-workspace-model.tsx', 'experiment-workspace-inputs.tsx', 'experiment-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const draft = {
       missionId: 'MISSION-SHC001-001', name: '核心词竞价实验', hypothesis: '降价 10% 会改善 ACOS',
       primaryMetric: 'ACOS', guardrailMetrics: '广告订单', guardrailCriteria: '广告订单 >= 95%',

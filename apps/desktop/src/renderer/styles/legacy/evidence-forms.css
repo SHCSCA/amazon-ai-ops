@@ -1,0 +1,85 @@
+.detail-grid,
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.detail-grid div,
+.form-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.detail-grid span,
+.form-grid label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-grid strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.source-file-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  border-top: 1px solid #edf1f5;
+  padding-top: 12px;
+}
+
+.source-file-list span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.source-file-list code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.evidence-check-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: var(--radius);
+  background: #f8fbff;
+  padding: 12px;
+}
+
+.evidence-check-panel h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.evidence-grid {
+  margin-top: 12px;
+}
+
+.evidence-grid div {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 10px;
+}
+
+.evidence-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-grid strong {
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+

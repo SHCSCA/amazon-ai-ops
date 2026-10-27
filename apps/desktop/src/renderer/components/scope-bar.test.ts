@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -132,7 +133,7 @@ describe('compact scope labels', () => {
   });
 
   it('reserves enough topbar width to keep imported row facts visible', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
     const factRule = cssRuleBody(css, '.topbar .scope-topbar-fact');
 
     expect(factRule).toMatch(/max-width\s*:\s*184px\s*;/);
@@ -163,7 +164,7 @@ describe('scope field feedback micro-response', () => {
   });
 
   it('keeps the field confirmation status space stable and animated in CSS', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.scope-field-confirmation');
     expect(css).toContain('min-height: 14px');
@@ -173,7 +174,7 @@ describe('scope field feedback micro-response', () => {
   });
 
   it('renders scope details and the range editor as popovers so opening them does not push the workspace', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
     const topbarRule = cssRuleBody(css, '.topbar');
     const compactTriggerRule = cssRuleBody(css, '.topbar .scope-compact-trigger');
     const topbarDetailsRule = cssRuleBody(css, '.topbar .scope-details-panel');

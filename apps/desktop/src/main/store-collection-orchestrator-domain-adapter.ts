@@ -6,6 +6,7 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import { LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
 import type { LingxingImportRepository } from '@amazon-ai-ops/local-db';
+import type { StoreCollectionAutomationService } from './store-collection-automation-service';
 import {
   type StoreCollectionAutomationAuthority,
   type StoreCollectionAuthorityReadback,
@@ -56,6 +57,7 @@ export interface StoreCollectionOrchestratorDomainAdapterOptions {
   config: {
     getForStoreRecord(store: StoreRecord): StoreRuntimeConfigProjection;
   };
+  automationControl: Pick<StoreCollectionAutomationService, 'getForStoreRecord'>;
   repository: Pick<
     LingxingImportRepository,
     'inspectUniqueCollectionJobForSemanticScope'
@@ -155,6 +157,10 @@ export class StoreCollectionOrchestratorDomainAdapter implements AdapterPorts {
       || config.currency !== 'USD'
       || config.businessTimezone !== 'America/Los_Angeles') {
       throw new Error('scheduler semantic scope runtime config 身份漂移。');
+    }
+    // 只阻止新自动计划，不改变手动采集和既有任务的恢复权限。
+    if (!this.options.automationControl.getForStoreRecord(store).automaticCollectionEnabled) {
+      return { state: 'not_due' as const };
     }
     const window = deriveStoreCollectionWindow(
       businessDate,

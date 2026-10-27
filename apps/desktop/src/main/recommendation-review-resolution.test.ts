@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import type {
   ActionRecommendation,
   ResolveRecommendationReviewRequest,
@@ -225,11 +226,8 @@ describe('recommendation review resolution', () => {
   });
 
   it('wires the Main handler through current scope, writable target authority, and CAS persistence', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const handler = source.slice(
-      source.indexOf('function handleResolveRecommendationReview'),
-      source.indexOf('async function handleApproveRecommendation'),
-    );
+    const source = mainRuntimeModuleContract('main-recommendation-review-runtime.ts');
+    const handler = mainRuntimeSectionContract('function handleResolveRecommendationReview', 'async function handleApproveRecommendation');
     expect(handler).toContain('resolveLockedRecommendationBatchScope');
     expect(handler).not.toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
     expect(handler).toContain('findByIdForStore(context.storeId, request.recommendationId)');
@@ -239,6 +237,6 @@ describe('recommendation review resolution', () => {
     expect(handler).toContain('resolveRecommendationReview({');
     expect(handler).toContain('updateStatusWithEvidenceIfCurrentForStore(');
     expect(handler).not.toContain('.updateStatusWithEvidenceIfCurrent(');
-    expect(source).toContain("registerTrackedIpcHandler('recommendations:resolve-review'");
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain("registerTrackedIpcHandler('recommendations:resolve-review'");
   });
 });

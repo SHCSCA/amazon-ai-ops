@@ -8,6 +8,8 @@ import type {
 } from '@amazon-ai-ops/shared-types';
 import { useMissionControlStoreContext } from '../store-context';
 import { getMissionControlWindowApi } from './window-api';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { useWorkspaceOperation } from '../../components/workspace/use-workspace-operation';
 import {
   captureMissionControlRequest,
   isMissionControlResponseCurrent,
@@ -21,7 +23,7 @@ export interface MissionControlBridgeState {
   today: MissionControlTodayProjection | null;
   phase: MissionControlBridgePhase;
   error: string | null;
-  refreshBootstrap(): Promise<void>;
+  refreshBootstrap(): Promise<boolean>;
   setAutonomyMode(mode: MissionControlAutonomyMode, missionId?: string): Promise<MissionControlCommandResponse | null>;
 }
 
@@ -35,6 +37,9 @@ export function useMissionControlBridge(): MissionControlBridgeState {
   const [phase, setPhase] = useState<MissionControlBridgePhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const latestBootstrapSequenceRef = useRef(0);
+  const operation = useWorkspaceOperation(JSON.stringify([store.authorityKey, store.contextEpoch]));
+  const operationRef = useRef(operation);
+  operationRef.current = operation;
   const currentRef = useRef({
     contextEpoch: store.contextEpoch,
     context: store.authoritativeContext,
@@ -45,6 +50,8 @@ export function useMissionControlBridge(): MissionControlBridgeState {
   };
 
   const refreshBootstrap = useCallback(async () => {
+    const isCurrent = operationRef.current.capture();
+    if (!isCurrent()) return false;
     const bootstrapSequence = latestBootstrapSequenceRef.current + 1;
     latestBootstrapSequenceRef.current = bootstrapSequence;
     const context = currentRef.current.context;
@@ -54,13 +61,12 @@ export function useMissionControlBridge(): MissionControlBridgeState {
       setToday(null);
       setPhase('idle');
       setError(null);
-      return;
+      return false;
     }
     const contextEpoch = currentRef.current.contextEpoch;
     const requestId = nextRequestId('bootstrap');
     const capture = captureMissionControlRequest(requestId, contextEpoch, context);
-    // Same-context refresh must not tear down an in-flight workspace operation.
-    // Authority changes still clear capabilities and enter loading in the effect below.
+    // 同店刷新保留正在执行的工作区；权威变化仍由下方 effect 清空旧投影。
     setPhase(current => current === 'ready' ? 'ready' : 'loading');
     setError(null);
     try {
@@ -71,23 +77,26 @@ export function useMissionControlBridge(): MissionControlBridgeState {
         context,
       });
       if (
-        bootstrapSequence !== latestBootstrapSequenceRef.current
+        !isCurrent() || bootstrapSequence !== latestBootstrapSequenceRef.current
         || !isMissionControlResponseCurrent(response, capture, currentRef.current)
-      ) return;
+      ) return false;
       setCapabilities(response.data.capabilities);
       setAutonomy(response.data.autonomy);
       setToday(response.data.today);
       setPhase('ready');
+      return true;
     } catch (caught) {
+      rendererRuntimeLog.error('mission_control.bootstrap_failed', { error: caught });
       if (
-        bootstrapSequence !== latestBootstrapSequenceRef.current
+        !isCurrent() || bootstrapSequence !== latestBootstrapSequenceRef.current
         || currentRef.current.contextEpoch !== contextEpoch
-      ) return;
+      ) return false;
       setCapabilities([]);
       setAutonomy(null);
       setToday(null);
       setPhase('error');
       setError(errorMessage(caught));
+      return false;
     }
   }, []);
 
@@ -110,6 +119,8 @@ export function useMissionControlBridge(): MissionControlBridgeState {
     mode: MissionControlAutonomyMode,
     missionId?: string,
   ): Promise<MissionControlCommandResponse | null> => {
+    const isCurrent = operationRef.current.capture();
+    if (!isCurrent()) return null;
     const context = currentRef.current.context;
     if (!context) return null;
     const contextEpoch = currentRef.current.contextEpoch;
@@ -123,7 +134,7 @@ export function useMissionControlBridge(): MissionControlBridgeState {
         context,
         payload: { mode, ...(missionId ? { missionId } : {}) },
       });
-      if (!isMissionControlResponseCurrent(response, capture, currentRef.current)) return null;
+      if (!isCurrent() || !isMissionControlResponseCurrent(response, capture, currentRef.current)) return null;
       setAutonomy((current) => current ? {
         ...current,
         currentMode: response.currentMode,
@@ -135,7 +146,8 @@ export function useMissionControlBridge(): MissionControlBridgeState {
       } : current);
       return response;
     } catch (caught) {
-      if (currentRef.current.contextEpoch === contextEpoch) {
+      rendererRuntimeLog.error('mission_control.mode_command_failed', { error: caught });
+      if (isCurrent() && currentRef.current.contextEpoch === contextEpoch) {
         setError(errorMessage(caught));
         setPhase('error');
       }

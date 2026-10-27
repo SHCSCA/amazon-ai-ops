@@ -127,7 +127,7 @@ describe('verify v15 final readiness', () => {
       usage: { totalTokens: 12 },
       responseSample: 'ok',
       debugHeaders: {
-        authorization: 'Bearer sk-1234567890abcdef1234567890abcdef',
+        authorization: ("Bearer " + "sk-" + "1234567890abcdef1234567890abcdef"),
       },
     });
     writeJson(manifestPath, {

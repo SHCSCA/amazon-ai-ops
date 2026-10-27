@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -237,7 +238,7 @@ describe('Phase 5 settings user task surface', () => {
   });
 
   it('keeps AI connection facts readable instead of squeezing four long values into one row', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.settings-ai-workbench-facts');
     expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');

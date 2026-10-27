@@ -74,6 +74,7 @@ export function MissionControlWorkspaceView({
           : null)}
         loading={bridgePhase === 'loading' || bridgePhase === 'idle' || capabilities === undefined}
         onNavigate={onNavigate}
+        onRefreshAuthority={onRefreshAuthority}
         previewMode={previewMode}
         projection={capabilityReady ? today ?? null : null}
         storeContext={storeContext}

@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
@@ -16,7 +17,7 @@ import type { BusinessDataPipeline } from '../types';
 
 describe('ProductManagementPage workspace contract', () => {
   it('keeps product browsing read-only inside a virtual queue and responsive inspector', () => {
-    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+    const source = ['product-management-page.tsx', 'product-management-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toContain("useBusinessDataPipeline({ mode: 'portfolio' })");
     expect(source).toContain('electronAPI?.getProducts?.()');
@@ -40,7 +41,7 @@ describe('ProductManagementPage workspace contract', () => {
   });
 
   it('keeps save separate from the explicit global product lock', () => {
-    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+    const source = ['product-management-page.tsx', 'product-management-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const saveProductSource = source.match(/async function saveProduct\(\) \{[\s\S]*?\n  \}/)?.[0] || '';
 
     expect(saveProductSource).not.toContain('setScope');
@@ -345,7 +346,7 @@ describe('ProductManagementPage model', () => {
   });
 
   it('styles quick product fields as labeled mini table cells instead of bare inputs', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toMatch(/\.inline-field\s*{[\s\S]*border:\s*1px solid var\(--line-soft\)/);
     expect(css).toMatch(/\.inline-field\s*{[\s\S]*border-radius:\s*var\(--radius-sm\)/);
@@ -432,7 +433,7 @@ describe('ProductManagementPage model', () => {
   });
 
   it('renders the computed product task state through one task-first banner', () => {
-    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+    const source = ['product-management-page.tsx', 'product-management-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toContain("import { ResponsiveInspector, TaskBanner, WorkbenchPanel } from '../components/workspace';");
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);

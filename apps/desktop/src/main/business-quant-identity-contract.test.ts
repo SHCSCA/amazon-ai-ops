@@ -1,8 +1,9 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('business quant diagnostic identity contract', () => {
-  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+  const source = mainRuntimeModuleContract('main-business-metrics-runtime.ts');
   const diagnosticsStart = source.indexOf('const diagnostics = rows.map');
   const diagnosticsEnd = source.indexOf('const blockers: string[]', diagnosticsStart);
   const diagnosticsSource = source.slice(diagnosticsStart, diagnosticsEnd);

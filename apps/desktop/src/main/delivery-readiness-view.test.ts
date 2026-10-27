@@ -250,4 +250,18 @@ describe('normalizeDeliveryReadiness', () => {
     expect(normalized.appReady).toBe(true);
     expect(deliveryReadinessAllowsExport(normalized)).toBe(true);
   });
+
+  it.each(['1.6.0', '1.7.0', '2.0.0'])('refuses legacy or merely relabelled evidence as current %s readiness', currentVersion => {
+    for (const schemaVersion of [undefined, 'v15.readiness/1', 'v16.readiness/1']) {
+      const normalized = normalizeDeliveryReadiness(
+        readyManifest({ schemaVersion }),
+        'D:/evidence/final-readiness.json',
+        { ...currentPortableAuthority, currentVersion },
+      );
+      expect(normalized.status).toBe('APP_NEEDS_WORK');
+      expect(normalized.appReady).toBe(false);
+      expect(normalized.failures.map(failure => failure.code)).toContain('V16_LEGACY_READINESS_REFUSED');
+      expect(deliveryReadinessAllowsExport(normalized)).toBe(false);
+    }
+  });
 });

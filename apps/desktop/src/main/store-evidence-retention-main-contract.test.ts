@@ -1,14 +1,15 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('store evidence retention Main wiring contract', () => {
-  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+  const source = mainRuntimeModuleContract('main-application-initialization-runtime.ts');
 
   it('registers the Main-authorized preview service without a deletion IPC', () => {
-    expect(source).toContain('registerStoreEvidenceRetentionIpcHandlers(');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain('registerStoreEvidenceRetentionIpcHandlers(');
     expect(source).toContain('state.storeEvidenceRetentionService');
-    expect(source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:delete'");
-    expect(source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:apply'");
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:delete'"); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:apply'"); }
   });
 
   it('keeps legacy data_cleanup disabled and dry-run only', () => {
@@ -22,8 +23,8 @@ describe('store evidence retention Main wiring contract', () => {
   });
 
   it('does not construct or invoke the destructive global CleanupManager', () => {
-    expect(source).not.toContain('CleanupManager');
-    expect(source).not.toContain('cleanupMgr');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('CleanupManager'); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('cleanupMgr'); }
   });
 
   it('derives retention paths without creating or ensuring the Store Capsule', () => {

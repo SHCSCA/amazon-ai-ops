@@ -23,7 +23,13 @@ import type {
   StoreRecord,
   StoreScopeRef,
 } from '@amazon-ai-ops/shared-types';
+import { missionControlContextKey, sanitizeCausalExportText } from '@amazon-ai-ops/shared-types';
 import { ReasonRequiredDialog } from '../components/workspace';
+import { WorkspaceActionButton } from '../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
+import { rendererRuntimeLog } from '../runtime-log';
+import { toUserFacingError } from '../user-facing-error';
+import { useOptionalMissionControlStoreContext } from './store-context';
 import {
   StoreScopeSwitcher,
   type StoreScopeSwitcherProps,
@@ -51,6 +57,7 @@ export interface MissionControlShellProps {
   stores: readonly StoreRecord[];
   activeStore?: StoreRecord | null;
   authoritativeContext: StoreContextEnvelope;
+  contextEpoch?: number;
   storePhase?: StoreScopeSwitcherProps['phase'];
   storeError?: string | null;
   storeSyncWarning?: string | null;
@@ -91,6 +98,7 @@ export function MissionControlShell({
   stores,
   activeStore,
   authoritativeContext,
+  contextEpoch,
   storePhase = 'ready',
   storeError,
   storeSyncWarning,
@@ -112,6 +120,10 @@ export function MissionControlShell({
   contentRef,
   children,
 }: MissionControlShellProps) {
+  const storeProvider = useOptionalMissionControlStoreContext();
+  const epoch = contextEpoch ?? storeProvider?.contextEpoch ?? 0;
+  const operationKey = JSON.stringify([missionControlContextKey(authoritativeContext), epoch, activeStore?.storeId, activeStore?.browserProfileId, activeStore?.status]);
+  const modeOperation = useWorkspaceOperation(operationKey);
   const projection = autonomy ?? DEFAULT_BLOCKED_AUTONOMY;
   const [pendingMode, setPendingMode] = useState<MissionControlAutonomyMode | null>(null);
   const [modeFeedback, setModeFeedback] = useState('');
@@ -124,6 +136,7 @@ export function MissionControlShell({
   const shellRef = useRef<HTMLDivElement>(null);
   const activeStoreId = String(authoritativeContext.storeId);
   const autoBlockerId = 'mission-control-auto-mode-blocker';
+  const modeBusy = modeOperation.busy;
   const visibleCommandItems = useMemo(() => {
     return searchOperatorModuleEntries(commandQuery);
   }, [commandQuery]);
@@ -167,8 +180,12 @@ export function MissionControlShell({
     annotateMissionControlSidebarScrollOwner(shellRef.current);
   }, []);
 
+  useEffect(() => {
+    setPendingMode(null); setModeFeedback(''); setModeChangeConfirm(null);
+  }, [operationKey]);
+
   async function requestMode(mode: MissionControlAutonomyMode, reason?: string) {
-    if (pendingMode) return;
+    if (modeBusy) return;
     if (mode === projection.currentMode) {
       setModeFeedback(`当前已经是${autonomyModeLabel(mode)}模式。`);
       return;
@@ -180,31 +197,40 @@ export function MissionControlShell({
       );
       return;
     }
+    if (mode === 'manual_approval' && !projection.manualApprovalAvailable) {
+      setModeFeedback('当前店铺暂不可切换到人工审批，请刷新店铺状态后重试。');
+      return;
+    }
     if (!onSetAutonomyMode) {
       setModeFeedback('模式权限尚未同步，未改变当前模式。');
       return;
     }
+    const ticket = modeOperation.begin();
+    if (!ticket) return;
     setPendingMode(mode);
     setModeFeedback('');
     const reasonPrefix = reason ? `[${reason}] ` : '';
     try {
       const result = await onSetAutonomyMode(mode);
+      if (!ticket.isCurrent()) return;
       if (result == null) {
         setModeFeedback('店铺上下文已变化，模式请求未生效，请重新确认。');
         return;
       }
       if (isBlockedModeResponse(result)) {
-        setModeFeedback(result.detail || '模式请求被本机安全边界阻断。');
+        setModeFeedback(sanitizeCausalExportText(result.detail || '模式请求被本机安全边界阻断。'));
         return;
       }
       setModeFeedback(
-        readModeResponseDetail(result)
-        || `${reasonPrefix}${autonomyModeLabel(mode)}请求已处理，当前状态以确认结果为准。`,
+        sanitizeCausalExportText(readModeResponseDetail(result)
+        || `${reasonPrefix}${autonomyModeLabel(mode)}请求已处理，当前状态以确认结果为准。`),
       );
     } catch (error) {
-      setModeFeedback(error instanceof Error ? error.message : '模式切换失败');
+      rendererRuntimeLog.error('mission_control.mode_change_failed', { error });
+      if (ticket.isCurrent()) setModeFeedback(toUserFacingError(error, '模式切换失败，请重新确认店铺与策略后重试。'));
     } finally {
-      setPendingMode(null);
+      if (ticket.isCurrent()) setPendingMode(null);
+      ticket.finish();
     }
   }
 
@@ -277,29 +303,35 @@ export function MissionControlShell({
 
         <div className="mission-control-topbar-actions" aria-label="全局工具与模式">
           <div className="mission-control-mode" aria-label="AI 执行模式" role="group">
-          <button
+          <WorkspaceActionButton
             aria-pressed={projection.currentMode === 'manual_approval'}
             className="mission-control-mode-button"
-            disabled={Boolean(pendingMode)}
+            disabled={modeBusy || !projection.manualApprovalAvailable}
+            disabledReason={modeBusy ? '正在切换执行模式，请等待确认结果后再选择。' : '当前店铺暂不可使用人工审批，请刷新店铺状态后重试。'}
+            busy={modeBusy && pendingMode === 'manual_approval'}
+            busyLabel="切换中..."
             onClick={() => setModeChangeConfirm({ mode: 'manual_approval' })}
             type="button"
           >
             {pendingMode === 'manual_approval' ? '切换中...' : '人工审批'}
-          </button>
-          <button
+          </WorkspaceActionButton>
+          <WorkspaceActionButton
             aria-label="AI 策略内自动"
             aria-describedby={!projection.policyAutoAvailable ? autoBlockerId : undefined}
             aria-disabled={!projection.policyAutoAvailable || undefined}
             aria-pressed={projection.currentMode === 'policy_auto'}
             className="mission-control-mode-button"
             data-authority-blocked={!projection.policyAutoAvailable ? 'true' : undefined}
-            disabled={Boolean(pendingMode)}
+            disabled={modeBusy}
+            disabledReason="正在切换执行模式，请等待确认结果后再选择。"
+            busy={modeBusy && pendingMode === 'policy_auto'}
+            busyLabel="切换中..."
             onClick={() => setModeChangeConfirm({ mode: 'policy_auto' })}
             type="button"
           >
             <Sparkle aria-hidden="true" size={14} weight="fill" />
             {pendingMode === 'policy_auto' ? '切换中...' : '策略内自动'}
-          </button>
+          </WorkspaceActionButton>
           {!projection.policyAutoAvailable && (
             <span className="mission-control-mode-blocker" id={autoBlockerId}>
               {projection.policyAutoBlockerDetail || DEFAULT_BLOCKED_AUTONOMY.policyAutoBlockerDetail}
@@ -436,6 +468,7 @@ export function MissionControlShell({
             <StoreScopeSwitcher
               activeStore={activeStore}
               authoritativeContext={authoritativeContext}
+              contextEpoch={epoch}
               collapsed={sidebarCollapsed}
               dailyStatusError={dailyStatusError}
               dailyStatusPhase={dailyStatusPhase}

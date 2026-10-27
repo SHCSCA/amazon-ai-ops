@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type {
@@ -196,7 +197,7 @@ describe('pending recommendation writable target binding', () => {
   });
 
   it('wires the production IPC through locked batch dates and the dedicated pending CAS', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const source = mainRuntimeModuleContract('main-recommendation-review-runtime.ts');
     const start = source.indexOf('function handleBindRecommendationWritableTarget');
     const end = source.indexOf('function handleResolveRecommendationReview');
     const handler = source.slice(start, end);
@@ -212,7 +213,7 @@ describe('pending recommendation writable target binding', () => {
     expect(handler).toContain('bindWritableTargetIfCurrentForStore(');
     expect(handler).not.toContain('.bindWritableTargetIfCurrent(');
     expect(handler).not.toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
-    expect(source).toContain("registerTrackedIpcHandler('recommendations:bind-writable-target'");
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain("registerTrackedIpcHandler('recommendations:bind-writable-target'");
   });
 
   it('never overwrites an existing writable target even when its binding audit is absent', () => {

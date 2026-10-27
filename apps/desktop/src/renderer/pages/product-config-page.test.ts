@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -103,7 +104,7 @@ describe('product config task and inline save feedback', () => {
 
   it('groups product target fields inside the modal instead of rendering one long form', () => {
     const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
     const targetStart = source.indexOf('className="product-target-editor"');
     const targetEditor = source.slice(targetStart);
 
@@ -117,7 +118,7 @@ describe('product config task and inline save feedback', () => {
   });
 
   it('keeps collapsed secondary actions out of the visible workbench contract', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.product-config-action-menu:not([open]) .product-config-list-actions');
     expect(css).toContain('.folded-ops-panel:not([open]) .folded-ops-body');
@@ -283,7 +284,7 @@ describe('product config task and inline save feedback', () => {
   });
 
   it('styles row-level target ACOS editing feedback without shifting the table row', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.product-row-acos-field');
     expect(css).toContain('.product-row-acos-status');
@@ -319,7 +320,7 @@ describe('product config task and inline save feedback', () => {
   });
 
   it('styles row-level product health status as a fixed table chip', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.product-row-health');
     expect(css).toContain('.product-row-health-detail');
@@ -327,7 +328,7 @@ describe('product config task and inline save feedback', () => {
   });
 
   it('styles the loaded product row and active load button as visible feedback', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.product-config-row-loaded td');
     expect(css).toContain('.product-config-load-button-active');
@@ -381,7 +382,7 @@ describe('product config bulk ACOS apply', () => {
   });
 
   it('styles bulk product selection count and progress as visible feedback', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.product-bulk-selection-count');
     expect(css).toContain('.product-bulk-selection-progress');

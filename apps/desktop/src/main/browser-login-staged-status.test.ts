@@ -1,6 +1,8 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { appCompositionSource } from '../renderer/app-composition.test-support';
 import {
   configuredSessionResetActionVisible,
   configuredSessionResetRequiredFromError,
@@ -12,29 +14,14 @@ import {
 } from '../renderer/App';
 
 describe('browser login staged ERP and Ads status contract', () => {
-  const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-  const ssoSource = fs.readFileSync(path.join(__dirname, 'lingxing-ads-sso.ts'), 'utf8');
-  const rendererSource = fs.readFileSync(path.join(__dirname, '../renderer/App.tsx'), 'utf8');
-  const login = mainSource.slice(
-    mainSource.indexOf('async function performBrowserLoginInUserLane'),
-    mainSource.indexOf('async function handleBrowserLogout'),
-  );
-  const collectionRuntime = mainSource.slice(
-    mainSource.indexOf('function initializeStoreCollectionProductionRuntime'),
-    mainSource.indexOf('function assertVisibleLingxingCollectionSession'),
-  );
-  const collectionCoordinatorWiring = mainSource.slice(
-    mainSource.indexOf('function initializeLingxingCollectionCoordinator'),
-    mainSource.indexOf('function initializeStoreCollectionProductionRuntime'),
-  );
-  const collectionAction = mainSource.slice(
-    mainSource.indexOf('async function handleCollectLingxingReports'),
-    mainSource.indexOf('function handleImportCurrentBusinessReports'),
-  );
-  const collectionResumeAction = mainSource.slice(
-    mainSource.indexOf('async function handleResumeLingxingCollection'),
-    mainSource.indexOf('const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS'),
-  );
+  const mainSource = mainRuntimeModuleContract('main-browser-login-runtime.ts').replace(/\r\n/g, '\n');
+  const ssoSource = fs.readFileSync(path.join(__dirname, 'lingxing-ads-state.ts'), 'utf8');
+  const rendererSource = appCompositionSource();
+  const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
+  const collectionRuntime = mainRuntimeSectionContract('function initializeStoreCollectionProductionRuntime', 'function assertVisibleLingxingCollectionSession');
+  const collectionCoordinatorWiring = mainRuntimeSectionContract('function initializeLingxingCollectionCoordinator', 'function initializeStoreCollectionProductionRuntime');
+  const collectionAction = mainRuntimeSectionContract('async function handleCollectLingxingReports', 'function handleImportCurrentBusinessReports');
+  const collectionResumeAction = mainRuntimeSectionContract('async function handleResumeLingxingCollection', 'const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS');
 
   it('keeps dynamic connection diagnostics out of the ordinary operator message', () => {
     const fallback = '连接状态异常，请刷新当前店铺后重试；真实广告执行继续阻断。';
@@ -166,7 +153,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
     expect(earlyCredentialPersistence).toContain('saveLoginCredentials(');
     expect(earlyCredentialPersistence).toContain(
-      'createStoreScopedLoginCredentialStore(state.settingsRepo, loginContext.storeId)',
+      'createStoreScopedLoginCredentialStore(state.configurationBus, loginContext.storeId)',
     );
     expect(earlyCredentialPersistence).toContain('credentialPersistenceCommitted = true;');
   });
@@ -369,10 +356,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('downgrades both persisted provider sessions after a fatal reconnect closes every visible browser', () => {
-    const handler = mainSource.slice(
-      mainSource.indexOf('async function handleBrowserLogin('),
-      mainSource.indexOf('async function performBrowserLoginInUserLane('),
-    );
+    const handler = mainRuntimeSectionContract('async function handleBrowserLogin(', 'async function performBrowserLoginInUserLane(');
     const cleanup = handler.indexOf('const cleanup = await Promise.allSettled([');
     const clear = handler.indexOf('clearBrowserLoginState();', cleanup);
     const downgrade = handler.indexOf('persistClosedBrowserLoginFailure(', clear);
@@ -383,10 +367,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(downgrade).toBeGreaterThan(clear);
     expect(republish).toBeGreaterThan(downgrade);
 
-    const persistence = mainSource.slice(
-      mainSource.indexOf('function persistClosedBrowserLoginFailure('),
-      mainSource.indexOf('function clearBrowserLoginState()'),
-    );
+    const persistence = mainRuntimeSectionContract('function persistClosedBrowserLoginFailure(', 'function clearBrowserLoginState()');
     expect(persistence).toContain("provider: 'lingxing'");
     expect(persistence).toContain("provider: 'amazon_ads'");
     expect(persistence.match(/status: 'blocked'/g)).toHaveLength(2);
@@ -455,10 +436,12 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
     expect(overallLabel).toContain("? 'ERP 已连接，Ads 待确认'");
 
-    const actionArea = rendererSource.slice(
-      rendererSource.indexOf('data-login-action="reconnect-all"') - 1_200,
-      rendererSource.indexOf('主动作保持禁用时'),
-    );
+    const actionAreaStart = rendererSource.indexOf('{adsConfirmationPending && (');
+    const actionAreaEnd = rendererSource.indexOf('主动作保持禁用时', actionAreaStart);
+    expect(actionAreaStart).toBeGreaterThan(-1);
+    expect(actionAreaEnd).toBeGreaterThan(-1);
+    expect(actionAreaEnd).toBeGreaterThan(actionAreaStart);
+    const actionArea = rendererSource.slice(actionAreaStart, actionAreaEnd);
     expect(actionArea).toContain('data-login-action="confirm-ads-identity"');
     expect(actionArea).toContain('data-package-ui-evidence-action="confirm-amazon-ads-identity"');
     expect(actionArea).toContain('确认绑定到当前店铺');
@@ -478,10 +461,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
     expect(retryButton).toContain('disabled={loading || !retryAdsReady}');
 
-    const handler = mainSource.slice(
-      mainSource.indexOf('async function handleBrowserLogin('),
-      mainSource.indexOf('async function performBrowserLoginInUserLane('),
-    );
+    const handler = mainRuntimeSectionContract('async function handleBrowserLogin(', 'async function performBrowserLoginInUserLane(');
     expect(handler).toContain('isCurrentAmazonAdsRetryContinuation(');
     expect(handler).toContain('retryCurrentAmazonAdsSession(');
     expect(handler.indexOf('retryCurrentAmazonAdsSession('))
@@ -489,10 +469,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('preserves the original ERP credential proof while an Ads-only retry completes the same login', () => {
-    const retry = mainSource.slice(
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-      mainSource.indexOf('async function handleBrowserLogin('),
-    );
+    const retry = mainRuntimeSectionContract('async function retryCurrentAmazonAdsSession(', 'async function handleBrowserLogin(');
 
     // The sole saved-source literal belongs to the stable Lingxing enrollment
     // continuation. Retry result projections must retain the already verified
@@ -511,10 +488,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
     expect(retryReadiness).not.toContain('!lingxingEnrollmentPending');
 
-    const retry = mainSource.slice(
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-      mainSource.indexOf('async function handleBrowserLogin('),
-    );
+    const retry = mainRuntimeSectionContract('async function retryCurrentAmazonAdsSession(', 'async function handleBrowserLogin(');
     const profileEvidence = retry.indexOf('await readLingxingAdsProfileEvidence(');
     const continuationIdentity = retry.indexOf('resolveLingxingStableIdentityFromVerifiedContinuation({');
     const enrollment = retry.indexOf('state.storeRepo!.enrollLingxingStableExternalAccount({');
@@ -526,11 +500,8 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('admits only Ads retry and confirmation through the exact post-login Package UI continuation lane', () => {
-    expect(mainSource).toContain('async function withPackageUiVisibleLoginContinuationMutation');
-    const continuation = mainSource.slice(
-      mainSource.indexOf('async function withPackageUiVisibleLoginContinuationMutation'),
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-    );
+    expect(mainRuntimeFunctionContract('withPackageUiVisibleLoginContinuationMutation')).toContain('async function withPackageUiVisibleLoginContinuationMutation');
+    const continuation = mainRuntimeSectionContract('async function withPackageUiVisibleLoginContinuationMutation', 'async function retryCurrentAmazonAdsSession(');
     expect(continuation).toContain("operation !== 'browser:retry-ads'");
     expect(continuation).toContain("operation !== 'browser:confirm-ads-identity'");
     expect(continuation).toContain('hasPackageUiFreshTypedProof(');
@@ -541,24 +512,14 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(continuation).toContain('storeMutationLane.release(claim)');
     expect(continuation).toContain("const expectedAdsStatus = 'pending';");
 
-    const retryHandler = mainSource.slice(
-      mainSource.indexOf('if (isCurrentAmazonAdsRetryContinuation('),
-      mainSource.indexOf('if (preflightConnections.lingxingIdentityReadiness',
-        mainSource.indexOf('if (isCurrentAmazonAdsRetryContinuation(')),
-    );
+    const retryHandler = mainRuntimeSectionContract('if (isCurrentAmazonAdsRetryContinuation(', 'if (preflightConnections.lingxingIdentityReadiness');
     expect(retryHandler).toContain('withPackageUiVisibleLoginContinuationMutation(');
-    const confirmHandler = mainSource.slice(
-      mainSource.indexOf('async function handleConfirmBrowserLoginAdsIdentity('),
-      mainSource.indexOf('async function handleBrowserLogout()'),
-    );
+    const confirmHandler = mainRuntimeSectionContract('async function handleConfirmBrowserLoginAdsIdentity(', 'async function handleBrowserLogout()');
     expect(confirmHandler).toContain('withPackageUiVisibleLoginContinuationMutation(');
   });
 
   it('accepts the explicitly audited Package UI suppressed-startup state before Ads continuation', () => {
-    const continuation = mainSource.slice(
-      mainSource.indexOf('async function withPackageUiVisibleLoginContinuationMutation'),
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-    );
+    const continuation = mainRuntimeSectionContract('async function withPackageUiVisibleLoginContinuationMutation', 'async function retryCurrentAmazonAdsSession(');
     expect(continuation).toContain('const packageUiSchedulerSnapshot = packageUiSchedulerAudit.snapshot();');
     expect(continuation).toContain('const packageUiSuppressedStartupSafe = Boolean(');
     expect(continuation).toContain('runtimeStatus.startupRecoveryConfirmed === false');
@@ -573,7 +534,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('retains the unconsumed pending Ads identity claim for retry instead of attempting a forbidden blocked-to-verified transition', () => {
-    expect(mainSource).toContain('let pendingAmazonAdsIdentityRetry:');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('let pendingAmazonAdsIdentityRetry:');
     const initialAdsFailure = login.slice(
       login.indexOf('} catch (caught) {', login.indexOf('const adsIdentityClaim =')),
       login.indexOf('const adsPageEvidence =',
@@ -582,17 +543,11 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(initialAdsFailure).toContain('pendingAmazonAdsIdentityRetry = {');
     expect(initialAdsFailure).not.toContain('blockAmazonAdsIdentity(adsIdentityClaim)');
 
-    const retryAdmission = mainSource.slice(
-      mainSource.indexOf('function isCurrentAmazonAdsRetryContinuation('),
-      mainSource.indexOf('function assertCurrentAmazonAdsRetryAuthority('),
-    );
+    const retryAdmission = mainRuntimeSectionContract('function isCurrentAmazonAdsRetryContinuation(', 'function assertCurrentAmazonAdsRetryAuthority(');
     expect(retryAdmission).toContain("runtime.providerIdentityStatus.amazonAds !== 'pending'");
     expect(retryAdmission).toContain('pendingAmazonAdsIdentityRetry');
 
-    const retry = mainSource.slice(
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-      mainSource.indexOf('async function handleBrowserLogin('),
-    );
+    const retry = mainRuntimeSectionContract('async function retryCurrentAmazonAdsSession(', 'async function handleBrowserLogin(');
     expect(retry).toContain('const retainedIdentity = pendingAmazonAdsIdentityRetry;');
     expect(retry).not.toContain('visibleBrowserRuntimeRegistry.claimAmazonAdsIdentity({');
     const retryFailure = retry.slice(retry.indexOf('} catch (caught) {'));
@@ -608,19 +563,13 @@ describe('browser login staged ERP and Ads status contract', () => {
       rendererSource.indexOf('const loginButtonView =', rendererSource.indexOf('const retryAdsReady = erpSessionConnected')),
     );
     expect(retryReadiness).toContain('!adsRetryRequiresFullReconnect');
-    const downgrade = mainSource.slice(
-      mainSource.indexOf('async function degradeVisibleLoginProvider('),
-      mainSource.indexOf('function ensureAmazonAdsEnrollmentConnection('),
-    );
+    const downgrade = mainRuntimeSectionContract('async function degradeVisibleLoginProvider(', 'function ensureAmazonAdsEnrollmentConnection(');
     expect(downgrade).toContain('adsIdentityCandidate: _staleCandidate');
     expect(downgrade).toContain('...sessionWithoutCandidate');
   });
 
   it('does not downgrade an Ads runtime when a closing page has a trusted replacement in the same isolated context', () => {
-    const liveness = mainSource.slice(
-      mainSource.indexOf('function bindCompletedLoginPageLiveness('),
-      mainSource.indexOf('async function degradeVisibleLoginProvider('),
-    );
+    const liveness = mainRuntimeSectionContract('function bindCompletedLoginPageLiveness(', 'async function degradeVisibleLoginProvider(');
     expect(liveness).toContain('findTrustedLingxingProviderReplacementPage(');
     expect(liveness).toContain('controller.setActivePage?.(replacementPage);');
     expect(liveness).toContain('watchPage(provider, controller, replacementPage);');
@@ -628,10 +577,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('does not bind pending Ads liveness to the controller ERP page before a trusted Ads document exists', () => {
-    const liveness = mainSource.slice(
-      mainSource.indexOf('function bindCompletedLoginPageLiveness('),
-      mainSource.indexOf('async function degradeVisibleLoginProvider('),
-    );
+    const liveness = mainRuntimeSectionContract('function bindCompletedLoginPageLiveness(', 'async function degradeVisibleLoginProvider(');
     const watch = liveness.slice(
       liveness.indexOf('const watch = ('),
       liveness.indexOf("watch('lingxing'"),
@@ -642,10 +588,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('keeps pending Ads writes blocked while briefly resolving a navigation replacement before downgrade', () => {
-    const liveness = mainSource.slice(
-      mainSource.indexOf('function bindCompletedLoginPageLiveness('),
-      mainSource.indexOf('async function degradeVisibleLoginProvider('),
-    );
+    const liveness = mainRuntimeSectionContract('function bindCompletedLoginPageLiveness(', 'async function degradeVisibleLoginProvider(');
     expect(liveness).toContain("provider !== 'amazon_ads'");
     expect(liveness).toContain("currentRuntime.providerIdentityStatus.amazonAds !== 'pending'");
     expect(liveness).toContain('await findTrustedLingxingProviderPageAfterPendingNavigation(');
@@ -655,24 +598,17 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('routes every staged and retry Ads page snapshot through the navigation-safe reader', () => {
-    const reader = mainSource.slice(
-      mainSource.indexOf('async function readLingxingPageState'),
-      mainSource.indexOf('function adsSessionResultFromPageState'),
-    );
+    const reader = mainRuntimeSectionContract('async function readLingxingPageState', 'function adsSessionResultFromPageState');
     expect(reader).toContain('const state = await readLingxingAdsPageStateAfterNavigation(page);');
     expect(reader).not.toContain('page.evaluate(');
   });
 
   it('retries download-center readback only when navigation destroys the prior execution context', () => {
-    const navigation = mainSource.slice(
-      mainSource.indexOf('async function waitForDownloadCenterListPage('),
-      mainSource.indexOf('async function finalizeLingxingDownloadCenterPage('),
-    );
+    const navigation = mainRuntimeSectionContract('async function waitForDownloadCenterListPage(', 'async function finalizeLingxingDownloadCenterPage(');
     expect(navigation).toContain('const state = await readLingxingAdsPageStateAfterNavigation(page);');
 
     const recovery = ssoSource.slice(
       ssoSource.indexOf('export async function readLingxingAdsPageStateAfterNavigation('),
-      ssoSource.indexOf('export async function dismissLingxingAdsChangeAnnouncements('),
     );
     expect(recovery).toContain('isTransientLingxingAdsNavigationError(error)');
     expect(recovery).toContain("await page.waitForLoadState('domcontentloaded'");
@@ -778,12 +714,9 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('records completed Package UI fresh typed proof for only the verified store and username before publishing the staged result', () => {
-    expect(mainSource).toContain('let packageUiFreshTypedProof:');
-    expect(mainSource).toContain('function hasPackageUiFreshTypedProof(');
-    const statusReader = mainSource.slice(
-      mainSource.indexOf('function handleGetSavedLoginCredentialStatus()'),
-      mainSource.indexOf('async function readLingxingPageState'),
-    );
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('let packageUiFreshTypedProof:');
+    expect(mainRuntimeFunctionContract('hasPackageUiFreshTypedProof')).toContain('function hasPackageUiFreshTypedProof(');
+    const statusReader = mainRuntimeSectionContract('function handleGetSavedLoginCredentialStatus()', 'async function readLingxingPageState');
     expect(statusReader).toContain('!hasPackageUiFreshTypedProof(');
 
     const credentialSave = login.indexOf('saveLoginCredentials(');
@@ -802,10 +735,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('selects and reads back the configured store after the download-center page becomes ready', () => {
-    const navigation = mainSource.slice(
-      mainSource.indexOf('async function waitForDownloadCenterListPage('),
-      mainSource.indexOf('async function waitForCreateReportPage('),
-    );
+    const navigation = mainRuntimeFunctionContract('finalizeLingxingDownloadCenterPage');
     expect(navigation).toContain('async function finalizeLingxingDownloadCenterPage(');
     expect(navigation).toContain('await selectOnlyLingxingAdsStore(page, storeName);');
     expect(navigation).toContain('storeName: string');
@@ -813,10 +743,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('enters Ads through ERP before navigating to the download center', () => {
-    const navigation = mainSource.slice(
-      mainSource.indexOf('async function navigateToLingxingDownloadCenter('),
-      mainSource.indexOf('async function waitForCreateReportPage('),
-    );
+    const navigation = mainRuntimeSectionContract('async function navigateToLingxingDownloadCenter(', 'async function waitForCreateReportPage(');
     const adsOriginGuard = navigation.indexOf("new URL(page.url()).origin !== 'https://ads.lingxing.com'");
     const erpAdsEntry = navigation.indexOf('page = await openLingxingAdsFromErp(controller);');
     const downloadCenterGoto = navigation.indexOf('await page.goto(model.candidateUrls[0]');
@@ -843,10 +770,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('navigates Ads-only retry to the download center before accepting its store evidence', () => {
-    const retry = mainSource.slice(
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-      mainSource.indexOf('async function handleBrowserLogin('),
-    );
+    const retry = mainRuntimeSectionContract('async function retryCurrentAmazonAdsSession(', 'async function handleBrowserLogin(');
     const profileEvidence = retry.indexOf('await readLingxingAdsProfileEvidence(');
     const downloadCenter = retry.indexOf('await navigateToLingxingDownloadCenter(');
     const continuationIdentity = retry.indexOf('resolveLingxingStableIdentityFromVerifiedContinuation({');
@@ -859,10 +783,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('revalidates an Ads confirmation on the download center before accepting the candidate', () => {
-    const confirmation = mainSource.slice(
-      mainSource.indexOf('async function handleConfirmBrowserLoginAdsIdentity('),
-      mainSource.indexOf('async function handleBrowserLogout('),
-    );
+    const confirmation = mainRuntimeSectionContract('async function handleConfirmBrowserLoginAdsIdentity(', 'async function handleBrowserLogout(');
     const controller = confirmation.indexOf("browserControllerFromVisibleRuntime(runtime, 'amazon_ads')");
     const downloadCenter = confirmation.indexOf('await navigateToLingxingDownloadCenter(');
     const observed = confirmation.indexOf('await readLingxingAdsProfileEvidence(');
@@ -875,10 +796,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('refreshes profile identity from the exact SSO-observed Ads page before confirmation readback', () => {
-    const pendingType = mainSource.slice(
-      mainSource.indexOf('let pendingAmazonAdsIdentityConfirmation:'),
-      mainSource.indexOf('let pendingAmazonAdsIdentityRetry:'),
-    );
+    const pendingType = mainRuntimeSectionContract('let pendingAmazonAdsIdentityConfirmation:', 'let pendingAmazonAdsIdentityRetry:');
     expect(pendingType).toContain('profileEvidenceUrl: string;');
 
     const pendingCandidate = login.slice(
@@ -888,10 +806,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     );
     expect(pendingCandidate).toContain('profileEvidenceUrl: visibleAdsState.url,');
 
-    const confirmation = mainSource.slice(
-      mainSource.indexOf('async function handleConfirmBrowserLoginAdsIdentity('),
-      mainSource.indexOf('async function handleBrowserLogout('),
-    );
+    const confirmation = mainRuntimeSectionContract('async function handleConfirmBrowserLoginAdsIdentity(', 'async function handleBrowserLogout(');
     const boundUrl = confirmation.indexOf('const profileEvidenceUrl = new URL(pending.profileEvidenceUrl);');
     const refresh = confirmation.indexOf('await adsController.navigate(profileEvidenceUrl.href);');
     const downloadCenter = confirmation.indexOf('await navigateToLingxingDownloadCenter(');
@@ -905,10 +820,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('binds an Ads-only retry candidate to the profile page observed before download-center navigation', () => {
-    const retry = mainSource.slice(
-      mainSource.indexOf('async function retryCurrentAmazonAdsSession('),
-      mainSource.indexOf('async function handleBrowserLogin('),
-    );
+    const retry = mainRuntimeSectionContract('async function retryCurrentAmazonAdsSession(', 'async function handleBrowserLogin(');
     const observedPage = retry.indexOf('const visibleState = await readLingxingPageState(adsPage);');
     const profileReadback = retry.indexOf('const detected = await readLingxingAdsProfileEvidence(adsPage, storeAlias);');
     const downloadCenter = retry.indexOf('await navigateToLingxingDownloadCenter(');
@@ -922,17 +834,11 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('enrolls the first confirmed Ads identity without treating it as a post-binding identity change', () => {
-    const confirmation = mainSource.slice(
-      mainSource.indexOf('async function handleConfirmBrowserLoginAdsIdentity('),
-      mainSource.indexOf('async function handleBrowserLogout('),
-    );
+    const confirmation = mainRuntimeSectionContract('async function handleConfirmBrowserLoginAdsIdentity(', 'async function handleBrowserLogout(');
     expect(confirmation).toContain('enrollConfirmedAmazonAdsConnection({');
     expect(confirmation).not.toContain('state.storeRepo!.updateConnection({');
 
-    const enrollment = mainSource.slice(
-      mainSource.indexOf('function enrollConfirmedAmazonAdsConnection('),
-      mainSource.indexOf('async function handleConfirmBrowserLoginAdsIdentity('),
-    );
+    const enrollment = mainRuntimeSectionContract('function enrollConfirmedAmazonAdsConnection(', 'async function handleConfirmBrowserLoginAdsIdentity(');
     expect(enrollment).toContain("provider = 'amazon_ads'");
     expect(enrollment).toContain('external_account_id IS NULL');
     expect(enrollment).toContain('normalized_external_account_id IS NULL');
@@ -943,10 +849,7 @@ describe('browser login staged ERP and Ads status contract', () => {
   });
 
   it('keeps copied profile-bound scheduler history fail-closed in Package UI read-only mode', () => {
-    const readOnlyProjection = mainSource.slice(
-      mainSource.indexOf('function readPackageUiStoreCollectionSchedule('),
-      mainSource.indexOf('function authorizePackageUiDatabaseCheckpoint('),
-    );
+    const readOnlyProjection = mainRuntimeSectionContract('function readPackageUiStoreCollectionSchedule(', 'function authorizePackageUiDatabaseCheckpoint(');
     expect(readOnlyProjection).toContain('state.storeCoordinator.assertActiveStoreContext(contextInput)');
     expect(readOnlyProjection).toContain('state.storeRuntimeConfigService.get(context).current');
     expect(readOnlyProjection).toContain("state: 'failed'");
@@ -955,10 +858,7 @@ describe('browser login staged ERP and Ads status contract', () => {
     expect(readOnlyProjection).toContain('真实采集和广告执行保持阻断');
     expect(readOnlyProjection).not.toContain('storeCollectionSchedulerReadModel');
 
-    const schedulerRegistration = mainSource.slice(
-      mainSource.indexOf('  registerStoreCollectionSchedulerIpcHandlers('),
-      mainSource.indexOf('  registerStoreScopedObjectsIpcHandlers('),
-    );
+    const schedulerRegistration = mainRuntimeSectionContract('  registerStoreCollectionSchedulerIpcHandlers(', '  registerStoreScopedObjectsIpcHandlers(');
     expect(schedulerRegistration).toContain(
       'get: (context) => readPackageUiStoreCollectionSchedule(context)',
     );

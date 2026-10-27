@@ -1,4 +1,6 @@
+import { createRuntimeLogPreloadApi } from './runtime-log-api';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { GetStoreCollectionAutomationRequest, SetStoreCollectionAutomationRequest } from '../shared/store-collection-automation-ipc';
 import type {
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
@@ -20,6 +22,8 @@ import type {
   ResolveRecommendationReviewResult,
   StoreContextEnvelope,
   StoreCollectionScheduleProjection,
+  StoreCollectionAutomationProjection,
+  SetStoreCollectionAutomationInput,
   StoreCollectionScheduleRunResult,
   StoreEvidenceRetentionPreviewSummary,
   StoreId,
@@ -123,6 +127,7 @@ ipcRenderer.on('business-ui:data-updated', () => {
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
+  ...createRuntimeLogPreloadApi(ipcRenderer),
   missionControl: createMissionControlPreloadApi(ipcRenderer),
   missionDomain: createMissionDomainPreloadApi(ipcRenderer),
   analysisAuthority: createAnalysisAuthorityPreloadApi(ipcRenderer),
@@ -296,6 +301,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     input: RestoreStoreRuntimeConfigInput,
   ): Promise<StoreRuntimeConfigProjection> =>
     ipcRenderer.invoke('store-runtime-config:restore', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  getStoreCollectionAutomation: (storeContext: StoreContextEnvelope): Promise<StoreCollectionAutomationProjection> =>
+    ipcRenderer.invoke('store-collection-automation:get', { storeContext } satisfies GetStoreCollectionAutomationRequest) as Promise<StoreCollectionAutomationProjection>,
+  setStoreCollectionAutomation: (storeContext: StoreContextEnvelope, input: SetStoreCollectionAutomationInput): Promise<StoreCollectionAutomationProjection> =>
+    ipcRenderer.invoke('store-collection-automation:set', { storeContext, input } satisfies SetStoreCollectionAutomationRequest) as Promise<StoreCollectionAutomationProjection>,
   previewStoreEvidenceRetention: (
     storeContext: StoreContextEnvelope,
   ): Promise<StoreEvidenceRetentionPreviewSummary> =>

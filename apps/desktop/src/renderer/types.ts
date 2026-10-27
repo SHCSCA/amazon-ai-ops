@@ -529,6 +529,7 @@ export interface DeliveryReadinessFailure {
 }
 
 export interface DeliveryReadinessView {
+  verificationProtocol?: 'v16.current-publication/1';
   available: boolean;
   path: string | null;
   exists?: boolean;

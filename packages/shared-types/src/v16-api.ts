@@ -3,9 +3,11 @@ import type { AiSpendPolicy, AiSpendPolicyInput, AiSpendProjection } from './ai-
 import type { MissionRecord, CreateMissionInput, UpdateMissionInput, TransitionMissionInput, DecisionRecord, DecisionHistoryRecord, MissionGrantRecord, MissionGrantEventRecord, ExperimentRecord, CreateExperimentInput, UpdateExperimentInput, ExperimentObservationRecord, ExperimentMetricSnapshotRecord, CausalEventRecord, AppendCausalEventInput } from './mission-domain';
 import type { RunMissionAnalysisRequest, RunMissionAnalysisResult, MissionAnalysisProjection, AuthorizeAnalysisProposalBatchRequest, AuthorizeAnalysisProposalBatchResult } from './analysis-authority';
 import type { AdExecutionBatchProjection, CreateAdExecutionBatchResult, AdExecutionUnknownReconciliationResult, AdKeywordIdentityVersionRecord } from './execution-authority';
+import type { AuthorityGateProjection } from './authority-gates';
+import type { CausalTimelineExport } from './causal-timeline-export';
 
 export const V16_API_VERSION = 'v16/1' as const;
-export type V16Result<T> = { success: true; data: T } | { success: false; code: string; error: string };
+export type V16Result<T> = { success: true; data: T } | { success: false; code: string; error: string; authorityGate?: AuthorityGateProjection };
 export interface V16Request<T> { apiVersion: typeof V16_API_VERSION; storeContext: StoreContextEnvelope; input: T; }
 type Contract<I, O> = { input: I; output: O };
 type Id = { id: string };
@@ -50,6 +52,7 @@ export interface V16Contracts {
   experimentObservations: Contract<{ experimentId: string }, ExperimentObservationRecord[]>;
   experimentSnapshots: Contract<{ experimentId: string }, ExperimentMetricSnapshotRecord[]>;
   memoryList: Contract<{ missionId?: string }, CausalEventRecord[]>;
+  memoryExport: Contract<{ missionId?: string }, CausalTimelineExport>;
   memoryAppend: Contract<AppendCausalEventInput & { stage: 'FACT' | 'ANALYSIS' }, CausalEventRecord>;
   analysisRun: Contract<Omit<RunMissionAnalysisRequest, 'context'>, RunMissionAnalysisResult>;
   analysisProjection: Contract<{ missionId: string }, MissionAnalysisProjection>;
@@ -65,7 +68,7 @@ export const V16_SERVICE_ROUTES = {
   grantIssue: 'analysis-authority:authorize-proposal-batch', grantGet: 'mission-domain:grants:get', grantList: 'mission-domain:grants:list', grantEvents: 'mission-domain:grants:list-events', grantRevoke: 'mission-domain:grants:revoke-human',
   executionResolveIdentity: 'execution-authority:resolve-identity', executionCreateBatch: 'execution-authority:create-batch', executionListBatches: 'execution-authority:list-batches', executionStart: 'execution-authority:start-batch', executionCancel: 'execution-authority:cancel-batch', executionReconcile: 'execution-authority:reconcile-unknown', executionTakeover: 'execution-authority:take-over-browser',
   experimentCreate: 'mission-domain:experiments:create', experimentGet: 'mission-domain:experiments:get', experimentList: 'mission-domain:experiments:list', experimentUpdate: 'mission-domain:experiments:update', experimentTransition: 'mission-domain:experiments:transition', experimentEvaluate: 'mission-domain:experiments:evaluate', experimentArchive: 'mission-domain:experiments:archive', experimentRestore: 'mission-domain:experiments:restore', experimentObservations: 'mission-domain:experiments:list-observations', experimentSnapshots: 'mission-domain:experiments:list-metric-snapshots',
-  memoryList: 'mission-domain:causal:list-events', memoryAppend: 'mission-domain:causal:append-event',
+  memoryList: 'mission-domain:causal:list-events', memoryAppend: 'mission-domain:causal:append-event', memoryExport: 'mission-domain:causal:export-timeline',
   analysisRun: 'analysis-authority:run-mission-analysis', analysisProjection: 'analysis-authority:get-mission-projection',
 } as const satisfies Record<keyof V16Contracts, string>;
 export const V16_SERVICE_CHANNELS = Object.freeze(Object.fromEntries(Object.keys(V16_SERVICE_ROUTES).map(key => [key, `v16svc:${key}`]))) as Readonly<{ [K in keyof V16Contracts]: `v16svc:${K}` }>;

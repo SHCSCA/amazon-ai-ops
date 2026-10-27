@@ -99,10 +99,7 @@
   white-space: nowrap;
 }
 
-.decision-domain-authority[data-state="PRODUCTION_NATIVE"],
-.decision-domain-list em[data-status="approved"],
 .decision-domain-list em[data-status="verified"],
-.decision-domain-detail-head > em[data-status="approved"],
 .decision-domain-detail-head > em[data-status="verified"] {
   border-color: #bfe3d5;
   background: #ebf8f3;
@@ -153,8 +150,26 @@
 }
 
 .decision-domain-list-panel .workbench-panel__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
+  gap: 8px;
   padding: 7px 9px;
+}
+
+.decision-domain-list-panel .workbench-panel__toolbar {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.decision-domain-list-panel .workbench-panel__toolbar > .task-banner__action-shell {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.decision-domain-list-panel .workbench-panel__toolbar .workspace-button,
+.decision-domain-list-panel .decision-domain-batch-authority > header .workspace-button {
+  white-space: nowrap;
 }
 
 .decision-domain-list-panel .workbench-panel__description {
@@ -209,6 +224,19 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.decision-domain-list-panel .decision-domain-batch-authority > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.decision-domain-list-panel .decision-domain-batch-authority > header > .task-banner__action-shell {
+  justify-items: start;
+}
+
+.decision-domain-list-panel .decision-domain-batch-authority > header .task-banner__disabled-reason {
+  max-width: 100%;
 }
 
 .decision-domain-batch-authority header strong,
@@ -349,7 +377,7 @@
   font-weight: 750;
   white-space: nowrap;
 }
-.decision-domain-analysis-table td > span[data-status="可审批"] { background: #eaf8f1; color: #087956; }
+.decision-domain-analysis-table td > span[data-status="可审批"] { background: #edf3fd; color: #1f5bc9; }
 .decision-domain-analysis-table td > span[data-status="已阻断"] { background: #fff0f0; color: #bc3434; }
 .decision-domain-analysis-table td > details { margin-top: 4px; }
 .decision-domain-analysis-table .workspace-button { min-height: 28px; padding: 4px 8px; white-space: nowrap; }
@@ -373,7 +401,7 @@
 .decision-domain-analysis-batch article small { margin-top: 2px; color: #69758b; font-size: 10px; }
 .decision-domain-analysis-batch article strong { color: #1f5bc9; font-size: 11px; }
 .decision-domain-analysis-batch article em { grid-column: 1 / -1; color: #b24b3d; font-size: 10px; font-style: normal; }
-.decision-domain-analysis-batch article em[data-eligible="true"] { color: #087956; }
+.decision-domain-analysis-batch article em[data-eligible="true"] { color: #1f5bc9; }
 
 .decision-domain-proposal-source {
   display: block;
@@ -521,7 +549,7 @@
 .decision-domain-evidence-grid ul { list-style: none; padding-left: 0; }
 .decision-domain-evidence-grid li { color: #3c4759; font-size: 11px; line-height: 1.4; }
 .decision-domain-evidence-grid ul li { display: flex; align-items: flex-start; gap: 7px; }
-.decision-domain-evidence-grid ul svg { flex: 0 0 auto; margin-top: 1px; color: #087956; }
+.decision-domain-evidence-grid ul svg { flex: 0 0 auto; margin-top: 1px; color: #526079; }
 .decision-domain-evidence-grid section > strong { display: block; margin-top: 12px; font-size: 12px; }
 .decision-domain-evidence-grid section > p { margin-top: 4px; color: #69758b; font-size: 12px; }
 
@@ -553,7 +581,7 @@
 .decision-domain-form__wide { grid-column: 1 / -1; }
 .decision-domain-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .decision-domain-grant-contract,
-.decision-domain-preview-grant { display: flex; align-items: flex-start; gap: 8px; grid-column: 1 / -1; border-radius: 8px; background: #f2fbf7; padding: 10px; color: #087956; }
+.decision-domain-preview-grant { display: flex; align-items: flex-start; gap: 8px; grid-column: 1 / -1; border-radius: 8px; background: #edf3fd; padding: 10px; color: #1f5bc9; }
 .decision-domain-selected-decisions { grid-column: 1 / -1; border-radius: 8px; background: #f6f8fb; padding: 9px; }
 .decision-domain-selected-decisions strong { font-size: 11px; }
 .decision-domain-selected-decisions p { margin: 4px 0 0; color: #526079; font-size: 10px; overflow-wrap: anywhere; }
@@ -570,11 +598,11 @@
   width: fit-content;
   max-width: min(760px, 100%);
   margin: 12px auto 0;
-  border: 1px solid #bfe3d5;
+  border: 1px solid #bdd0ef;
   border-radius: 8px;
-  background: #ebf8f3;
+  background: #edf3fd;
   padding: 8px 12px;
-  color: #087956;
+  color: #1f5bc9;
   font-size: 12px;
 }
 .decision-domain-feedback[data-tone="error"] { border-color: #efcaca; background: #fff0f0; color: #bc3434; }

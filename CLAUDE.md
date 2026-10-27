@@ -1,162 +1,54 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## 项目入口
 
-## Project overview
+Amazon AI Ops Agent 是 Windows-only、本地优先的 Electron / TypeScript 应用。产品版本为1.6.0；当前交付保持 APP_NEEDS_WORK / INTERNAL NON_READY。项目硬约束和安全边界以 [AGENTS.md](AGENTS.md) 及用户最新指令为准。两个入口独立保留，本次未合并或改变链接类型。
 
-Amazon AI Ops Agent is a Windows-first, local Electron desktop app for Amazon operations. It connects Lingxing ad report collection, local report import, product-level ad quantification, keyword and Listing optimization, AI/rule-based recommendations, manual approval, Ads UI readback, and final delivery evidence into an auditable local workflow.
+先读 [README](README.md)、[项目状态](docs/PROJECT_STATUS.md)、[进展](PROGRESS.md)、[当前缺口](BLOCKED.md) 和 [开发交接](docs/DEVELOPMENT_HANDOFF.md)。不要从历史phase完成报告、旧包或旧READY推断当前通过状态。
 
-The app is currently a v1.5.1 static Windows candidate in `APP_NEEDS_WORK` (`INTERNAL NON_READY`). Policy scope, keyword evidence, MissionGrant issuance, and execution selection now share a fail-closed current-store authority chain: exact completed import/report row, latest Stage5 revision, and current Stage6 identity/session where required. Focused authority tests pass 157/157; the allowed unit gate passes 285/285 files and 3584/3584 tests; package script contracts pass 12/12. Static `pnpm run build:win` passed all seven steps, but the user prohibits typecheck, business smoke, Package UI, ZIP launch, current-package formal-DB pre/post verification, app/browser/desktop control, and real Ads testing. The new package therefore has no runtime acceptance credit and cannot be called `APP_READY`. Ads execution still requires a unique current object/bid, a concrete `lower_bid` within 10%, product-local human approval, distinct evidence, one write, and reload/readback proof.
+## 命令速查
 
-## Common commands
-
-Install dependencies:
-
-```bash
-pnpm install
-```
-
-Run the desktop app in development mode:
-
-```bash
+```powershell
+pnpm install --frozen-lockfile
 pnpm dev
-```
-
-Type-check everything that exposes a `typecheck` script:
-
-```bash
+pnpm run prepare:native:node
 pnpm run typecheck
-```
-
-Type-check only the Electron desktop app:
-
-```bash
-pnpm --filter @amazon-ai-ops/desktop run typecheck
-```
-
-Build only the renderer:
-
-```bash
-pnpm --filter @amazon-ai-ops/desktop run build:renderer
-```
-
-Build the Windows installer and portable EXE:
-
-```bash
-pnpm --filter @amazon-ai-ops/desktop run build:win
-```
-
-Run all Vitest tests:
-
-```bash
+pnpm run check:module-boundaries:all
 pnpm test
+pnpm run verify:desktop-isolated
+pnpm run build:win
 ```
 
-Run one test file:
+测试/构建前核原生ABI及隔离路径；不要把源码应用检查当安装包验收。当前全量失败和下次复现入口见开发交接。
 
-```bash
-pnpm vitest run apps/desktop/src/main/recommendation-execution-policy.test.ts
-```
+## 职责速查
 
-Run a targeted package test suite, when the package has its own `test` script:
+| 位置 | 责任 |
+| --- | --- |
+| apps/desktop/src/main/index.ts | 组合根，接入运行上下文、全局异常和生命周期；领域逻辑不再集中回此文件 |
+| main/bootstrap-configuration.ts、configuration-bus.ts | 启动快照、持久配置和提交后通知 |
+| main/desktop-bootstrap.ts、desktop-startup.ts | 路径/S7准入、初始化、窗口和恢复 |
+| main/main-ipc-registration-runtime.ts | 按领域装配IPC，处理器使用统一追踪和异常边界 |
+| preload/index.ts及领域API | 受限跨进程桥 |
+| renderer/mission-control/workspaces/registry.ts | 十workspace、22入口的实际注册 |
+| 同目录v16-module-router.ts | 六个一级业务模块映射 |
+| packages/local-db/src/sqlite | schema迁移及分领域仓储 |
+| scripts | 隔离验证、原生证据、包型、安全、发布与回读工具 |
 
-```bash
-pnpm --filter @amazon-ai-ops/lingxing-report-collector test
-pnpm --filter @amazon-ai-ops/report-parser test
-```
+表中Main/Preload/Renderer路径相对 apps/desktop/src/。完整导航见 [ARCHITECTURE](docs/ARCHITECTURE.md)。
 
-Current business UI and delivery checks:
+## 开发边界
 
-```bash
-pnpm run smoke:business-ui-current
-pnpm run smoke:package-launch
-pnpm run verify:ad-execution
-pnpm run verify:ad-readback -- <evidence.json>
-pnpm run write:v15-evidence-manifest -- ...
-pnpm run verify:v15-final-readiness -- ...
-pnpm run export:v15-delivery-bundle -- ...
-pnpm run verify:v15-ready-safety -- ...
-```
+- 新增/修改IPC须同步Main、Preload、Renderer类型和对应合同测试。
+- 店铺、对象、批次、revision、session、Grant必须逐调用保持一致；聚合仓储的同事务核验不得拆开。
+- UI保持任务优先、浅色Windows工作台和本地/系统字体。技术细节放次级区域；不把APP_*、长命令和证据墙作为运营首屏。
+- 真实报表与不同统计粒度分别处理，不把campaign/ad_group/placement等混加。
+- 产品配置不授广告权限，Listing仅本地版本与导出，UNKNOWN执行只读对账。
+- 密码/密钥留Main安全存储边界，不返还已保存明文、不进日志或提交。
+- 全局配置、日志、异常、简洁中文注释及模块尺寸门遵循AGENTS和治理基线。
 
-Production delivery order is fixed by the README/user guide:
+## 文档与外部状态
 
-```bash
-pnpm --filter @amazon-ai-ops/desktop run build:win
-pnpm run smoke:package-launch
-pnpm run verify:v15-final-readiness -- ...
-# Update the README top DELIVERY line to the current evidence's `APP_READY` state.
-pnpm run export:v15-delivery-bundle -- ...
-pnpm run verify:v15-ready-safety -- ...
-```
+[docs/README.md](docs/README.md)区分现行合同、历史规格/计划和运行原件。状态变化同步项目状态、PROGRESS、BLOCKED和现行操作说明；生产bundle仍要求当前身份与匹配安全校验。代码快照不发布生产包。
 
-If Windows packaging runs out of space on the C: temp directory, set `TEMP` and `TMP` to a D: drive folder before `build:win`.
-
-## Repository structure
-
-This is a pnpm workspace:
-
-- `apps/desktop/` is the Electron app.
-- `packages/*` are local workspace packages consumed by the desktop main process.
-- `scripts/` contains verification, smoke, evidence, delivery, and readback helper scripts.
-- `resources/` contains bundled prompts, field mappings, page models, and default rules.
-- `docs/` contains current product, acceptance, runbook, design parity, and progress documentation.
-- `amazon-ai-ops-business-prototype/` is the visual/business prototype reference used for UI parity.
-
-Do not commit local/runtime delivery artifacts listed in the README: `output/`, `storage/`, `apps/desktop/release/`, AppData DB/profile data, raw Lingxing reports, release EXEs, or credentials.
-
-## Desktop architecture
-
-The runtime is a local-first Electron app, not a client/server web app:
-
-- `apps/desktop/src/main/index.ts` owns app initialization, storage paths under Electron `userData`, SQLite initialization, repository creation, scheduler setup, Playwright browser control, Lingxing report collection/import, recommendation generation, readback evidence, delivery evidence, and IPC handler registration.
-- `apps/desktop/src/preload/index.ts` exposes a constrained `window.electronAPI` bridge. Renderer pages should call this bridge rather than importing Electron APIs directly.
-- `apps/desktop/src/renderer/App.tsx` owns login gating, Zustand app state, top shell, route switching, `ScopeBar`, and mapping `AppRoute` values to business pages.
-- `apps/desktop/src/renderer/types.ts` defines renderer-facing route and business view models for scope, reports, quantification, AI evidence, recommendations, readback, Listing, and delivery readiness.
-- `apps/desktop/src/renderer/pages/` contains the business pages. The current shell flow is `Sidebar -> topbar -> ScopeBar -> PageHeader/OperatorTaskPanel/KPI -> page content`.
-
-The main process currently registers IPC handlers in one large module. When adding renderer functionality, update all three layers consistently: the main handler, the preload bridge method, and the renderer view/types/tests that consume it.
-
-## Workspace package responsibilities
-
-The main process composes the local packages rather than duplicating their domain logic:
-
-- `@amazon-ai-ops/browser-worker`: Playwright/browser control for Lingxing/Ads UI sessions.
-- `@amazon-ai-ops/lingxing-report-collector`: Lingxing download center automation, page model diagnostics, preflight, batch manifests, and report verification.
-- `@amazon-ai-ops/report-parser`: XLSX/CSV parsing and diagnostics for ad reports, keyword metrics, and Listing content.
-- `@amazon-ai-ops/local-db`: SQLite initialization and repositories for settings, products, ad metrics, recommendations, operation events, report files, AI call logs, and diagnosis runs.
-- `@amazon-ai-ops/rules-engine`: ad quantification, rule configuration, recommendation generation, risk evaluation, and AI/rule decision merging.
-- `@amazon-ai-ops/ai-adapter`: OpenAI-compatible provider integration plus ad strategy diagnosis, action explanation, daily report, evidence sufficiency, and Listing draft AI helpers.
-- `@amazon-ai-ops/action-executor`: ad action execution and verifier types/logic; keep real execution behind approval/readback safety gates.
-- `@amazon-ai-ops/audit-log`: audit logging, screenshots, traces, and cleanup.
-- `@amazon-ai-ops/scheduler`: local scheduled tasks for recommendation/report generation and cleanup.
-- `@amazon-ai-ops/keyword-opportunity`: keyword opportunity derivation from imported metrics.
-- `@amazon-ai-ops/listing-analyzer`: keyword coverage, safe Listing suggestions, rule-based/AI draft export helpers.
-- `@amazon-ai-ops/shared-types`: cross-package domain types.
-
-## Product and safety boundaries
-
-Important product invariants from the README:
-
-- Report collection/import must use real Lingxing ad reports. Screenshots, audit files, and page archives do not substitute for raw reports.
-- `campaign`, `ad_group`, `placement`, `advertised_product`, and `user_search_term` are different grains and must not be blindly summed together.
-- Product config fields such as cost, FBA fee, current price, minimum acceptable price, target ACOS/TACOS, and target net margin stay local and do not approve or execute ad actions.
-- Listing drafts are local versions only and are not automatically submitted to Amazon or Lingxing.
-- Credentials and AI keys are handled by local secure storage; do not expose plaintext in UI, logs, docs, tests, or commits.
-
-## UI and design notes
-
-The current UI is aligned to `amazon-ai-ops-business-prototype/pages/*.html` and the parity docs under `docs/design/`. The renderer intentionally uses a light Windows desktop theme and local/system fonts; do not introduce Google Fonts or a dark-mode toggle unless the product direction changes.
-
-The 17 business routes are defined by `AppRoute` in `apps/desktop/src/renderer/types.ts` and rendered in `BusinessRoutePage` in `apps/desktop/src/renderer/App.tsx`. Navigation can also be requested through the `amazon-ai-ops:navigate` browser event.
-
-## Documentation to check before large changes
-
-- `README.md`: current state, delivery commands, commit boundaries, and product boundaries.
-- `docs/amazon_ai_ops_desktop_prd_arch_dev_spec_v1_5_no_external.md`: v1.5 PRD/architecture/development specification.
-- `docs/V1_5_ACCEPTANCE_MATRIX.md`: acceptance expectations.
-- `docs/V1_5_PROGRESS_REPORT.md`: detailed progress and evidence history.
-- `docs/USER_GUIDE_v1_5.md`: user-facing workflow and delivery order.
-- `docs/REAL_AD_READBACK_RUNBOOK.md`: real Ads UI manual execution/readback process.
-- `docs/design/prototype-reference-index.md` and `docs/design/prototype-parity-checklist.md`: prototype parity references.
-
-No repository-level `.cursor/rules`, `.cursorrules`, or `.github/copilot-instructions.md` files were present when this file was created.
+不自动写个人记忆或旧电脑Obsidian路径。整理前本文件完整原字节保存在 [归档](docs/history/2026-10-27-documentation-sync/README.md)，可供核对，不是新的指令来源。

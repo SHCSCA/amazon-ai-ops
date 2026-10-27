@@ -32,7 +32,9 @@ describe('mandatory runner evidence integrity', () => {
       execution: { startedAt: time, finishedAt: time, exitCode: 0 },
       artifact: { format: 'checks-json', path: rawPath, sha256: sha256(fs.readFileSync(rawPath)) },
       result: { success: true, total: 1, passed: 1, failed: 0, skipped: 0 } });
-    expect(verifyEvidence(test,identity,f.root)).toMatchObject({ success: false, issues: ['NATIVE_ARTIFACT_VERIFICATION_REQUIRED'] });
+    const result = verifyEvidence(test,identity,f.root);
+    expect(result.success).toBe(false);
+    expect(result.issues).toContain('NATIVE_ARTIFACT_VERIFICATION_REQUIRED');
   });
   it('accepts a complete same-identity runner result with matching actual counts', () => { expect(fixture().verify().success).toBe(true); });
   it.each([

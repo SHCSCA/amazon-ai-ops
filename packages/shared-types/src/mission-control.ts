@@ -150,7 +150,17 @@ export interface MissionControlTodayReadinessItem {
   targetView: MissionControlViewId;
 }
 
+export interface MissionControlTodayBlocker {
+  id: string;
+  code: string;
+  reason: string;
+  recoveryLabel: string;
+  targetView: MissionControlViewId;
+  requiredCapabilityId: string;
+}
+
 export interface MissionControlTodayProjection {
+  operatorFlow?: readonly import('./operator-flow').OperatorFlowStageProjection[];
   storeId: string;
   authorityKey: string;
   businessDate: string;
@@ -176,6 +186,7 @@ export interface MissionControlTodayProjection {
   };
   readiness: MissionControlTodayReadinessItem[];
   blockers: string[];
+  blockerActions?: readonly MissionControlTodayBlocker[];
   attentionItems: string[];
   analysis?: {
     activeMissionId?: string;

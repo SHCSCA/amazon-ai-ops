@@ -73,6 +73,7 @@ export function OperatorModuleSidebar({
               >
                 <button
                   aria-busy={pending || undefined}
+                  aria-describedby={navigationBusy ? 'operator-navigation-pending-reason' : undefined}
                   aria-expanded={!collapsed && active}
                   aria-label={collapsed ? module.label : undefined}
                   className="operator-module-button"
@@ -110,6 +111,7 @@ export function OperatorModuleSidebar({
                         <div key={moduleEntry.view} role="listitem">
                           <button
                             aria-busy={entryPending || undefined}
+                            aria-describedby={navigationBusy ? 'operator-navigation-pending-reason' : undefined}
                             aria-current={entryActive ? 'page' : undefined}
                             className="operator-module-entry"
                             data-operator-entry={moduleEntry.view}
@@ -137,6 +139,9 @@ export function OperatorModuleSidebar({
             );
           })}
         </div>
+        {navigationBusy && <p className="muted-line" id="operator-navigation-pending-reason" role="status">
+          正在转跳到{pendingModule?.label || '所选入口'}，请等待完成后再选择其他入口。
+        </p>}
       </div>
 
       {(storeScopeControl || onToggleCollapsed) && (

@@ -112,6 +112,20 @@ function proposal(): AnalysisProposalSnapshotRecord {
 }
 
 describe('Stage 5 analysis authority contracts', () => {
+  it('rejects evidence sealed before import completion and identity recorded before verification', () => {
+    expect(() => validateAnalysisEvidencePackage({ ...evidencePackage(), sealedAt: '2026-07-22T00:59:59.000Z' }))
+      .toThrow(/later than sealing/);
+    expect(() => validateVerifiedAdEntityAuthority({ ...authority(), verifiedAt: '2026-07-22T02:05:01.000Z' }))
+      .toThrow(/later than its recorded creation/);
+  });
+
+  it.each(['2026-02-30', '2026-02-29', '2026-04-31'])(
+    'rejects an impossible report date %s before evidence sealing', date => {
+      const value = { ...evidencePackage(), dateFrom: date };
+      expect(() => validateAnalysisEvidencePackage(value)).toThrow(/dateFrom must be YYYY-MM-DD/);
+    },
+  );
+
   it('accepts exactly eight path-free report source proofs', () => {
     const value = evidencePackage();
     expect(() => validateAnalysisEvidencePackage(value)).not.toThrow();

@@ -17,6 +17,7 @@ export interface MissionControlStoreGateViewProps {
   stores: readonly StoreRecord[];
   activeStore?: StoreRecord | null;
   authoritativeContext?: StoreContextEnvelope | null;
+  contextEpoch?: number;
   dailyStatuses?: readonly StoreDailyStatusProjection[];
   dailyStatusPhase?: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
@@ -87,6 +88,7 @@ export function MissionControlStoreGateView(props: MissionControlStoreGateViewPr
             <StoreScopeSwitcher
               activeStore={props.activeStore}
               authoritativeContext={props.authoritativeContext}
+              contextEpoch={props.contextEpoch}
               dailyStatusError={props.dailyStatusError}
               dailyStatusPhase={props.dailyStatusPhase}
               dailyStatuses={props.dailyStatuses}
@@ -140,6 +142,7 @@ export function MissionControlStoreGate({ children }: { children: ReactNode }) {
     <MissionControlStoreGateView
       activeStore={store.activeStore}
       authoritativeContext={store.authoritativeContext}
+      contextEpoch={store.contextEpoch}
       dailyStatusError={store.dailyStatusError}
       dailyStatusPhase={store.dailyStatusPhase}
       dailyStatuses={store.dailyStatuses}

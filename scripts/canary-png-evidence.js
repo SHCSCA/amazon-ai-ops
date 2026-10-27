@@ -146,6 +146,10 @@ function decodeScanlines(
 }
 
 function inspectPngEvidenceBytes(bytes) {
+  return inspectPngBytes(bytes);
+}
+
+function inspectPngBytes(bytes, expectedSize) {
   if (!Buffer.isBuffer(bytes)) fail('artifact bytes must be a Buffer');
   if (bytes.length > PNG_EVIDENCE_MAX_FILE_BYTES) {
     fail(`PNG artifact exceeds the ${PNG_EVIDENCE_MAX_FILE_BYTES}-byte file safety limit`);
@@ -198,7 +202,10 @@ function inspectPngEvidenceBytes(bytes) {
       const compressionMethod = data[10];
       const filterMethod = data[11];
       const interlaceMethod = data[12];
-      if (width < PNG_EVIDENCE_MIN_WIDTH || height < PNG_EVIDENCE_MIN_HEIGHT) {
+      if (expectedSize && (width !== expectedSize.width || height !== expectedSize.height)) {
+        fail('owned motion PNG dimensions do not match the independently observed native viewport');
+      }
+      if (!expectedSize && (width < PNG_EVIDENCE_MIN_WIDTH || height < PNG_EVIDENCE_MIN_HEIGHT)) {
         fail(`image dimensions ${width}x${height} are below the ${PNG_EVIDENCE_MIN_WIDTH}x${PNG_EVIDENCE_MIN_HEIGHT} evidence minimum`);
       }
       if (width * height > PNG_EVIDENCE_MAX_PIXELS) {
@@ -301,6 +308,105 @@ function inspectPngEvidenceBytes(bytes) {
     idatChunks: idatParts.length,
     sizeBytes: bytes.length,
   });
+}
+
+function ownedMotionSize(witness, expected) {
+  const equal = require('node:util').isDeepStrictEqual;
+  const insist = condition => { if (!condition) fail('owned motion geometry witness is missing or inconsistent'); };
+  const keys = (value, fields) => insist(value && typeof value === 'object' && !Array.isArray(value)
+    && equal(Object.keys(value).sort(), [...fields].sort()));
+  const stamp = value => {
+    const time = typeof value === 'string' ? Date.parse(value) : NaN;
+    insist(Number.isFinite(time) && new Date(time).toISOString() === value); return time;
+  };
+  const number = value => Number.isFinite(value);
+  const positive = value => Number.isSafeInteger(value) && value > 0;
+  const close = (left, right) => number(left) && number(right) && Math.abs(left - right) <= 1e-9;
+  const size = value => { keys(value, ['width', 'height']); insist(positive(value.width) && positive(value.height)); };
+  const rect = value => { keys(value, ['x', 'y', 'width', 'height']); size({ width: value.width, height: value.height });
+    insist(Number.isSafeInteger(value.x) && Number.isSafeInteger(value.y)); };
+  keys(expected, ['kind', 'owner', 'deviceScaleFactor', 'referenceGeometry', 'execution', 'capturedAt']);
+  keys(expected.owner, ['mainPid', 'mainCreationTime', 'windowId', 'rendererPid', 'rendererCreationTime', 'url', 'electronVersion']);
+  insist(['125-percent', 'minimum-window'].includes(expected.kind) && [1, 1.25].includes(expected.deviceScaleFactor)
+    && positive(expected.owner.mainPid) && positive(expected.owner.windowId) && positive(expected.owner.rendererPid)
+    && number(expected.owner.mainCreationTime) && number(expected.owner.rendererCreationTime)
+    && typeof expected.owner.url === 'string' && expected.owner.url.startsWith('file:')
+    && expected.owner.electronVersion === '44.2.0');
+  keys(witness, ['schemaVersion', 'method', 'imageSemantics', 'before', 'captureStartedAt', 'captureFinishedAt', 'after', 'nativeSize', 'nativeScaleFactors']);
+  insist(witness.schemaVersion === 'v16.owned-motion-geometry/1' && witness.method === 'electron-webcontents-capture-page'
+    && witness.imageSemantics === 'electron-44-capture-1x-pixels' && equal(witness.nativeScaleFactors, [1]));
+  size(witness.nativeSize);
+  const geometry = snapshot => {
+    keys(snapshot, ['mainPid', 'mainCreationTime', 'windowId', 'rendererPid', 'rendererCreationTime', 'url', 'electronVersion',
+      'bounds', 'contentBounds', 'contentSize', 'minimumSize', 'zoomFactor', 'maximized', 'fullScreen', 'minimized', 'visible',
+      'display', 'forceDeviceScaleFactor', 'renderer', 'observedAt']);
+    for (const field of Object.keys(expected.owner)) insist(snapshot[field] === expected.owner[field]);
+    rect(snapshot.bounds); rect(snapshot.contentBounds); size(snapshot.contentSize); size(snapshot.minimumSize);
+    insist(snapshot.minimumSize.width === 1200 && snapshot.minimumSize.height === 700
+      && snapshot.maximized === false && snapshot.fullScreen === false && snapshot.minimized === false && snapshot.visible === true
+      && close(snapshot.zoomFactor, expected.kind === '125-percent' ? 1.25 : 1));
+    keys(snapshot.display, ['id', 'scaleFactor']);
+    insist(Number.isSafeInteger(snapshot.display.id) && snapshot.display.scaleFactor === expected.deviceScaleFactor
+      && snapshot.forceDeviceScaleFactor === String(expected.deviceScaleFactor));
+    const content = snapshot.contentBounds, bounds = snapshot.bounds;
+    insist(content.width === snapshot.contentSize.width && content.height === snapshot.contentSize.height
+      && content.x >= bounds.x && content.y >= bounds.y
+      && content.x + content.width <= bounds.x + bounds.width && content.y + content.height <= bounds.y + bounds.height);
+    keys(snapshot.renderer, ['url', 'innerWidth', 'innerHeight', 'devicePixelRatio']);
+    insist(snapshot.renderer.url === expected.owner.url && positive(snapshot.renderer.innerWidth) && positive(snapshot.renderer.innerHeight)
+      && close(snapshot.renderer.devicePixelRatio, expected.deviceScaleFactor * snapshot.zoomFactor));
+    // CSS 整数视口只允许落在两端取整格点；像素尺寸独立由原生 DIP 与可信显示比例推出。
+    for (const axis of ['width', 'height']) {
+      const css = snapshot.renderer[axis === 'width' ? 'innerWidth' : 'innerHeight'];
+      const value = snapshot.contentSize[axis] / snapshot.zoomFactor;
+      insist(css === Math.floor(value) || css === Math.ceil(value));
+    }
+    if (expected.kind === '125-percent') insist(snapshot.contentSize.width === 1366 && snapshot.contentSize.height === 768);
+    else insist(snapshot.bounds.width === 1200 && snapshot.bounds.height === 700);
+    const observed = stamp(snapshot.observedAt);
+    insist(observed >= stamp(expected.execution.startedAt) && observed <= stamp(expected.execution.finishedAt));
+    return { left: content.x - bounds.x, top: content.y - bounds.y,
+      right: bounds.x + bounds.width - content.x - content.width, bottom: bounds.y + bounds.height - content.y - content.height };
+  };
+  const chrome = geometry(witness.before); geometry(witness.after);
+  const withoutTime = value => { const { observedAt, ...rest } = value; return rest; };
+  insist(equal(withoutTime(witness.before), withoutTime(witness.after))
+    && stamp(witness.before.observedAt) <= stamp(witness.captureStartedAt)
+    && stamp(witness.captureStartedAt) <= stamp(witness.captureFinishedAt)
+    && stamp(witness.captureFinishedAt) <= stamp(witness.after.observedAt)
+    && stamp(witness.after.observedAt) <= stamp(expected.capturedAt)
+    && stamp(expected.capturedAt) <= stamp(expected.execution.finishedAt));
+  if (expected.kind === 'minimum-window') {
+    const reference = expected.referenceGeometry;
+    ownedMotionSize(reference, { ...expected, kind: '125-percent', referenceGeometry: null });
+    const normal = reference.before;
+    const referenceChrome = { left: normal.contentBounds.x - normal.bounds.x, top: normal.contentBounds.y - normal.bounds.y,
+      right: normal.bounds.x + normal.bounds.width - normal.contentBounds.x - normal.contentBounds.width,
+      bottom: normal.bounds.y + normal.bounds.height - normal.contentBounds.y - normal.contentBounds.height };
+    insist(equal(chrome, referenceChrome) && witness.before.display.id === normal.display.id
+      && stamp(reference.after.observedAt) <= stamp(witness.before.observedAt));
+  } else insist(expected.referenceGeometry === null);
+  // Electron 44.2.0 的 capturePage 逐轴向上取整，再包成 1x bitmap；本入口不接受自由最小尺寸参数。
+  const pixels = { width: Math.ceil(witness.before.contentSize.width * expected.deviceScaleFactor),
+    height: Math.ceil(witness.before.contentSize.height * expected.deviceScaleFactor) };
+  insist(equal(witness.nativeSize, pixels));
+  return pixels;
+}
+
+function inspectOwnedMotionPngEvidenceBytes(bytes, witness, expected) {
+  return inspectPngBytes(bytes, ownedMotionSize(witness, expected));
+}
+
+function inspectNativeOwnedMotionPngEvidenceBytes(bytes, witness, expected) {
+  let frame;
+  try { frame = require('./owned-motion-geometry-v2.cjs').validateOwnedMotionV2Frame(witness, expected); }
+  catch (error) {
+    const failure = new PngEvidenceValidationError('owned motion geometry v2 witness is missing or inconsistent');
+    Object.defineProperty(failure, 'cause', { value: error });
+    throw failure;
+  }
+  const png = inspectPngBytes(bytes, frame.pixels);
+  return Object.freeze({ ...png, visibleViewport: frame.visibleViewport });
 }
 
 function normalizedStatTimeNs(stat, key) {
@@ -407,5 +513,7 @@ module.exports = {
   PNG_EVIDENCE_MIN_WIDTH,
   PngEvidenceValidationError,
   inspectPngEvidenceBytes,
+  inspectOwnedMotionPngEvidenceBytes,
+  inspectNativeOwnedMotionPngEvidenceBytes,
   inspectPngEvidenceFile,
 };

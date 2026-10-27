@@ -2,9 +2,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { cliArg, parseMustRequirements, readJson, verifyManifest, writeJson } = require('./verify-v16-required-test-manifest.js');
 
-function verifyTraceClosure(requirements, manifest, root = process.cwd(), verification = verifyManifest(manifest, root)) {
+function verifyTraceClosure(requirements, manifest, root = process.cwd(), verification, trustedRuntime) {
+  verification ??= verifyManifest(manifest, root, undefined, trustedRuntime);
   const issues = [...verification.issues];
-  const prd = parseMustRequirements(fs.readFileSync(path.join(root, 'docs/amazon_ai_ops_agent_prd_v1_6_0.md'), 'utf8'));
+  let frozen;
+  if (trustedRuntime) {
+    try {
+      frozen = require('./v16-trusted-runtime').validateFrozenBuild(trustedRuntime.frozenBuild, verification.identity);
+      if (JSON.stringify(requirements) !== JSON.stringify(frozen.requirementsIndex)) issues.push('FROZEN_REQUIREMENTS_INDEX_MISMATCH');
+    } catch (error) {
+      return { schemaVersion: 'v16.trace-closure/1', identity: verification.identity, success: false, issues: [...issues, 'FROZEN_BUILD_UNAVAILABLE:' + error.message], total: 0, completed: 0, details: [], diagnostics: [require('./v16-native-artifacts').structuredFailure('v16.frozen_trace_failed', error)] };
+    }
+  }
+  const prd = frozen?.prdMust ?? parseMustRequirements(fs.readFileSync(path.join(root, 'docs/amazon_ai_ops_agent_prd_v1_6_0.md'), 'utf8'));
   const indexed = requirements?.requirements;
   if (!prd.length || new Set(prd.map(r => r.id)).size !== prd.length) issues.push('EMPTY_OR_DUPLICATE_PRD_MUST');
   if (!Array.isArray(indexed) || indexed.length !== prd.length || new Set(indexed.map(r => r.id)).size !== prd.length) issues.push('INCOMPLETE_REQUIREMENT_INDEX');
@@ -22,12 +32,16 @@ function verifyTraceClosure(requirements, manifest, root = process.cwd(), verifi
         || !test?.success || !test.caseIds?.includes(item.caseId)) problems.push('UNVERIFIED_ACCEPTANCE_CASE:' + String(item.caseId));
     }
     for (const link of entry?.implementation ?? []) {
+      if (frozen) {
+        if (!require('./v16-trusted-runtime').relativeSource(link) || !frozen.implementationInventory.some(record => record.path === link)) problems.push('INVALID_IMPLEMENTATION_LINK:' + String(link));
+        continue;
+      }
       const candidate = typeof link === 'string' ? path.resolve(root, link) : '';
       const relative = candidate && path.relative(root, candidate);
       if (!candidate || path.isAbsolute(relative) || relative.startsWith('..') || !fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) problems.push('INVALID_IMPLEMENTATION_LINK:' + String(link));
     }
     for (const id of entry?.testIds ?? []) {
-      const test = manifest.requiredTests.find(t => t.testId === id);
+      const test = manifest?.requiredTests?.find(t => t.testId === id);
       if (!test?.requirementIds?.includes(required.id) || !tests.get(id)?.success) problems.push('UNVERIFIED_TEST:' + id);
     }
     return { id: required.id, success: !problems.length, issues: problems };
@@ -45,7 +59,7 @@ function main() {
   process.exitCode = result.success ? 0 : 1;
 }
 if (require.main === module) {
-  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+  try { main(); } catch (error) { console.error(JSON.stringify(require('./v16-native-artifacts').structuredFailure('v16.trace_verification_failed', error))); process.exitCode = 1; }
 }
 
 module.exports = { verifyTraceClosure, main };

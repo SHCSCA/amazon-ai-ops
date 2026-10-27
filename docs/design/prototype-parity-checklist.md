@@ -1,5 +1,7 @@
 # Amazon AI Ops Prototype Parity Checklist
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > Historical prototype-parity record. It remains a design reference only; current source/package readiness is governed by `PROGRESS.md`, `BLOCKED.md`, and `docs/OPERATOR_CORE_FLOW_REPAIR_2026-08-07.md`.
 
 > Updated: 2026-07-03

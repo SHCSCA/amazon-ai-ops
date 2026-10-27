@@ -1,0 +1,92 @@
+.mission-domain-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+  max-height: none;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.mission-domain-form label,
+.mission-domain-checkpoint-form label {
+  display: grid;
+  gap: 5px;
+  color: #344158;
+  font-size: 12px;
+}
+
+.mission-domain-form label > small {
+  color: #69758b;
+  font-size: 11px;
+}
+
+.mission-domain-form__wide {
+  grid-column: 1 / -1;
+}
+
+.mission-domain-checkpoint-form {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+}
+
+@container mission-domain (max-width: 720px) {
+  .mission-domain-flight-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-domain-detail-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mission-domain-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    padding-top: 7px;
+    border-top: 1px solid #e8edf4;
+  }
+
+  .mission-domain-queue-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1199px) {
+  .mission-domain-contract,
+  .mission-domain-lineage > div[role="list"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mission-domain-contract > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .mission-domain-contract > div:nth-child(n + 3) {
+    border-top: 1px solid #e8edf4;
+  }
+
+  .mission-domain-analysis-authority > dl,
+  .mission-domain-proposal-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.mission-domain-diagnostics {
+  width: fit-content;
+  max-width: 100%;
+  font-size: 10px;
+}
+
+.mission-domain-diagnostics summary {
+  cursor: pointer;
+  color: #1f5bc9;
+  font-weight: 800;
+}
+
+.mission-domain-diagnostics code {
+  display: block;
+  margin-top: 4px;
+  color: #69758b;
+  overflow-wrap: anywhere;
+}

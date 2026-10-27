@@ -73,6 +73,42 @@ describe('single-lock isolated Windows package orchestration', () => {
     expect(contents).toMatch(/ShowWindow\s+\$HWNDPARENT\s+\$\{SW_SHOW\}/);
   });
 
+  it('retries only the extracted directory for at most 19.5 seconds and reports cleanup failure', () => {
+    const contents = fs.readFileSync(PROGRESS_TEMPLATE, 'utf8');
+    const cleanup = contents.slice(contents.indexOf('portable_cleanup_retry:'));
+    expect(cleanup).toContain('RMDir /r "$INSTDIR"');
+    expect(cleanup).not.toMatch(/RMDir[^\n]+\$TEMP|RMDir[^\n]+userData/i);
+    expect(cleanup).toMatch(/\$\{If\} \$1 < 40\s+Sleep 500\s+Goto portable_cleanup_retry/);
+    expect(cleanup).toContain('GetFileAttributesW(w "$INSTDIR")');
+    expect(cleanup).toMatch(/\$3 = 2\s+\$\{OrIf\} \$3 = 3\s+Goto portable_cleanup_done/);
+    expect(cleanup).toContain('"event":"portable.cleanup_failed"');
+    expect(cleanup).toContain('"childExitCode":$R5');
+    expect(cleanup).toContain('${GetTime} "" "LS" $4 $5 $7 $8 $9 $R0 $R1');
+    expect(cleanup).toContain('IntFmt $9 "%02d" $9');
+    expect(cleanup).toContain('StrCpy $R2 "$7-$5-$4T$9:$R0:$R1Z"');
+    expect(cleanup).toContain('"timestamp":"$R2","level":"error","event":"portable.cleanup_failed","context":{');
+    expect(cleanup).not.toMatch(/\$\{GetTime\}[^\n]+\$R5/);
+    expect(cleanup).toMatch(/\$\{If\} \$R5 = 0\s+SetErrorLevel 79\s+\$\{Else\}\s+SetErrorLevel \$R5/);
+    expect(cleanup).toMatch(/portable_cleanup_done:\s+SetErrorLevel \$R5/);
+  });
+
+  it.each([
+    ['missing counter bound', '${If} $1 < 40', '${If} $1 < 0'],
+    ['missing delay', 'Sleep 500', 'Sleep 0'],
+    ['lost child exit code', 'StrCpy $R5 $0', 'StrCpy $R5 0'],
+    ['false absence on access denied', '${OrIf} $3 = 3', '${OrIf} $3 = 5'],
+    ['masked cleanup failure', 'SetErrorLevel 79', 'SetErrorLevel 0'],
+    ['missing diagnostic', '"event":"portable.cleanup_failed"', '"event":"ignored"'],
+    ['local time marked as UTC', '${GetTime} "" "LS"', '${GetTime} "" "L"'],
+    ['clock overwrites child exit code', '${GetTime} "" "LS" $4 $5 $7', '${GetTime} "" "LS" $R5 $5 $7'],
+    ['flat diagnostic context', '"context":{"launcherPid":$6', '"launcherPid":$6'],
+    ['wrong successful status', 'portable_cleanup_done:\n  SetErrorLevel $R5', 'portable_cleanup_done:\n  SetErrorLevel 0'],
+  ])('refuses a portable template with %s', (_name, before, after) => {
+    const contents = fs.readFileSync(PROGRESS_TEMPLATE, 'utf8').replace(/\r\n/g, '\n');
+    expect(contents).toContain(before);
+    expect(() => assertProgressTemplateContract(contents.replace(before, after))).toThrow(/bounded cleanup/);
+  });
+
   it.each(['success', 'failure'])('restores the installed portable template byte-exactly after %s', (outcome) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-portable-template-'));
     tempDirectories.push(directory);

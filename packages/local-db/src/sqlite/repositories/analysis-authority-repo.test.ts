@@ -564,7 +564,7 @@ function insertRecommendation(
   return harness.recommendationRepository.insertForStore(harness.context.storeId, rec);
 }
 
-function registerAuthority(harness: Harness, evidencePackageId: string) {
+function registerAuthority(harness: Harness, evidencePackageId: string, verifiedAt = NOW) {
   return harness.repository.registerVerifiedAdEntity(harness.context, {
     authorityId: 'authority-1',
     evidencePackageId,
@@ -579,7 +579,7 @@ function registerAuthority(harness: Harness, evidencePackageId: string) {
     identitySource: 'ads_ui',
     proofSha256: 'e'.repeat(64),
     verifiedBy: 'operator',
-    verifiedAt: NOW,
+    verifiedAt,
   });
 }
 
@@ -598,6 +598,18 @@ function enablePolicyAuto(harness: Harness): void {
 }
 
 describe('AnalysisAuthorityRepository', () => {
+  it.each(['2026-07-22T12:01:00.000Z', '2026-02-30T12:00:00.000Z'])(
+    'rejects invalid verification time %s before returning an existing identity or writing', verifiedAt => {
+      const harness = createHarness();
+      const evidence = seal(harness);
+      registerAuthority(harness, evidence.id);
+      const before = harness.database.prepare('SELECT total_changes() AS count').get();
+      expect(() => registerAuthority(harness, evidence.id, verifiedAt)).toThrow(AnalysisAuthorityRepositoryError);
+      expect(harness.database.prepare('SELECT total_changes() AS count').get()).toEqual(before);
+      expect(harness.repository.getVerifiedAdEntity(harness.context, 'authority-1')?.verifiedAt).toBe(NOW);
+    },
+  );
+
   it('seals a path-free exact 8/8 evidence package and remains append-only', () => {
     const harness = createHarness();
     const record = seal(harness);
@@ -664,7 +676,7 @@ describe('AnalysisAuthorityRepository', () => {
         identitySource: 'ads_ui' as const,
         proofSha256: 'd'.repeat(64),
         verifiedBy: 'operator',
-        verifiedAt: '2026-07-22T12:01:00.000Z',
+        verifiedAt: NOW,
       },
     });
     expect(second.entityRevision).toBe(3);

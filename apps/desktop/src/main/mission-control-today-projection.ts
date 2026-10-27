@@ -3,6 +3,7 @@ import type {
   LingxingCollectionJobSnapshot,
   LingxingReportType,
   MissionControlTodayProjection,
+  MissionControlTodayBlocker,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { missionControlContextKey } from '@amazon-ai-ops/shared-types';
@@ -187,6 +188,12 @@ export function buildMissionControlTodayProjection(
   const blockers = readiness
     .filter((item) => item.state === 'blocked')
     .map((item) => `${item.label}：${item.detail}`);
+  const blockerActions: MissionControlTodayBlocker[] = readiness
+    .filter(item => item.state === 'blocked')
+    .map(item => ({ id: 'readiness-' + item.id, code: 'TODAY_' + item.id.toUpperCase() + '_REQUIRED',
+      reason: item.label + '：' + item.detail, recoveryLabel: item.id === 'products' ? '管理产品与目标' : item.id === 'import' ? '检查导入结果' : '处理采集与连接',
+      targetView: item.targetView, requiredCapabilityId: item.targetView === 'objects/products' ? 'objects.products.view'
+        : item.targetView === 'collection/import-check' ? 'collection.import-check.view' : 'collection.reports.view' }));
   const attentionItems = readiness
     .filter((item) => item.state === 'attention')
     .map((item) => `${item.label}：${item.detail}`);
@@ -198,6 +205,8 @@ export function buildMissionControlTodayProjection(
   if (unknownCount > 0) {
     const detail = `当前店铺有 ${unknownCount} 个执行批次结果不确定；请进入执行工作台查看记录或进行只读双次对账，不得重试保存。`;
     blockers.unshift(detail);
+    blockerActions.unshift({ id: 'unknown-execution', code: 'EXECUTION_UNKNOWN_READONLY_RECONCILIATION', reason: detail,
+      recoveryLabel: '查看执行并只读对账', targetView: 'execution/live', requiredCapabilityId: 'execution.queue.view' });
     nextAction = {
       id: 'reconcile-unknown-execution', label: '查看执行结果并只读对账', detail,
       targetView: 'execution/live', requiredCapabilityId: 'execution.queue.view',
@@ -279,6 +288,7 @@ export function buildMissionControlTodayProjection(
     },
     readiness,
     blockers,
+    blockerActions,
     attentionItems,
     nextAction,
   };

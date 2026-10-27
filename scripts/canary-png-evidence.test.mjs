@@ -303,3 +303,89 @@ describe('canary PNG evidence contract', () => {
     }
   });
 });
+const ownedMotionPng = createRequire(import.meta.url)('./canary-png-evidence.js').inspectOwnedMotionPngEvidenceBytes;
+
+function ownedMotionContract(deviceScaleFactor = 1, kind = 'minimum-window') {
+  const owner = { mainPid: 11, mainCreationTime: 1000, windowId: 1, rendererPid: 22, rendererCreationTime: 1100,
+    url: 'file:///owned/resources/app/dist/renderer/index.html', electronVersion: '44.2.0' };
+  const stamp = milliseconds => `2026-10-26T04:00:00.${String(milliseconds).padStart(3, '0')}Z`;
+  const witness = view => {
+    const zoomFactor = view === '125-percent' ? 1.25 : 1;
+    const contentSize = view === '125-percent' ? { width: 1366, height: 768 } : { width: 1184, height: 633 };
+    const snapshot = observedAt => ({ ...owner, bounds: { x: 100, y: 100, width: contentSize.width + 16, height: contentSize.height + 67 },
+      contentBounds: { x: 108, y: 159, ...contentSize }, contentSize, minimumSize: { width: 1200, height: 700 },
+      zoomFactor, maximized: false, fullScreen: false, minimized: false, visible: true,
+      display: { id: 7, scaleFactor: deviceScaleFactor }, forceDeviceScaleFactor: String(deviceScaleFactor),
+      renderer: { url: owner.url, innerWidth: Math.round(contentSize.width / zoomFactor), innerHeight: Math.round(contentSize.height / zoomFactor),
+        devicePixelRatio: deviceScaleFactor * zoomFactor }, observedAt });
+    const base = view === '125-percent' ? 100 : 500;
+    return { schemaVersion: 'v16.owned-motion-geometry/1', method: 'electron-webcontents-capture-page',
+      imageSemantics: 'electron-44-capture-1x-pixels', before: snapshot(stamp(base)), captureStartedAt: stamp(base + 100),
+      captureFinishedAt: stamp(base + 200), after: snapshot(stamp(base + 300)),
+      nativeSize: { width: Math.ceil(contentSize.width * deviceScaleFactor), height: Math.ceil(contentSize.height * deviceScaleFactor) }, nativeScaleFactors: [1] };
+  };
+  const geometry = witness(kind);
+  return { geometry, expected: { kind, owner, deviceScaleFactor, referenceGeometry: kind === 'minimum-window' ? witness('125-percent') : null,
+    execution: { startedAt: stamp(0), finishedAt: '2026-10-26T04:00:01.000Z' }, capturedAt: stamp(900) } };
+}
+
+describe('所属窗口motion专用PNG合同', () => {
+  it.each([1, 1.25])('只接受DSF=%s时两轴独立推导的真实最小内容尺寸', deviceScaleFactor => {
+    for (const kind of ['125-percent', 'minimum-window']) {
+      const { geometry, expected } = ownedMotionContract(deviceScaleFactor, kind);
+      const png = pngBytes(geometry.nativeSize);
+      expect(ownedMotionPng(png, geometry, expected)).toMatchObject(geometry.nativeSize);
+    }
+  });
+  it('1x最小窗口专用成功不会降低canary或旧公开API的1200x700门', () => {
+    const { geometry, expected } = ownedMotionContract(); const png = pngBytes(geometry.nativeSize);
+    expect(ownedMotionPng(png, geometry, expected)).toMatchObject({ width: 1184, height: 633 });
+    expect(() => inspectPngEvidenceBytes(png)).toThrow(/1200x700/);
+    expect(() => inspectPngEvidenceBytes(png, { minWidth: 1, minHeight: 1 })).toThrow(/1200x700/);
+  });
+  it.each([[1183, 633], [1184, 632], [100, 100]])('两轴裁切或缩略图%sx%s不能借所属见证通过', (width, height) => {
+    const { geometry, expected } = ownedMotionContract();
+    expect(() => ownedMotionPng(pngBytes({ width, height }), geometry, expected)).toThrow(/dimensions/);
+  });
+  it.each([
+    ['Main', geometry => { geometry.after.mainPid = 99; }],
+    ['Renderer', geometry => { geometry.before.rendererPid = 99; geometry.after.rendererPid = 99; }],
+    ['URL', geometry => { geometry.after.renderer.url = 'file:///other'; }],
+    ['DPR', geometry => { geometry.before.renderer.devicePixelRatio = 1.1; geometry.after.renderer.devicePixelRatio = 1.1; }],
+    ['zoom', geometry => { geometry.before.zoomFactor = 1.1; geometry.after.zoomFactor = 1.1; }],
+    ['capture time', geometry => { geometry.captureFinishedAt = geometry.before.observedAt; }],
+    ['bounds', geometry => { geometry.after.bounds.width++; }],
+    ['content', geometry => { geometry.after.contentSize.height--; }],
+    ['empty force', geometry => { geometry.before.forceDeviceScaleFactor = ''; geometry.after.forceDeviceScaleFactor = ''; }],
+    ['display scale', geometry => { geometry.before.display.scaleFactor = 1.25; geometry.after.display.scaleFactor = 1.25; }],
+    ['native size', geometry => { geometry.nativeSize.height++; }],
+    ['representation', geometry => { geometry.nativeScaleFactors = [1.25]; }],
+    ['version', geometry => { geometry.before.electronVersion = '46.0.0'; geometry.after.electronVersion = '46.0.0'; }],
+  ])('%s不匹配时拒绝而不选任意较小尺寸', (_, change) => {
+    const { geometry, expected } = ownedMotionContract(), bytes = pngBytes(geometry.nativeSize);
+    change(geometry); expect(() => ownedMotionPng(bytes, geometry, expected)).toThrow(/geometry/);
+  });
+  it('缺见证或缺前一同窗125%见证时保留旧原件并拒绝', () => {
+    const { geometry, expected } = ownedMotionContract(), bytes = pngBytes(geometry.nativeSize);
+    expect(() => ownedMotionPng(bytes, undefined, expected)).toThrow(/geometry/);
+    expect(() => ownedMotionPng(bytes, geometry, { ...expected, referenceGeometry: null })).toThrow(/geometry/);
+  });
+  it('专用入口仍校验CRC和完整压缩流', () => {
+    const { geometry, expected } = ownedMotionContract(); const corrupt = pngBytes(geometry.nativeSize);
+    corrupt[corrupt.length - 1] ^= 1;
+    expect(() => ownedMotionPng(corrupt, geometry, expected)).toThrow(/CRC/);
+    expect(() => ownedMotionPng(pngBytes({ ...geometry.nativeSize, idatData: Buffer.from('broken-zlib') }), geometry, expected)).toThrow(/IDAT/);
+  });
+});
+
+describe('motion跨视图chrome独立关系', () => {
+  it.each([1, 1.25])('DSF=%s单视图合法且前后一致仍须匹配前一125%%视图四边chrome', deviceScaleFactor => {
+    const { geometry, expected } = ownedMotionContract(deviceScaleFactor), bytes = pngBytes(geometry.nativeSize);
+    expect(ownedMotionPng(bytes, geometry, expected)).toMatchObject(geometry.nativeSize);
+    geometry.before.contentBounds.x++; geometry.after.contentBounds.x++;
+    expect(() => ownedMotionPng(bytes, geometry, expected)).toThrow(/geometry/);
+    const matchingReference = structuredClone(expected.referenceGeometry);
+    matchingReference.before.contentBounds.x++; matchingReference.after.contentBounds.x++;
+    expect(ownedMotionPng(bytes, geometry, { ...expected, referenceGeometry: matchingReference })).toMatchObject(geometry.nativeSize);
+  });
+});

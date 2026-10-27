@@ -1,0 +1,244 @@
+.business-stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.dashboard-compact-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-compact-section .progressive-details-body {
+  gap: 12px;
+}
+
+.dashboard-workflow-details {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.business-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.business-grid-four {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.business-scope-line {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.business-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.business-pill-row-right {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.business-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.metric-tile {
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.metric-tile span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metric-tile strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.metric-tile-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.metric-tile-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+}
+
+.metric-tile-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+}
+
+.metric-tile-pending,
+.metric-tile-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+}
+
+.business-definition-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.business-definition-list div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.business-definition-list dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.business-definition-list dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.business-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: #41536a;
+  line-height: 1.45;
+}
+
+.inline-blocker-list {
+  margin-top: 12px;
+  border: 1px solid #fecaca;
+  background: #fff7f7;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.inline-blocker-list strong {
+  display: block;
+  color: var(--red);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.inline-blocker-list ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: #7f1d1d;
+  line-height: 1.4;
+}
+
+.blocked-line {
+  margin: 10px 0 0;
+  color: var(--red);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.table-subtext {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.muted-line {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.warning-line {
+  margin: 10px 0 0;
+  color: var(--amber);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.inline-alert {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  background: #eff6ff;
+  padding: 10px 12px;
+}
+
+.inline-alert strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.inline-alert p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.path-list {
+  display: grid;
+  gap: 8px;
+}
+
+.path-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid #edf1f5;
+  padding-top: 8px;
+}
+
+.path-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.path-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+code {
+  overflow-wrap: anywhere;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+
+.compact-button {
+  height: 30px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+

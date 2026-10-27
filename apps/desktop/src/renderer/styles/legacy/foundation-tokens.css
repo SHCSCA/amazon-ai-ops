@@ -1,0 +1,109 @@
+:root {
+  --aao-bg: #f8fafc;
+  --aao-surface: #ffffff;
+  --aao-surface-2: #f1f5f9;
+  --aao-surface-3: #e2e8f0;
+  --aao-ink: #0f172a;
+  --aao-ink-2: #475569;
+  --aao-ink-3: #94a3b8;
+  --aao-line: #e2e8f0;
+  --aao-line-strong: #cbd5e1;
+  --aao-brand-50: #eff6ff;
+  --aao-brand-100: #dbeafe;
+  --aao-brand-200: #bfdbfe;
+  --aao-brand-300: #93c5fd;
+  --aao-brand-500: #3b82f6;
+  --aao-brand-600: #2563eb;
+  --aao-brand-700: #1d4ed8;
+  --state-success: #16a34a;
+  --state-success-soft: #f0fdf4;
+  --state-warning: #ca8a04;
+  --state-warning-soft: #fefce8;
+  --state-error: #dc2626;
+  --state-error-soft: #fef2f2;
+  --state-info: #2563eb;
+  --state-info-soft: #eff6ff;
+  --shadow-1: 0 1px 3px rgba(0,0,0,.06);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-body: "Segoe UI","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+  --font-mono: "Cascadia Mono","SFMono-Regular",Consolas,monospace;
+  color-scheme: light;
+
+  --bg: var(--aao-bg);
+  --panel: var(--aao-surface);
+  --panel-subtle: var(--aao-surface-2);
+  --line: var(--aao-line-strong);
+  --line-soft: var(--aao-line);
+  --line-subtle: var(--aao-surface-3);
+  --text: var(--aao-ink);
+  --text-main: var(--aao-ink);
+  --text-secondary: var(--aao-ink-2);
+  --text-muted: var(--aao-ink-3);
+  --text-placeholder: var(--aao-ink-3);
+  --muted: var(--aao-ink-3);
+  --blue: var(--aao-brand-500);
+  --blue-strong: var(--aao-brand-700);
+  --blue-soft: var(--aao-brand-50);
+  --green: var(--state-success);
+  --green-soft: var(--state-success-soft);
+  --amber: var(--state-warning);
+  --amber-soft: var(--state-warning-soft);
+  --red: var(--state-error);
+  --red-soft: var(--state-error-soft);
+  --primary: var(--aao-brand-500);
+  --radius: var(--radius-md);
+  --radius-xs: 4px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,.06);
+  --shadow-card-hover: 0 1px 3px rgb(15 32 53 / 0.08), 0 12px 32px rgb(15 32 53 / 0.08);
+  --shadow-popover: 0 4px 6px rgb(15 32 53 / 0.06), 0 16px 40px rgb(15 32 53 / 0.12);
+  --motion-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-slow: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--aao-bg);
+  color: var(--aao-ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-body);
+}
+
+button {
+  cursor: pointer;
+  transition:
+    background-color .15s ease,
+    border-color .15s ease,
+    box-shadow .15s ease,
+    color .15s ease,
+    filter .15s ease,
+    opacity .15s ease,
+    transform .15s ease;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+

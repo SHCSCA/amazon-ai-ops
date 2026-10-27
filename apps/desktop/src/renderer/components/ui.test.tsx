@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -20,7 +21,7 @@ function collectElements(node: ReactNode, predicate: (element: ReactElement) => 
 }
 
 function rendererCss(): string {
-  return readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  return readStyleComposition(new URL('../styles.css', import.meta.url));
 }
 
 function cssRuleBody(css: string, selector: string): string {
@@ -365,5 +366,33 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.dashboard-details summary:focus-visible,[\s\S]*\.details-panel summary:focus-visible,[\s\S]*\.evidence-disclosure summary:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
     expect(stylesheet).toMatch(/\.dashboard-details summary:active,[\s\S]*\.details-panel summary:active,[\s\S]*\.evidence-disclosure summary:active\s*\{[\s\S]*transform:\s*scale\(0\.98\)/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.dashboard-details summary,[\s\S]*\.details-panel summary,[\s\S]*\.evidence-disclosure summary[\s\S]*transition:\s*none/);
+  });
+});
+
+describe('FormTableRow显式名称与说明关联', () => {
+  it('仅给纯字段名和原hint分配调用方ID，不复制或改写多个子控件', () => {
+    const input = <input aria-labelledby="api-label" aria-describedby="api-hint" type="password" />;
+    const peer = <button type="button">保留同行动作</button>;
+    const tree = FormTableRow({ label: 'API Key', labelId: 'api-label', hintId: 'api-hint', required: true,
+      hint: '仅保存脱敏状态，页面不展示完整 Key。', feedback: { tone: 'ready', children: '已配置' }, children: [input, peer] }) as ReactElement;
+    const labels = collectElements(tree, element => element.props.id === 'api-label');
+    expect(labels).toHaveLength(1); expect(labels[0].type).toBe('span'); expect(collectText(labels[0])).toBe('API Key');
+    expect(collectElements(labels[0], element => element.type === 'b')).toHaveLength(0);
+    const hints = collectElements(tree, element => element.props.id === 'api-hint');
+    expect(hints).toHaveLength(1); expect(hints[0].type).toBe('small');
+    expect(collectText(hints[0])).toBe('仅保存脱敏状态，页面不展示完整 Key。');
+    expect(collectElements(tree, element => element.props['aria-label'] === '必填')).toHaveLength(1);
+    expect(collectElements(tree, element => element.type === 'input')[0]).toBe(input);
+    expect(collectElements(tree, element => element.type === 'button')[0]).toBe(peer);
+  });
+  it('未选用ID时保留原label文本、必填标记和多控件关联行为', () => {
+    const input = <input />; const peer = <button type="button">同行动作</button>;
+    const tree = FormTableRow({ label: '原字段', required: true, hint: '原说明', children: [input, peer] }) as ReactElement;
+    const label = collectElements(tree, element => element.props.className === 'form-table-label')[0];
+    expect(tree.type).toBe('label'); expect(React.Children.toArray(label.props.children)[0]).toBe('原字段');
+    expect(collectElements(tree, element => Boolean(element.props.id))).toHaveLength(0);
+    expect(collectElements(tree, element => element.type === 'input')[0]).toBe(input);
+    expect(input.props['aria-labelledby']).toBeUndefined(); expect(input.props['aria-describedby']).toBeUndefined();
+    expect(collectText(tree)).toContain('原说明');
   });
 });

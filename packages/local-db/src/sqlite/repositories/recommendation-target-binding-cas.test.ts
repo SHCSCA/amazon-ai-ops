@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { RecommendationRepository } from './recommendation-repo';
+import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
 
 function createRepository() {
   const db = new Database(':memory:');
@@ -34,6 +35,7 @@ function createRepository() {
 describe('recommendation writable target binding CAS', () => {
   it('keeps fresh analysis explanations separate from history and deduplicates within that generation', () => {
     const { db, repo } = createRepository();
+    const storeId = normalizeStoreId('store-1');
     try {
       db.exec(`ALTER TABLE action_recommendations ADD COLUMN store_id TEXT;
         CREATE TABLE stores (store_id TEXT, display_name TEXT, marketplace TEXT, status TEXT);
@@ -48,17 +50,17 @@ describe('recommendation writable target binding CAS', () => {
           acos: 0.6, cpc: 2.6, cvr: 0.05, date: '2026-09-08',
           explanationSource: 'ai' as const, aiExplanation: 'Old explanation' },
       };
-      const previous = repo.insertIfNoDuplicateForStore('store-1', old);
-      const before = repo.findByIdForStore('store-1', previous.id);
+      const previous = repo.insertIfNoDuplicateForStore(storeId, old);
+      const before = repo.findByIdForStore(storeId, previous.id);
       const incoming = { ...old, taskId: 'new-analysis', reason: 'Live bid decreases 10%',
         evidence: { ...old.evidence, aiExplanation: 'Live bid decreases 10%' } };
-      const fresh = repo.insertIfNoDuplicateForStore('store-1', incoming, true);
+      const fresh = repo.insertIfNoDuplicateForStore(storeId, incoming, true);
       expect(fresh.inserted).toBe(true);
       expect(fresh.id).not.toBe(previous.id);
-      expect(repo.findByIdForStore('store-1', previous.id)).toEqual(before);
-      expect(repo.findByIdForStore('store-1', fresh.id)?.evidence.aiExplanation).toBe(incoming.reason);
-      expect(repo.insertIfNoDuplicateForStore('store-1', incoming, true)).toEqual({ id: fresh.id, inserted: false });
-      expect(repo.findByIdForStore('store-1', fresh.id)?.status).toBe('pending');
+      expect(repo.findByIdForStore(storeId, previous.id)).toEqual(before);
+      expect(repo.findByIdForStore(storeId, fresh.id)?.evidence.aiExplanation).toBe(incoming.reason);
+      expect(repo.insertIfNoDuplicateForStore(storeId, incoming, true)).toEqual({ id: fresh.id, inserted: false });
+      expect(repo.findByIdForStore(storeId, fresh.id)?.status).toBe('pending');
       expect(db.prepare('SELECT count(*) AS n FROM action_recommendations').get()).toEqual({ n: 2 });
     } finally { db.close(); }
   });

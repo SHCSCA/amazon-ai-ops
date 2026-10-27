@@ -5,6 +5,7 @@ export type DeliveryMatrixStatus = 'ready' | 'needs_work' | 'blocked';
 export type DeliveryMatrixTone = 'ready' | 'warning' | 'blocked' | 'pending';
 
 export interface DeliveryReadinessMatrixInput {
+  businessDataAvailable?: boolean;
   realReportCount: number;
   importedReportTypeCount: number;
   importedRows: number;
@@ -67,6 +68,7 @@ export function buildDeliveryReadinessMatrixInput(source: BuildDeliveryReadiness
   ];
 
   return {
+    businessDataAvailable: Boolean(data),
     realReportCount: cleanCount(collection?.fileAudit?.realReportFileCount ?? collection?.realReportFiles?.length),
     importedReportTypeCount: importedReportTypeCoverageCount(collection),
     importedRows: cleanCount(collection?.fileAudit?.importedRowCount ?? quant?.importedRows),
@@ -110,9 +112,10 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
   const approvedRecommendationCount = cleanCount(input.approvedRecommendationCount);
   const readbackVerifiedCount = cleanCount(input.readbackVerifiedCount);
 
-  const dataReady = realReportCount >= 8 && importedReportTypeCount >= 8 && importedRows > 0 && actionableRows > 0;
+  const businessDataAvailable = input.businessDataAvailable !== false;
+  const dataReady = businessDataAvailable && realReportCount >= 8 && importedReportTypeCount >= 8 && importedRows > 0 && actionableRows > 0;
   const aiReady = input.aiAvailable && aiSuccessCount > 0;
-  const contextReady = operationEventCount > 0 && productContextCount > 0;
+  const contextReady = businessDataAvailable && operationEventCount > 0 && productContextCount > 0;
   const listingReady = input.listingReadReady && input.listingDraftReady;
   const recommendationsReady = pendingRecommendationCount > 0 || approvedRecommendationCount > 0;
   const recommendationsReviewOnly = !recommendationsReady && reviewRecommendationCount > 0;
@@ -123,13 +126,15 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
     {
       key: 'data',
       label: '真实数据闭环',
-      statusLabel: dataReady ? '通过' : '阻断',
-      tone: dataReady ? 'ready' : 'blocked',
-      detail: dataReady
+      statusLabel: !businessDataAvailable ? '未知' : dataReady ? '通过' : '阻断',
+      tone: !businessDataAvailable ? 'pending' : dataReady ? 'ready' : 'blocked',
+      detail: !businessDataAvailable
+        ? '当前范围业务数据未知，尚未读取；请先在系统设置检查当前店铺运行配置，首次使用请创建配置。'
+        : dataReady
         ? `${realReportCount}/8 类真实广告报表，${importedRows} 行 DB 日级指标，${actionableRows} 行可生成建议。`
         : `${realReportCount}/8 类真实广告报表，${importedRows} 行 DB 日级指标，${actionableRows} 行可生成建议；正式建议必须先补齐真实数据。`,
-      nextAction: dataReady ? '查看广告表现' : '去数据采集',
-      route: dataReady ? 'ad-quant' : realReportCount > 0 ? 'data-import-validation' : 'data-collection',
+      nextAction: !businessDataAvailable ? '去系统设置' : dataReady ? '查看广告表现' : '去数据采集',
+      route: !businessDataAvailable ? 'settings' : dataReady ? 'ad-quant' : realReportCount > 0 ? 'data-import-validation' : 'data-collection',
     },
     {
       key: 'aiEvidence',
@@ -147,9 +152,11 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
     {
       key: 'businessContext',
       label: '运营上下文',
-      statusLabel: contextReady ? '通过' : '需补充',
-      tone: contextReady ? 'ready' : dataReady ? 'warning' : 'blocked',
-      detail: contextReady
+      statusLabel: !businessDataAvailable ? '未知' : contextReady ? '通过' : '需补充',
+      tone: !businessDataAvailable ? 'pending' : contextReady ? 'ready' : dataReady ? 'warning' : 'blocked',
+      detail: !businessDataAvailable
+        ? '当前运营事件和产品配置数量未知，业务数据尚未读取。'
+        : contextReady
         ? `${operationEventCount} 条运营事件，${productContextCount} 个产品配置已进入 AI+规则上下文。`
         : `${operationEventCount} 条运营事件，${productContextCount} 个产品配置；缺少背景时 AI 阈值判断容易误判。`,
       nextAction: contextReady ? '复核产品阶段' : '维护运营事件和产品配置',
@@ -222,6 +229,11 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
       totalCount,
       items,
     };
+  }
+
+  if (!businessDataAvailable) {
+    return { status: 'blocked', headline: '业务数据状态未知，当前仍不能交付',
+      primaryNextAction: '先到系统设置检查或创建当前店铺运行配置', readyCount, totalCount, items };
   }
 
   if (!dataReady) {

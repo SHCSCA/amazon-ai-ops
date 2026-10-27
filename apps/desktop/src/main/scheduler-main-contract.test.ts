@@ -1,34 +1,39 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const source = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
+const startupSource = readFileSync(new URL('./desktop-startup.ts', import.meta.url), 'utf8');
 
 function between(startMarker: string, endMarker: string): string {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  expect(start, `missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
-  expect(end, `missing end marker: ${endMarker}`).toBeGreaterThan(start);
-  return source.slice(start, end);
+  const section = mainRuntimeSectionContract(startMarker, endMarker);
+  expect(section.indexOf(startMarker), '职责源码缺少起始标记').toBeGreaterThanOrEqual(0);
+  expect(section.length, '职责源码边界必须包含完整内容').toBeGreaterThan(startMarker.length);
+  return section;
 }
 
 describe('desktop scheduler scope contract', () => {
   it('runs scheduled recommendation generation with the persisted operation scope', () => {
-    const registration = source.match(/name: 'daily_recommendation_generate',[\s\S]*?\n\s*\}\);/)?.[0] || '';
-
-    expect(registration).toContain('runRecommendationGeneration(handleGetOperationScope())');
-    expect(registration).not.toContain('runRecommendationGeneration();');
+    const source = mainRuntimeFunctionContract('initApp');
+    const registration = source.match(/registerScheduledAnalysisTask\([\s\S]*?\n\s*\}\);/)?.[0] || '';
+    const task = readFileSync(new URL('./scheduled-analysis-task.ts', import.meta.url), 'utf8');
+    expect(registration).toContain('readScope: handleGetOperationScope');
+    expect(registration).toContain('runAnalysis: runRecommendationGeneration');
+    expect(task).toContain('await ports.runAnalysis(ports.readScope())');
+    expect(task).not.toContain('issueMissionGrant');
+    expect(task).not.toContain('startBatch');
   });
 
   it('retires the legacy collection scheduler and exposes only the production read model IPC', () => {
-    expect(source).not.toContain("from './store-collection-scheduler';");
-    expect(source).not.toContain('new StoreCollectionScheduler(');
-    expect(source).not.toContain('state.storeCollectionScheduler =');
-    expect(source).not.toContain('reconcileStoreCollectionScheduler');
-    expect(source).not.toContain('.reconcile(context)');
-    expect(source).toContain('createStoreCollectionProductionComposition({');
-    expect(source).toContain('state.storeCollectionSchedulerReadModel = composition.schedulerReadModel');
-    expect(source).toContain('registerStoreCollectionSchedulerIpcHandlers(');
-    expect(source).toContain(': state.storeCollectionSchedulerReadModel');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("from './store-collection-scheduler';"); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('new StoreCollectionScheduler('); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('state.storeCollectionScheduler ='); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('reconcileStoreCollectionScheduler'); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('.reconcile(context)'); }
+    expect(mainRuntimeModuleContract('main-collection-initialization-runtime.ts')).toContain('createStoreCollectionProductionComposition({');
+    expect(mainRuntimeModuleContract('main-collection-initialization-runtime.ts')).toContain('state.storeCollectionSchedulerReadModel = composition.schedulerReadModel');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain('registerStoreCollectionSchedulerIpcHandlers(');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain(': state.storeCollectionSchedulerReadModel');
 
     const legacyStart = source.indexOf("registerTrackedIpcHandler('scheduler:set-task-enabled'");
     const legacyEnd = source.indexOf('// Logs', legacyStart);
@@ -44,14 +49,14 @@ describe('desktop scheduler scope contract', () => {
       'function assertVisibleLingxingCollectionSession',
     );
 
-    expect(source.match(/new VisibleBrowserRuntimeRegistry\(\)/g)).toHaveLength(1);
-    expect(source.match(/new StoreMutationLane\(\)/g)).toHaveLength(1);
-    expect(source.match(/new StoreCollectionPolicySuppressionController\(\)/g)).toHaveLength(1);
+    expect(mainRuntimeModuleContract('main-runtime-context.ts').match(/new VisibleBrowserRuntimeRegistry\(\)/g)).toHaveLength(1);
+    expect(mainRuntimeModuleContract('main-runtime-context.ts').match(/new StoreMutationLane\(\)/g)).toHaveLength(1);
+    expect(mainRuntimeModuleContract('main-runtime-context.ts').match(/new StoreCollectionPolicySuppressionController\(\)/g)).toHaveLength(1);
     expect(composition).toContain('registry: visibleBrowserRuntimeRegistry');
     expect(composition).toContain('mutationLane: storeMutationLane');
     expect(composition).toContain('policySuppression: storeCollectionPolicySuppression');
     expect(composition).toContain('STORE_COLLECTION_ORCHESTRATOR_HISTORY_KEY');
-    expect(composition).toContain('transaction: (work) => state.settingsRepo!.transaction(work)');
+    expect(composition).toContain('transaction: (work) => state.configurationBus!.transaction(work)');
     expect(composition).toContain('electronLoginCredentialCipher.encrypt(plaintext)');
     expect(composition).toContain('headless: false');
     expect(composition).toContain('userDataDir: input.userDataDir');
@@ -169,8 +174,8 @@ describe('desktop scheduler scope contract', () => {
     expect(schedulerIpc).toContain('state.storeCollectionSchedulerReadModel!.get(context)');
     expect(schedulerIpc).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
     expect(login).toContain('withPackageUiSetupMutation');
-    expect(source).toContain('package UI evidence cannot start or resume collection');
-    expect(source).toContain('package UI evidence cannot cancel collection');
+    expect(mainRuntimeModuleContract('main-collection-commands-runtime.ts')).toContain('package UI evidence cannot start or resume collection');
+    expect(mainRuntimeModuleContract('main-collection-commands-runtime.ts')).toContain('package UI evidence cannot cancel collection');
   });
 
   it('starts every drain before awaiting one barrier and closes authority only after full success', () => {
@@ -206,57 +211,72 @@ describe('desktop scheduler scope contract', () => {
     expect(shutdown).toContain('capturePreCloseTerminalDatabaseCheckpointIfReady()');
     expect(shutdown).not.toContain('capturePreCloseTerminalDatabaseCheckpoint()');
     expect(shutdown).toContain("cleanupFailurePolicy: 'fail-closed'");
-    expect(source).toContain('pendingBrowserControllerCleanup.retain(controllers)');
-    expect(source).toContain('pendingBrowserControllerCleanup.closeRetained()');
-    expect(source).toContain('pendingBrowserControllerCleanup.hasRetainedControllers()');
+    expect(mainRuntimeModuleContract('main-browser-session-runtime.ts')).toContain('pendingBrowserControllerCleanup.retain(controllers)');
+    expect(mainRuntimeModuleContract('main-browser-session-runtime.ts')).toContain('pendingBrowserControllerCleanup.closeRetained()');
+    expect(mainRuntimeModuleContract('main-browser-session-runtime.ts')).toContain('pendingBrowserControllerCleanup.hasRetainedControllers()');
     expect(shutdown).not.toContain('shutdownStep(');
     expect(shutdown).not.toContain('state.storeCollectionScheduler =');
   });
 
   it('routes every invoke handler through the process-wide Main IPC drain barrier', () => {
+    const registrar = readFileSync(new URL('./tracked-ipc-handler.ts', import.meta.url), 'utf8');
+    const settings = readFileSync(new URL('./settings-ipc.ts', import.meta.url), 'utf8');
     const directRegistrations = source.match(/ipcMain\.handle\(/g) ?? [];
     const trackedRegistrations = source.match(/registerTrackedIpcHandler\('/g) ?? [];
+    const settingsRegistrations = settings.match(/trackedRegistrar\.handle\('settings:/g) ?? [];
 
-    expect(directRegistrations).toHaveLength(1);
-    expect(source).toContain('ipcMain.handle(channel, (event, ...args) => (');
-    expect(trackedRegistrations.length).toBeGreaterThan(70);
-    expect(source).toContain('mainIpcOperationTracker.run(channel');
-    expect(source).toContain(
+    expect(directRegistrations).toHaveLength(0);
+    expect(registrar.match(/ipcMain\.handle\(/g)).toHaveLength(1);
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('const registerTrackedIpcHandler = createTrackedIpcRegistrar(');
+    expect(registrar).toContain('ipcMain.handle(channel, async (event, ...args) => {');
+    expect(settingsRegistrations).toHaveLength(9);
+    expect(settings).not.toMatch(/ipcMain\.handle\(/);
+    expect(source).toMatch(/registerSettingsIpcHandlers\(trackedIpcRegistrar,/);
+    expect(trackedRegistrations.length + settingsRegistrations.length).toBeGreaterThan(70);
+    expect(registrar).toContain('operationTracker.run(channel');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain(
       'packageUiSchedulerAudit.wrapRegistrar(trackedIpcRegistrar)',
     );
-    expect(source).toContain(
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain(
       'packageUiSchedulerAudit.registerDatabaseCheckpointIpc(schedulerEvidenceIpc)',
     );
-    expect(source).not.toMatch(/registerStoreIpcHandlers\(ipcMain/);
-    expect(source).not.toMatch(/registerMissionDomainIpcHandlers\(ipcMain/);
-    expect(source).not.toMatch(/registerAnalysisAuthorityIpcHandlers\(ipcMain/);
-    expect(source).not.toMatch(/registerExecutionAuthorityIpcHandlers\(ipcMain/);
-    expect(source).not.toMatch(/registerStoreRuntimeConfigIpcHandlers\(\s*ipcMain/);
-    expect(source).not.toMatch(/registerStoreScopedObjectsIpcHandlers\(\s*ipcMain/);
-    expect(source).not.toMatch(/registerStoreScopedAdListingIpcHandlers\(\s*ipcMain/);
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerStoreIpcHandlers\(ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerMissionDomainIpcHandlers\(ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerAnalysisAuthorityIpcHandlers\(ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerExecutionAuthorityIpcHandlers\(ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerStoreRuntimeConfigIpcHandlers\(\s*ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerStoreScopedObjectsIpcHandlers\(\s*ipcMain/); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toMatch(/registerStoreScopedAdListingIpcHandlers\(\s*ipcMain/); }
   });
 
   it('routes startup and strict-cleanup failures through one visible fail-closed lifecycle', () => {
-    const recovery = source.indexOf('const lifecycleRecovery = createAppLifecycleRecoveryController');
+    const source = mainRuntimeModuleContract('index.ts');
+    const contextSource = mainRuntimeModuleContract('main-runtime-context.ts');
+    const recovery = contextSource.indexOf('const lifecycleRecovery = createAppLifecycleRecoveryController');
+    const installation = source.indexOf('installMainRuntimeContext(createMainRuntimeContext(__filename))');
     const beforeQuitRegistration = source.indexOf("app.on('before-quit', handleBeforeQuit)");
-    const startup = source.indexOf('void lifecycleRecovery.runStartupBootstrap(async () => {');
-    const lifecycle = source.slice(recovery);
+    const startup = source.indexOf('void startDesktopApplication({');
+    const lifecycle = contextSource.slice(recovery);
 
     expect(recovery).toBeGreaterThan(0);
-    expect(beforeQuitRegistration).toBeGreaterThan(recovery);
+    expect(installation).toBeGreaterThan(0);
+    expect(beforeQuitRegistration).toBeGreaterThan(installation);
     expect(startup).toBeGreaterThan(beforeQuitRegistration);
-    expect(source).toContain('await app.whenReady()');
-    expect(source).toContain('void lifecycleRecovery.handleCleanupFailure(error)');
-    expect(source).toContain("buttons: ['重试安全退出', '暂不退出']");
-    expect(source).toContain("return result.response === 0 ? 'retry-safe-quit' : 'keep-app-open'");
-    expect(source).toContain('createWindow({ forceVisible: true })');
-    expect(source).toContain("throw new Error('LIFECYCLE_RECOVERY_WINDOW_NOT_VISIBLE')");
-    expect(source).not.toContain('app.whenReady().then(');
+    expect(startupSource).toContain('return options.lifecycleRecovery.runStartupBootstrap(async () => {');
+    expect(startupSource).toContain('await app.whenReady()');
+    expect(source.slice(startup)).toContain('lifecycleRecovery,');
+    expect(source.slice(startup)).toContain('initialize: initApp,');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('void lifecycleRecovery.handleCleanupFailure(error)');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain("buttons: ['重试安全退出', '暂不退出']");
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain("return result.response === 0 ? 'retry-safe-quit' : 'keep-app-open'");
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('createWindow({ forceVisible: true })');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain("throw new Error('LIFECYCLE_RECOVERY_WINDOW_NOT_VISIBLE')");
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('app.whenReady().then('); }
     expect(lifecycle).not.toContain('app.exit(');
   });
 
   it('shows a recovery shell immediately and contains renderer load rejection', () => {
-    const createWindowSource = between('interface CreateMainWindowOptions', '// Initialization');
+    const createWindowSource = readFileSync(new URL('./desktop-window.ts', import.meta.url), 'utf8');
     const forcedShow = createWindowSource.indexOf('if (options.forceVisible)');
     const rendererLoad = createWindowSource.indexOf('const rendererLoad = development');
     const loadFailure = createWindowSource.indexOf('void rendererLoad.catch((error) => {');

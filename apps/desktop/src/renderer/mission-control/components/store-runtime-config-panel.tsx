@@ -1,4 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { StoreCollectionAutomationControl } from './store-collection-automation-control';
+import { missionControlContextKey } from '@amazon-ai-ops/shared-types';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { WorkspaceActionButton, createWorkspaceActionAdmission } from '../../components/workspace/action-feedback';
+import { toUserFacingError } from '../../user-facing-error';
 import {
   Archive,
   ArrowCounterClockwise,
@@ -122,6 +127,13 @@ export function StoreRuntimeConfigPanel({
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [pending, setPending] = useState<ConfigMutation | null>(null);
   const loadSequence = useRef(0);
+  const authorityKey = missionControlContextKey(storeContext);
+  const currentAuthority = useRef(authorityKey);
+  const epoch = useRef(0);
+  const admission = useRef(createWorkspaceActionAdmission());
+  if (currentAuthority.current !== authorityKey) { currentAuthority.current = authorityKey; epoch.current += 1; }
+  admission.current.update(authorityKey);
+  useEffect(() => () => { epoch.current += 1; }, []);
   const current = projection?.current ?? null;
 
   useEffect(() => {
@@ -131,6 +143,7 @@ export function StoreRuntimeConfigPanel({
     setRuntimeError(null);
     setEditor(null);
     setConfirmArchive(false);
+    setPending(null);
     if (!api) {
       setLoading(false);
       setRuntimeError('Store Runtime Config API 未接入，已失败关闭。');
@@ -138,30 +151,40 @@ export function StoreRuntimeConfigPanel({
     }
     void api.getStoreRuntimeConfig(storeContext)
       .then((next) => {
+        assertConfigProjectionStore(next, storeContext);
         if (sequence === loadSequence.current) setProjection(next);
       })
       .catch((error) => {
+        rendererRuntimeLog.error('renderer.store_config_load_failed', { error });
         if (sequence === loadSequence.current) setRuntimeError(errorMessage(error));
       })
       .finally(() => {
         if (sequence === loadSequence.current) setLoading(false);
       });
     return () => { loadSequence.current += 1; };
-  }, [api, storeContext]);
+  }, [api, authorityKey]);
 
   const run = async (action: ConfigMutation, operation: () => Promise<StoreRuntimeConfigProjection>) => {
     if (!api || pending) return;
+    const release = admission.current.tryEnter();
+    if (!release) return;
+    const capturedEpoch = epoch.current;
     setPending(action);
     setRuntimeError(null);
     try {
       const next = await operation();
+      if (capturedEpoch !== epoch.current) return;
+      assertConfigProjectionStore(next, storeContext);
       setProjection(next);
       setEditor(null);
       setConfirmArchive(false);
     } catch (error) {
+      rendererRuntimeLog.error('renderer.store_config_operation_failed', { operation: action, error });
+      if (capturedEpoch !== epoch.current) return;
       setRuntimeError(errorMessage(error));
     } finally {
-      setPending(null);
+      release();
+      if (capturedEpoch === epoch.current) setPending(null);
     }
   };
 
@@ -232,6 +255,7 @@ export function StoreRuntimeConfigPanel({
       data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.view}
       data-config-state={current?.status ?? (loading ? 'loading' : 'empty')}
     >
+      <StoreCollectionAutomationControl storeContext={storeContext} />
       <WorkbenchPanel
         description="当前店铺独立保存采集、量化与 AI 建议参数；Amazon Ads 自动执行上限与急停仍由策略和真实执行服务管理。"
         status={<span>{current ? `${runtimeConfigRevisionDisplayLabel(current.revision)} · ${current.status === 'active' ? '生效中' : '已归档'}` : loading ? '读取中' : '未配置'}</span>}
@@ -239,7 +263,7 @@ export function StoreRuntimeConfigPanel({
         toolbar={(
           <div className="mission-control-config-actions" role="group" aria-label="店铺运行配置操作">
             {!current && (
-              <button
+              <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.create}
                 disabled={loading || Boolean(pending) || !api}
@@ -247,11 +271,11 @@ export function StoreRuntimeConfigPanel({
                 type="button"
               >
                 <Plus aria-hidden="true" size={16} />新建配置
-              </button>
+              </WorkspaceActionButton>
             )}
             {current?.status === 'active' && (
               <>
-                <button
+                <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                   className="workspace-button workspace-button--primary"
                   data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.update}
                   disabled={Boolean(pending)}
@@ -259,8 +283,8 @@ export function StoreRuntimeConfigPanel({
                   type="button"
                 >
                   <PencilSimple aria-hidden="true" size={16} />编辑配置
-                </button>
-                <button
+                </WorkspaceActionButton>
+                <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                   className="workspace-button workspace-button--secondary"
                   data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.archive}
                   disabled={Boolean(pending)}
@@ -268,12 +292,12 @@ export function StoreRuntimeConfigPanel({
                   type="button"
                 >
                   <Archive aria-hidden="true" size={16} />归档
-                </button>
+                </WorkspaceActionButton>
               </>
             )}
             {current?.status === 'archived' && (
-              <button
-                aria-busy={pending === 'restore' || undefined}
+              <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={pending === 'restore'} busyLabel="恢复中…"
+
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.restore}
                 disabled={Boolean(pending)}
@@ -281,7 +305,7 @@ export function StoreRuntimeConfigPanel({
                 type="button"
               >
                 <ArrowCounterClockwise aria-hidden="true" size={16} />{pending === 'restore' ? '恢复中…' : '恢复配置'}
-              </button>
+              </WorkspaceActionButton>
             )}
           </div>
         )}
@@ -336,12 +360,12 @@ export function StoreRuntimeConfigPanel({
           <section aria-labelledby="runtime-config-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" role="dialog">
             <header>
               <div><span>可恢复归档</span><h2 id="runtime-config-archive-title">归档当前店铺配置？</h2><p>配置会停止生效但保留全部版本，可随时恢复；不会影响其他店铺。</p></div>
-              <button aria-label="关闭归档确认" className="mission-control-dialog__close" disabled={Boolean(pending)} onClick={() => setConfirmArchive(false)} type="button"><X aria-hidden="true" size={18} /></button>
+              <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" aria-label="关闭归档确认" className="mission-control-dialog__close" disabled={Boolean(pending)} onClick={() => setConfirmArchive(false)} type="button"><X aria-hidden="true" size={18} /></WorkspaceActionButton>
             </header>
             <footer>
-              <button className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmArchive(false)} type="button">取消</button>
-              <button
-                aria-busy={pending === 'archive' || undefined}
+              <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={Boolean(pending)} onClick={() => setConfirmArchive(false)} type="button">取消</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={!api ? '当前配置服务尚未接入，请重新打开应用后重试。' : loading ? '正在读取当前店铺配置，请稍候。' : '当前配置操作正在处理，请等待完成后再操作。'} busy={pending === 'archive'} busyLabel="归档中…"
+
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_RUNTIME_CONFIG_CAPABILITY_IDS.archive}
                 disabled={Boolean(pending)}
@@ -352,7 +376,7 @@ export function StoreRuntimeConfigPanel({
                 type="button"
               >
                 <Archive aria-hidden="true" size={16} />{pending === 'archive' ? '归档中…' : '确认归档'}
-              </button>
+              </WorkspaceActionButton>
             </footer>
           </section>
         </div>
@@ -394,7 +418,7 @@ function ConfigEditor({
             <h2 id="runtime-config-editor-title">{mode === 'create' ? '新建店铺运行配置' : '编辑店铺运行配置'}</h2>
             <p id="runtime-config-editor-description">参数仅作用于当前店铺，时间按 {storeContext.businessTimezone} 解释。</p>
           </div>
-          <button aria-label="关闭配置编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X aria-hidden="true" size={18} /></button>
+          <WorkspaceActionButton disabledReason={'当前配置正在保存，请等待完成后再操作。'} busy={false} busyLabel="处理中…" aria-label="关闭配置编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X aria-hidden="true" size={18} /></WorkspaceActionButton>
         </header>
         <div className="mission-control-store-form mission-control-config-form">
           <label><span>每日采集时间</span><input autoFocus type="time" value={draft.collectionScheduleLocalTime} onChange={(event) => set('collectionScheduleLocalTime', event.target.value)} />{errors.collectionScheduleLocalTime && <small role="alert">{errors.collectionScheduleLocalTime}</small>}</label>
@@ -410,8 +434,8 @@ function ConfigEditor({
           </label>
         </div>
         <footer>
-          <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</button>
-          <button aria-busy={busy || undefined} className="workspace-button workspace-button--primary" data-capability-id={mode === 'create' ? STORE_RUNTIME_CONFIG_CAPABILITY_IDS.create : STORE_RUNTIME_CONFIG_CAPABILITY_IDS.update} disabled={busy} onClick={onSave} type="button"><Check aria-hidden="true" size={16} />{busy ? '保存中…' : mode === 'create' ? '创建配置' : '保存变更'}</button>
+          <WorkspaceActionButton disabledReason={'当前配置正在保存，请等待完成后再操作。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</WorkspaceActionButton>
+          <WorkspaceActionButton disabledReason={'当前配置正在保存，请等待完成后再操作。'} busy={busy} busyLabel="保存中…"  className="workspace-button workspace-button--primary" data-capability-id={mode === 'create' ? STORE_RUNTIME_CONFIG_CAPABILITY_IDS.create : STORE_RUNTIME_CONFIG_CAPABILITY_IDS.update} disabled={busy} onClick={onSave} type="button"><Check aria-hidden="true" size={16} />{busy ? '保存中…' : mode === 'create' ? '创建配置' : '保存变更'}</WorkspaceActionButton>
         </footer>
       </section>
     </div>
@@ -483,6 +507,11 @@ function formatTimestamp(value: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return '店铺配置操作未完成，请刷新后重试。';
+  return toUserFacingError(error, '店铺配置操作未完成，请刷新后重试。');
+}
+
+function assertConfigProjectionStore(projection: StoreRuntimeConfigProjection, context: StoreContextEnvelope): void {
+  const rows = [...(projection.current ? [projection.current] : []), ...projection.versions.map(version => version.snapshot)];
+  if (rows.some(row => row.storeId !== context.storeId || row.marketplace !== 'US' || row.currency !== 'USD'
+    || row.businessTimezone !== context.businessTimezone)) throw new Error('配置返回了其他店铺或业务范围的数据，请重新读取当前店铺。');
 }

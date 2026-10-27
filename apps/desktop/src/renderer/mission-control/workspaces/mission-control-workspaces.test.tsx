@@ -1,5 +1,6 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
+import { readStyleComposition } from '../../styles/css-source.test-support';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type {
@@ -741,10 +742,7 @@ describe('StoreManagementPanel', () => {
 });
 
 describe('Mission Control namespaced visual contract', () => {
-  const stylesheet = readFileSync(
-    new URL('../../styles/mission-control-shell.css', import.meta.url),
-    'utf8',
-  );
+  const stylesheet = readStyleComposition(new URL('../../styles/mission-control-shell.css', import.meta.url));
 
   it('restores the 216px sidebar and visible Phosphor icon rail', () => {
     expect(stylesheet).toContain('.mission-control-shell .app-sidebar');

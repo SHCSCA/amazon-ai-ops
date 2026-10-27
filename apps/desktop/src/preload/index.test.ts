@@ -73,6 +73,16 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain("ipcRenderer.invoke('store-runtime-config:get')");
   });
 
+  it('exposes only the two typed store collection automation channels with context and CAS input', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    expect(source).toContain('StoreCollectionAutomationProjection');
+    expect(source).toContain('SetStoreCollectionAutomationInput');
+    expect(source).toContain("ipcRenderer.invoke('store-collection-automation:get', { storeContext } satisfies GetStoreCollectionAutomationRequest)");
+    expect(source).toContain("ipcRenderer.invoke('store-collection-automation:set', { storeContext, input } satisfies SetStoreCollectionAutomationRequest)");
+    expect(source.match(/ipcRenderer\.invoke\('store-collection-automation:/g)).toHaveLength(2);
+    expect(source).not.toContain("ipcRenderer.invoke('store-collection-automation:set', input)");
+  });
+
   it('exposes store collection schedule operations only through complete StoreContext requests', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 

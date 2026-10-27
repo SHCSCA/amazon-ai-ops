@@ -1,15 +1,16 @@
-// Browser port double for isolated integration tests; never real Ads evidence.
+// 隔离浏览器端口夹具显式提供投放状态；不能计作真实 Ads 证据。
 import fs from 'node:fs';
 import type { PlaywrightKeywordBidLocatorLike, PlaywrightKeywordBidPageLike } from '@amazon-ai-ops/action-executor';
 const TARGET_PATH = '/ad_report/target/index/index';
-class FakeLocator implements PlaywrightKeywordBidLocatorLike {
+
+export class FakeLocator implements PlaywrightKeywordBidLocatorLike {
   constructor(
     private readonly page: FakeExecutionPage,
-    private readonly kind: 'body' | 'marker' | 'row' | 'links' | 'bid' | 'save' | 'missing',
+    private readonly kind: 'body' | 'marker' | 'row' | 'links' | 'bid' | 'save' | 'missing' | 'campaign' | 'campaignState' | 'groupState',
   ) {}
 
   async count(): Promise<number> {
-    if (['body', 'marker', 'row', 'links', 'bid', 'save'].includes(this.kind)) return 1;
+    if (['body', 'marker', 'row', 'links', 'bid', 'save', 'campaign', 'campaignState', 'groupState'].includes(this.kind)) return 1;
     return 0;
   }
 
@@ -17,6 +18,9 @@ class FakeLocator implements PlaywrightKeywordBidLocatorLike {
   nth(): PlaywrightKeywordBidLocatorLike { return this; }
 
   locator(selector: string): PlaywrightKeywordBidLocatorLike {
+    if (this.kind === 'campaign' && selector === '.fa-circle') return new FakeLocator(this.page, 'campaignState');
+    if (this.kind === 'row' && selector === 'a[href*="ad_group_id="] .fa-circle') return new FakeLocator(this.page, 'groupState');
+    if (this.kind === 'row' && selector === 'input.select-item') return new FakeLocator(this.page, 'marker');
     if (this.kind === 'marker' && selector === 'xpath=ancestor::tr[1]') return new FakeLocator(this.page, 'row');
     if (this.kind === 'row' && selector === 'a[href*="ad_group_id="]') return new FakeLocator(this.page, 'links');
     if (this.kind === 'row' && selector === '.form-control.price') return new FakeLocator(this.page, 'bid');
@@ -25,6 +29,10 @@ class FakeLocator implements PlaywrightKeywordBidLocatorLike {
   }
 
   async getAttribute(name: string): Promise<string | null> {
+    if (this.kind === 'marker' && name === 'data-status') return this.page.keywordStatus;
+    if (this.kind === 'campaign' && name === 'href') return '/ad_report/ad_group/index/index?profile_id=ads-account-1&id=' + this.page.campaignId;
+    if (this.kind === 'campaignState' && name === 'class') return this.page.campaignState;
+    if (this.kind === 'groupState' && name === 'class') return this.page.groupState;
     if (this.kind === 'marker' && name === 'value') return this.page.keywordId;
     if (this.kind === 'links' && name === 'href') {
       return `/ad_report/group?ad_group_id=${this.page.adGroupId}`;
@@ -58,6 +66,9 @@ class FakeLocator implements PlaywrightKeywordBidLocatorLike {
 }
 
 export class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
+  keywordStatus = 'enabled';
+  campaignState = 'fa fa-circle text-green';
+  groupState = 'fa fa-circle text-green';
   bidValue = '$1.49';
   campaignId = 'campaign-1';
   adGroupId = 'ad-group-1';
@@ -85,8 +96,9 @@ export class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
 
   locator(selector: string): PlaywrightKeywordBidLocatorLike {
     if (selector === 'body') return new FakeLocator(this, 'body');
-    if (selector === `input.select-item[value="${this.keywordId}"]`
-      || selector === 'input.select-item[value="opaque-keyword-1"]') {
+    if (selector === 'a.Js-select-link[href*="/ad_report/ad_group/index/index?"]') return new FakeLocator(this, 'campaign');
+    if (selector === `tr:not([data-dt-row]) input.select-item[value="${this.keywordId}"]`
+      || selector === 'tr:not([data-dt-row]) input.select-item[value="opaque-keyword-1"]') {
       return new FakeLocator(this, 'marker');
     }
     return new FakeLocator(this, 'missing');
@@ -127,6 +139,6 @@ export class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
+  const promise = new Promise<void>(done => { resolve = done; });
   return { promise, resolve };
 }

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { WorkspaceActionButton } from './action-feedback';
+import { useOverlayFocusScope } from './overlay-focus-scope';
 
 /**
  * ReasonRequiredDialog — centralized confirm dialog for any action that must
@@ -84,15 +86,12 @@ export function ReasonRequiredDialog({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const titleId = React.useMemo(() => buildTitleId(title), [title]);
 
-  // Reset internal state when the dialog closes (or the title changes, which is
-  // how callers typically re-purpose the same dialog across entities).
+  // 对象变更或关闭时清理原因，防止沿用上一个决定的输入。
   useEffect(() => {
-    if (!open) {
-      setReason('');
-    }
+    setReason('');
   }, [open, title]);
 
-  // Autofocus the textarea on open, matching the existing inline dialogs.
+  // 保留原因输入的首焦点，共享弹层负责焦点圈定与返回。
   useEffect(() => {
     if (open) {
       const handle = window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -100,21 +99,18 @@ export function ReasonRequiredDialog({
     }
     return undefined;
   }, [open]);
+  const focusScope = useOverlayFocusScope<HTMLDivElement, HTMLElement>({ open, onDismiss: onClose, dismissDisabled: busy });
 
   if (!open) return null;
 
+  // 标签尾部的必填星号仅用于展示，不加入可访问名称。
+  const hasRequiredMarker = reasonLabel.endsWith(' *');
+  const reasonName = hasRequiredMarker ? reasonLabel.slice(0, -2) : reasonLabel;
   const trimmedReason = reason.trim();
   const reasonValid = trimmedReason.length >= reasonMinLength;
   const confirmDisabled = busy || !reasonValid || Boolean(isConfirmDisabled?.(trimmedReason));
 
   const confirmClassName = `workspace-button workspace-button--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'primary'}`;
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape' && !busy) {
-      event.preventDefault();
-      onClose();
-    }
-  };
 
   const handleConfirm = () => {
     if (confirmDisabled) return;
@@ -124,7 +120,7 @@ export function ReasonRequiredDialog({
   return (
     <div
       className="mission-control-dialog-backdrop"
-      onKeyDown={handleKeyDown}
+      ref={focusScope.overlayRootRef}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onClose();
       }}
@@ -135,7 +131,9 @@ export function ReasonRequiredDialog({
         aria-describedby={`${titleId}-description`}
         aria-modal="true"
         className="mission-control-dialog mission-control-dialog--confirm"
+        ref={focusScope.surfaceRef}
         role="alertdialog"
+        tabIndex={-1}
       >
         <header>
           <div>
@@ -146,11 +144,12 @@ export function ReasonRequiredDialog({
         </header>
         <div className="reason-required-dialog__body">
           <label>
-            <span>{reasonLabel}</span>
+            <span>{reasonName}{hasRequiredMarker ? <span aria-hidden="true"> *</span> : null}</span>
             <textarea
-              aria-label={reasonLabel}
+              aria-label={reasonName}
               aria-required="true"
-              autoFocus
+              aria-describedby={busy ? `${titleId}-busy-hint` : !reasonValid ? `${titleId}-reason-hint` : undefined}
+              data-overlay-initial-focus
               disabled={busy}
               onChange={(event) => setReason(event.target.value)}
               placeholder={reasonPlaceholder}
@@ -159,30 +158,36 @@ export function ReasonRequiredDialog({
               value={reason}
             />
           </label>
-          {!reasonValid && reason.length > 0 && (
-            <p className="reason-required-dialog__hint" role="status">
+          {busy && <p className="reason-required-dialog__hint" id={`${titleId}-busy-hint`} role="status">当前操作正在提交，完成后可继续填写原因。</p>}
+          {!reasonValid && (
+            <p className="reason-required-dialog__hint" id={`${titleId}-reason-hint`} role="status">
               至少输入 {reasonMinLength} 个非空白字符后再确认。
             </p>
           )}
         </div>
         <footer>
-          <button
+          <WorkspaceActionButton
             className="workspace-button workspace-button--secondary"
             disabled={busy}
+            disabledReason="当前操作正在提交，请等待完成后关闭。"
             onClick={onClose}
             type="button"
           >
             {cancelLabel}
-          </button>
-          <button
-            aria-busy={busy || undefined}
+          </WorkspaceActionButton>
+          <WorkspaceActionButton
+            busy={busy}
+            busyLabel={`${confirmLabel}中…`}
             className={confirmClassName}
             disabled={confirmDisabled}
+            disabledReason={busy ? '当前操作正在提交，请等待完成。' : !reasonValid
+              ? `至少输入 ${reasonMinLength} 个非空白字符后再确认。`
+              : '当前操作条件尚未满足，请关闭后刷新当前对象，再重新确认。'}
             onClick={handleConfirm}
             type="button"
           >
-            {busy ? `${confirmLabel}中…` : confirmLabel}
-          </button>
+            {confirmLabel}
+          </WorkspaceActionButton>
         </footer>
         {diagnosticDetails ? (
           <details className="reason-required-dialog__diagnostics">

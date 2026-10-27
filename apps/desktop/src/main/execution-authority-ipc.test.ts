@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import  {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import {
-  EXECUTION_AUTHORITY_IPC_CHANNELS,
-  registerExecutionAuthorityIpcHandlers,
-} from './execution-authority-ipc';
-
+import { EXECUTION_AUTHORITY_IPC_CHANNELS, registerExecutionAuthorityIpcHandlers } from './execution-authority-ipc';
 const context = normalizeStoreContextEnvelope({
   storeId: 'store-one',
   browserProfileId: 'profile-one',

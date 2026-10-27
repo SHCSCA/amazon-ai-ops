@@ -42,6 +42,9 @@ export interface StoreCollectionScheduleProjection {
   storeId: StoreId;
   businessDate: BusinessDate;
   enabled: boolean;
+  automaticCollectionEnabled?: boolean;
+  automationSource?: 'legacy-default' | 'explicit-override';
+  automationRevision?: number;
   state: StoreCollectionScheduleState;
   detail: string;
   scheduleLocalTime?: string;

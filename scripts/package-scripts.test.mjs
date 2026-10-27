@@ -12,6 +12,8 @@ describe('root package smoke scripts', () => {
     const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     const desktopPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
     const mainSource = fs.readFileSync(path.join(root, 'apps', 'desktop', 'src', 'main', 'index.ts'), 'utf8');
+    const mainContextSource = fs.readFileSync(path.join(root, 'apps', 'desktop', 'src', 'main', 'main-runtime-context.ts'), 'utf8');
+    const mainIpcSource = fs.readFileSync(path.join(root, 'apps', 'desktop', 'src', 'main', 'main-ipc-registration-runtime.ts'), 'utf8');
     const zipSmoke = fs.readFileSync(path.join(root, 'scripts', 'smoke-folder-zip-launch.ps1'), 'utf8');
     const listingDraftSmoke = fs.readFileSync(path.join(root, 'scripts', 'smoke-listing-draft-renderer.js'), 'utf8');
     const versionHelper = fs.readFileSync(path.join(root, 'scripts', 'current-app-version.js'), 'utf8');
@@ -24,8 +26,11 @@ describe('root package smoke scripts', () => {
 
     expect(rootPackage.version).toBe('1.6.0');
     expect(desktopPackage.version).toBe(rootPackage.version);
-    expect(mainSource).toContain(`const APP_VERSION = '${rootPackage.version}'`);
-    expect(mainSource).toContain("registerTrackedIpcHandler('app:get-version', () => APP_VERSION)");
+    expect(mainContextSource).toContain(`const APP_VERSION = '${rootPackage.version}'`);
+    expect(mainIpcSource).toContain("mainRuntimeContext.registerTrackedIpcHandler('app:get-version', () => mainRuntimeContext.APP_VERSION)");
+    expect(mainSource).toContain('installMainRuntimeContext(createMainRuntimeContext(__filename))');
+    expect(mainSource).toContain("import { registerIpcHandlers } from './main-ipc-registration-runtime'");
+    expect(mainSource).toContain('    registerIpcHandlers,');
     expect(zipSmoke).toContain('$desktopPackageVersion');
     expect(zipSmoke).not.toContain('AmazonAIOpsAgent-1.5.0.zip');
     expect(rootPackage.scripts['smoke:listing-draft-renderer']).toBe('node scripts/smoke-listing-draft-renderer.js');
@@ -53,6 +58,7 @@ describe('root package smoke scripts', () => {
     expect(vitestConfig).toMatchObject({
       test: {
         pool: 'forks',
+        fileParallelism: false,
         maxWorkers: 4,
         minWorkers: 1,
       },
@@ -93,16 +99,23 @@ describe('root package smoke scripts', () => {
 
   it('exposes package security evidence and requires its explicit handoff in both safety branches', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const exporterEntry = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const exporter = fs.readFileSync(path.join(root, 'scripts', 'v15-delivery-export-publication.js'), 'utf8');
     const finalReadiness = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-final-readiness.js'), 'utf8');
     const evidenceManifestWriter = fs.readFileSync(path.join(root, 'scripts', 'write-v15-evidence-manifest.js'), 'utf8');
-    const nonReadySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-non-ready-safety.js'), 'utf8');
+    const nonReadyEntry = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-non-ready-safety.js'), 'utf8');
+    const nonReadySafety = fs.readFileSync(path.join(root, 'scripts', 'v15-non-ready-safety-publication.js'), 'utf8');
+    const nonReadyPackages = fs.readFileSync(path.join(root, 'scripts', 'v15-non-ready-safety-packages.js'), 'utf8');
     const readySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-ready-safety.js'), 'utf8');
 
     expect(packageJson.scripts['smoke:package-security-boundaries'])
       .toBe('node scripts/smoke-package-security-boundaries.js');
     expect(packageJson.scripts['smoke:package-adversarial-node-env'])
       .toBe('node scripts/smoke-package-adversarial-node-env.js');
+    expect(exporterEntry).toContain("require('./v15-delivery-export-publication.js')");
+    expect(exporterEntry).toContain('main();');
+    expect(nonReadyEntry).toContain("require('./v15-non-ready-safety-publication.js')");
+    expect(nonReadyEntry).toContain('main();');
     expect(exporter).toContain("explicitFileArg(args, 'package-security-evidence')");
     expect(exporter).toContain("explicitFileArg(args, 'package-adversarial-node-env-evidence')");
     expect(exporter).toContain('scripts/smoke-package-security-boundaries.js');
@@ -116,22 +129,27 @@ describe('root package smoke scripts', () => {
     expect(readySafety).toContain('validateAdversarialNodeEnvSelectionContract');
     expect(nonReadySafety).toContain("args['package-security-evidence']");
     expect(nonReadySafety).toContain("args['package-adversarial-node-env-evidence']");
-    expect(nonReadySafety).toContain('selected?.evidenceSha256');
+    expect(nonReadySafety).toContain("require('./v15-non-ready-safety-packages.js')");
+    expect(nonReadySafety).toContain('packageAdversarialNodeEnvEvidenceIsStrictlyValid(');
+    expect(nonReadyPackages).toContain('selected?.evidenceSha256');
     expect(readySafety).toContain("args.get('package-security-evidence')");
     expect(readySafety).toContain("args.get('package-adversarial-node-env-evidence')");
     expect(readySafety).toContain('selected?.evidenceSha256');
   });
 
   it('keeps delivery bundle extras aligned with the current business UI smoke artifact', () => {
-    const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const exporter = fs.readFileSync(path.join(root, 'scripts', 'v15-delivery-export-evidence.js'), 'utf8');
+    const publication = fs.readFileSync(path.join(root, 'scripts', 'v15-delivery-export-publication.js'), 'utf8');
 
+    expect(publication).toContain("require('./v15-delivery-export-evidence.js')");
+    expect(publication).toContain('collectEvidencePaths(');
     expect(exporter).toContain('current-business-ui-smoke-');
     expect(exporter.indexOf('current-business-ui-smoke-')).toBeLessThan(exporter.indexOf('v15-product-readiness-ui-smoke-'));
   });
 
   it('exposes the ad readback session preparation helper in package scripts and delivery bundle extras', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const exporter = fs.readFileSync(path.join(root, 'scripts', 'v15-delivery-export-publication.js'), 'utf8');
 
     expect(packageJson.scripts['prepare:ad-readback-session']).toBe('node scripts/prepare-ad-readback-session.js');
     expect(packageJson.scripts['verify:ad-readback-session']).toBe('node scripts/verify-ad-readback-session.js');

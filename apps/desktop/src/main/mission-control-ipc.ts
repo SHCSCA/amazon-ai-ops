@@ -54,6 +54,7 @@ export function registerMissionControlIpcHandlers(
           },
           readiness: body.data.today.readiness.map((item) => ({ ...item })),
           blockers: [...body.data.today.blockers],
+          ...(body.data.today.blockerActions ? { blockerActions: body.data.today.blockerActions.map(item => ({ ...item })) } : {}),
           attentionItems: [...body.data.today.attentionItems],
           nextAction: { ...body.data.today.nextAction },
         },

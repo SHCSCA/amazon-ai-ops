@@ -1,0 +1,60 @@
+
+.table-wrap,
+.product-management-list-wrap,
+.product-management-detail-table,
+.product-management-timeline,
+.product-config-page-stack .table-wrap,
+.product-config-bulk-row-grid,
+.ad-quant-object-table-wrap,
+.ad-quant-daily-table-wrap,
+.ai-evidence-table-wrap,
+.recommendation-workbench-table-wrap,
+.operation-events-primary-timeline {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+@media (max-width: 1420px) {
+  .listing-optimization-page-stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .listing-editor-panel,
+  .listing-draft-panel,
+  .listing-heatmap-panel,
+  .listing-read-panel,
+  .listing-flow-panel,
+  .listing-boundary-panel,
+  .listing-current-panel,
+  .listing-history-panel {
+    grid-column: 1;
+  }
+
+  .listing-draft-panel {
+    position: static;
+  }
+}
+
+@media (max-width: 1420px) {
+  .product-config-page-stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-config-list-panel,
+  .product-config-target-panel,
+  .product-config-basic-panel,
+  .product-config-scope-panel {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 1360px) {
+  .product-management-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-management-sidecar {
+    position: static;
+  }
+}

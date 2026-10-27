@@ -15,6 +15,7 @@ export interface ReadbackQueryInput {
 export type ReadbackPublicationKind = 'capture' | 'rows' | 'export' | 'final' | 'session' | 'verify';
 
 export interface ReadbackRequestSnapshot {
+  contextCurrent?: () => boolean;
   kind: ReadbackPublicationKind;
   requestId: number;
   queryKey: string;
@@ -143,10 +144,10 @@ export function canPublishReadbackResult(
   request: ReadbackRequestSnapshot,
   active: ReadbackRequestSnapshot,
 ): boolean {
-  return request.kind === active.kind
+  return (request.contextCurrent?.() ?? true) && (request.kind === active.kind
     && request.requestId === active.requestId
     && request.queryKey === active.queryKey
-    && request.formEpoch === active.formEpoch;
+    && request.formEpoch === active.formEpoch);
 }
 
 export function readbackAuthorityForMode(

@@ -1,13 +1,14 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Main store selection and cross-store status wiring', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+  const source = mainRuntimeModuleContract('main-application-initialization-runtime.ts');
 
   it('restores operator selection only after startup recovery has settled', () => {
     const coordinatorConstruction = source.indexOf('const storeCoordinator = new StoreCoordinator');
-    const runtimeRecovery = source.indexOf("console.log('[App] init:store-collection-runtime-recovery-confirmed')");
+    const runtimeRecovery = source.indexOf("runtimeLog.log('[App] init:store-collection-runtime-recovery-confirmed')");
     const executionRecovery = source.indexOf('executionAuthorityService.recoverStartup()');
     const selectionRestore = source.indexOf('restoreOperatorWorkspaceSelectionAfterRecovery()');
 
@@ -19,18 +20,20 @@ describe('Main store selection and cross-store status wiring', () => {
   });
 
   it('uses app_settings selection storage and a deferred cross-store read transaction', () => {
-    expect(source).toContain("operator_workspace_selection:v1");
-    expect(source).toContain("selectionPersistence: packageUiReadOnlyRuntime ? 'memory_only' : 'read_write'");
-    expect(source).toContain('readTransaction: (work) => state.db!.transaction(work).deferred()');
-    expect(source).not.toContain('readTransaction: (work) => state.storeRepo!.transaction(work)');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain("operator_workspace_selection:v1");
+    expect(mainRuntimeModuleContract('main-application-initialization-runtime.ts')).toContain("selectionPersistence: packageUiReadOnlyRuntime ? 'memory_only' : 'read_write'");
+    expect(mainRuntimeModuleContract('main-application-initialization-runtime.ts')).toContain('readTransaction: (work) => state.db!.transaction(work).deferred()');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('readTransaction: (work) => state.storeRepo!.transaction(work)'); }
   });
 
   it('registers the read model separately from the user store mutation lane', () => {
-    expect(source).toContain('const storeDailyStatusReader = new StoreDailyStatusProjectionReader');
-    expect(source).toContain('}, state.storeDailyStatusReader);');
+    const ipcSource = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
+    expect(mainRuntimeModuleContract('main-application-initialization-runtime.ts')).toContain('const storeDailyStatusReader = new StoreDailyStatusProjectionReader');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain('}, state.storeDailyStatusReader);');
   });
 
   it('routes Package UI setup through its bounded lane before normal Store mutation authority', () => {
+    const source = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
     const laneEntry = source.indexOf('withUserStoreMutation: async (scope, work) => {');
     const readOnlyGuard = source.indexOf('if (packageUiReadOnlyRuntime)', laneEntry);
     const setupLane = source.indexOf('withPackageUiSetupMutation(', readOnlyGuard);
@@ -47,6 +50,7 @@ describe('Main store selection and cross-store status wiring', () => {
   });
 
   it('validates an exact switch target inside the lane before closing the visible runtime', () => {
+    const source = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
     const laneCallback = source.indexOf(
       'const laneActive = state.storeCoordinator!.getActiveStoreContext()',
     );

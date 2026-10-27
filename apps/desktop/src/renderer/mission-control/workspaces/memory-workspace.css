@@ -658,9 +658,12 @@
   font-size: 11px;
 }
 
-.memory-search > button {
+.memory-search > .task-banner__action-shell {
   flex: 0 0 auto;
   min-width: 84px;
+}
+
+.memory-search > .task-banner__action-shell > button {
   white-space: nowrap;
 }
 

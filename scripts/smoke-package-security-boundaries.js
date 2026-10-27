@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { inspectPackageSecuritySemantics } = require('./package-security-semantic');
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MAIN_BUNDLE_PATH = path.join(
@@ -102,22 +103,20 @@ function collectPackageSecurityBoundaries(options) {
     'expected package app-content hash',
   );
   const mainBundleText = fs.readFileSync(options.mainBundlePath, 'utf8');
-  const settingsRepositoryText = fs.readFileSync(options.settingsRepositoryPath, 'utf8');
-  const sqliteDbText = fs.readFileSync(options.sqliteDbPath, 'utf8');
+  const settingsRepositoryTexts = (options.settingsRepositoryPaths ?? [options.settingsRepositoryPath]).map(file => fs.readFileSync(file, 'utf8'));
+  const sqliteDbTexts = (options.sqliteDbPaths ?? [options.sqliteDbPath]).map(file => fs.readFileSync(file, 'utf8'));
+  if (!settingsRepositoryTexts.length || !sqliteDbTexts.length) throw new Error('PACKAGE_SECURITY_SOURCE_GROUP_EMPTY');
   const mainBundleSha256 = sha256File(options.mainBundlePath);
 
   const directExternalUrlForwarding = /setWindowOpenHandler\s*\(\s*\(\s*\{\s*url\s*\}\s*\)\s*=>[\s\S]{0,500}?\bshell\s*\.\s*openExternal\s*\(\s*url\s*\)/
     .test(mainBundleText);
-  const plaintextCredentialWriter = /\bsaveCredentials\s*\(/.test(settingsRepositoryText)
-    || /\b(?:this\s*\.\s*)?set\s*\(\s*['"]login_password['"]/.test(settingsRepositoryText);
-  const sqliteVerboseLogging = /\bverbose\s*:\s*console\s*\.\s*log\b/.test(sqliteDbText);
-  const packagedDevDowngradeGuard = /const\s+development\s*=\s*!\s*[\w$.]+\s*\.\s*isPackaged\s*&&\s*process\s*\.\s*env\s*\.\s*NODE_ENV\s*===\s*['"]development['"]/
-    .test(mainBundleText);
+  const plaintextCredentialWriter = settingsRepositoryTexts.some(source => /\bsaveCredentials\s*\(/.test(source)
+    || /\b(?:this\s*\.\s*)?set\s*\(\s*['"]login_password['"]/.test(source));
+  const sqliteVerboseLogging = sqliteDbTexts.some(source => /\bverbose\s*:\s*console\s*\.\s*log\b/.test(source));
+  const { packagedDevDowngradeGuard, legacySavedPasswordIpcAbsent } = inspectPackageSecuritySemantics(mainBundleText);
   const navigationGuardsWired = /webContents\s*\.\s*on\s*\(\s*['"]will-navigate['"]\s*,\s*createMainWindowNavigationHandler/.test(mainBundleText)
     && /webContents\s*\.\s*on\s*\(\s*['"]will-redirect['"]\s*,\s*createMainWindowNavigationHandler/.test(mainBundleText)
     && /webContents\s*\.\s*setWindowOpenHandler\s*\(\s*createSecureWindowOpenHandler/.test(mainBundleText);
-  const legacySavedPasswordIpcAbsent = !mainBundleText.includes('browser:get-saved-credentials')
-    && mainBundleText.includes('browser:get-saved-credential-status');
   const checks = [
     checkRecord('PACKAGE_EXECUTABLE_HASH_MATCH', executableSha256 === expectedExeSha256),
     checkRecord('PACKAGE_APP_CONTENT_HASH_MATCH', appContentSha256 === expectedAppContentSha256),
@@ -226,7 +225,8 @@ function main(argv = process.argv) {
     expectedAppContentSha256: args.expectedAppContentSha256,
     mainBundlePath: DEFAULT_MAIN_BUNDLE_PATH,
     settingsRepositoryPath: DEFAULT_SETTINGS_REPOSITORY_PATH,
-    sqliteDbPath: DEFAULT_SQLITE_DB_PATH,
+    sqliteDbPaths: ['db.ts', 'db-migration-contract.ts', 'db-migration-runner.ts', 'db-metric-identity.ts', 'db-columns.ts']
+      .map(file => path.join(path.dirname(DEFAULT_SQLITE_DB_PATH), file)),
   });
   const outputPath = path.resolve(args.out);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });

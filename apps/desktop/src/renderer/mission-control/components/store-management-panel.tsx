@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { WorkspaceActionButton, createWorkspaceActionAdmission } from '../../components/workspace/action-feedback';
 import {
   Archive,
   ArrowCounterClockwise,
@@ -217,6 +219,14 @@ export function StoreManagementPanel({
     return left.displayName.localeCompare(right.displayName, 'zh-CN');
   }), [stores]);
   const busy = pending !== null || connectionPending !== null;
+  const authorityKey = String(activeStoreId ?? 'missing');
+  const currentAuthority = useRef(authorityKey);
+  const epoch = useRef(0);
+  const admission = useRef(createWorkspaceActionAdmission());
+  if (currentAuthority.current !== authorityKey) { currentAuthority.current = authorityKey; epoch.current += 1; }
+  admission.current.update(authorityKey);
+  useEffect(() => () => { epoch.current += 1; }, []);
+  useEffect(() => { setPending(null); setConnectionPending(null); setEditor(null); setConfirmArchive(null); setRuntimeError(null); }, [authorityKey]);
   const rawVisibleError = runtimeError ?? externalError ?? null;
   const visibleError = rawVisibleError
     ? operatorStoreManagementMessage(
@@ -251,34 +261,48 @@ export function StoreManagementPanel({
   ]);
 
   const unbind = async (connection: StoreConnection) => {
-    if (!onUnbindConnection || connectionPending) return;
+    if (!onUnbindConnection || busy) return;
+    const release = admission.current.tryEnter();
+    if (!release) return;
+    const capturedEpoch = epoch.current;
     const provider = connection.provider;
     setConnectionPending(`unbind:${provider}`);
     setRuntimeError(null);
     setConnectionFeedback(null);
     try {
       await onUnbindConnection(connection);
+      if (capturedEpoch !== epoch.current) return;
       setConfirmUnbind(null);
       setConnectionFeedback(`${provider === 'lingxing' ? '领星' : 'Amazon Ads'} 映射已解绑；保存密码未被清除。`);
     } catch (operationError) {
+      rendererRuntimeLog.error('renderer.store_connection_unbind_failed', { error: operationError });
+      if (capturedEpoch !== epoch.current) return;
       setRuntimeError(errorMessage(operationError));
     } finally {
-      setConnectionPending(null);
+      release();
+      if (capturedEpoch === epoch.current) setConnectionPending(null);
     }
   };
 
   const run = async (action: StoreMutation, operation: () => Promise<unknown> | unknown, storeId?: string) => {
     if (busy) return;
+    const release = admission.current.tryEnter();
+    if (!release) return;
+    const capturedEpoch = epoch.current;
     setPending({ action, storeId });
     setRuntimeError(null);
     try {
       await operation();
+      if (capturedEpoch !== epoch.current) return;
       if (action === 'update') setEditor(null);
       if (action === 'archive') setConfirmArchive(null);
     } catch (operationError) {
+      rendererRuntimeLog.error('renderer.store_management_operation_failed', { operation: action, error: operationError });
+      if (capturedEpoch !== epoch.current) return;
       setRuntimeError(errorMessage(operationError));
     } finally {
-      setPending(null);
+      release();
+      if (capturedEpoch === epoch.current) setPending(null);
     }
   };
 
@@ -340,7 +364,7 @@ export function StoreManagementPanel({
         return (
           <div className="mission-control-store-actions" role="group" aria-label={`${store.displayName}店铺操作`}>
             {store.status !== 'archived' && (
-              <button
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                 aria-label={`编辑 ${store.displayName}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.update}
@@ -350,10 +374,10 @@ export function StoreManagementPanel({
                 type="button"
               >
                 <PencilSimple aria-hidden="true" size={16} />
-              </button>
+              </WorkspaceActionButton>
             )}
             {store.status !== 'archived' ? (
-              <button
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                 aria-label={`归档 ${store.displayName}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.archive}
@@ -363,9 +387,9 @@ export function StoreManagementPanel({
                 type="button"
               >
                 <Archive aria-hidden="true" size={16} />
-              </button>
+              </WorkspaceActionButton>
             ) : (
-              <button
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={rowBusy && pending?.action === 'restore'} busyLabel="恢复中…"
                 className="workspace-button workspace-button--secondary"
                 data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.restore}
                 disabled={busy}
@@ -374,7 +398,7 @@ export function StoreManagementPanel({
               >
                 <ArrowCounterClockwise aria-hidden="true" size={16} />
                 {rowBusy && pending?.action === 'restore' ? '恢复中…' : '恢复'}
-              </button>
+              </WorkspaceActionButton>
             )}
           </div>
         );
@@ -423,14 +447,14 @@ export function StoreManagementPanel({
               </div>
               <div className="store-connection-mapping__actions">
                 {lingxingConnection && (
-                  <button
+                  <WorkspaceActionButton disabledReason={!onUnbindConnection ? '连接解绑服务尚未接入，请重新打开应用后重试。' : '店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                     className="workspace-button workspace-button--secondary"
                     disabled={busy || !onUnbindConnection}
                     onClick={() => setConfirmUnbind({ ...lingxingConnection })}
                     type="button"
                   >
                     解绑
-                  </button>
+                  </WorkspaceActionButton>
                 )}
               </div>
             </section>
@@ -457,14 +481,14 @@ export function StoreManagementPanel({
               </div>
               <div className="store-connection-mapping__actions">
                 {amazonAdsConnection && (
-                  <button
+                  <WorkspaceActionButton disabledReason={!onUnbindConnection ? '连接解绑服务尚未接入，请重新打开应用后重试。' : '店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…"
                     className="workspace-button workspace-button--secondary"
                     disabled={busy || !onUnbindConnection}
                     onClick={() => setConfirmUnbind({ ...amazonAdsConnection })}
                     type="button"
                   >
                     解绑
-                  </button>
+                  </WorkspaceActionButton>
                 )}
               </div>
             </section>
@@ -520,7 +544,7 @@ export function StoreManagementPanel({
                 <h2 id="mission-control-store-editor-title">编辑店铺</h2>
                 <p id="mission-control-store-editor-description">站点和币种固定为 US / USD，系统会自动隔离各店铺数据。</p>
               </div>
-              <button aria-label="关闭店铺编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" aria-label="关闭店铺编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEditor(null)} type="button"><X aria-hidden="true" size={18} /></WorkspaceActionButton>
             </header>
             <div className="mission-control-store-form">
               <label>
@@ -533,14 +557,17 @@ export function StoreManagementPanel({
                 />
                 {errors.displayName && <small role="alert">{errors.displayName}</small>}
               </label>
-              <label><span>Amazon 站点</span><input readOnly value={US_MARKETPLACE} /></label>
-              <label><span>币种</span><input readOnly value={USD_CURRENCY} /></label>
+              <label><span>Amazon 站点</span><input aria-label="Amazon 站点" aria-describedby="store-market-fixed" readOnly value={US_MARKETPLACE} /><small id="store-market-fixed">当前版本仅支持美国站。</small></label>
+              <label><span>币种</span><input aria-label="币种" aria-describedby="store-currency-fixed" readOnly value={USD_CURRENCY} /><small id="store-currency-fixed">当前经营与广告数据固定使用美元。</small></label>
               <label>
                 <span>业务时区</span>
                 <input
                   readOnly
+                  aria-label="业务时区"
+                  aria-describedby="store-timezone-fixed"
                   value={editor.draft.businessTimezone}
                 />
+                <small id="store-timezone-fixed">业务时区随店铺范围固定，以保留历史业务日含义。</small>
                 {errors.businessTimezone && <small role="alert">{errors.businessTimezone}</small>}
               </label>
               <label>
@@ -555,9 +582,9 @@ export function StoreManagementPanel({
               </label>
             </div>
             <footer>
-              <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setEditor(null)} type="button">取消</button>
-              <button
-                aria-busy={pending?.action === 'update' || undefined}
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setEditor(null)} type="button">取消</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={pending?.action === 'update'} busyLabel="保存中…"
+
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.update}
                 disabled={busy}
@@ -566,7 +593,7 @@ export function StoreManagementPanel({
               >
                 <Check aria-hidden="true" size={16} />
                 {pending?.action === 'update' ? '保存中…' : '保存变更'}
-              </button>
+              </WorkspaceActionButton>
             </footer>
           </section>
         </div>
@@ -583,9 +610,9 @@ export function StoreManagementPanel({
               </div>
             </header>
             <footer>
-              <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmArchive(null)} type="button">取消</button>
-              <button
-                aria-busy={pending?.action === 'archive' || undefined}
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmArchive(null)} type="button">取消</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={pending?.action === 'archive'} busyLabel="归档中…"
+
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.archive}
                 disabled={busy}
@@ -594,7 +621,7 @@ export function StoreManagementPanel({
               >
                 <Archive aria-hidden="true" size={16} />
                 {pending?.action === 'archive' ? '归档中…' : '确认归档'}
-              </button>
+              </WorkspaceActionButton>
             </footer>
           </section>
         </div>
@@ -642,9 +669,9 @@ export function StoreManagementPanel({
               </div>
             </header>
             <footer>
-              <button disabled={Boolean(connectionPending)} onClick={() => setConfirmUnbind(null)} type="button">取消</button>
-              <button
-                aria-busy={connectionPending === `unbind:${confirmUnbind.provider}` || undefined}
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={false} busyLabel="处理中…" disabled={Boolean(connectionPending)} onClick={() => setConfirmUnbind(null)} type="button">取消</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'店铺操作正在处理，请等待完成后再操作。'} busy={Boolean(connectionPending)} busyLabel="解绑中…"
+
                 autoFocus
                 className="workspace-button workspace-button--primary"
                 disabled={Boolean(connectionPending)}
@@ -652,7 +679,7 @@ export function StoreManagementPanel({
                 type="button"
               >
                 {connectionPending === `unbind:${confirmUnbind.provider}` ? '解绑中…' : '确认解绑映射'}
-              </button>
+              </WorkspaceActionButton>
             </footer>
           </section>
         </div>

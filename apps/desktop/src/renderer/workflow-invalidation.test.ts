@@ -45,4 +45,20 @@ describe('workflow runtime invalidation', () => {
     expect(observed).toEqual([]);
     unsubscribe();
   });
+
+  it('does not invalidate the new workspace when an earlier mutation resolves late', async () => {
+    const target = new EventTarget();
+    const observed: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation(detail => observed.push(detail.source), target);
+    let current = true;
+    let resolve!: (value: number) => void;
+    const result = runWorkflowInvalidatingMutation('approval-approved',
+      () => new Promise<number>(done => { resolve = done; }), target, () => current);
+
+    current = false;
+    resolve(42);
+    await expect(result).resolves.toBe(42);
+    expect(observed).toEqual([]);
+    unsubscribe();
+  });
 });

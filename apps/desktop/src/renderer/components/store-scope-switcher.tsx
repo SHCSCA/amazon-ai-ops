@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   CaretDown,
   CheckCircle,
@@ -12,6 +12,8 @@ import {
   DEFAULT_US_BUSINESS_TIMEZONE,
   USD_CURRENCY,
   US_MARKETPLACE,
+  missionControlContextKey,
+  sanitizeCausalExportText,
   type CreateStoreInput,
   type StoreContextEnvelope,
   type StoreDailyStatusProjection,
@@ -19,11 +21,16 @@ import {
   type StoreScopeRef,
 } from '@amazon-ai-ops/shared-types';
 import { useOverlayFocusScope } from './workspace/overlay-focus-scope';
+import { WorkspaceActionButton } from './workspace/action-feedback';
+import { useWorkspaceOperation, type WorkspaceOperationTicket } from './workspace/use-workspace-operation';
+import { rendererRuntimeLog } from '../runtime-log';
+import { toUserFacingError } from '../user-facing-error';
 
 export type StoreScopeSwitcherProps = {
   stores: readonly StoreRecord[];
   activeStore?: StoreRecord | null;
   authoritativeContext?: StoreContextEnvelope | null;
+  contextEpoch?: number;
   dailyStatuses?: readonly StoreDailyStatusProjection[];
   phase: 'loading' | 'needs-selection' | 'switching' | 'ready' | 'error';
   dailyStatusPhase?: 'idle' | 'loading' | 'ready' | 'error';
@@ -69,7 +76,7 @@ const INTERNAL_OPERATOR_TERM = /(?:\b(?:Main|StoreContext|Authority|Renderer|Pro
 function operatorStoreMessage(value: string | null | undefined, fallback: string): string {
   const firstLine = value?.trim().split(/\r?\n/)[0];
   if (!firstLine || INTERNAL_OPERATOR_TERM.test(firstLine)) return fallback;
-  return firstLine.slice(0, 240);
+  return sanitizeCausalExportText(firstLine).slice(0, 240);
 }
 
 function StoreDiagnosticDetails({ raw, visible }: { raw?: string | null; visible: string }) {
@@ -77,7 +84,7 @@ function StoreDiagnosticDetails({ raw, visible }: { raw?: string | null; visible
   return (
     <details>
       <summary>诊断详情</summary>
-      <code>{raw}</code>
+      <code>{sanitizeCausalExportText(raw)}</code>
     </details>
   );
 }
@@ -119,6 +126,7 @@ export function StoreScopeSwitcher({
   stores,
   activeStore,
   authoritativeContext,
+  contextEpoch = 0,
   dailyStatuses = [],
   phase,
   dailyStatusPhase = 'idle',
@@ -136,10 +144,17 @@ export function StoreScopeSwitcher({
   const [displayName, setDisplayName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [createdStore, setCreatedStore] = useState<StoreRecord | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [action, setAction] = useState<'create' | 'switch' | 'retry' | null>(null);
   const [pendingStoreId, setPendingStoreId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const previousInitiallyExpanded = useRef(initiallyExpanded);
+  const feedbackId = useId();
+  const operationKey = JSON.stringify([
+    authoritativeContext ? missionControlContextKey(authoritativeContext) : null,
+    contextEpoch, activeStore?.storeId, activeStore?.marketplace, activeStore?.browserProfileId, activeStore?.status,
+  ]);
+  const operation = useWorkspaceOperation(operationKey);
+  const activeTicket = useRef<WorkspaceOperationTicket | null>(null);
   const listedStores = useMemo(
     () => [...stores].sort((left, right) => {
       const statusOrder = { active: 0, inactive: 1, archived: 2 } as const;
@@ -148,7 +163,12 @@ export function StoreScopeSwitcher({
     }),
     [stores],
   );
-  const switching = phase === 'switching' || pendingStoreId !== null;
+  const creating = operation.busy && action === 'create';
+  const retrying = operation.busy && action === 'retry';
+  const switching = phase === 'switching' || (operation.busy && action === 'switch');
+  const actionBusy = operation.busy || switching;
+  const busyReason = creating ? '正在创建店铺，请等待完成后再操作。'
+    : retrying ? '正在重新读取店铺状态，请等待完成后再操作。' : '正在切换店铺，请等待核验完成后再操作。';
   const listBusy = phase === 'loading' || dailyStatusPhase === 'loading';
   const currentStatus = activeStore ? statusForStore(dailyStatuses, activeStore) : undefined;
   const rawScopeError = error || dailyStatusError || null;
@@ -162,15 +182,23 @@ export function StoreScopeSwitcher({
     previousInitiallyExpanded.current = initiallyExpanded;
   }, [initiallyExpanded]);
 
+  useEffect(() => {
+    setAction(null); setPendingStoreId(null); setCreateError(null); setSwitchError(null);
+    setCreatedStore(null); setCreateOpen(false); setDisplayName('');
+    // 新权威到达时只重置本地交互，不把旧请求的结果当作新店铺回执。
+    if (activeTicket.current) setExpanded(false);
+    activeTicket.current = null;
+  }, [operationKey]);
+
   const closeCreate = () => {
-    if (creating) return;
+    if (activeTicket.current?.isCurrent() || phase === 'switching') return;
     setCreateOpen(false);
     setDisplayName('');
     setCreateError(null);
     setCreatedStore(null);
   };
   const createDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
-    dismissDisabled: creating,
+    dismissDisabled: actionBusy,
     onDismiss: closeCreate,
     open: createOpen,
   });
@@ -197,7 +225,7 @@ export function StoreScopeSwitcher({
   }, [expanded, popoverFocus.overlayRootRef, switching]);
 
   async function requestSwitch(store: StoreRecord): Promise<boolean> {
-    if (switching || store.status !== 'active') return false;
+    if (actionBusy || store.status !== 'active') return false;
     if (
       authoritativeContext?.storeId === store.storeId
       && authoritativeContext.marketplace === store.marketplace
@@ -205,34 +233,62 @@ export function StoreScopeSwitcher({
       setExpanded(false);
       return true;
     }
+    const ticket = operation.begin();
+    if (!ticket) return false;
+    activeTicket.current = ticket; setAction('switch');
     setPendingStoreId(String(store.storeId));
     setSwitchError(null);
     try {
       await onSwitch({ storeId: store.storeId, marketplace: store.marketplace });
+      if (!ticket.isCurrent()) return false;
       setExpanded(false);
+      if (createdStore?.storeId === store.storeId) {
+        setCreateOpen(false); setCreatedStore(null); setDisplayName('');
+      }
       return true;
     } catch (caught) {
-      setSwitchError(caught instanceof Error ? caught.message : '店铺切换失败，请检查后重试。');
+      rendererRuntimeLog.error('store_scope.switch_failed', { error: caught });
+      if (ticket.isCurrent()) setSwitchError(toUserFacingError(caught, '店铺切换失败，请检查后重试。'));
       return false;
     } finally {
-      setPendingStoreId(null);
+      if (ticket.isCurrent()) { setPendingStoreId(null); setAction(null); activeTicket.current = null; }
+      ticket.finish();
     }
   }
 
   async function submitCreate() {
-    if (creating) return;
+    if (actionBusy) return;
     const validationError = validateStoreScopeCreateName(displayName);
     setCreateError(validationError);
     if (validationError) return;
-    setCreating(true);
+    const ticket = operation.begin();
+    if (!ticket) return;
+    activeTicket.current = ticket; setAction('create');
     try {
       const created = await onCreate(buildFixedUsStoreInput(displayName));
+      if (!ticket.isCurrent()) return;
       setCreatedStore(created);
       setCreateError(null);
     } catch (caught) {
-      setCreateError(caught instanceof Error ? caught.message : '店铺创建失败，请检查后重试。');
+      rendererRuntimeLog.error('store_scope.create_failed', { error: caught });
+      if (ticket.isCurrent()) setCreateError(toUserFacingError(caught, '店铺创建失败，请检查后重试。'));
     } finally {
-      setCreating(false);
+      if (ticket.isCurrent()) { setAction(null); activeTicket.current = null; }
+      ticket.finish();
+    }
+  }
+
+  async function retry() {
+    if (actionBusy) return;
+    const ticket = operation.begin(); if (!ticket) return;
+    activeTicket.current = ticket; setAction('retry'); setSwitchError(null);
+    try { await onRetry(); }
+    catch (caught) {
+      rendererRuntimeLog.error('store_scope.retry_failed', { error: caught });
+      if (ticket.isCurrent()) setSwitchError(toUserFacingError(caught, '店铺状态读取失败，请重试。'));
+    } finally {
+      if (ticket.isCurrent()) { setAction(null); activeTicket.current = null; }
+      ticket.finish();
     }
   }
 
@@ -243,14 +299,15 @@ export function StoreScopeSwitcher({
       data-collapsed={collapsed ? 'true' : 'false'}
       ref={popoverFocus.overlayRootRef}
     >
-      <button
+      <WorkspaceActionButton
         aria-expanded={expanded}
         aria-haspopup="listbox"
         aria-label={collapsed
           ? `店铺与站点：${activeStore?.displayName || '未选择'}，Amazon 美国站，美元`
           : undefined}
         className="store-scope-switcher__trigger"
-        disabled={switching}
+        disabled={actionBusy}
+        disabledReason={busyReason}
         onClick={() => {
           setSwitchError(null);
           setExpanded((current) => !current);
@@ -267,7 +324,7 @@ export function StoreScopeSwitcher({
           <span>Amazon US · USD</span>
         </span>
         <CaretDown aria-hidden="true" className="store-scope-switcher__caret" size={14} />
-      </button>
+      </WorkspaceActionButton>
 
       {!collapsed && (
         <div className="store-scope-switcher__summary" aria-live="polite">
@@ -292,16 +349,16 @@ export function StoreScopeSwitcher({
               <strong>店铺与站点</strong>
               <span>当前店铺由系统核验</span>
             </div>
-            <button aria-label="关闭店铺列表" onClick={() => setExpanded(false)} type="button">
+            <WorkspaceActionButton aria-label="关闭店铺列表" disabled={actionBusy} disabledReason={busyReason} onClick={() => setExpanded(false)} type="button">
               <X aria-hidden="true" size={15} />
-            </button>
+            </WorkspaceActionButton>
           </header>
 
           {(phase === 'error' || dailyStatusPhase === 'error') && (
             <div className="store-scope-switcher__state" data-state="error" role="alert">
               <Warning aria-hidden="true" size={17} weight="fill" />
               <span>{visibleScopeError}</span>
-              <button onClick={() => void onRetry()} type="button">重试</button>
+              <WorkspaceActionButton busy={retrying} busyLabel="读取中…" disabled={actionBusy} disabledReason={busyReason} onClick={() => void retry()}>重试</WorkspaceActionButton>
               <StoreDiagnosticDetails raw={rawScopeError} visible={visibleScopeError} />
             </div>
           )}
@@ -336,14 +393,18 @@ export function StoreScopeSwitcher({
                 const rowPending = pendingStoreId === String(store.storeId);
                 const downloaded = status?.collection.downloadedReportCount;
                 return (
-                  <button
+                  <WorkspaceActionButton
                     aria-busy={rowPending || undefined}
                     aria-selected={selected}
                     className="store-scope-switcher__option"
                     data-overall={status?.overall || 'unknown'}
                     data-overlay-initial-focus={selected ? '' : undefined}
                     data-store-scope-id={String(store.storeId)}
-                    disabled={switching || store.status !== 'active'}
+                    disabled={actionBusy || store.status !== 'active'}
+                    disabledReason={store.status !== 'active'
+                      ? `此店铺已${store.status === 'inactive' ? '停用' : '归档'}，请到“管理店铺”恢复后再切换。` : busyReason}
+                    busy={rowPending && operation.busy}
+                    busyLabel={`${store.displayName} 切换中…`}
                     key={`${store.storeId}:${store.marketplace}`}
                     onClick={() => void requestSwitch(store)}
                     role="option"
@@ -360,15 +421,16 @@ export function StoreScopeSwitcher({
                       <span>指标 {status ? FRESHNESS_LABELS[status.metrics.freshness] : '尚未读取'}</span>
                     </span>
                     <small title={statusDetail(status)}>{statusDetail(status)}</small>
-                  </button>
+                  </WorkspaceActionButton>
                 );
               })}
             </div>
           )}
 
           <footer>
-            <button
-              disabled={switching}
+            <WorkspaceActionButton
+              disabled={actionBusy}
+              disabledReason={busyReason}
               onClick={() => {
                 setExpanded(false);
                 setCreateOpen(true);
@@ -376,10 +438,11 @@ export function StoreScopeSwitcher({
               type="button"
             >
               <Plus aria-hidden="true" size={15} />新增店铺
-            </button>
+            </WorkspaceActionButton>
             {onManage && (
-              <button
-                disabled={switching}
+              <WorkspaceActionButton
+                disabled={actionBusy}
+                disabledReason={busyReason}
                 onClick={() => {
                   setExpanded(false);
                   onManage();
@@ -387,7 +450,7 @@ export function StoreScopeSwitcher({
                 type="button"
               >
                 <Wrench aria-hidden="true" size={15} />管理店铺
-              </button>
+              </WorkspaceActionButton>
             )}
           </footer>
         </div>
@@ -418,9 +481,9 @@ export function StoreScopeSwitcher({
                 <h2 id="store-scope-create-title">新增美国站店铺</h2>
                 <p id="store-scope-create-description">创建只新增数据域，不会暗中切换当前店铺。</p>
               </div>
-              <button aria-label="关闭新增店铺" disabled={creating} onClick={closeCreate} type="button">
+              <WorkspaceActionButton aria-label="关闭新增店铺" disabled={actionBusy} disabledReason={busyReason} onClick={closeCreate} type="button">
                 <X aria-hidden="true" size={18} />
-              </button>
+              </WorkspaceActionButton>
             </header>
 
             {createdStore ? (
@@ -454,6 +517,7 @@ export function StoreScopeSwitcher({
                     autoComplete="off"
                     data-overlay-initial-focus
                     disabled={creating}
+                    aria-describedby={creating ? `${feedbackId}-creating` : undefined}
                     maxLength={120}
                     onChange={(event) => {
                       setDisplayName(event.currentTarget.value);
@@ -463,6 +527,7 @@ export function StoreScopeSwitcher({
                     value={displayName}
                   />
                 </label>
+                {creating && <p className="muted-line" id={`${feedbackId}-creating`}>正在创建店铺，名称暂时锁定；完成或失败后可继续编辑并重试。</p>}
                 <div className="store-scope-create-fixed" aria-label="固定美国站配置">
                   <span><small>Amazon 站点</small><strong>US</strong></span>
                   <span><small>币种</small><strong>USD</strong></span>
@@ -484,31 +549,35 @@ export function StoreScopeSwitcher({
             )}
 
             <footer>
-              <button disabled={creating} onClick={closeCreate} type="button">
+              <WorkspaceActionButton disabled={actionBusy} disabledReason={busyReason} onClick={closeCreate} type="button">
                 {createdStore ? '稍后切换' : '取消'}
-              </button>
+              </WorkspaceActionButton>
               {createdStore ? (
-                <button
+                <WorkspaceActionButton
                   className="workspace-button workspace-button--primary"
                   data-store-scope-id={String(createdStore.storeId)}
-                  disabled={switching}
-                  onClick={() => void requestSwitch(createdStore).then((switched) => {
-                    if (switched) closeCreate();
-                  })}
+                  disabled={actionBusy}
+                  disabledReason={busyReason}
+                  busy={switching && operation.busy}
+                  busyLabel="切换中…"
+                  onClick={() => void requestSwitch(createdStore)}
                   type="button"
                 >
                   切换到新店铺
-                </button>
+                </WorkspaceActionButton>
               ) : (
-                <button
+                <WorkspaceActionButton
                   aria-busy={creating || undefined}
                   className="workspace-button workspace-button--primary"
-                  disabled={creating}
+                  disabled={actionBusy}
+                  disabledReason={busyReason}
+                  busy={creating}
+                  busyLabel="创建中…"
                   onClick={() => void submitCreate()}
                   type="button"
                 >
-                  {creating ? '创建中…' : '创建店铺'}
-                </button>
+                  创建店铺
+                </WorkspaceActionButton>
               )}
             </footer>
           </section>

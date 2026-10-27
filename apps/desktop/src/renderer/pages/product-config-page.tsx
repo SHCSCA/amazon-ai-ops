@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BusinessDataConfigurationNotice } from '../components/business-data-configuration';
+// 保留页面编排与原有交互，纯值规则和展示规则按职责复用。
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { TaskBanner } from '../components/workspace';
@@ -6,404 +8,29 @@ import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scop
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
-import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
-
-type ProductStage = 'cold_start' | 'keyword_exploration' | 'stable_conversion' | 'scaling' | 'profit_harvesting' | 'declining_repair';
-
-const STAGE_OPTIONS: Array<{ value: ProductStage; label: string; description: string }> = [
-  { value: 'cold_start', label: '冷启动', description: '数据少，允许适度试错，但要严格观察点击和首单。' },
-  { value: 'keyword_exploration', label: '测词期', description: '重点找有效搜索词，阈值可比利润期宽松。' },
-  { value: 'stable_conversion', label: '稳定转化', description: '已有稳定订单，重点控 ACOS 和预算效率。' },
-  { value: 'scaling', label: '放量期', description: '可接受阶段性更高 ACOS，但必须跟踪库存和转化。' },
-  { value: 'profit_harvesting', label: '利润收割', description: '严格控制 ACOS，优先降本和保利润。' },
-  { value: 'declining_repair', label: '异常修复', description: '转化或 ACOS 异常，优先排查价格、库存、Listing 和流量质量。' },
-];
-
-export const DEFAULT_COST = {
-  purchaseCost: 0,
-  firstLegCost: 0,
-  fbaFee: 0,
-  referralFeeRate: 0.15,
-  storageFee: 0,
-  otherCost: 0,
-  currentPrice: 0,
-  minPrice: 0,
-  targetNetMargin: 0.15,
-  targetAcos: 0.35,
-  targetTacos: 0.12,
-};
-
-type ProductCostInput = typeof DEFAULT_COST;
-type ProductCostKey = keyof ProductCostInput;
-type InlineSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
-type ProductConfigMetricKey = 'grossCost' | 'margin' | 'targetAcos' | 'targetTacos';
-type ProductConfigMetricTone = 'ready' | 'warning' | 'blocked' | 'pending';
-
-interface ProductConfigActionButtonInput {
-  active: boolean;
-  baseClassName: string;
-  label: string;
-  busyLabel: string;
-  disabled?: boolean;
-  groupBusy?: boolean;
-}
-
-export interface ProductConfigActionButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export interface ProductConfigLoadButtonView {
-  ariaPressed: boolean;
-  className: string;
-  label: string;
-}
-
-export interface ProductConfigRowTargetAcosView {
-  ariaLabel: string;
-  className: string;
-  disabled: boolean;
-  feedbackLabel: string;
-  inputValue: string;
-}
-
-export interface ProductConfigRowHealthView {
-  ariaLabel: string;
-  className: string;
-  detail: string;
-  label: string;
-  tone: ProductConfigMetricTone;
-}
-
-export function productConfigActionButtonView({
-  active,
-  baseClassName,
-  label,
-  busyLabel,
-  disabled = false,
-  groupBusy = false,
-}: ProductConfigActionButtonInput): ProductConfigActionButtonView {
-  return {
-    ariaBusy: active ? true : undefined,
-    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: Boolean(disabled || active || groupBusy),
-    label: active ? busyLabel : label,
-    showSpinner: active,
-  };
-}
-
-export function productConfigRowClass(input: { bulkSelected: boolean; loaded: boolean }): string {
-  return [
-    input.bulkSelected ? 'product-config-row-selected' : '',
-    input.loaded ? 'product-config-row-loaded' : '',
-  ].filter(Boolean).join(' ');
-}
-
-export function productConfigLoadButtonView(input: { loaded: boolean }): ProductConfigLoadButtonView {
-  return {
-    ariaPressed: input.loaded,
-    className: [
-      'secondary-button compact-button product-config-load-button',
-      input.loaded ? 'product-config-load-button-active' : '',
-    ].filter(Boolean).join(' '),
-    label: input.loaded ? '已载入' : '载入编辑',
-  };
-}
-
-export function productConfigRowTargetAcosView(input: {
-  asin?: string;
-  disabled?: boolean;
-  draftValue?: string;
-  productTargetAcos: number;
-  status: InlineSaveStatus;
-}): ProductConfigRowTargetAcosView {
-  const currentPercent = Number.isFinite(Number(input.productTargetAcos))
-    ? (Number(input.productTargetAcos) * 100).toFixed(2)
-    : '0.00';
-  const feedbackLabel = input.status === 'saving'
-    ? '目标 ACOS 保存中...'
-    : input.status === 'saved'
-      ? '目标 ACOS 已保存'
-      : input.status === 'error'
-        ? '目标 ACOS 保存失败'
-        : '';
-  return {
-    ariaLabel: `编辑 ${String(input.asin || '产品').trim() || '产品'} 目标 ACOS`,
-    className: [
-      'product-row-acos-field',
-      input.status !== 'idle' ? `product-row-acos-field-${input.status}` : '',
-    ].filter(Boolean).join(' '),
-    disabled: Boolean(input.disabled || input.status === 'saving'),
-    feedbackLabel,
-    inputValue: input.draftValue ?? currentPercent,
-  };
-}
-
-export function productConfigRowHealthView(input: { targetAcos: number }): ProductConfigRowHealthView {
-  const targetAcos = Number(input.targetAcos);
-  const tone = productConfigMetricTone('targetAcos', targetAcos);
-  const labelByTone: Record<ProductConfigMetricTone, string> = {
-    ready: '目标正常',
-    warning: '需复核',
-    blocked: '高风险',
-    pending: '待配置',
-  };
-  const detail = tone === 'pending' ? '未配置目标 ACOS' : `目标 ACOS ${(targetAcos * 100).toFixed(2)}%`;
-  return {
-    ariaLabel: `产品目标健康度：${labelByTone[tone]}，${detail}`,
-    className: `product-row-health product-row-health-${tone}`,
-    detail,
-    label: labelByTone[tone],
-    tone,
-  };
-}
-
-const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
-  purchaseCost: '采购成本',
-  firstLegCost: '头程费用',
-  fbaFee: 'FBA 费用',
-  referralFeeRate: '推荐费率',
-  storageFee: '仓储费',
-  otherCost: '其他成本',
-  currentPrice: '当前售价',
-  minPrice: '最低可接受售价',
-  targetNetMargin: '目标净利率',
-  targetAcos: '目标 ACOS',
-  targetTacos: '目标 TACOS',
-};
-
-export function buildCostInputFromProduct(product: any): ProductCostInput {
-  const source = product?.cost || {};
-  const numberOrDefault = (key: keyof ProductCostInput) => {
-    const value = Number(source[key]);
-    return Number.isFinite(value) ? value : DEFAULT_COST[key];
-  };
-  return {
-    purchaseCost: numberOrDefault('purchaseCost'),
-    firstLegCost: numberOrDefault('firstLegCost'),
-    fbaFee: numberOrDefault('fbaFee'),
-    referralFeeRate: numberOrDefault('referralFeeRate'),
-    storageFee: numberOrDefault('storageFee'),
-    otherCost: numberOrDefault('otherCost'),
-    currentPrice: numberOrDefault('currentPrice'),
-    minPrice: numberOrDefault('minPrice'),
-    targetNetMargin: numberOrDefault('targetNetMargin'),
-    targetAcos: numberOrDefault('targetAcos'),
-    targetTacos: numberOrDefault('targetTacos'),
-  };
-}
-
-export function productCostInputHint(cost: ProductCostInput): string {
-  const hasRealCostOrPrice = [
-    cost.purchaseCost,
-    cost.firstLegCost,
-    cost.fbaFee,
-    cost.storageFee,
-    cost.otherCost,
-    cost.currentPrice,
-    cost.minPrice,
-  ].some((value) => Number(value || 0) > 0);
-  if (!hasRealCostOrPrice) {
-    return '当前成本、售价和最低可接受售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
-  }
-  return '已填写成本、售价或最低可接受售价；保存前请确认这些数字来自当前产品。';
-}
-
-export function isProductConfigAutoSaveField(key: string): key is ProductCostKey {
-  return Object.prototype.hasOwnProperty.call(PRODUCT_COST_FIELD_LABELS, key);
-}
-
-export function productConfigInlineSaveLabel(key: string, status: InlineSaveStatus): string {
-  if (!isProductConfigAutoSaveField(key) || status === 'idle') return '';
-  const label = PRODUCT_COST_FIELD_LABELS[key];
-  if (status === 'saving') return `${label} 保存中...`;
-  if (status === 'saved') return `${label} 已保存`;
-  return `${label} 保存失败`;
-}
-
-const RATE_COST_FIELDS = new Set<ProductCostKey>(['referralFeeRate', 'targetNetMargin', 'targetAcos', 'targetTacos']);
-
-function stepPrecision(step: string): number {
-  const decimal = String(step || '').split('.')[1];
-  return Math.max(2, decimal?.length || 0);
-}
-
-export function productConfigNudgeCostValue(
-  key: ProductCostKey,
-  value: number,
-  direction: 'up' | 'down',
-  step = '0.01',
-): number {
-  const delta = Math.abs(Number(step) || 0.01);
-  const current = Number.isFinite(Number(value)) ? Number(value) : 0;
-  const next = current + (direction === 'up' ? delta : -delta);
-  const clampedLow = Math.max(0, next);
-  const clamped = RATE_COST_FIELDS.has(key) ? Math.min(1, clampedLow) : clampedLow;
-  return Number(clamped.toFixed(stepPrecision(step)));
-}
-
-export function productConfigMetricTone(metric: ProductConfigMetricKey, value: number): ProductConfigMetricTone {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 'pending';
-  if (metric === 'grossCost') return numeric > 0 ? 'ready' : 'pending';
-  if (metric === 'margin') {
-    if (numeric < 0) return 'blocked';
-    if (numeric < 0.1) return 'warning';
-    return 'ready';
-  }
-  if (metric === 'targetAcos') {
-    if (numeric <= 0) return 'pending';
-    if (numeric > 0.7) return 'blocked';
-    if (numeric > 0.4) return 'warning';
-    return 'ready';
-  }
-  if (numeric <= 0) return 'pending';
-  if (numeric > 0.45) return 'blocked';
-  if (numeric > 0.3) return 'warning';
-  return 'ready';
-}
-
-export function buildProductConfigTaskState(input: {
-  asin?: string;
-  configuredProducts: number;
-  importedRows: number;
-  saving: boolean;
-}) {
-  const asin = String(input.asin || '').trim().toUpperCase();
-  const hasAsin = Boolean(asin);
-  return {
-    title: hasAsin ? `维护 ${asin} 的产品目标` : '先填写 ASIN，再维护产品目标',
-    detail: hasAsin
-      ? `当前范围已有 ${input.importedRows} 行广告指标，${input.configuredProducts} 个产品配置；成本、最低价、目标 ACOS/TACOS 会进入 AI 阈值判断。`
-      : '产品目标必须先绑定 ASIN，否则广告表现只能按全局默认阈值解释 ACOS 和花费。',
-    primaryActionLabel: input.saving ? '保存中...' : hasAsin ? '编辑当前产品目标' : '新建产品配置',
-    primaryActionBusy: input.saving,
-    primaryActionBusyLabel: '保存中...',
-    primaryActionDisabled: input.saving,
-    secondaryActionLabel: '查看广告表现',
-  };
-}
-
-export function normalizeProductConfigAcosPercent(value: string | number): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100) return null;
-  return Number((parsed / 100).toFixed(4));
-}
-
-export function productConfigProductKey(product: any): string {
-  return String(product?.id ?? product?.asin ?? '');
-}
-
-export function productConfigBulkSelectionState(input: {
-  selectedCount: number;
-  totalProducts: number;
-}) {
-  const totalProducts = Math.max(0, Number(input.totalProducts) || 0);
-  const selectedCount = totalProducts > 0
-    ? Math.min(Math.max(0, Number(input.selectedCount) || 0), totalProducts)
-    : 0;
-  const progressPercent = totalProducts > 0 ? Math.round((selectedCount / totalProducts) * 100) : 0;
-  const hasSelection = selectedCount > 0;
-
-  return {
-    ariaStatus: totalProducts > 0
-      ? hasSelection
-        ? `已选择 ${selectedCount} 个产品，批量目标 ACOS 只会写入这些本地产品配置。`
-        : '当前未选择产品；批量目标 ACOS 不会作用于任何产品。'
-      : '当前范围暂无产品；批量目标 ACOS 不会作用于任何产品。',
-    countClassName: [
-      'product-bulk-selection-count',
-      hasSelection ? 'product-bulk-selection-count-active' : '',
-    ].filter(Boolean).join(' '),
-    countLabel: `已选 ${selectedCount}/${totalProducts} 个产品`,
-    progressPercent,
-    progressStyle: { '--product-bulk-selection-progress': `${progressPercent}%` } as React.CSSProperties,
-    tone: hasSelection ? 'ready' : 'pending',
-  };
-}
-
-export function buildProductConfigBulkApplyState(input: {
-  totalProducts: number;
-  selectedCount: number;
-  targetAcosPercent: string | number;
-  applying: boolean;
-}) {
-  const targetAcos = normalizeProductConfigAcosPercent(input.targetAcosPercent);
-  const targetPercent = Number(input.targetAcosPercent);
-  const validTarget = targetAcos !== null;
-  const targetAcosLabel = validTarget ? `${targetPercent.toFixed(2)}%` : '-';
-  const hasProducts = input.totalProducts > 0;
-  const hasSelection = input.selectedCount > 0;
-  const canApply = hasProducts && hasSelection && validTarget && !input.applying;
-  let statusTone: ProductConfigMetricTone = 'pending';
-  let statusMessage = hasProducts ? `${input.selectedCount}/${input.totalProducts} 个产品已勾选` : '当前范围暂无产品';
-  if (!validTarget) {
-    statusTone = 'blocked';
-    statusMessage = '目标 ACOS 必须为 0 到 100 之间的百分比';
-  } else if (!hasProducts) {
-    statusTone = 'pending';
-  } else if (!hasSelection) {
-    statusTone = 'pending';
-  } else if (input.applying) {
-    statusTone = 'warning';
-    statusMessage = `正在应用 ${targetAcosLabel}`;
-  } else {
-    statusTone = 'ready';
-    statusMessage = `将 ${targetAcosLabel} 应用到 ${input.selectedCount} 个产品`;
-  }
-  return {
-    canApply,
-    primaryActionLabel: input.applying ? '批量应用中...' : hasSelection ? `应用到 ${input.selectedCount} 个产品` : '先勾选产品',
-    statusTone,
-    statusMessage,
-    targetAcos,
-    targetAcosLabel,
-  };
-}
-
-export function buildProductConfigBulkSaveInput(product: any, scope: { storeName: string; marketplaceCode: string }, targetAcos: number) {
-  return {
-    product: {
-      asin: String(product?.asin || '').trim(),
-      parentAsin: product?.parent_asin || product?.parentAsin || '',
-      msku: product?.msku || '',
-      sku: product?.sku || '',
-      title: product?.title || '',
-      productStage: product?.product_stage || product?.productStage || 'keyword_exploration',
-      status: product?.status || 'active',
-      storeName: scope.storeName,
-      marketplaceCode: scope.marketplaceCode,
-    },
-    cost: {
-      ...buildCostInputFromProduct(product),
-      targetAcos,
-    },
-  };
-}
-
-function navigate(route: AppRoute) {
-  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
-}
-
-function toNumber(value: string | number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function stageLabel(stage?: string): string {
-  return STAGE_OPTIONS.find((item) => item.value === stage)?.label || stage || '未配置';
-}
+import { rendererRuntimeLog } from '../runtime-log';
+import { usePageOperation } from './use-page-operation';
+import type { WorkspaceOperationTicket } from '../components/workspace/use-workspace-operation';
+import { type ProductCostKey, type InlineSaveStatus, type ProductConfigMetricTone, type ProductStage, DEFAULT_COST, STAGE_OPTIONS, PRODUCT_COST_FIELD_LABELS } from './product-config-contracts';
+import { productCostInputHint, buildProductConfigTaskState, buildProductConfigBulkApplyState, productConfigBulkSelectionState, productConfigActionButtonView, productConfigInlineSaveLabel, productConfigRowHealthView, productConfigRowClass, productConfigMetricTone } from './product-config-presentation';
+import { productConfigProductKey, buildCostInputFromProduct, toNumber, productConfigNudgeCostValue, navigate, stageLabel } from './product-config-values';
 
 export function ProductConfigPage() {
   const { scope } = useScopeStore();
-  const { data } = useBusinessDataPipeline();
+  const { data, configurationRequired } = useBusinessDataPipeline();
+  const operation = usePageOperation(JSON.stringify(scope));
+  const productApi = (window as any).electronAPI;
+  const canSaveProduct = typeof productApi?.saveProductConfig === 'function';
+  const canSaveBulk = typeof productApi?.bulkUpdateProductTargetAcos === 'function';
+  const activeTicket = useRef<WorkspaceOperationTicket | null>(null);
+  const productsLoadSequence = useRef(0);
+  const inlineFeedbackSequence = useRef(0);
+  const [runningAction, setRunningAction] = useState<'save' | 'inline' | 'bulk' | null>(null);
+  const saving = operation.busy && (runningAction === 'save' || runningAction === 'inline');
+  const bulkApplying = operation.busy && runningAction === 'bulk';
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [dirtyCostFields, setDirtyCostFields] = useState<Partial<Record<ProductCostKey, boolean>>>({});
@@ -411,7 +38,6 @@ export function ProductConfigPage() {
   const [nudgedCostField, setNudgedCostField] = useState<ProductCostKey | null>(null);
   const [bulkSelectedProductKeys, setBulkSelectedProductKeys] = useState<string[]>([]);
   const [bulkTargetAcosPercent, setBulkTargetAcosPercent] = useState(35);
-  const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState('');
   const [bulkFeedbackTone, setBulkFeedbackTone] = useState<ProductConfigMetricTone>('pending');
   const [editorMode, setEditorMode] = useState<'product' | 'target' | 'bulk' | null>(null);
@@ -441,7 +67,7 @@ export function ProductConfigPage() {
     asin: draft.asin,
     configuredProducts: currentScopeProducts.length,
     importedRows,
-    saving,
+    saving: false,
   });
   const selectedBulkKeySet = useMemo(() => new Set(bulkSelectedProductKeys), [bulkSelectedProductKeys]);
   const selectedBulkProducts = useMemo(
@@ -459,24 +85,30 @@ export function ProductConfigPage() {
     totalProducts: currentScopeProducts.length,
   });
   const saveConfigButton = productConfigActionButtonView({
-    active: saving,
+    active: operation.busy && runningAction === 'save',
     baseClassName: 'primary-button',
     busyLabel: '保存中...',
-    disabled: !draft.asin.trim(),
+    disabled: !draft.asin.trim() || operation.busy || !operation.hasAuthority || loading || !canSaveProduct,
     label: '保存完整产品配置',
   });
   const bulkApplyButton = productConfigActionButtonView({
     active: bulkApplying,
     baseClassName: 'primary-button',
     busyLabel: '批量应用中...',
-    disabled: !bulkApplyState.canApply,
+    disabled: !bulkApplyState.canApply || operation.busy || !operation.hasAuthority || loading || !canSaveBulk,
     label: bulkApplyState.primaryActionLabel,
   });
   const loadedProduct = currentScopeProducts.find((product) => (
     String(product.asin || '').trim().toUpperCase() === draft.asin.trim().toUpperCase()
   ));
   const loadedProductRowKey = loadedProduct ? productConfigProductKey(loadedProduct) : '';
-  const editorBusy = saving || bulkApplying;
+  const editorBusy = operation.busy;
+  const productDisabledReason = !operation.hasAuthority ? operation.blockedReason
+    : editorBusy ? '当前产品操作正在处理中，请稍候。'
+    : loading ? '正在读取当前店铺产品，请稍候。'
+    : editorMode === 'bulk' && !canSaveBulk ? '当前应用未提供批量保存接口。'
+    : editorMode !== 'bulk' && !canSaveProduct ? '当前应用未提供产品保存接口。'
+    : !draft.asin.trim() ? '保存前请先填写 ASIN。' : '';
   const productConfigDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
     dismissDisabled: editorBusy,
     onDismiss: closeEditor,
@@ -484,30 +116,45 @@ export function ProductConfigPage() {
   });
 
   function closeEditor() {
-    if (editorBusy) return;
+    if (activeTicket.current?.isCurrent()) return;
     setEditorMode(null);
   }
 
-  async function loadProducts() {
+  async function loadProducts(isCurrent = operation.capture()) {
+    if (!operation.hasAuthority) { setProducts([]); setLoading(false); return; }
+    const request = ++productsLoadSequence.current;
     setLoading(true);
     setError('');
     try {
       const rows = await (window as any).electronAPI?.getProducts?.();
+      if (!isCurrent() || request !== productsLoadSequence.current) return;
       setProducts(Array.isArray(rows) ? rows : []);
     } catch (caught) {
+      rendererRuntimeLog.error('product_config.load_failed', { error: caught });
+      if (!isCurrent() || request !== productsLoadSequence.current) return;
       setError(toUserFacingError(caught, '读取产品配置失败。'));
     } finally {
-      setLoading(false);
+      if (isCurrent() && request === productsLoadSequence.current) setLoading(false);
     }
   }
 
-  useEffect(() => {
-    setDraft((current) => ({
-      ...current,
-      asin: current.asin || scope.asin || '',
-    }));
-    loadProducts();
-  }, [scope.asin, scope.storeName, scope.marketplaceCode]);
+  useLayoutEffect(() => {
+    inlineFeedbackSequence.current += 1;
+    setProducts([]);
+    setDraft({ asin: scope.asin || '', parentAsin: '', msku: '', sku: '', title: '', productStage: 'keyword_exploration', status: 'active' });
+    setCost(DEFAULT_COST);
+    setEditorMode(null);
+    setDirtyCostFields({});
+    setInlineSave({ status: 'idle' });
+    setNudgedCostField(null);
+    if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
+    setBulkSelectedProductKeys([]);
+    setBulkFeedback('');
+    setMessage('');
+    setError('');
+  }, [operation.contextKey]);
+
+  useEffect(() => { void loadProducts(); }, [operation.contextKey]);
 
   useEffect(() => () => {
     if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
@@ -541,6 +188,7 @@ export function ProductConfigPage() {
   }, [currentScopeProducts, dirtyCostFields, draft.asin, editorMode, scope.asin]);
 
   function loadProduct(product: any) {
+    if (activeTicket.current?.isCurrent() || !operation.hasAuthority) return;
     setDraft({
       asin: product.asin || '',
       parentAsin: product.parent_asin || '',
@@ -557,11 +205,13 @@ export function ProductConfigPage() {
   }
 
   function openProductEditor(product: any, mode: 'product' | 'target') {
+    if (activeTicket.current?.isCurrent() || !operation.hasAuthority || loading) return;
     if (product) loadProduct(product);
     setEditorMode(mode);
   }
 
   function openBulkEditor() {
+    if (activeTicket.current?.isCurrent() || !operation.hasAuthority || loading) return;
     if (currentScopeProducts.length && bulkSelectedProductKeys.length === 0) {
       setBulkSelectedProductKeys(currentScopeProducts.map(productConfigProductKey).filter(Boolean));
     }
@@ -569,7 +219,11 @@ export function ProductConfigPage() {
   }
 
   async function saveProductConfig(options: { source?: 'manual' | 'inline'; field?: ProductCostKey } = {}) {
-    setSaving(true);
+    const ticket = operation.begin();
+    if (!ticket) return;
+    activeTicket.current = ticket;
+    const feedbackRequest = ++inlineFeedbackSequence.current;
+    setRunningAction(options.source === 'inline' ? 'inline' : 'save');
     if (options.source === 'inline' && options.field) {
       setInlineSave({ field: options.field, status: 'saving' });
     } else {
@@ -588,27 +242,32 @@ export function ProductConfigPage() {
         },
         cost,
       });
+      if (!ticket.isCurrent()) return;
       if (!result?.success) throw new Error('保存接口没有返回成功状态。');
       if (options.source === 'inline' && options.field) {
         setDirtyCostFields((current) => ({ ...current, [options.field as ProductCostKey]: false }));
         setInlineSave({ field: options.field, status: 'saved' });
         setMessage(`${PRODUCT_COST_FIELD_LABELS[options.field]} 已保存，AI 阈值会读取新的产品边界。`);
-        window.setTimeout(() => setInlineSave((current) => (
+        const isCurrent = operation.capture();
+        window.setTimeout(() => { if (isCurrent() && feedbackRequest === inlineFeedbackSequence.current) setInlineSave((current) => (
           current.field === options.field && current.status === 'saved' ? { status: 'idle' } : current
-        )), 900);
+        )); }, 900);
       } else {
         setDirtyCostFields({});
         setMessage('产品配置已保存。后续 AI 阶段诊断和动态阈值会优先参考产品阶段、目标 ACOS、毛利和成本边界。');
       }
       window.dispatchEvent(new Event('business-ui:data-updated'));
-      await loadProducts();
+      await loadProducts(ticket.isCurrent);
     } catch (caught) {
+      rendererRuntimeLog.error('product_config.save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       if (options.source === 'inline' && options.field) {
         setInlineSave({ field: options.field, status: 'error' });
       }
       setError(toUserFacingError(caught, '保存产品配置失败。'));
     } finally {
-      setSaving(false);
+      if (activeTicket.current === ticket) activeTicket.current = null;
+      ticket.finish();
     }
   }
 
@@ -617,6 +276,7 @@ export function ProductConfigPage() {
   }
 
   function toggleBulkProduct(productKey: string, checked: boolean) {
+    if (activeTicket.current?.isCurrent()) return;
     setBulkSelectedProductKeys((current) => {
       if (checked) return Array.from(new Set([...current, productKey]));
       return current.filter((key) => key !== productKey);
@@ -624,6 +284,7 @@ export function ProductConfigPage() {
   }
 
   function toggleAllBulkProducts(checked: boolean) {
+    if (activeTicket.current?.isCurrent()) return;
     setBulkSelectedProductKeys(checked ? currentScopeProducts.map(productConfigProductKey).filter(Boolean) : []);
   }
 
@@ -636,7 +297,10 @@ export function ProductConfigPage() {
     const targetAcos = bulkApplyState.targetAcos;
     const targetLabel = bulkApplyState.targetAcosLabel;
     const selectedRows = selectedBulkProducts;
-    setBulkApplying(true);
+    const ticket = operation.begin();
+    if (!ticket) return;
+    activeTicket.current = ticket;
+    setRunningAction('bulk');
     setBulkFeedback(`正在把目标 ACOS ${targetLabel} 应用到 ${selectedRows.length} 个产品...`);
     setBulkFeedbackTone('warning');
     setError('');
@@ -651,6 +315,7 @@ export function ProductConfigPage() {
           marketplaceCode: product.marketplace_code || scope.marketplaceCode,
         })),
       });
+      if (!ticket.isCurrent()) return;
       if (!result?.success || result.updatedCount !== selectedRows.length) {
         throw new Error('批量目标 ACOS 未完整写入，事务已回滚。');
       }
@@ -661,23 +326,28 @@ export function ProductConfigPage() {
       setBulkFeedback(`已把目标 ACOS ${targetLabel} 应用到 ${selectedRows.length} 个产品。`);
       setBulkFeedbackTone('ready');
       window.dispatchEvent(new Event('business-ui:data-updated'));
-      await loadProducts();
+      await loadProducts(ticket.isCurrent);
     } catch (caught) {
+      rendererRuntimeLog.error('product_config.bulk_save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setBulkFeedback('批量应用失败，已保留勾选。');
       setBulkFeedbackTone('blocked');
       setError(toUserFacingError(caught, '批量应用目标 ACOS 失败。'));
     } finally {
-      setBulkApplying(false);
+      if (activeTicket.current === ticket) activeTicket.current = null;
+      ticket.finish();
     }
   }
 
   function updateCost(key: ProductCostKey, value: string) {
+    if (activeTicket.current?.isCurrent()) return;
     setCost((current) => ({ ...current, [key]: toNumber(value) }));
     setDirtyCostFields((current) => ({ ...current, [key]: true }));
     if (inlineSave.field === key && inlineSave.status !== 'saving') setInlineSave({ status: 'idle' });
   }
 
   function nudgeCost(key: ProductCostKey, direction: 'up' | 'down', step: string) {
+    if (activeTicket.current?.isCurrent()) return;
     setCost((current) => ({ ...current, [key]: productConfigNudgeCostValue(key, current[key], direction, step) }));
     setDirtyCostFields((current) => ({ ...current, [key]: true }));
     if (inlineSave.field === key && inlineSave.status !== 'saving') setInlineSave({ status: 'idle' });
@@ -734,40 +404,43 @@ export function ProductConfigPage() {
         title={PAGE_HEADER_TITLES.productConfig}
         description="查看当前范围内产品的成本、售价边界和目标 ACOS；编辑动作进入弹窗，不把表单常驻在工作台。"
       />
+      {configurationRequired && <BusinessDataConfigurationNotice />}
 
       <TaskBanner
-        description={taskState.detail}
-        meta={`${currentScopeProducts.length} 个产品配置 · ${importedRows} 行当前范围指标`}
+        description={configurationRequired ? '当前业务数据尚未读取；本地产品信息、成本和目标仍可维护。' : taskState.detail}
+        meta={configurationRequired ? `${currentScopeProducts.length} 个本地产品配置 · 当前范围指标未读取` : `${currentScopeProducts.length} 个产品配置 · ${importedRows} 行当前范围指标`}
         primaryAction={{
           label: taskState.primaryActionLabel,
-          disabled: taskState.primaryActionDisabled,
-          busy: taskState.primaryActionBusy,
+          disabled: editorBusy || loading || !operation.hasAuthority,
+          disabledReason: productDisabledReason,
+          busy: false,
           busyLabel: taskState.primaryActionBusyLabel,
-          onClick: () => setEditorMode(draft.asin ? 'target' : 'product'),
+          onClick: () => { if (!activeTicket.current?.isCurrent()) setEditorMode(draft.asin ? 'target' : 'product'); },
         }}
         secondaryActions={[
-          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant'), disabled: saving },
-          { label: '补充运营事件', onClick: () => navigate('operation-events'), disabled: saving },
+          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant'), disabled: editorBusy, disabledReason: productDisabledReason },
+          { label: '补充运营事件', onClick: () => navigate('operation-events'), disabled: editorBusy, disabledReason: productDisabledReason },
         ]}
         status={draft.asin ? `当前 ${draft.asin}` : '待创建产品'}
         title={taskState.title}
         tone={draft.asin ? 'confirmed' : 'attention'}
       />
+      {!editorMode && productDisabledReason && <p role="status">{productDisabledReason}</p>}
 
       <div className="business-stack product-config-page-stack">
         <Panel className="product-config-list-panel" title="产品目标列表" tone={currentScopeProducts.length ? 'default' : 'warning'}>
           <div className="product-config-list-head">
             <div className="product-config-list-facts" aria-label="当前产品目标概览">
               <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>{currentScopeProducts.length} 个产品</StatusPill>
-              <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>{importedRows} 行指标</StatusPill>
+              <StatusPill tone={configurationRequired ? 'pending' : importedRows > 0 ? 'ready' : 'blocked'}>{configurationRequired ? '指标未读取' : `${importedRows} 行指标`}</StatusPill>
               <StatusPill tone={draft.asin ? 'ready' : 'pending'}>{draft.asin ? `当前 ${draft.asin}` : '未选产品'}</StatusPill>
             </div>
             <details className="product-config-action-menu">
               <summary>更多产品操作</summary>
               <div className="product-config-list-actions">
-                <button className="secondary-button compact-button" disabled={!draft.asin || saving} onClick={() => setEditorMode('product')} type="button">编辑信息</button>
-                <button className="secondary-button compact-button" disabled={!currentScopeProducts.length || saving} onClick={openBulkEditor} type="button">批量设置</button>
-                <button className="primary-button compact-button" disabled={saving} onClick={() => setEditorMode('product')} type="button">新建产品</button>
+                <button className="secondary-button compact-button" disabled={!draft.asin || editorBusy || loading || !operation.hasAuthority} onClick={() => openProductEditor(null, 'product')} type="button">编辑信息</button>
+                <button className="secondary-button compact-button" disabled={!currentScopeProducts.length || editorBusy || loading || !operation.hasAuthority} onClick={openBulkEditor} type="button">批量设置</button>
+                <button className="primary-button compact-button" disabled={editorBusy || loading || !operation.hasAuthority} onClick={() => openProductEditor(null, 'product')} type="button">新建产品</button>
               </div>
             </details>
           </div>
@@ -823,6 +496,7 @@ export function ProductConfigPage() {
                       <td>
                         <div className="product-config-row-actions">
                           <button
+                            disabled={editorBusy || loading || !operation.hasAuthority}
                             aria-pressed={rowLoaded}
                             className="secondary-button compact-button"
                             onClick={() => openProductEditor(product, 'target')}
@@ -869,10 +543,10 @@ export function ProductConfigPage() {
               </div>
             </div>
             <div className="action-row product-config-prototype-actions">
-              <button className="secondary-button" disabled={saving} onClick={() => navigate('ad-quant')} type="button">
+              <button className="secondary-button" disabled={editorBusy} onClick={() => navigate('ad-quant')} type="button">
                 {taskState.secondaryActionLabel}
               </button>
-              <button className="secondary-button" disabled={saving} onClick={() => navigate('operation-events')} type="button">
+              <button className="secondary-button" disabled={editorBusy} onClick={() => navigate('operation-events')} type="button">
                 补充运营事件
               </button>
             </div>
@@ -908,6 +582,7 @@ export function ProductConfigPage() {
               <button className="secondary-button compact-button" disabled={editorBusy} onClick={closeEditor} type="button">关闭</button>
             </div>
 
+            <fieldset disabled={editorBusy || !operation.hasAuthority} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {editorMode === 'product' ? (
               <div className="product-config-modal-body">
                 <FormTable>
@@ -1177,6 +852,8 @@ export function ProductConfigPage() {
               </div>
             )}
 
+            </fieldset>
+            {productDisabledReason && <p role="status">{productDisabledReason}</p>}
             <div className="product-config-modal-footer">
               {editorMode === 'bulk' ? (
                 <>
@@ -1190,7 +867,7 @@ export function ProductConfigPage() {
                     {bulkApplyButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
                     <span>{bulkApplyButton.label}</span>
                   </button>
-                  <button className="secondary-button" disabled={bulkApplying} onClick={closeEditor} type="button">关闭</button>
+                  <button className="secondary-button" disabled={editorBusy} onClick={closeEditor} type="button">关闭</button>
                 </>
               ) : (
                 <>
@@ -1208,3 +885,9 @@ export function ProductConfigPage() {
     </div>
   );
 }
+
+export { DEFAULT_COST, type ProductConfigActionButtonView, type ProductConfigLoadButtonView, type ProductConfigRowTargetAcosView, type ProductConfigRowHealthView } from './product-config-contracts';
+
+export { productConfigActionButtonView, productConfigRowClass, productConfigLoadButtonView, productConfigRowTargetAcosView, productConfigRowHealthView, productCostInputHint, productConfigInlineSaveLabel, productConfigMetricTone, buildProductConfigTaskState, productConfigBulkSelectionState, buildProductConfigBulkApplyState } from './product-config-presentation';
+
+export { buildCostInputFromProduct, isProductConfigAutoSaveField, productConfigNudgeCostValue, normalizeProductConfigAcosPercent, productConfigProductKey, buildProductConfigBulkSaveInput } from './product-config-values';

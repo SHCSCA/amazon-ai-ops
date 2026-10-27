@@ -17,8 +17,7 @@ const {
   migrationV1ChecksumWhitelist,
 } = require('./verify-production-authority-selection.js');
 
-// These check-code identifiers are part of the schema-v1 evidence ABI. Their
-// validation is intentionally bound to TARGET_VERSION, currently v11.
+// 检查码属于既有证据协议；迁移目标始终按生产 TARGET_VERSION 校验。
 
 function parseS7VerifierArgs(argv) {
   const args = { manifest: '', out: '' };
@@ -35,7 +34,7 @@ function parseS7VerifierArgs(argv) {
   return args;
 }
 
-function verifyS7MigrationBackupRestore(manifestPath) {
+function verifyS7MigrationBackupRestore(manifestPath, trustedRuntime) {
   const absoluteManifestPath = path.resolve(manifestPath);
   assertRegularFile(absoluteManifestPath, 'S7 migration manifest');
   const manifest = JSON.parse(fs.readFileSync(absoluteManifestPath, 'utf8'));
@@ -65,14 +64,23 @@ function verifyS7MigrationBackupRestore(manifestPath) {
   );
   verifyBoundFile(checks, 'RESTORED_COPY', manifest.restore?.destinationPath, manifest.restore?.sha256);
 
-  const Database = requireSqlite();
-  const expectedMigrationRows = migrationContract().map((record) => ({
+  if (trustedRuntime) {
+    const { insist } = require('./v16-native-artifacts');
+    insist(typeof trustedRuntime.Database === 'function' && typeof trustedRuntime.localDbRuntime?.StoreRepository === 'function', 'TRUSTED_MIGRATION_RUNTIME_INVALID');
+    insist(Array.isArray(trustedRuntime.migrationContract) && trustedRuntime.migrationContract.length === TARGET_VERSION
+      && trustedRuntime.migrationContract.every((record, index) => record.version === index + 1 && typeof record.name === 'string' && record.name && typeof record.checksum === 'string' && record.checksum), 'TRUSTED_MIGRATION_CONTRACT_INVALID');
+    insist(Array.isArray(trustedRuntime.allowedV1Checksums) && trustedRuntime.allowedV1Checksums.length > 0
+      && trustedRuntime.allowedV1Checksums.includes(trustedRuntime.migrationContract[0].checksum)
+      && trustedRuntime.allowedV1Checksums.every(value => typeof value === 'string' && value.length > 0), 'TRUSTED_MIGRATION_V1_POLICY_INVALID');
+  }
+  const Database = trustedRuntime?.Database ?? requireSqlite();
+  const expectedMigrationRows = (trustedRuntime?.migrationContract ?? migrationContract()).map((record) => ({
     version: Number(record.version),
     name: String(record.name),
     checksum: String(record.checksum),
     status: 'applied',
   }));
-  const allowedV1Checksums = migrationV1ChecksumWhitelist(expectedMigrationRows);
+  const allowedV1Checksums = trustedRuntime ? new Set(trustedRuntime.allowedV1Checksums) : migrationV1ChecksumWhitelist(expectedMigrationRows);
   let upgraded;
   let upgradedMigrationRows;
   let evaluatedBusinessRowPreservation;
@@ -103,7 +111,7 @@ function verifyS7MigrationBackupRestore(manifestPath) {
       ) && v11Schema.passed === true,
       `records=${JSON.stringify(upgradedMigrationRows)}; v11Schema=${JSON.stringify(v11Schema.violations)}`);
 
-    const runtime = loadLocalDbRuntime();
+    const runtime = trustedRuntime?.localDbRuntime ?? loadLocalDbRuntime();
     const repository = new runtime.StoreRepository(upgraded);
     let preflight;
     try {

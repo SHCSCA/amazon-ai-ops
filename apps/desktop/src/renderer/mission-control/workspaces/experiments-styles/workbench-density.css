@@ -1,0 +1,362 @@
+
+.experiments-page.workspace-page-frame {
+  max-width: none;
+  gap: 9px;
+  margin: 0;
+  padding: 14px 18px 20px;
+}
+
+.experiments-page > .workspace-page-frame__header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 58px;
+  border: 0;
+  border-bottom: 1px solid var(--experiment-line);
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 10px;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__copy {
+  display: grid;
+  gap: 2px;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__eyebrow {
+  display: block;
+  color: #5b73a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__title-line h2 {
+  font-size: 21px;
+  line-height: 1.25;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__description {
+  display: block;
+  overflow: hidden;
+  color: #50617d;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__actions {
+  align-items: center;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip {
+  min-height: 55px;
+  border-radius: 8px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item {
+  gap: 3px;
+  padding: 8px 11px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item dt {
+  font-size: 9px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.experiment-authority,
+.experiment-status {
+  min-height: 20px;
+  padding: 4px 7px;
+  font-size: 9px;
+}
+
+.experiment-preview-note {
+  margin: 2px 0 0;
+  font-size: 9px;
+}
+
+.experiments-layout {
+  gap: 10px;
+  grid-template-columns: minmax(238px, 0.3fr) minmax(0, 1fr);
+}
+
+.experiments-queue {
+  top: 8px;
+  border-radius: 8px;
+}
+
+.experiments-queue .workbench-panel__header {
+  align-items: center;
+  padding: 9px 10px;
+}
+
+.experiments-queue .workbench-panel__title-line h2 {
+  font-size: 13px;
+}
+
+.experiments-queue .workbench-panel__description {
+  font-size: 10px;
+}
+
+.experiments-queue .workbench-panel__status {
+  padding: 2px 6px;
+  font-size: 9px;
+}
+
+.experiments-queue .workbench-panel__body {
+  padding: 9px;
+}
+
+.experiments-queue-tools {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.experiments-queue-tools > input {
+  min-height: 32px;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.experiments-queue-tools > label {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.experiments-queue-list {
+  gap: 0;
+  border: 1px solid #e1e8f2;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.experiments-queue-list > li + li {
+  border-top: 1px solid #e8edf4;
+}
+
+.experiments-queue-list > li > button {
+  gap: 3px;
+  min-height: 59px;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 9px;
+  box-shadow: none;
+}
+
+.experiments-queue-list > li > button:hover,
+.experiments-queue-list > li > button:focus-visible {
+  box-shadow: inset 3px 0 0 #93b5ef;
+  transform: none;
+}
+
+.experiments-queue-list strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiments-queue-list small,
+.experiments-queue-list b {
+  font-size: 9px;
+}
+
+.experiments-pagination {
+  margin-top: 8px;
+}
+
+.experiments-queue .workbench-panel__footer {
+  padding: 6px 10px;
+  font-size: 9px;
+}
+
+.experiment-detail {
+  gap: 8px;
+}
+
+.experiment-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.experiment-detail-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.experiment-detail-context > span {
+  overflow: hidden;
+  color: #5b73a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiment-detail-context > strong {
+  font-size: 11px;
+}
+
+.experiment-actions {
+  grid-column: auto;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.experiment-actions .workspace-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+.experiment-contract {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--experiment-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--experiment-ink);
+}
+
+.experiment-contract > div {
+  background: #fff;
+  padding: 8px 10px;
+}
+
+.experiment-contract > div + div {
+  border-left: 1px solid #e6ebf2;
+}
+
+.experiment-contract dt {
+  margin-bottom: 3px;
+  color: #65728a;
+  font-size: 9px;
+}
+
+.experiment-contract dd {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiment-ledger,
+.experiment-evidence-grid > section,
+.experiment-metrics {
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.experiment-ledger > header,
+.experiment-evidence-grid header,
+.experiment-metrics > header {
+  margin-bottom: 8px;
+}
+
+.experiment-ledger h3,
+.experiment-evidence-grid h3,
+.experiment-metrics h3 {
+  font-size: 12px;
+}
+
+.experiment-ledger header p,
+.experiment-evidence-grid header p,
+.experiment-metrics header p {
+  font-size: 9px;
+}
+
+.experiment-ledger-list {
+  max-height: 190px;
+  gap: 0;
+  border: 1px solid #e1e8f2;
+  border-radius: 7px;
+  overflow: auto;
+}
+
+.experiment-ledger-list article {
+  min-height: 54px;
+  gap: 8px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  padding: 8px;
+}
+
+.experiment-ledger-list article + article {
+  border-top: 1px solid #e8edf4;
+}
+
+.experiment-ledger-list article > span {
+  padding: 5px;
+  font-size: 9px;
+}
+
+.experiment-ledger-list strong,
+.experiment-ledger-list p,
+.experiment-ledger-list small {
+  font-size: 9px;
+}
+
+.experiment-evidence-grid {
+  gap: 8px;
+}
+
+.experiment-variables article,
+.experiment-evidence-grid li {
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+
+.experiment-variables pre {
+  max-height: none;
+  margin-top: 4px;
+  font-size: 9px;
+}
+
+@media (max-width: 1080px) {
+  .experiments-page > .workspace-page-frame__task .task-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .experiments-page > .workspace-page-frame__task .task-banner__actions {
+    justify-content: flex-start;
+  }
+
+  .experiments-layout {
+    grid-template-columns: minmax(210px, .35fr) minmax(0, 1fr);
+  }
+
+  .experiment-actions {
+    flex-wrap: wrap;
+  }
+}

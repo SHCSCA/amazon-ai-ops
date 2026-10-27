@@ -1,16 +1,15 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { appCompositionSource } from '../renderer/app-composition.test-support';
 
 describe('Main Lingxing stable-identity enrollment wiring', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-  const rendererSource = fs.readFileSync(path.join(__dirname, '../renderer/App.tsx'), 'utf8');
+  const source = mainRuntimeModuleContract('main-browser-login-runtime.ts');
+  const rendererSource = appCompositionSource();
 
   it('rejects saved enrollment before entering the visible-browser transition', () => {
-    const login = source.slice(
-      source.indexOf('async function handleBrowserLogin'),
-      source.indexOf('async function performBrowserLoginInUserLane'),
-    );
+    const login = mainRuntimeSectionContract('async function handleBrowserLogin', 'async function performBrowserLoginInUserLane');
     const pendingGuard = login.indexOf("lingxingIdentityReadiness === 'enrollment_pending'");
     const transition = login.indexOf('runUserVisibleBrowserTransition({');
     expect(pendingGuard).toBeGreaterThan(-1);
@@ -19,10 +18,7 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('enrolls from Main-only evidence before committing ready session metadata', () => {
-    const login = source.slice(
-      source.indexOf('async function performBrowserLoginInUserLane'),
-      source.indexOf('async function handleBrowserLogout'),
-    );
+    const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
     const reusedGuard = login.indexOf("connections.lingxingIdentityReadiness === 'enrollment_pending'");
     const downloadCenter = login.indexOf('await navigateToLingxingDownloadCenter(');
     const enroll = login.indexOf('state.storeRepo.enrollLingxingStableExternalAccount({');
@@ -39,10 +35,7 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('enters Ads through the visible ERP menu and reads the authenticated US profile before collection', () => {
-    const login = source.slice(
-      source.indexOf('async function performBrowserLoginInUserLane'),
-      source.indexOf('async function handleBrowserLogout'),
-    );
+    const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
     const erpAdsEntry = login.indexOf('await openLingxingAdsFromErp(lingxingController)');
     const profileEvidence = login.indexOf('await readLingxingAdsProfileEvidence(', erpAdsEntry);
     const singleStoreScope = login.indexOf('await selectOnlyLingxingAdsStore(', profileEvidence);
@@ -56,10 +49,7 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('requires explicit typed authority before resetting only the active store Lingxing session', () => {
-    const login = source.slice(
-      source.indexOf('async function performBrowserLoginInUserLane'),
-      source.indexOf('async function handleBrowserLogout'),
-    );
+    const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
     const recovery = login.indexOf('await recoverLingxingEnrollmentSession({');
     const clearCookies = login.indexOf('await browserContext.clearCookies()', recovery);
     const enroll = login.indexOf('state.storeRepo.enrollLingxingStableExternalAccount({');
@@ -75,11 +65,8 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('continues the same visible enrollment attempt when storage clearing triggers a trusted navigation', () => {
-    expect(source).toContain('function isExpectedLingxingSessionResetNavigation(');
-    const login = source.slice(
-      source.indexOf('async function performBrowserLoginInUserLane'),
-      source.indexOf('async function handleBrowserLogout'),
-    );
+    expect(mainRuntimeFunctionContract('isExpectedLingxingSessionResetNavigation')).toContain('function isExpectedLingxingSessionResetNavigation(');
+    const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
     const storageClear = login.indexOf('await page.evaluate(async () => {');
     const clearCookies = login.indexOf('await browserContext.clearCookies()', storageClear);
     const navigateToLogin = login.indexOf('navigateToLogin: async () => {', clearCookies);
@@ -95,10 +82,7 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('uses only collectionStoreName as the Lingxing collection selector', () => {
-    const target = source.slice(
-      source.indexOf('function authorizedLingxingCollectionTarget'),
-      source.indexOf('function projectBusinessReportFileForRenderer'),
-    );
+    const target = mainRuntimeSectionContract('function authorizedLingxingCollectionTarget', 'function projectBusinessReportFileForRenderer');
     expect(target).toContain('connection.collectionStoreName?.trim()');
     expect(target).not.toContain('connection.externalAccountId?.trim()');
   });
@@ -136,10 +120,7 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
   });
 
   it('re-verifies a configured store reused session with the exact Main-managed saved credential', () => {
-    const login = source.slice(
-      source.indexOf('async function performBrowserLoginInUserLane'),
-      source.indexOf('async function handleBrowserLogout'),
-    );
+    const login = mainRuntimeSectionContract('async function performBrowserLoginInUserLane', 'async function handleBrowserLogout');
     const savedRecoveryAuthority = login.indexOf('const configuredSavedSessionRecoveryAuthorized =');
     const recovery = login.indexOf('const configuredSessionRecovered = await resetConfiguredLingxingSessionIfAuthorized({');
     const credentialPolicy = login.indexOf('const credentialPolicy = decideLoginSessionCredentialPolicy({');
@@ -191,6 +172,6 @@ describe('Main Lingxing stable-identity enrollment wiring', () => {
     expect(resetHandler).toContain('await api.browserLogout();');
     expect(resetHandler).not.toContain('password');
     expect(rendererSource).toContain('data-login-action="reset-lingxing-session"');
-    expect(source).toContain("failureCode: 'operator_session_reset_requested'");
+    expect(mainRuntimeFunctionContract('handleBrowserLogout')).toContain("failureCode: 'operator_session_reset_requested'");
   });
 });

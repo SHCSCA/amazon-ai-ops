@@ -51,8 +51,9 @@ export async function runWorkflowInvalidatingMutation<T>(
   source: WorkflowInvalidationSource,
   task: () => Promise<T>,
   target?: WorkflowEventTarget,
+  canInvalidate: () => boolean = () => true,
 ): Promise<T> {
   const result = await task();
-  notifyWorkflowInvalidated(source, target);
+  if (canInvalidate()) notifyWorkflowInvalidated(source, target);
   return result;
 }

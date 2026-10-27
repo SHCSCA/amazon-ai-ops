@@ -1,7 +1,9 @@
+import { readStyleComposition } from './styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import * as AppModule from './App';
+import { appCompositionSource } from './app-composition.test-support';
 import {
   buildBrowserLoginRequest,
   describeLoginSession,
@@ -97,7 +99,7 @@ describe('headerSessionStatusLabel', () => {
   });
 
   it('uses the Main-verified store result instead of promoting the submitted username in Renderer', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
 
     expect(source).toContain('setLoginState(true, session.currentStore, session)');
     expect(source).not.toContain('setLoginState(true, request.username, session)');
@@ -106,8 +108,8 @@ describe('headerSessionStatusLabel', () => {
   });
 
   it('exposes unverified session detail as a focusable warning status instead of title-only copy', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+    const source = appCompositionSource();
+    const css = readStyleComposition(new URL('./styles.css', import.meta.url));
 
     expect(source).toContain('aria-label={describeLoginSession(loginSession)}');
     expect(source).toContain('aria-live="polite"');
@@ -139,7 +141,7 @@ describe('login micro-response contract', () => {
   });
 
   it('requires an explicit visible Lingxing binding before login without exposing the username in DOM data', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
     const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(loginPage).toContain('data-login-connection-status');
@@ -163,7 +165,7 @@ describe('login micro-response contract', () => {
   });
 
   it('uses Main-detected Ads identity and exposes only the one-time confirmation action', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
     const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(loginPage).toContain("connection.provider === 'amazon_ads'");
@@ -184,7 +186,7 @@ describe('login micro-response contract', () => {
   });
 
   it('presents the store-scoped external connection workbench with visible blockers', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
     const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(loginPage).toContain('aria-label="当前店铺外部连接工作台"');
@@ -221,7 +223,7 @@ describe('login micro-response contract', () => {
   });
 
   it('preserves the typed credential draft when same-store connection binding refreshes authority', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
     const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(source).toContain('interface StoreConnectionCredentialDraft');
@@ -236,7 +238,7 @@ describe('login micro-response contract', () => {
   });
 
   it('enters Mission Control without a global external-login gate or manual Ads identity field', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
     const root = source.slice(source.indexOf('export default function App()'));
     expect(root).toContain('<MissionControlRuntime');
     expect(root).not.toContain('isLoggedIn ?');
@@ -269,7 +271,7 @@ describe('login micro-response contract', () => {
   });
 
   it('defines non-layout-shifting login feedback styles', () => {
-    const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('./styles.css', import.meta.url));
 
     expect(css).toContain('.login-submit-button');
     expect(css).toContain('.login-status-line');
@@ -278,7 +280,7 @@ describe('login micro-response contract', () => {
   });
 
   it('keeps remembered passwords in Main while preserving one-click saved login', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
 
     expect(source).toContain('getSavedLoginCredentialStatus');
     expect(source).toContain("credentialSource: 'saved'");
@@ -406,11 +408,11 @@ describe('login micro-response contract', () => {
   });
 
   it('locks Enter submission while login is already busy and disables persistence when encryption is unavailable', () => {
-    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const source = appCompositionSource();
 
     expect(source).toContain('if (loading) return;');
     expect(source.match(/event\.key === 'Enter' && !loading && loginConnectionsReady && handleLogin\(\)/g)).toHaveLength(2);
-    expect(source).toContain("disabled={savedCredentialState === 'encryption_unavailable'}");
+    expect(source).toContain("disabled={loading || savedCredentialState === 'encryption_unavailable'}");
     expect(source).toContain('const remember = encryptionAvailable && (');
     expect(source).toContain('requiresFreshTypedProof ? true : Boolean(saved.rememberPassword)');
     expect(source).toContain('<span>记住密码</span>');

@@ -301,7 +301,7 @@ export type CanonicalWorkspaceProps = {
   storeContext: StoreContextEnvelope | null;
   capabilities?: readonly MissionControlCapabilityProjection[];
   autonomy?: MissionControlAutonomyProjection | null;
-  onRefreshAuthority?: () => Promise<void> | void;
+  onRefreshAuthority?: () => Promise<void | boolean> | void | boolean;
   previewMode: boolean;
 };
 

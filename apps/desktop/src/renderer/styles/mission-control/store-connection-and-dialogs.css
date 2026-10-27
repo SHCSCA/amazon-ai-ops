@@ -1,0 +1,396 @@
+.mission-control-workspace-root .store-connection-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .store-connection-mapping {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 12px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header {
+  display: grid;
+  gap: 3px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header > div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header strong {
+  color: #26344a;
+  font-size: 13px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header span {
+  color: #315b93;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header small {
+  color: #718096;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.mission-control-workspace-root .store-connection-mapping label {
+  display: grid;
+  gap: 4px;
+  color: #5d6b7e;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.mission-control-workspace-root .store-connection-mapping input {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px 9px;
+  color: #253247;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .store-connection-mapping input:focus-visible {
+  border-color: #6ea0e2;
+  outline: 2px solid rgb(37 99 235 / 0.12);
+  outline-offset: 1px;
+}
+
+.mission-control-workspace-root .store-connection-stable-identity,
+.login-stable-identity {
+  display: grid;
+  gap: 3px;
+  border-left: 3px solid #94a3b8;
+  background: #f1f5f9;
+  padding: 7px 9px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.mission-control-workspace-root .store-connection-stable-identity output,
+.login-stable-identity output {
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .store-connection-mapping__actions {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.mission-control-workspace-root .store-connection-feedback {
+  margin: 0 14px 14px;
+  border-left: 3px solid #22c55e;
+  background: #f0fdf4;
+  padding: 8px 10px;
+  color: #166534;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.store-post-commit-sync-warning {
+  margin: 0 14px 14px;
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  padding: 8px 10px;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.login-stable-identity {
+  margin-top: 8px;
+}
+
+.store-connection-overall-status {
+  display: grid;
+  gap: 3px;
+  margin: 12px 0;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #64748b;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.store-connection-overall-status strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.store-connection-overall-status span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.store-connection-overall-status[data-state="connected"] {
+  border-color: #bbf7d0;
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.store-connection-overall-status[data-state="partial"],
+.store-connection-overall-status[data-state="connecting"] {
+  border-color: #fed7aa;
+  border-left-color: #f59e0b;
+  background: #fff7ed;
+}
+
+.store-connection-overall-status[data-state="error"] {
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts,
+.mission-control-dialog .store-connection-unbind-facts {
+  display: grid;
+  gap: 1px;
+  margin: 8px 0 0;
+  background: #e2e8f0;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts > div,
+.mission-control-dialog .store-connection-unbind-facts > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  background: #f8fafc;
+  padding: 6px 8px;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts :is(dt, dd),
+.mission-control-dialog .store-connection-unbind-facts :is(dt, dd) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #475569;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts dd,
+.mission-control-dialog .store-connection-unbind-facts dd {
+  color: #1e293b;
+  font-weight: 650;
+}
+
+.store-scope-create-backdrop,
+.login-unbind-backdrop {
+  position: fixed;
+  z-index: 420;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(23 32 51 / 0.28);
+  padding: 24px;
+}
+
+.store-scope-create-dialog,
+.login-unbind-dialog {
+  display: grid;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 48px rgb(15 23 42 / 0.22);
+}
+
+.store-scope-create-dialog > header,
+.store-scope-create-dialog > footer,
+.login-unbind-dialog > header,
+.login-unbind-dialog > footer {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 18px;
+}
+
+.store-scope-create-dialog > header,
+.login-unbind-dialog > header {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.store-scope-create-dialog > footer,
+.login-unbind-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+}
+
+.store-scope-create-dialog > header > div,
+.login-unbind-dialog > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.store-scope-create-dialog :is(h2, p),
+.login-unbind-dialog :is(h2, p) {
+  margin: 0;
+}
+
+.store-scope-create-dialog h2,
+.login-unbind-dialog h2 {
+  color: #1f2937;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.store-scope-create-dialog p,
+.login-unbind-dialog p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.store-scope-create-dialog > header span,
+.login-unbind-dialog > header span {
+  color: #315b93;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+}
+
+.store-scope-create-dialog > header button {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  background: #fff;
+  color: #64748b;
+}
+
+.store-scope-create-form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.store-scope-create-form label {
+  display: grid;
+  gap: 5px;
+  color: #526177;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.store-scope-create-form input {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: #253247;
+  font-size: 13px;
+}
+
+.store-scope-create-fixed {
+  display: grid;
+  grid-template-columns: 0.8fr 0.7fr 1.8fr;
+  gap: 8px;
+}
+
+.store-scope-create-fixed span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.store-scope-create-fixed small {
+  color: #718096;
+  font-size: 9px;
+}
+
+.store-scope-create-fixed strong {
+  overflow: hidden;
+  color: #334155;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.store-scope-create-limit,
+.store-scope-create-feedback {
+  min-height: 18px;
+  margin: 0;
+  color: #718096;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.store-scope-create-feedback [role="alert"],
+.store-scope-create-switch-error {
+  color: #b91c1c !important;
+}
+
+.store-scope-create-success {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  margin: 18px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  padding: 14px;
+  color: #15803d;
+}
+
+.store-scope-create-success > div {
+  display: grid;
+  gap: 4px;
+}
+
+.login-connection-unbind {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 1080px) {
+  .mission-control-workspace-root .store-connection-mapping-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-control-shell *,
+  .mission-control-workspace-root *,
+  .mission-control-store-gate-shell *,
+  .store-scope-create-backdrop *,
+  .login-unbind-backdrop * {
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,5 +1,7 @@
 # Operator Core Flow Repair — 2026-08-07
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 ## 2026-08-28 分析运行回执、结果归属与实验指标记忆
 
 - UNKNOWN 批次的 `execution_unknown_reconciled` 即使两次只读核验命中目标值，也不能进入分析因果记忆；批次与 Mission 继续失败关闭。回归先真实返回该对账事件（`1 failed / 47 skipped`），修后 unknown 血缘统一排除。新增 `appendCausalEventWithEvidence` 将对账事件和两份证据放进同一 `IMMEDIATE` 事务，重复证据 ID 红测证明任一失败会回滚整笔；仓储+执行完整 `88/88`。

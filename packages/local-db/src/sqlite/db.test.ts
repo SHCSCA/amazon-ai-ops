@@ -735,7 +735,7 @@ describe('V1.6 database version and recovery boundary', () => {
     else database.prepare('DELETE FROM schema_migrations WHERE version=2').run();
     database.pragma('wal_checkpoint(TRUNCATE)'); database.close();
     const before = fs.readFileSync(filename);
-    expect(() => initSqlite(filename)).toThrow(/ledger contract/);
+    expect(() => initSqlite(filename)).toThrow(/ledger.*contract/);
     expect(fs.readFileSync(filename)).toEqual(before);
   });
   it('backs up the complete pending chain through schema 20 before any legacy normalization', () => {

@@ -1,11 +1,18 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8');
-const importSource = readFileSync(new URL('./lingxing-report-import.ts', import.meta.url), 'utf8');
+const source = mainRuntimeModuleContract('main-ipc-registration-runtime.ts').replace(/\r\n/g, '\n');
+const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const importSource = readFileSync(new URL('./lingxing-report-import.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 function between(startMarker: string, endMarker: string, content = source): string {
+  if (content === source) {
+    const section = mainRuntimeSectionContract(startMarker, endMarker);
+    expect(section.indexOf(startMarker), `missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
+    expect(section.length, `missing source boundary: ${endMarker}`).toBeGreaterThan(startMarker.length);
+    return section;
+  }
   const start = content.indexOf(startMarker);
   const end = content.indexOf(endMarker, start + startMarker.length);
   expect(start, `missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
@@ -21,10 +28,10 @@ describe('legacy IPC store authority contract', () => {
       'operation-events:update',
       'operation-events:delete',
     ]) {
-      expect(source).not.toContain(`registerTrackedIpcHandler('${channel}'`);
+      for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain(`registerTrackedIpcHandler('${channel}'`); }
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
-    expect(source).toContain('registerStoreScopedObjectsIpcHandlers(');
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain('registerStoreScopedObjectsIpcHandlers(');
   });
 
   it('retires legacy product IPC in favor of StoreContext plus revision CAS', () => {
@@ -34,14 +41,14 @@ describe('legacy IPC store authority contract', () => {
       'products:save-config',
       'products:bulk-update-target-acos',
     ]) {
-      expect(source).not.toContain(`registerTrackedIpcHandler('${channel}'`);
+      for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain(`registerTrackedIpcHandler('${channel}'`); }
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
     expect(preload).toContain("ipcRenderer.invoke('store-objects:products:update', { storeContext, input })");
   });
 
   it('retires the path-bearing legacy keyword opportunity bridge', () => {
-    expect(source).not.toContain("registerTrackedIpcHandler('v1_5:business-ui:keyword-opportunities'");
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('v1_5:business-ui:keyword-opportunities'"); }
     expect(preload).not.toContain("ipcRenderer.invoke('v1_5:business-ui:keyword-opportunities'");
     expect(preload).toContain("ipcRenderer.invoke('store-ad-listing:keyword-facts:list', { storeContext, input })");
   });
@@ -65,6 +72,7 @@ describe('legacy IPC store authority contract', () => {
 
 describe('collection Renderer boundary contract', () => {
   it('closes orphan resume claims before generic startup import and job recovery', () => {
+    const source = mainRuntimeFunctionContract('initApp');
     const resumeRecovery = source.indexOf(
       '.interruptOrphanedCollectionResumeClaimsForStartup();',
     );
@@ -132,7 +140,7 @@ describe('collection Renderer boundary contract', () => {
     expect(cancellation).toContain('signalActiveCancellation: () =>');
     expect(cancellation).toContain('clearCancellationSignal: clearCancellation');
     expect(cancellation).toContain("current.state !== 'queued' && current.state !== 'running'");
-    expect(cancellation).toContain('Treat that as a safe late-cancel race');
+    expect(cancellation).toContain('clearCancellation();\n        return;');
     expect(cancellation).toContain('readDurableSettlement: ({ requireNewResumeReceipt }) =>');
     expect(cancellation).toContain('readLatestCollectionResumeAttemptReceiptForStore');
     expect(cancellation).toContain("latestResumeReceipt.outcome === 'failed'");
@@ -204,7 +212,7 @@ describe('collection Renderer boundary contract', () => {
       importSource,
     );
     const importer = importSource.slice(importSource.indexOf('export function importLingxingDownloadedReportMetrics'));
-    expect(source).toContain('return importLingxingDownloadedReportMetrics(result, { repository: state.lingxingImportRepo, stores: state.storeRepo }, options)');
+    expect(mainRuntimeFunctionContract('importStoreScopedLingxingDownloadedReportMetrics')).toContain('return importLingxingDownloadedReportMetrics(result, { repository: state.lingxingImportRepo, stores: state.storeRepo }, options)');
 
     const evidenceRead = importer.indexOf('readIndependentLingxingReportControlTotals');
     const missingGuard = importer.indexOf('LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING');
@@ -289,7 +297,7 @@ describe('collection Renderer boundary contract', () => {
     expect(recovery).toContain('const discoveredRun = committedRun ??');
     expect(recovery).toContain('throw classifyLingxingImportRecoveryFailure({');
     expect(recovery).toContain('immutableImportRunPresent: Boolean(discoveredRun)');
-    expect(source).toContain('assertLingxingImportStartupRecoverySafe(importRecovery)');
+    expect(mainRuntimeFunctionContract('initApp')).toContain('assertLingxingImportStartupRecoverySafe(importRecovery)');
   });
 
   it('builds Today facts from US/USD metrics and per-report immutable import proofs', () => {
@@ -332,8 +340,8 @@ describe('US business-date rollover authority contract', () => {
     expect(rollover).toContain("code === 'VISIBLE_BROWSER_TRANSITION_BUSY'");
     expect(rollover).not.toContain('state.browserRuntime');
     expect(rollover).not.toContain('context: Object.freeze({ ...fresh })');
-    expect(rollover).toContain('setInterval(');
-    expect(rollover).toContain('storeBusinessDateAuthorityTimer.unref?.()');
+    expect(mainRuntimeFunctionContract('startStoreBusinessDateAuthorityMonitor')).toContain('setInterval(');
+    expect(mainRuntimeFunctionContract('startStoreBusinessDateAuthorityMonitor')).toContain('storeBusinessDateAuthorityTimer.unref?.()');
   });
 });
 
@@ -358,14 +366,11 @@ describe('policy grant dispatch lifecycle contract', () => {
     expect(login).toContain('正式 Package UI 首轮登录必须手动输入凭证并勾选记住密码。');
     expect(login.indexOf('if (packageUiFreshTypedProofRequired'))
       .toBeLessThan(login.indexOf('state.storeCoordinator.assertActiveStoreContext'));
-    expect(source).not.toContain('detachBrowserRuntimeForStore');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('detachBrowserRuntimeForStore'); }
   });
 
   it('resumes durable pre-batch dispatches only after a verified Ads session is ready', () => {
-    const login = between(
-      'async function handleBrowserLogin',
-      'async function handleBrowserLogout',
-    );
+    const login = mainRuntimeFunctionContract('handleBrowserLogin');
 
     expect(login).toContain('if (outcome.value.adsSessionReady');
     expect(login).toContain('resumePolicyGrantDispatches(');
@@ -415,6 +420,7 @@ describe('policy grant dispatch lifecycle contract', () => {
   });
 
   it('keeps collection_only runtime out of every legacy operator action and leases nested Listing work once', () => {
+    const source = mainRuntimeModuleContract('main-operator-browser-runtime.ts');
     const controller = between(
       'function browserRuntimeController',
       'function browserControllerFromVisibleRuntime',
@@ -426,7 +432,7 @@ describe('policy grant dispatch lifecycle contract', () => {
 
     expect(controller).toContain("runtime.purpose !== 'operator_full'");
     expect(controller).toContain('clearBrowserLoginState()');
-    expect(source).toContain('function withLegacyOperatorBrowserLease<Result>');
+    expect(mainRuntimeModuleContract('main-operator-browser-runtime.ts')).toContain('function withLegacyOperatorBrowserLease<Result>');
     expect(source).toContain('state.executionAuthorityService.withAdmittedBrowserOperation(');
     expect(source.indexOf('state.executionAuthorityService.withAdmittedBrowserOperation('))
       .toBeLessThan(source.indexOf('const lease = browserOperationLeases.acquire({'));

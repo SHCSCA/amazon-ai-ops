@@ -1,400 +1,32 @@
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import type { LingxingCollectionJobSnapshot } from '@amazon-ai-ops/shared-types';
 import type {
-  LingxingCollectionJobSnapshot,
-  LingxingCollectionProgressEvent,
-  LingxingCollectionRequestDto,
-  StoreContextEnvelope,
-} from '@amazon-ai-ops/shared-types';
-import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import type { RunBatchOptions, RunBatchResult } from '@amazon-ai-ops/lingxing-report-collector';
-import type {
-  CollectionInPlaceResumeState,
-  CollectionResumeAttemptReceipt,
-  CollectionResumeClaim,
-} from '@amazon-ai-ops/local-db';
-import { deriveStoreCapsulePaths } from '@amazon-ai-ops/browser-worker';
+  RunBatchOptions,
+  RunBatchResult,
+} from '@amazon-ai-ops/lingxing-report-collector';
 import {
   LingxingCollectionCoordinator,
   normalizeCollectionRequest,
 } from './lingxing-collection-coordinator';
-
-const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'aao-lingxing-coordinator-'));
-
-afterAll(() => {
-  fs.rmSync(TEST_ROOT, { force: true, recursive: true });
-});
-
-function context(storeId = 'store-one', sessionGeneration = 4): StoreContextEnvelope {
-  return normalizeStoreContextEnvelope({
-    storeId,
-    browserProfileId: `profile-${storeId}`,
-    marketplace: 'US',
-    currency: 'USD',
-    businessTimezone: 'America/Los_Angeles',
-    businessDate: '2026-07-22',
-    sessionGeneration,
-  });
-}
-
-function request(storeContext = context()) {
-  return {
-    requestId: 'collect-store-one-001',
-    storeContext,
-    dateStart: '2026-07-15',
-    dateEnd: '2026-07-21',
-    mode: 'create-and-download' as const,
-    reportTypes: ['campaign', 'keyword'] as const,
-  };
-}
-
-function capsuleFor(storeContext = context()) {
-  return deriveStoreCapsulePaths(
-    TEST_ROOT,
-    storeContext.storeId,
-    storeContext.browserProfileId,
-  );
-}
-
-function jobRequest(storeContext = context()): LingxingCollectionRequestDto {
-  return normalizeCollectionRequest(request(storeContext));
-}
-
-function fullEightResumeState(): CollectionInPlaceResumeState {
-  const durableContext = context('store-one', 3);
-  const durableRequest = normalizeCollectionRequest({
-    ...request(durableContext),
-    requestId: 'collect-resume-001',
-    reportTypes: undefined,
-  });
-  const updatedAt = '2026-07-22T07:59:00.000Z';
-  const reports = durableRequest.reportTypes.map((reportType) => ({
-    reportType,
-    state: 'queued' as const,
-    attemptIndex: 0,
-    autoRetryCount: 0,
-    updatedAt,
-  }));
-  return {
-    jobId: 'batch-1',
-    request: durableRequest,
-    reports,
-    job: {
-      jobId: 'batch-1',
-      request: durableRequest,
-      state: 'failed',
-      reports,
-      blockerCode: 'LINGXING_COLLECTION_STEP_FAILED',
-      detail: 'safe pre-create failure',
-      createdAt: '2026-07-22T07:58:00.000Z',
-      completedAt: updatedAt,
-      updatedAt,
-    },
-    batch: {
-      id: 'batch-1',
-      requestId: durableRequest.requestId,
-      storeId: durableContext.storeId,
-      browserProfileId: durableContext.browserProfileId,
-      businessDate: durableContext.businessDate,
-      sessionGeneration: durableContext.sessionGeneration,
-      dateStart: durableRequest.dateStart,
-      dateEnd: durableRequest.dateEnd,
-      storeName: 'SHC001 主店',
-      marketplaceCode: 'US',
-      status: 'failed',
-      downloadDir: path.join(capsuleFor(context()).downloadsDir, 'batch-1'),
-      createdAt: '2026-07-22T07:58:00.000Z',
-      completedAt: updatedAt,
-    },
-    files: [],
-    expectedJobUpdatedAt: updatedAt,
-    authorityProofSha256: 'a'.repeat(64),
-  };
-}
-
-function resultFor(options: RunBatchOptions): RunBatchResult {
-  const now = '2026-07-22T08:00:00.000Z';
-  const requestDto: LingxingCollectionRequestDto = {
-    requestId: options.requestId,
-    storeContext: options.storeContext,
-    dateStart: options.dateStart,
-    dateEnd: options.dateEnd,
-    mode: 'create-and-download',
-    reportTypes: [...(options.reportTypes || [])],
-  };
-  const reports = requestDto.reportTypes.map((reportType) => ({
-    reportType,
-    state: 'downloaded' as const,
-    attemptIndex: 0,
-    autoRetryCount: 0,
-    updatedAt: now,
-  }));
-  const downloadDir = path.join(options.rootDownloadDir, 'batch-1');
-  fs.mkdirSync(downloadDir, { recursive: true });
-  const files = requestDto.reportTypes.map((reportType) => {
-    const filePath = path.join(downloadDir, `${reportType}.csv`);
-    fs.writeFileSync(filePath, 'date,cost\n2026-07-21,1.00\n', 'utf8');
-    return {
-      id: `file-${reportType}`,
-      batchId: 'batch-1',
-      reportType,
-      displayName: reportType,
-      status: 'downloaded' as const,
-      maxAutoRetries: 2,
-      autoRetryCount: 0,
-      filePath,
-      fileSizeBytes: fs.statSync(filePath).size,
-      attemptErrors: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-  });
-  const manifestPath = path.join(downloadDir, 'manifest.json');
-  fs.writeFileSync(manifestPath, '{}\n', 'utf8');
-  return {
-    batch: {
-      id: 'batch-1',
-      requestId: options.requestId,
-      storeId: options.storeContext.storeId,
-      browserProfileId: options.storeContext.browserProfileId,
-      businessDate: options.storeContext.businessDate,
-      sessionGeneration: options.storeContext.sessionGeneration,
-      dateStart: options.dateStart,
-      dateEnd: options.dateEnd,
-      storeName: options.storeDisplayName,
-      marketplaceCode: 'US',
-      status: 'completed',
-      downloadDir,
-      manifestPath,
-      createdAt: now,
-      completedAt: now,
-    },
-    files,
-    job: {
-      jobId: 'batch-1',
-      request: requestDto,
-      state: 'completed',
-      reports,
-      createdAt: now,
-      updatedAt: now,
-      completedAt: now,
-    },
-  };
-}
-
-function progressFor(options: RunBatchOptions): LingxingCollectionProgressEvent {
-  const reportTypes = [...(options.reportTypes || [])];
-  return {
-    eventId: 'batch-1:1',
-    emittedAt: '2026-07-22T08:00:00.000Z',
-    job: {
-      jobId: 'batch-1',
-      request: {
-        requestId: options.requestId,
-        storeContext: options.storeContext,
-        dateStart: options.dateStart,
-        dateEnd: options.dateEnd,
-        mode: 'create-and-download',
-        reportTypes,
-      },
-      state: 'running',
-      reports: reportTypes.map((reportType) => ({
-        reportType,
-        state: 'queued',
-        attemptIndex: 0,
-        autoRetryCount: 0,
-        updatedAt: '2026-07-22T08:00:00.000Z',
-      })),
-      createdAt: '2026-07-22T08:00:00.000Z',
-      updatedAt: '2026-07-22T08:00:00.000Z',
-    },
-  };
-}
-
-function harness(options: {
-  preflight?: () => void | Promise<void>;
-  productionImport?: boolean;
-  omitInjectedRunner?: boolean;
-} = {}) {
-  let active = context();
-  let cancelled = false;
-  const persistedProgress: LingxingCollectionProgressEvent[] = [];
-  const published: LingxingCollectionProgressEvent[] = [];
-  const persistedResults: RunBatchResult[] = [];
-  const persistedImportStates: LingxingCollectionJobSnapshot[] = [];
-  const resumeProgress: LingxingCollectionProgressEvent[] = [];
-  const resumeFinalized: Array<{ outcome: string; claimVersion: number }> = [];
-  let resumeClaimSequence = 0;
-  const nextResumeClaim = (claim?: any) => {
-    resumeClaimSequence += 1;
-    return {
-      storeId: context().storeId,
-      attemptId: claim?.attemptId ?? 'attempt-coordinator-resume',
-      jobId: claim?.jobId ?? 'batch-1',
-      requestId: claim?.requestId ?? 'collect-resume-001',
-      claimToken: `token-${resumeClaimSequence}`,
-      expectedJobUpdatedAt: claim?.expectedJobUpdatedAt ?? '2026-07-22T07:59:00.000Z',
-      expectedAuthorityProofSha256: 'a'.repeat(64),
-      version: (claim?.version ?? 0) + 1,
-      claimedAt: claim?.claimedAt ?? '2026-07-22T07:59:30.000Z',
-    };
-  };
-  const importResult = vi.fn(async () => ({ inserted: 12 }));
-  const receiptFor = (
-    claim: CollectionResumeClaim,
-    outcome: CollectionResumeAttemptReceipt['outcome'],
-    completedAt = claim.expectedJobUpdatedAt,
-  ): CollectionResumeAttemptReceipt => ({
-    storeId: claim.storeId,
-    attemptId: claim.attemptId,
-    jobId: claim.jobId,
-    requestId: claim.requestId,
-    outcome,
-    baseJobUpdatedAt: '2026-07-22T07:59:00.000Z',
-    finalJobUpdatedAt: claim.expectedJobUpdatedAt,
-    baseAuthorityProofSha256: 'a'.repeat(64),
-    finalAuthorityProofSha256: 'b'.repeat(64),
-    durableSessionGeneration: 3,
-    executionSessionGeneration: 4,
-    executionContextSha256: 'c'.repeat(64),
-    claimedAt: claim.claimedAt,
-    completedAt,
-  });
-  const resumeFinalize = vi.fn((_storeId: string, input: any) => {
-    resumeFinalized.push({ outcome: input.outcome, claimVersion: input.claim.version });
-    return receiptFor(input.claim, input.outcome, input.completedAt);
-  });
-  const resumeInterrupt = vi.fn((_storeId: string, input: any) => {
-    resumeFinalized.push({ outcome: 'interrupted', claimVersion: input.claim.version });
-    return receiptFor(input.claim, 'interrupted');
-  });
-  const clearCancellation = vi.fn();
-  const acquireCollectionResumeClaimForStore = vi.fn((_storeId, input) => (
-    nextResumeClaim({
-      jobId: input.jobId,
-      requestId: input.requestId,
-      expectedJobUpdatedAt: input.expectedJobUpdatedAt,
-      version: 0,
-    })
-  ));
-  const operation = {
-    assertStepCurrent: vi.fn(() => {
-      if (active.storeId !== 'store-one' || active.sessionGeneration !== 4) {
-        throw new Error('stale authority');
-      }
-      return { purpose: 'collection' };
-    }),
-    renew: vi.fn(() => {
-      if (active.storeId !== 'store-one' || active.sessionGeneration !== 4) {
-        throw new Error('stale authority');
-      }
-      return { purpose: 'collection' };
-    }),
-  };
-  const runCreateBatch = vi.fn(async (options: RunBatchOptions) => {
-    await options.progressSink(progressFor(options));
-    expect(await options.authorityGuard({
-      jobId: 'batch-1',
-      requestId: options.requestId,
-      storeContext: options.storeContext,
-      reportType: 'campaign',
-      attemptIndex: 0,
-      step: 'navigate',
-    })).toEqual({ allowed: true });
-    return resultFor(options);
-  });
-  const coordinator = new LingxingCollectionCoordinator({
-    authority: {
-      assertActiveStoreContext(value) {
-        const submitted = normalizeStoreContextEnvelope(value);
-        if (submitted.storeId !== active.storeId
-          || submitted.sessionGeneration !== active.sessionGeneration) {
-          throw new Error('stale authority');
-        }
-        return active;
-      },
-      getActiveStoreContext: () => active,
-    },
-    operations: {
-      run: async (_input, execute) => execute(operation as never),
-    },
-    resolveRuntime: (_context, { canary }) => ({
-      storeId: active.storeId,
-      browserProfileId: active.browserProfileId,
-      capsule: capsuleFor(active),
-      automation: {} as never,
-      canary,
-      storeDisplayName: 'SHC001 主店',
-      target: { marketplaceCode: 'US', storeId: active.storeId, storeName: 'SHC001' },
-    }),
-    ...(options.preflight ? { preflight: options.preflight } : {}),
-    ...(options.productionImport
-      ? {
-          productionImport: {
-            policy: 'exact-eight-lineage-v1' as const,
-            run: importResult,
-          },
-        }
-      : { importResult }),
-    persistence: {
-      persistProgress(event) { persistedProgress.push(event); },
-      persistResult(result) { persistedResults.push(result); },
-      persistImportState(job) { persistedImportStates.push(job); },
-      acquireCollectionResumeClaimForStore,
-      commitCollectionResumeProgressForStore(_storeId, input) {
-        resumeProgress.push(input.event);
-        return nextResumeClaim({
-          ...input.claim,
-          expectedJobUpdatedAt: input.event.job.updatedAt,
-        });
-      },
-      commitCollectionResumeRunnerResultForStore(_storeId, input) {
-        return {
-          claim: nextResumeClaim({
-            ...input.claim,
-            expectedJobUpdatedAt: input.job.updatedAt,
-          }),
-          result: { job: input.job, batch: input.batch as any, files: input.files as any },
-        };
-      },
-      advanceCollectionResumeClaimAfterImportForStore(_storeId, input) {
-        return nextResumeClaim(input.claim);
-      },
-      finalizeCollectionResumeAttemptForStore: resumeFinalize,
-      interruptCollectionResumeClaimForStore: resumeInterrupt,
-    },
-    isCancelled: () => cancelled,
-    clearCancellation,
-    publishProgress(event) { published.push(event); },
-    ...(options.omitInjectedRunner ? {} : { runCreateBatch }),
-  });
-  return {
-    coordinator,
-    get active() { return active; },
-    set active(value: StoreContextEnvelope) { active = value; },
-    operation,
-    persistedProgress,
-    persistedResults,
-    persistedImportStates,
-    importResult,
-    published,
-    runCreateBatch,
-    resumeProgress,
-    resumeFinalized,
-    resumeFinalize,
-    resumeInterrupt,
-    acquireCollectionResumeClaimForStore,
-    clearCancellation,
-    get cancelled() { return cancelled; },
-    set cancelled(value: boolean) { cancelled = value; },
-    receiptFor,
-  };
-}
+import {
+  context,
+  request,
+  capsuleFor,
+  jobRequest,
+  fullEightResumeState,
+  resultFor,
+  progressFor,
+  harness,
+} from "./collection-coordinator.test-fixtures";
 
 describe('LingxingCollectionCoordinator', () => {
-  it('re-authorizes the captured store, owns the capsule path, persists progress, and imports', async () => {
+it('re-authorizes the captured store, owns the capsule path, persists progress, and imports', async () => {
     const test = harness();
     const output = await test.coordinator.start(request());
 
@@ -429,7 +61,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toEqual({ inserted: 12 });
   });
 
-  it('keeps a standalone selected-report download out of the production exact-eight import chain', async () => {
+it('keeps a standalone selected-report download out of the production exact-eight import chain', async () => {
     const test = harness({ productionImport: true });
 
     const output = await test.coordinator.start(request());
@@ -446,12 +78,12 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('rejects the legacy import port when no injected collector runner isolates it from production', () => {
+it('rejects the legacy import port when no injected collector runner isolates it from production', () => {
     expect(() => harness({ omitInjectedRunner: true }))
       .toThrow('LINGXING_COLLECTION_LEGACY_IMPORT_PORT_FORBIDDEN');
   });
 
-  it('does not production-import an eight-report result with a failed report checkpoint', async () => {
+it('does not production-import an eight-report result with a failed report checkpoint', async () => {
     const test = harness({ productionImport: true });
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       const result = resultFor(options);
@@ -471,7 +103,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('production-imports one exact eight-report root job with its Main-issued lineage', async () => {
+it('production-imports one exact eight-report root job with its Main-issued lineage', async () => {
     const test = harness({ productionImport: true });
 
     const output = await test.coordinator.start({
@@ -517,7 +149,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toEqual({ inserted: 12 });
   });
 
-  it('strips a runner-forged lineage from a standalone partial production result', async () => {
+it('strips a runner-forged lineage from a standalone partial production result', async () => {
     const test = harness({ productionImport: true });
     const expectedReportTypes = normalizeCollectionRequest({
       ...request(),
@@ -542,7 +174,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('resumes the original full-eight job under the current execution generation and finalizes after import', async () => {
+it('resumes the original full-eight job under the current execution generation and finalizes after import', async () => {
     const test = harness();
     const resumeFrom = fullEightResumeState();
 
@@ -573,7 +205,7 @@ describe('LingxingCollectionCoordinator', () => {
     ]);
   });
 
-  it('resumes and production-imports the original exact-eight durable job through the strict port', async () => {
+it('resumes and production-imports the original exact-eight durable job through the strict port', async () => {
     const test = harness({ productionImport: true });
     const resumeFrom = fullEightResumeState();
 
@@ -593,7 +225,7 @@ describe('LingxingCollectionCoordinator', () => {
     ]);
   });
 
-  it('identifies a pre-claim preflight rejection without acquiring a durable resume claim', async () => {
+it('identifies a pre-claim preflight rejection without acquiring a durable resume claim', async () => {
     const test = harness({
       preflight: async () => {
         throw new Error('download center diagnostic not ready');
@@ -610,7 +242,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.acquireCollectionResumeClaimForStore).not.toHaveBeenCalled();
   });
 
-  it('resolves a durably finalized import failure as a failed terminal result', async () => {
+it('resolves a durably finalized import failure as a failed terminal result', async () => {
     const test = harness();
     test.importResult.mockRejectedValueOnce(new Error('resume parser rejected report'));
 
@@ -630,7 +262,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.resumeInterrupt).not.toHaveBeenCalled();
   });
 
-  it('reconciles a finalize error against the already durable succeeded proof', async () => {
+it('reconciles a finalize error against the already durable succeeded proof', async () => {
     const test = harness();
     test.resumeFinalize.mockRejectedValueOnce(new Error('simulated post-success finalize failure'));
     test.resumeInterrupt.mockImplementationOnce((_storeId, input) => (
@@ -650,7 +282,7 @@ describe('LingxingCollectionCoordinator', () => {
     );
   });
 
-  it('clears a volatile cancellation only after the cancelled terminal receipt is durable', async () => {
+it('clears a volatile cancellation only after the cancelled terminal receipt is durable', async () => {
     const test = harness();
     test.cancelled = true;
 
@@ -674,7 +306,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('retains a volatile cancellation when the cancelled receipt is not durable', async () => {
+it('retains a volatile cancellation when the cancelled receipt is not durable', async () => {
     const test = harness();
     test.cancelled = true;
     test.resumeFinalize.mockRejectedValueOnce(new Error('cancel receipt unavailable'));
@@ -688,7 +320,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.resumeInterrupt).toHaveBeenCalledOnce();
   });
 
-  it('does not publish an earlier store progress event after the selected store changes', async () => {
+it('does not publish an earlier store progress event after the selected store changes', async () => {
     const test = harness();
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       test.active = context('store-two', 1);
@@ -702,7 +334,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.persistedResults).toHaveLength(0);
   });
 
-  it('rejects an invalid or unsupported request before resolving a runtime', () => {
+it('rejects an invalid or unsupported request before resolving a runtime', () => {
     expect(() => normalizeCollectionRequest({
       ...request(),
       dateStart: '2026-07-32',
@@ -717,7 +349,7 @@ describe('LingxingCollectionCoordinator', () => {
     })).toThrow('USD');
   });
 
-  it('turns an operator cancellation into a collector guard decision', async () => {
+it('turns an operator cancellation into a collector guard decision', async () => {
     const test = harness();
     const cancelledRunner = vi.fn(async (options: RunBatchOptions) => {
       const decision = await options.cancellationGuard({
@@ -763,7 +395,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(cancelledRunner).toHaveBeenCalledOnce();
   });
 
-  it('converts a substituted runner success into cancelled and clears only after terminal persistence', async () => {
+it('converts a substituted runner success into cancelled and clears only after terminal persistence', async () => {
     const test = harness();
     let cancelled = false;
     const sequence: string[] = [];
@@ -815,7 +447,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(importResult).not.toHaveBeenCalled();
   });
 
-  it('retains the cancellation guard when cancelled terminal persistence fails', async () => {
+it('retains the cancellation guard when cancelled terminal persistence fails', async () => {
     const test = harness();
     const clearCancellation = vi.fn();
     const coordinator = new LingxingCollectionCoordinator({
@@ -847,7 +479,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(clearCancellation).not.toHaveBeenCalled();
   });
 
-  it('rechecks cancellation after terminal persistence and before importing rows', async () => {
+it('rechecks cancellation after terminal persistence and before importing rows', async () => {
     const test = harness();
     let cancelled = false;
     const persistedImportStates: LingxingCollectionJobSnapshot[] = [];
@@ -882,7 +514,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(importResult).not.toHaveBeenCalled();
   });
 
-  it('requires the runner result to carry the same store authority', async () => {
+it('requires the runner result to carry the same store authority', async () => {
     const test = harness();
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       const result = resultFor(options);
@@ -895,7 +527,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.persistedResults).toHaveLength(0);
   });
 
-  it('persists a failed terminal snapshot but never imports it', async () => {
+it('persists a failed terminal snapshot but never imports it', async () => {
     const test = harness();
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       const result = resultFor(options);
@@ -913,7 +545,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toBeUndefined();
   });
 
-  it('persists canary evidence but never imports canary rows into production metrics', async () => {
+it('persists canary evidence but never imports canary rows into production metrics', async () => {
     const test = harness();
 
     const output = await test.coordinator.start({
@@ -929,7 +561,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(output.importSummary).toBeUndefined();
   });
 
-  it('does not publish terminal success or import when the atomic terminal commit fails', async () => {
+it('does not publish terminal success or import when the atomic terminal commit fails', async () => {
     const test = harness();
     const terminalCommitError = new Error('terminal transaction rolled back');
     const originalProgressCount = test.published.length;
@@ -963,7 +595,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('rejects an importable completion when the manifest is missing', async () => {
+it('rejects an importable completion when the manifest is missing', async () => {
     const test = harness();
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       const result = resultFor(options);
@@ -977,7 +609,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.importResult).not.toHaveBeenCalled();
   });
 
-  it('durably marks an import failure so the completed download can be recovered', async () => {
+it('durably marks an import failure so the completed download can be recovered', async () => {
     const test = harness();
     test.importResult.mockRejectedValueOnce(new Error('parser rejected real report'));
 
@@ -997,7 +629,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.published.at(-1)?.job.importState).toBe('failed');
   });
 
-  it('keeps the canary request namespace Main-owned', async () => {
+it('keeps the canary request namespace Main-owned', async () => {
     const test = harness();
 
     await expect(test.coordinator.start({
@@ -1011,7 +643,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.runCreateBatch).not.toHaveBeenCalled();
   });
 
-  it('normalizes omitted report types to the exact eight-report contract', () => {
+it('normalizes omitted report types to the exact eight-report contract', () => {
     const normalized = normalizeCollectionRequest({
       ...request(),
       reportTypes: undefined,
@@ -1022,7 +654,7 @@ describe('LingxingCollectionCoordinator', () => {
     expect(jobRequest()).toEqual(normalizeCollectionRequest(request()));
   });
 
-  it('issues a root lineage only for a full eight-report job and preserves an authorized continuation', async () => {
+it('issues a root lineage only for a full eight-report job and preserves an authorized continuation', async () => {
     const fullHarness = harness();
     const full = await fullHarness.coordinator.start({ ...request(), reportTypes: undefined });
     expect(full.result.job.lineage).toEqual({
@@ -1054,7 +686,7 @@ describe('LingxingCollectionCoordinator', () => {
     });
   });
 
-  it('persists continuation lineage on the first progress event before a runner crash', async () => {
+it('persists continuation lineage on the first progress event before a runner crash', async () => {
     const test = harness();
     test.runCreateBatch.mockImplementationOnce(async (options) => {
       await options.progressSink(progressFor(options));

@@ -1,4 +1,8 @@
-import { normalizeStoreId, type AdExecutionBatchProjection } from '@amazon-ai-ops/shared-types';
+import { normalizeStoreId, type AdExecutionBatchProjection, type AdExecutionStatus } from '@amazon-ai-ops/shared-types';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ReadbackGateIndicator } from './execution-workspace-gate-indicator';
+import { ExecutionReadbackComparison } from './execution-readback-comparison';
 import { describe, expect, it } from 'vitest';
 import { selectExecutionReadbackGate } from './execution-workspace-gate';
 
@@ -8,6 +12,7 @@ const BASE_GRANT_ID = 'GRANT-001';
 
 function makeProjection(overrides: {
   grantId?: string;
+  status?: AdExecutionStatus;
   jobs?: Partial<{
     id: string;
     identity: { campaignId: string; adGroupId: string; keywordId: string };
@@ -20,18 +25,18 @@ function makeProjection(overrides: {
     }>;
   }>[];
 } = {}): AdExecutionBatchProjection {
-  const { grantId = BASE_GRANT_ID, jobs = [{}] } = overrides;
+  const { grantId = BASE_GRANT_ID, jobs = [{}], status = 'queued' } = overrides;
   const storeId = normalizeStoreId('store-a');
   const now = '2026-09-07T00:00:00Z';
   return {
-    batch: { id: BASE_BATCH_ID, storeId, marketplace: 'US', currency: 'USD', missionId: 'mission-a', missionRevision: 1, grantId, actionRevision: 1, status: 'queued', revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now },
+    batch: { id: BASE_BATCH_ID, storeId, marketplace: 'US', currency: 'USD', missionId: 'mission-a', missionRevision: 1, grantId, actionRevision: 1, status, revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now },
     jobs: jobs.map(j => ({
       id: j.id ?? BASE_JOB_ID, storeId, batchId: BASE_BATCH_ID, ordinal: 1, missionId: 'mission-a', grantId,
       proposalId: 'proposal-a', decisionId: 'decision-a', decisionRevision: 1, actionRevision: 1,
       actionType: 'set_keyword_bid', canonicalKeywordId: 'keyword-a', adEntityId: 'entity-a', entityRevision: 1,
       identity: { storeId, marketplace: 'US', currency: 'USD', adsAccountId: 'account-a', objectRevision: 1, campaignId: 'C1', adGroupId: 'AG1', keywordId: 'K1', ...j.identity },
       pageIdentityHash: 'a'.repeat(64), expectedBidCents: 100, targetBidCents: 90, changePct: -10,
-      idempotencyKey: 'key-a', status: 'queued', revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now,
+      idempotencyKey: 'key-a', status, revision: 1, createdSessionGeneration: 1, createdAt: now, updatedAt: now,
       evidence: (j.evidence ?? []).map((e, i) => ({ id: 'evidence-' + i, storeId, contentSha256: String(i).repeat(64), pageIdentityHash: 'a'.repeat(64), canonicalKeywordId: 'keyword-a', objectRevision: 1, capturedSessionGeneration: 1, capturedAt: now, createdAt: now, ...e })),
       events: [],
     })),
@@ -271,9 +276,48 @@ describe('selectExecutionReadbackGate', () => {
         observedBidCents: 90,
       },
     ];
-    const projection = makeProjection({ grantId: BASE_GRANT_ID, jobs: [{ id: BASE_JOB_ID, evidence }] });
+    const projection = makeProjection({ grantId: BASE_GRANT_ID, status: 'succeeded', jobs: [{ id: BASE_JOB_ID, evidence }] });
     const result = selectExecutionReadbackGate(projection, BASE_JOB_ID, BASE_GRANT_ID);
     expect(result.eligible).toBe(true);
     expect(result.blockers).toHaveLength(0);
+  });
+
+  it('never presents UNKNOWN or blocked as verified when all three evidence slots are attached', () => {
+    const evidence = (['before', 'after', 'reload'] as const).map((slot, index) => ({
+      batchId: BASE_BATCH_ID, jobId: BASE_JOB_ID, slot, artifactRef: 'artifact-' + index,
+      observedBidCents: slot === 'before' ? 100 : 90,
+    }));
+    for (const status of ['unknown', 'blocked', 'queued', 'verifying', 'cancelled'] as const) {
+      const projection = makeProjection({ status, jobs: [{ evidence }] });
+      const gate = selectExecutionReadbackGate(projection, BASE_JOB_ID, BASE_GRANT_ID);
+      expect(gate.valuesMatch).toBe(true);
+      expect(gate.distinctEvidence).toBe(true);
+      expect(gate.resultVerified).toBe(false);
+      expect(gate.eligible).toBe(false);
+      const indicator = renderToStaticMarkup(React.createElement(ReadbackGateIndicator, { blockers: gate.blockers }));
+      expect(indicator).toContain('data-gate-blocked="true"');
+      expect(indicator).not.toContain('data-gate-open="true"');
+      const comparison = renderToStaticMarkup(React.createElement(ExecutionReadbackComparison, { projection, jobId: BASE_JOB_ID }));
+      expect(comparison.match(/data-state="attached"/g)).toHaveLength(3);
+      expect(comparison).not.toContain('data-state="ready"');
+      expect(comparison).toContain('尚未完成结果核验');
+    }
+  });
+
+  it('uses verified evidence color only for a successful Main result and never for preview or inconsistent jobs', () => {
+    const evidence = (['before', 'after', 'reload'] as const).map((slot, index) => ({
+      batchId: BASE_BATCH_ID, jobId: BASE_JOB_ID, slot, artifactRef: 'artifact-' + index,
+      observedBidCents: slot === 'before' ? 100 : 90,
+    }));
+    const projection = makeProjection({ status: 'succeeded', jobs: [{ evidence }] });
+    const success = renderToStaticMarkup(React.createElement(ExecutionReadbackComparison, { projection, jobId: BASE_JOB_ID }));
+    expect(success.match(/data-state="ready"/g)).toHaveLength(3);
+    const preview = renderToStaticMarkup(React.createElement(ExecutionReadbackComparison, { projection, jobId: BASE_JOB_ID, previewOnly: true }));
+    expect(preview).not.toContain('data-state="ready"');
+    projection.jobs[0].status = 'unknown';
+    expect(selectExecutionReadbackGate(projection, BASE_JOB_ID, BASE_GRANT_ID).eligible).toBe(false);
+    projection.jobs[0].status = 'succeeded';
+    projection.jobs[0].evidence[2].observedBidCents = 91;
+    expect(selectExecutionReadbackGate(projection, BASE_JOB_ID, BASE_GRANT_ID).eligible).toBe(false);
   });
 });

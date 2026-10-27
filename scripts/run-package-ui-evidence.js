@@ -15,7 +15,7 @@ Usage:
   pnpm run evidence:package-ui -- \\
     --expected-exe-sha256 <64-hex> \\
     --expected-app-content-sha256 <64-hex> \\
-    --user-data-dir <D:\\Temp\\amazon-ai-ops-...> \\
+    --user-data-dir <G:\\Temp\\amazon-ai-ops-...> \\
     --protected-db <C:\\Users\\...\\amazon-ai-ops.db> \\
     --authority-selection <current-production-authority-selection.json> \\
     --run-group <operator-safe-id> \\
@@ -34,8 +34,8 @@ virtualizer contract is verified independently by verify:s7-large-table. It acce
 URL, preview scenario, executable override, credentials, approval, execution,
 export, collection, or Ads-write argument.
 
-Evidence mode requires an existing isolated profile copy under
-D:\\Temp\\amazon-ai-ops*. Electron main binds this exact directory through
+Evidence mode requires an existing isolated profile copy under a local drive's
+Temp\\amazon-ai-ops* subtree. Electron main binds this exact directory through
 app.setPath('userData') before any app.getPath('userData') use; APPDATA is not
 used as an isolation mechanism. Before launch, profile/amazon-ai-ops.db must
 match the explicit protected DB through a WAL-aware read-only SQLite online
@@ -57,7 +57,7 @@ Options:
   --print-package-hashes                 Print fixed EXE + app-content hashes only
   --expected-exe-sha256 <hash>           Required immutable EXE hash
   --expected-app-content-sha256 <hash>   Required immutable app tree hash
-  --user-data-dir <absolute D path>      Required existing isolated profile copy
+  --user-data-dir <absolute local path>  Required existing isolated profile copy
   --protected-db <absolute file path>    Required real AppData DB protected by WAL-aware before/after proof
   --authority-selection <absolute path> Required current production authority-selection receipt
   --run-group <id>                       Optional new immutable run-group id

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { runtimeLogger } from './runtime-logger';
 import {
   EVIDENCE_MODE_ENV,
   EVIDENCE_USER_DATA_DIR_ENV,
@@ -55,7 +56,7 @@ describe('evidence userData path contract', () => {
   });
 
   it.each([PACKAGE_UI_EVIDENCE_MODE, PACKAGE_LAUNCH_SMOKE_MODE])(
-    'sets and verifies the explicit D-drive userData before evidence mode %s proceeds',
+    'sets and verifies the explicit isolated userData before evidence mode %s proceeds',
     (mode) => {
       const expected = `D:\\Temp\\amazon-ai-ops-${mode}\\run-1`;
       const app = {
@@ -63,6 +64,7 @@ describe('evidence userData path contract', () => {
         setPath: vi.fn(),
       };
       const io = fakeIo();
+      const log = vi.spyOn(runtimeLogger, 'info').mockImplementation(() => {});
       const result = configureEvidenceUserDataPath(app, {
         [EVIDENCE_MODE_ENV]: mode,
         [EVIDENCE_USER_DATA_DIR_ENV]: expected,
@@ -75,6 +77,8 @@ describe('evidence userData path contract', () => {
         expect.stringContaining(`"mode": "${mode}"`),
       );
       expect(result).toEqual({ mode, overridden: true, userDataDir: expected });
+      expect(log).toHaveBeenCalledWith('app.evidence_user_data', { identity: result });
+      log.mockRestore();
     },
   );
 
@@ -89,11 +93,23 @@ describe('evidence userData path contract', () => {
     expect(() => validateEvidenceUserDataPath(candidate, fakeIo())).toThrow();
   });
 
-  it('rejects a D-drive junction that resolves outside the approved D:\\Temp subtree', () => {
+  it('rejects a junction that resolves outside the approved Temp subtree', () => {
     expect(() => validateEvidenceUserDataPath(
       'D:\\Temp\\amazon-ai-ops-package-ui\\profile',
       fakeIo('C:\\Users\\wz\\AppData\\Roaming\\@amazon-ai-ops\\desktop'),
-    )).toThrow(/D: drive|symlink|junction/);
+    )).toThrow(/child of|symlink|junction/);
+  });
+
+  it.each(['C', 'F', 'G', 'H'])('accepts a scoped directory on an existing %s drive', (drive) => {
+    const candidate = `${drive}:\\Temp\\amazon-ai-ops-maintenance\\run-1`;
+    expect(validateEvidenceUserDataPath(candidate, fakeIo())).toBe(candidate);
+  });
+
+  it('rejects a junction even when it resolves into another permitted evidence directory', () => {
+    expect(() => validateEvidenceUserDataPath(
+      'G:\\Temp\\amazon-ai-ops-maintenance\\run-1',
+      fakeIo('F:\\Temp\\amazon-ai-ops-maintenance\\run-1'),
+    )).toThrow(/symlink|junction/);
   });
 
   it('fails closed when the mode/path pair is incomplete, unsupported, or not applied by Electron', () => {

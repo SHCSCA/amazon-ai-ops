@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
 import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionFocusReturnTarget, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, buildRecommendationDecisionRequest, hasCurrentRecommendationReviewResolution, parseApprovalSelectionIntent, refreshedApprovalSelection, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
@@ -14,7 +15,7 @@ describe('ApprovalPage dialog focus contract', () => {
 
   it('delegates initial focus, tab wrapping, Escape locking, and focus restoration to the shared scope', async () => {
     const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./approval-workspace.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('const approvalDecisionDialogFocus = useOverlayFocusScope');
     expect(source).toContain('dismissDisabled: Boolean(submittingDecision)');
@@ -520,7 +521,7 @@ describe('parseApprovalSelectionIntent', () => {
 describe('approvalDecisionButtonView', () => {
   it('keeps the first approval surface focused on user decisions', async () => {
     const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./approval-workspace.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('逐条确认动作是否允许执行');
     expect(source).toContain('批准，进入结果核对');
@@ -531,8 +532,8 @@ describe('approvalDecisionButtonView', () => {
 
   it('keeps the per-row approval form in a modal instead of pushing the queue down inline', async () => {
     const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./approval-workspace.tsx', import.meta.url), 'utf8');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('className="product-config-modal-backdrop approval-decision-modal-backdrop"');
     expect(source).toContain('aria-modal="true"');

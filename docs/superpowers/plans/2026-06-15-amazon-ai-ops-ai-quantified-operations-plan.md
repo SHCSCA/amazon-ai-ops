@@ -1,5 +1,7 @@
 # Amazon AI Ops AI Quantified Operations Implementation Plan
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../../PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn Amazon AI Ops from a report/audit tool into a real Amazon ads operating system: collect true daily Lingxing ad data, store it as a historical warehouse, combine rules and AI to diagnose product promotion stage, produce quantitative thresholds and recommendations, then route approved actions into safe execution/readback.

@@ -2,6 +2,9 @@ import type {
   AnalysisAuthorizationBlocker,
   AnalysisAuthorizationBlockerCode,
 } from '@amazon-ai-ops/shared-types';
+import { ANALYSIS_AUTHORIZATION_BLOCKER_CODES } from '@amazon-ai-ops/shared-types';
+
+const analysisBlockerCodes = new Set<string>(ANALYSIS_AUTHORIZATION_BLOCKER_CODES);
 
 export function analysisBlocker(
   code: AnalysisAuthorizationBlockerCode,
@@ -36,9 +39,9 @@ export function analysisErrorCode(error: unknown): AnalysisAuthorizationBlockerC
   const code = error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code ?? '')
     : '';
-  if (code && /^[A-Z][A-Z0-9_]+$/.test(code)) return code as AnalysisAuthorizationBlockerCode;
+  if (analysisBlockerCodes.has(code)) return code as AnalysisAuthorizationBlockerCode;
   const message = error instanceof Error ? error.message : String(error ?? '');
   const prefixed = message.match(/^([A-Z][A-Z0-9_]+):/);
-  if (prefixed) return prefixed[1] as AnalysisAuthorizationBlockerCode;
+  if (prefixed && analysisBlockerCodes.has(prefixed[1])) return prefixed[1] as AnalysisAuthorizationBlockerCode;
   return 'ANALYSIS_INTERRUPTED';
 }

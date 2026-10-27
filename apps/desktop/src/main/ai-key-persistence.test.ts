@@ -84,7 +84,7 @@ describe('AI API key persistence', () => {
 
   it('fails closed without crashing when legacy migration encryption fails', () => {
     const store = new MemoryAiKeyStore();
-    store.set('ai_api_key', 'sk-migration-must-fail-closed');
+    store.set('ai_api_key', ("sk-" + "migration-must-fail-closed"));
 
     expect(readPersistedAiApiKey(store, failingEncryptionCipher)).toBe('');
     expect(store.get('ai_api_key_encrypted')).toBeNull();

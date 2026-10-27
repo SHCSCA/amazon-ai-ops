@@ -178,7 +178,7 @@ describe('buildDiagnosisWorkspaceModel', () => {
 });
 
 describe('ad diagnosis workspace structure', () => {
-  const source = readFileSync(new URL('./ad-quant-page.tsx', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('./ad-quant-workspace.tsx', import.meta.url), 'utf8');
 
   it('renders one shared first-screen task banner', () => {
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);

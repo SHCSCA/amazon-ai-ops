@@ -23,16 +23,16 @@ const expectedTitles = {
 
 const pageTitleBindings = [
   ['operation scope', 'pages/operation-scope-page.tsx', 'operationScope'],
-  ['data collection', 'pages/data-collection-page.tsx', 'dataCollection'],
-  ['data import validation', 'pages/data-import-validation-page.tsx', 'dataImportValidation'],
+  ['data collection', 'pages/collection-view.tsx', 'dataCollection'],
+  ['data import validation', 'pages/import-validation-workspace.tsx', 'dataImportValidation'],
   ['operation events', 'pages/operation-events-page.tsx', 'operationEvents'],
   ['product config', 'pages/product-config-page.tsx', 'productConfig'],
-  ['ad quant', 'pages/ad-quant-page.tsx', 'adQuant'],
-  ['recommendations', 'pages/recommendations-page.tsx', 'recommendations'],
-  ['approval', 'pages/approval-page.tsx', 'approval'],
-  ['keyword opportunities', 'pages/keyword-opportunities-page.tsx', 'keywordOpportunities'],
-  ['listing optimization', 'pages/listing-optimization-page.tsx', 'listingOptimization'],
-  ['delivery', 'pages/delivery-page.tsx', 'delivery'],
+  ['ad quant', 'pages/ad-quant-workspace.tsx', 'adQuant'],
+  ['recommendations', 'pages/recommendation-view.tsx', 'recommendations'],
+  ['approval', 'pages/approval-workspace.tsx', 'approval'],
+  ['keyword opportunities', 'pages/keyword-opportunities-workspace.tsx', 'keywordOpportunities'],
+  ['listing optimization', 'pages/listing-view.tsx', 'listingOptimization'],
+  ['delivery', 'pages/delivery-view.tsx', 'delivery'],
   ['settings', 'pages/settings-page.tsx', 'settings'],
 ] as const;
 
@@ -64,7 +64,7 @@ describe('page header copy contract', () => {
   });
 
   it('uses the task-first PageFrame title for Today instead of the legacy PageHeader contract', () => {
-    const source = readFileSync(new URL('pages/dashboard-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('pages/dashboard-workspace.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('<PageFrame');
     expect(source).toContain('title="今日任务"');
@@ -72,7 +72,7 @@ describe('page header copy contract', () => {
   });
 
   it('uses the task-first PageFrame title for readback instead of the legacy PageHeader contract', () => {
-    const source = readFileSync(new URL('pages/readback-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('pages/readback-view.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('<PageFrame');
     expect(source).toContain('title="结果核对"');

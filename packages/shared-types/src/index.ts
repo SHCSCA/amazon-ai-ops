@@ -12,6 +12,7 @@ export * from './v1_5';
 export * from './operation-event';
 export * from './ad-readback';
 export * from './store';
+export * from './domain-time';
 export * from './store-daily-status';
 export * from './mission-control';
 export * from './lingxing-collection';
@@ -28,6 +29,9 @@ export type {
 export { validateAnalysisRunRecord, validateAnalysisRunMetadata } from './analysis-runs';
 export * from './execution-authority';
 export * from './store-runtime-config';
+export * from './store-collection-automation';
+export { StoreCollectionAutomationError, storeCollectionAutomationSettingKey, readStoreCollectionAutomation } from './store-collection-automation-control.cjs';
+export type { StoreCollectionAutomationErrorCode } from './store-collection-automation-control.cjs';
 export * from './store-collection-schedule';
 export * from './store-evidence-retention';
 // V1.6 Domain models
@@ -46,3 +50,8 @@ export type { MissionStage, MissionStatus, StageTransition, StageCompletionCrite
 export { normalizeDomainIdentifier, normalizeDomainRevision, normalizeDomainStringList, normalizeDomainText, normalizeDomainTimestamp } from './mission-domain';
 export type { ExecutionStatus } from './common';
 export * from './ai-spend';
+export * from './authority-gates';
+export { createRuntimeLogRecord, sanitizeRuntimeLogValue } from './runtime-log-format.cjs';
+export type { RuntimeLogLevel, RuntimeLogPort, RuntimeLogRecord } from './runtime-log-format.cjs';
+export * from './causal-timeline-export';
+export * from './operator-flow';

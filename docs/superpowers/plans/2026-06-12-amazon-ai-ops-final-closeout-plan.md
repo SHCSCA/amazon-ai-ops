@@ -1,5 +1,7 @@
 # Amazon AI Ops Final Closeout Implementation Plan
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../../PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Finish Amazon AI Ops as a user-testable Windows desktop operations console with clear business UI, real Lingxing ad data gates, ad quantification, recommendation/approval/readback flow, keyword and Listing workflows, final evidence, and a no-install executable.

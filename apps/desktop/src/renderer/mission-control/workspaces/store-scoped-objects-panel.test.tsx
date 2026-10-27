@@ -108,7 +108,7 @@ describe('StoreScopedObjectsPanel', () => {
   });
 
   it('explains percentage inputs without exposing the internal save process', () => {
-    const source = readFileSync(new URL('./store-scoped-objects-panel.tsx', import.meta.url), 'utf8');
+    const source = ['store-scoped-objects-panel.tsx','store-objects-contracts.tsx','store-objects-model.tsx','store-objects-inputs.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toContain('界面按百分比填写，保存时自动换算，无需手动输入小数');
     expect(source).not.toContain('Main 保存为 0–1 比率');
@@ -214,7 +214,7 @@ describe('StoreScopedObjectsPanel', () => {
   });
 
   it('presents event removal as recoverable archive with explicit history access', () => {
-    const source = readFileSync(new URL('./store-scoped-objects-panel.tsx', import.meta.url), 'utf8');
+    const source = ['store-scoped-objects-panel.tsx','store-objects-contracts.tsx','store-objects-model.tsx','store-objects-inputs.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('查看已归档事件');
     expect(source).toContain('不会被删除');
     expect(source).toContain('精准检索并恢复');

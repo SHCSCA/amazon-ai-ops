@@ -13,7 +13,7 @@ import type {
   MissionControlTodayProjection,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { missionControlContextKey } from '@amazon-ai-ops/shared-types';
+import { sanitizeCausalExportText, missionControlContextKey } from '@amazon-ai-ops/shared-types';
 import {
   PageFrame,
   SummaryStrip,
@@ -22,6 +22,12 @@ import {
 } from '../../components/workspace';
 import type { NavigationIntent } from '../../navigation';
 import { navigationIntentForMissionControlView } from './registry';
+import { OperatorFlowFeedback } from './operator-flow-feedback';
+import { WorkspaceActionButton } from '../../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../../components/workspace/use-workspace-operation';
+import { useOptionalMissionControlStoreContext } from '../store-context';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { toUserFacingError } from '../../user-facing-error';
 import './canonical-workspace-surfaces.css';
 
 export interface TodayWorkspaceProps {
@@ -32,12 +38,13 @@ export interface TodayWorkspaceProps {
   capabilities?: readonly MissionControlCapabilityProjection[];
   previewMode?: boolean;
   onNavigate: (intent: NavigationIntent) => void;
+  onRefreshAuthority?: () => Promise<void | boolean> | void | boolean;
 }
 
 const TODAY_INTERNAL_OPERATOR_COPY = /\b(?:Main|StoreContext|Authority|Renderer|Profile|Mission|Experiment|UNKNOWN|revision|draft|set_keyword_bid|manifest|fingerprint|dry-run|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|append-only|correction|DECISION|ACTION|READBACK|EFFECT)\b/i;
 
 export function todayOperatorCopy(value: unknown, fallback: string): string {
-  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
+  const normalized = sanitizeCausalExportText(String(value ?? '')).trim().replace(/\s+/g, ' ');
   return !normalized || TODAY_INTERNAL_OPERATOR_COPY.test(normalized) ? fallback : normalized;
 }
 
@@ -49,7 +56,27 @@ export function TodayWorkspace({
   capabilities,
   previewMode = false,
   onNavigate,
+  onRefreshAuthority,
 }: TodayWorkspaceProps) {
+  const storeProvider = useOptionalMissionControlStoreContext();
+  const operationKey = JSON.stringify([storeContext ? missionControlContextKey(storeContext) : null, storeProvider?.contextEpoch ?? 0]);
+  const refreshOperation = useWorkspaceOperation(operationKey);
+  const [refreshFeedback, setRefreshFeedback] = React.useState('');
+  React.useEffect(() => setRefreshFeedback(''), [operationKey]);
+  async function refreshToday() {
+    if (!onRefreshAuthority || !storeContext || loading) return;
+    const ticket = refreshOperation.begin(); if (!ticket) return;
+    setRefreshFeedback('正在刷新当前店铺今日状态…');
+    try {
+      const refreshed = await onRefreshAuthority();
+      if (ticket.isCurrent()) setRefreshFeedback(refreshed === false
+        ? '今日状态刷新未完成，请检查当前店铺连接后重试。'
+        : '已请求刷新当前店铺今日状态，请以最新投影为准。');
+    } catch (caught) {
+      rendererRuntimeLog.error('today.authority_refresh_failed', { error: caught });
+      if (ticket.isCurrent()) setRefreshFeedback(toUserFacingError(caught, '今日状态刷新失败，请检查当前店铺连接后重试。'));
+    } finally { ticket.finish(); }
+  }
   const authorityMatches = Boolean(
     projection
     && storeContext
@@ -74,6 +101,12 @@ export function TodayWorkspace({
     item,
     '当前店铺准备条件未满足，请按上方步骤处理。',
   )) ?? [];
+  const safeRecoveryActions = safeProjection?.blockers.map((reason, index) => {
+    const action = safeProjection.blockerActions?.[index];
+    return action ?? { id: 'legacy-blocker-' + index, code: 'TODAY_PREPARATION_REQUIRED', reason,
+      recoveryLabel: '处理当前准备步骤', targetView: safeProjection.nextAction.targetView,
+      requiredCapabilityId: safeProjection.nextAction.requiredCapabilityId };
+  }) ?? [];
   const safeAttentionItems = safeProjection?.attentionItems.map((item) => todayOperatorCopy(
     item,
     '当前店铺还有待处理事项，请按上方步骤核对。',
@@ -157,6 +190,13 @@ export function TodayWorkspace({
         ) : undefined}
         title="今日任务"
       >
+        {onRefreshAuthority && <div className="workspace-action-row">
+          <WorkspaceActionButton className="workspace-button workspace-button--secondary" busy={refreshOperation.busy} busyLabel="刷新中…"
+            disabled={!storeContext || loading || refreshOperation.busy}
+            disabledReason={!storeContext ? '请先在左侧选择当前店铺，再刷新今日状态。' : '正在读取当前店铺状态，请等待完成后再刷新。'}
+            onClick={() => void refreshToday()}>刷新今日状态</WorkspaceActionButton>
+          {refreshFeedback && <p className="muted-line" role="status">{refreshFeedback}</p>}
+        </div>}
         {!safeProjection ? (
           <WorkspaceState
             description={error
@@ -204,7 +244,8 @@ export function TodayWorkspace({
                       : item.id === 'browser' ? Browser : Database;
                     return (
                       <div className="canonical-chain-item" key={item.id} role="listitem">
-                        <button
+                        <WorkspaceActionButton
+                          disabledReason="目标页面尚未接入，请先检查当前店铺连接与本机服务。"
                           className="canonical-chain-step"
                           data-tone={item.state}
                           disabled={!capabilityAllows(item.targetView)}
@@ -216,7 +257,7 @@ export function TodayWorkspace({
                           <strong>{item.label}</strong>
                           <small>{item.detail}</small>
                           {index < safeProjection.readiness.length - 1 && <ArrowRight aria-hidden="true" size={14} />}
-                        </button>
+                        </WorkspaceActionButton>
                       </div>
                     );
                   })}
@@ -238,13 +279,14 @@ export function TodayWorkspace({
                 </ul>
               </aside>
             </div>
+            {safeProjection.operatorFlow && <OperatorFlowFeedback stages={safeProjection.operatorFlow} allows={capabilityAllows} onNavigate={navigateTo} />}
             <section className="canonical-next-actions">
               <h3>下一推进动作</h3>
               {safeProjection.analysis && (
                 <div className="canonical-analysis-status">
                   <div><span>运营分析 · 美国站 / USD</span><strong>{safeProjection.analysis.activeMissionId ? '运行中运营任务' : '尚无活动运营任务'}</strong><small>{safeProjection.analysis.evidencePackageCount ? `${safeProjection.analysis.evidencePackageCount} 个证据包 · ${safeProjection.analysis.proposalCount} 条不可变建议` : '先进入任务中心运行真实分析。'}</small></div>
                   <dl><div><dt>人工可授权</dt><dd>{safeProjection.analysis.humanEligibleCount}</dd></div><div><dt>策略可授权</dt><dd>{safeProjection.analysis.policyEligibleCount}</dd></div><div><dt>证据有效至</dt><dd>{safeProjection.analysis.latestFreshUntil?.slice(0, 16).replace('T', ' ') ?? '等待分析'}</dd></div></dl>
-                  <button className="workspace-button workspace-button--primary" disabled={!capabilityAllows(safeProjection.analysis.proposalCount ? 'decisions/recommendations' : 'missions/overview')} onClick={() => navigateTo(safeProjection.analysis!.proposalCount ? 'decisions/recommendations' : 'missions/overview')} type="button">{safeProjection.analysis.proposalCount ? '查看建议' : '运行分析'}</button>
+                  <WorkspaceActionButton disabledReason="分析或决策页面尚未接入，请先检查当前店铺连接与本机服务。" className="workspace-button workspace-button--secondary" data-action-priority="secondary" disabled={!capabilityAllows(safeProjection.analysis.proposalCount ? 'decisions/recommendations' : 'missions/overview')} onClick={() => navigateTo(safeProjection.analysis!.proposalCount ? 'decisions/recommendations' : 'missions/overview')} type="button">{safeProjection.analysis.proposalCount ? '查看建议' : '运行分析'}</WorkspaceActionButton>
                 </div>
               )}
               <ol>
@@ -254,20 +296,31 @@ export function TodayWorkspace({
                     <strong>{safeNextActionLabel}</strong>
                     <small>{safeNextActionDetail}</small>
                   </span>
-                  <button
+                  <WorkspaceActionButton
+                    disabledReason={safeNextActionDetail}
                     className="workspace-button workspace-button--secondary"
                     disabled={!nextActionAvailable}
                     onClick={() => navigateTo(safeProjection.nextAction.targetView)}
                     title={nextActionAvailable ? undefined : '目标能力尚未接入生产'}
                     type="button"
-                  >{nextActionAvailable ? '去处理' : '能力未接入'}</button>
+                  >{nextActionAvailable ? '去处理' : '能力未接入'}</WorkspaceActionButton>
                 </li>
               </ol>
               {safeProjection.blockers.length > 0 && (
                 <div className="canonical-preview-notice" role="status">
                   <span>当前阻断</span>
                   <strong>{safeProjection.blockers.length} 项</strong>
-                  <small>{safeBlockers.join('；')}</small>
+                  <ul aria-label="当前阻断与恢复入口">
+                    {safeRecoveryActions.map((blocker, index) => {
+                      const available = capabilityAllows(blocker.targetView, blocker.requiredCapabilityId);
+                      return <li key={blocker.id} data-blocker-code={blocker.code}>
+                        <span>{safeBlockers[index]}</span>
+                        <WorkspaceActionButton disabledReason="当前恢复入口尚未接入，请先刷新应用连接。" className="workspace-button workspace-button--secondary" data-recovery-intent={blocker.targetView}
+                          disabled={!available} title={available ? undefined : '当前恢复入口尚未接入，请先刷新应用连接。'}
+                          onClick={() => navigateTo(blocker.targetView)} type="button">{todayOperatorCopy(blocker.recoveryLabel, '处理当前准备步骤')}</WorkspaceActionButton>
+                      </li>;
+                    })}
+                  </ul>
                 </div>
               )}
               {safeProjection.attentionItems.length > 0 && (

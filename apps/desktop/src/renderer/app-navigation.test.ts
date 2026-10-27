@@ -13,6 +13,7 @@ import {
 } from './App';
 import type { NavigationIntent } from './navigation';
 import { notifyWorkflowInvalidated } from './workflow-invalidation';
+import { appCompositionSource } from './app-composition.test-support';
 import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 
 function navigationEvent(detail: unknown): Event {
@@ -20,7 +21,7 @@ function navigationEvent(detail: unknown): Event {
 }
 
 function appSource(): string {
-  return readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+  return appCompositionSource();
 }
 
 function routerSource(): string {

@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { KeywordOpportunityView } from '../types';
@@ -14,7 +15,7 @@ import {
 
 describe('KeywordOpportunitiesPage dialog focus contracts', () => {
   it('uses independent shared focus scopes for filters and source details', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('const keywordFilterDialogFocus = useOverlayFocusScope');
     expect(source).toContain('open: filterModalOpen');
@@ -49,9 +50,9 @@ describe('keyword opportunity scope authority', () => {
   });
 
   it('prevents cross-scope Listing handoff in the rendered page contract', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('rowsScopeKey !== requestScopeKey');
+    expect(source).toContain('rowsScopeKey !== pageOperation.contextKey');
     expect(source).toContain('const authoritativeScope = rowsAuthorityScopeRef.current');
     expect(source).toContain('dateFrom: authoritativeScope.dateFrom');
     expect(source).toContain('batchId: authoritativeScope.batchId');
@@ -175,8 +176,8 @@ describe('keyword opportunity filter micro-feedback', () => {
   });
 
   it('keeps the 100ms vertical crossfade and aria-live source contract wired', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('keyword-opportunity-filter-feedback');
@@ -188,8 +189,8 @@ describe('keyword opportunity filter micro-feedback', () => {
   });
 
   it('keeps structured filter cells inside a modal instead of the main workbench', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     const modalStart = source.indexOf('className="product-config-modal keyword-filter-modal"');
     const modalEnd = source.indexOf('<footer className="product-config-modal-footer">', modalStart);
@@ -249,8 +250,8 @@ describe('keywordOpportunityActionButtonView', () => {
 
 describe('Phase 5 keyword opportunity user task surface', () => {
   it('frames keyword opportunities as a table-first Listing handoff workbench with evidence folded', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('复核可带入 Listing 的关键词机会');
     expect(source).toContain('关键词机会池');
@@ -274,7 +275,7 @@ describe('Phase 5 keyword opportunity user task surface', () => {
   });
 
   it('uses one TaskBanner and one unnested technical disclosure', () => {
-    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./keyword-opportunities-workspace.tsx', import.meta.url), 'utf8');
     const technicalStart = source.indexOf('<ProgressiveDetails title="机会口径、来源和复核摘要"');
     const technicalEnd = source.indexOf('</ProgressiveDetails>', technicalStart);
 

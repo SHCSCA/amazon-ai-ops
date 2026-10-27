@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { runtimeLogger } from './runtime-logger';
+import { normalizeEvidenceUserDataPath, normalizeWindowsPath } from './evidence-path-policy.cjs';
 
 export const EVIDENCE_MODE_ENV = 'AMAZON_AI_OPS_EVIDENCE_MODE';
 export const EVIDENCE_USER_DATA_DIR_ENV = 'AMAZON_AI_OPS_USER_DATA_DIR';
@@ -8,6 +10,7 @@ export const PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV =
 export const PACKAGE_UI_EVIDENCE_MODE = 'package-ui';
 export const PACKAGE_LAUNCH_SMOKE_MODE = 'package-launch-smoke';
 export const EVIDENCE_USER_DATA_LOG_PREFIX = '[App] evidence-user-data ';
+export const EVIDENCE_USER_DATA_LOG_EVENT = 'app.evidence_user_data';
 export const EVIDENCE_USER_DATA_RUNTIME_MARKER = 'evidence-user-data-runtime.json';
 export const PACKAGE_LAUNCH_WINDOW_READY_MARKER = 'package-launch-window-ready.json';
 
@@ -26,8 +29,6 @@ const ALLOWED_EVIDENCE_MODES = new Set([
   PACKAGE_UI_EVIDENCE_MODE,
   PACKAGE_LAUNCH_SMOKE_MODE,
 ]);
-const ALLOWED_USER_DATA_ROOT = 'D:\\Temp';
-const ALLOWED_TOP_LEVEL_SEGMENT = /^amazon-ai-ops(?:-|$)/i;
 
 interface EvidencePathIo {
   existsSync(filePath: string): boolean;
@@ -49,7 +50,7 @@ const DEFAULT_IO: EvidencePathIo = {
 };
 
 function comparisonPath(filePath: string): string {
-  return path.win32.normalize(filePath).replace(/[\\/]+$/, '').toLowerCase();
+  return normalizeWindowsPath(filePath);
 }
 
 export function isPackageLaunchWindowReadyMarker(
@@ -86,40 +87,15 @@ export function isPackageLaunchWindowReadyMarker(
     || comparisonPath(marker.userDataDir) === comparisonPath(expected.userDataDir);
 }
 
-function normalizeRequestedPath(value: string): string {
-  if (!value || value !== value.trim() || value.includes('\0')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be a non-empty path without surrounding whitespace or NUL bytes.`);
-  }
-  const normalized = path.win32.normalize(value);
-  if (!path.win32.isAbsolute(normalized) || normalized.startsWith('\\\\')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be an absolute local Windows path.`);
-  }
-  if (path.win32.parse(normalized).root.toUpperCase() !== 'D:\\') {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be located on the D: drive.`);
-  }
-  if (normalized.slice(2).includes(':')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} may not contain an alternate data stream.`);
-  }
-  const relative = path.win32.relative(ALLOWED_USER_DATA_ROOT, normalized);
-  if (!relative || relative.startsWith('..\\') || relative === '..' || path.win32.isAbsolute(relative)) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be a child of ${ALLOWED_USER_DATA_ROOT}.`);
-  }
-  const topLevelSegment = relative.split('\\')[0];
-  if (!ALLOWED_TOP_LEVEL_SEGMENT.test(topLevelSegment)) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must use an amazon-ai-ops-prefixed directory under ${ALLOWED_USER_DATA_ROOT}.`);
-  }
-  return normalized;
-}
-
 export function validateEvidenceUserDataPath(
   requestedPath: string,
   io: EvidencePathIo = DEFAULT_IO,
 ): string {
-  const normalized = normalizeRequestedPath(requestedPath);
+  const normalized = normalizeEvidenceUserDataPath(requestedPath);
   if (!io.existsSync(normalized) || !io.isDirectory(normalized)) {
     throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must already exist as a directory before Electron starts.`);
   }
-  const realPath = normalizeRequestedPath(io.realpathSync(normalized));
+  const realPath = normalizeEvidenceUserDataPath(io.realpathSync(normalized));
   if (comparisonPath(realPath) !== comparisonPath(normalized)) {
     throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} may not traverse a symlink or junction.`);
   }
@@ -157,6 +133,6 @@ export function configureEvidenceUserDataPath(
     generatedAt: new Date().toISOString(),
     pid: process.pid,
   }, null, 2)}\n`);
-  console.info(`${EVIDENCE_USER_DATA_LOG_PREFIX}${JSON.stringify(identity)}`);
+  runtimeLogger.info(EVIDENCE_USER_DATA_LOG_EVENT, { identity });
   return identity;
 }

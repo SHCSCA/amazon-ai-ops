@@ -41,7 +41,8 @@ describe('ReasonRequiredDialog', () => {
     const markup = render({ open: true, reasonMinLength: 3 });
     expect(markup).toMatch(/<button[^>]*>\s*确认\s*<\/button>/);
     expect(markup).toContain('disabled=""');
-    expect(markup).toContain('复核原因 *');
+    expect(markup).toContain('aria-label="复核原因"');
+    expect(markup).toContain('<span aria-hidden="true"> *</span>');
     expect(markup).toContain('aria-required="true"');
   });
 
@@ -86,14 +87,14 @@ describe('ReasonRequiredDialog', () => {
       reasonLabel: '解除原因 *',
       reasonPlaceholder: '请说明解除的业务依据',
     });
-    expect(markup).toContain('解除原因 *');
+    expect(markup).toContain('aria-label="解除原因"');
+    expect(markup).toContain('<span aria-hidden="true"> *</span>');
     expect(markup).toContain('请说明解除的业务依据');
   });
 
-  it('hides the hint when reason is empty', () => {
+  it('explains how to enable confirmation when reason is empty', () => {
     const markup = render({ open: true, reasonMinLength: 3 });
-    // Initial render has no reason text, so the helper hint stays hidden.
-    expect(markup).not.toContain('至少输入');
+    expect(markup).toContain('至少输入 3 个非空白字符后再确认。');
   });
 
   it('uses warning tone for soft confirmations', () => {

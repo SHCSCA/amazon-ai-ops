@@ -68,6 +68,22 @@ function assertProgressTemplateContract(contents) {
   if (/SetSilent\s+silent/i.test(contents)) {
     throw new Error('Portable progress template must not enable silent extraction.');
   }
+  const cleanupContract = [
+    /ExecWait[^\n]+\$0[\s\S]+SetOutPath \$EXEDIR\s+(?:#[^\n]*\s+)?StrCpy \$R5 \$0\s+StrCpy \$1 0\s+portable_cleanup_retry:/,
+    /portable_cleanup_retry:\s+IntOp \$1 \$1 \+ 1\s+ClearErrors\s+RMDir \/r "\$INSTDIR"/,
+    /GetFileAttributesW\(w "\$INSTDIR"\) i \.r2 \?e'\s+Pop \$3/,
+    /\$\{If\} \$2 = -1\s+\$\{If\} \$3 = 2\s+\$\{OrIf\} \$3 = 3\s+Goto portable_cleanup_done/,
+    /\$\{If\} \$1 < 40\s+Sleep 500\s+Goto portable_cleanup_retry\s+\$\{EndIf\}/,
+    /!include "FileFunc\.nsh"/,
+    /\$\{GetTime\} "" "LS" \$4 \$5 \$7 \$8 \$9 \$R0 \$R1/,
+    /IntFmt \$9 "%02d" \$9\s+StrCpy \$R2 "\$7-\$5-\$4T\$9:\$R0:\$R1Z"/,
+    /"timestamp":"\$R2","level":"error","event":"portable\.cleanup_failed","context":\{"launcherPid":\$6,"attempts":\$1,"childExitCode":\$R5,"win32Error":\$3\}\}/,
+    /\$\{If\} \$R5 = 0\s+SetErrorLevel 79\s+\$\{Else\}\s+SetErrorLevel \$R5\s+\$\{EndIf\}\s+Goto portable_cleanup_end/,
+    /portable_cleanup_done:\s+SetErrorLevel \$R5\s+portable_cleanup_end:/,
+  ];
+  if (cleanupContract.some((contract) => !contract.test(contents))) {
+    throw new Error('Portable progress template must preserve bounded cleanup, diagnostics, and child exit status.');
+  }
 }
 
 function runElectronBuilderWindows(argv = process.argv.slice(2), injected = {}) {

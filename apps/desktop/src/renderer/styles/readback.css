@@ -363,6 +363,6 @@
   .readback-page *::after {
     scroll-behavior: auto !important;
     animation: none !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 0ms !important;
   }
 }

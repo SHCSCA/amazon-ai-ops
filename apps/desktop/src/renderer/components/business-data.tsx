@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
+import { useOptionalMissionControlStoreContext } from '../mission-control/store-context';
+import { useWorkspaceOperation } from './workspace/use-workspace-operation';
+import { rendererRuntimeLog } from '../runtime-log';
+import { assertStoreRuntimeConfigProjection } from '../store-runtime-config-projection';
 import type {
   BusinessDataPipeline,
   BusinessReportOptionStatus,
@@ -112,11 +116,14 @@ function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipel
 
 export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode } = {}) {
   const scope = useScopeStore((state) => state.scope);
+  const storeAuthority = useOptionalMissionControlStoreContext();
   const mode = options.mode ?? 'scope';
   const [data, setData] = useState<BusinessDataPipeline | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [configurationRequired, setConfigurationRequired] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
   const previousReloadTokenRef = useRef(reloadToken);
 
@@ -124,9 +131,10 @@ export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode }
     () => businessPipelineScopeKey(scope, mode),
     [mode, scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName],
   );
-  // In portfolio mode the request scope intentionally remains stable when only
-  // the globally locked ASIN changes. The hook still returns the live global
-  // scope below so callers never lose the authoritative selection context.
+  const requestKey = JSON.stringify([storeAuthority?.authorityKey, storeAuthority?.contextEpoch,
+    storeAuthority?.phase, scopeKey, mode]);
+  const operation = useWorkspaceOperation(requestKey);
+  // 产品总览读取不随单个 ASIN 改变，返回值仍保留当前全局选择。
   const requestScope = useMemo(
     () => businessPipelineRequestScope(scope, mode),
     [mode, scopeKey],
@@ -134,28 +142,58 @@ export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode }
 
   useEffect(() => {
     let cancelled = false;
+    const isCurrent = operation.capture();
+    const capturedContext = storeAuthority?.authoritativeContext;
+    if (!capturedContext || storeAuthority?.phase !== 'ready') {
+      setData(emptyPipeline(requestScope, '请先选择并连接当前美国站店铺。'));
+      setConfigurationRequired(false);
+      setError(null);
+      setSettledKey(requestKey);
+      setLoading(false);
+      return undefined;
+    }
     const reloadChanged = reloadToken !== previousReloadTokenRef.current;
     const loadDelay = businessPipelineLoadDelay({ firstLoad: firstLoadRef.current, reloadChanged });
     previousReloadTokenRef.current = reloadToken;
     firstLoadRef.current = false;
 
-    async function load() {
+    const load = async () => {
       setLoading(true);
       setError(null);
       try {
         const api = (window as any).electronAPI;
+        if (!api?.getStoreRuntimeConfig) {
+          throw new Error('店铺配置读取接口未暴露');
+        }
+        const authorizedScope = { ...requestScope, storeContext: { ...capturedContext } };
+        const projection = await api.getStoreRuntimeConfig({ ...capturedContext });
+        if (cancelled || !isCurrent()) return;
+        assertStoreRuntimeConfigProjection(projection, capturedContext);
+        if (projection.current === null) {
+          // 空投影是合法待配置状态，不得把尚未读取的业务数据补成零。
+          rendererRuntimeLog.warn('business_data_unavailable', { reason: 'STORE_RUNTIME_CONFIG_MISSING', storeContext: { ...capturedContext }, mode, scope: { ...requestScope } });
+          setData(null);
+          setError(null);
+          setConfigurationRequired(true);
+          setSettledKey(requestKey);
+          return;
+        }
         if (!api?.getBusinessUiDataPipeline) {
           throw new Error('只读数据接口未暴露');
         }
-        const nextData = await api.getBusinessUiDataPipeline(requestScope);
+        const nextData = await api.getBusinessUiDataPipeline(authorizedScope);
+        if (cancelled || !isCurrent()) return;
         let operationEvents: OperationEventView[] | null = null;
         let operationNotes = nextData?.operations?.notes || [];
-        // Product-scoped pipeline events already include global events; ASIN list queries do not.
+        // 产品数据管线已包含全局事件，按 ASIN 单独读取会漏掉它们。
         if (api.listOperationEvents && !requestScope.asin) {
           try {
-            const rows = await api.listOperationEvents({ ...requestScope, limit: 300 });
+            const rows = await api.listOperationEvents({ ...authorizedScope, limit: 300 });
+            if (cancelled || !isCurrent()) return;
             operationEvents = Array.isArray(rows) ? rows : [];
           } catch (caught) {
+            rendererRuntimeLog.error('business.events_read_failed', { error: caught });
+            if (cancelled || !isCurrent()) return;
             operationNotes = [
               ...operationNotes,
               toUserFacingError(caught, '读取运营事件失败，AI 上下文将缺少活动/价格/Listing/库存背景。'),
@@ -170,19 +208,24 @@ export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode }
             notes: operationNotes,
           },
         };
-        if (!cancelled) {
+        if (!cancelled && isCurrent()) {
           setData(mergedData);
+          setConfigurationRequired(false);
+          setSettledKey(requestKey);
         }
       } catch (caught) {
+        rendererRuntimeLog.error('business.pipeline_read_failed', { error: caught });
         const message = toUserFacingError(caught, '读取当前运营范围数据失败。');
-        if (!cancelled) {
+        if (!cancelled && isCurrent()) {
           setError(message);
+          setConfigurationRequired(false);
           setData(emptyPipeline(requestScope, message));
+          setSettledKey(requestKey);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && isCurrent()) setLoading(false);
       }
-    }
+    };
 
     setLoading(true);
     setError(null);
@@ -191,7 +234,7 @@ export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode }
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [requestScope, scopeKey, reloadToken]);
+  }, [requestScope, scopeKey, requestKey, reloadToken]);
 
   useEffect(() => {
     const refresh = () => setReloadToken((current) => current + 1);
@@ -200,9 +243,10 @@ export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode }
   }, []);
 
   return {
-    data,
-    error,
-    loading,
+    data: settledKey === requestKey ? data : null,
+    error: settledKey === requestKey ? error : null,
+    configurationRequired: settledKey === requestKey && configurationRequired,
+    loading: settledKey !== requestKey || loading,
     scope,
     reload: () => setReloadToken((current) => current + 1),
   };

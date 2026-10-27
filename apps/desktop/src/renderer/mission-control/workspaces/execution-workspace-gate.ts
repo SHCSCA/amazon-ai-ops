@@ -1,25 +1,4 @@
-/**
- * execution-workspace-gate.ts
- *
- * Pure selector — no side effects, no IPC, no network. Takes the current
- * execution projection and selected job and returns a structured gate report with
- * a flat `blockers: string[]` array suitable for rendering in a single
- * `role="status"` indicator strip.
- *
- * The 7 gates:
- *  1. authorityBound    — current batch has a grant binding
- *  2. identityVerified — all jobs in the batch have resolved campaign/adgroup/keyword IDs
- *  3. beforeAttached   — "before" evidence slot is populated for the selected job
- *  4. afterAttached    — "after" evidence slot is populated for the selected job
- *  5. reloadAttached   — "reload" evidence slot is populated for the selected job
- *  6. distinctEvidence — the three evidence entries come from different artifact refs
- *  7. valuesMatch      — the saved (after) bid equals the reload bid exactly
- *
- * The selector only reads already-fetched renderer state. It does NOT:
- *   - trigger new IPC calls
- *   - verify SHA-256 hashes
- *   - write anything to SQLite
- */
+/** 只投影已读取的执行结果和七项证据条件；不读取原件、不授权或写入。 */
 
 import type {
   AdExecutionBatchProjection,
@@ -28,6 +7,7 @@ import type {
 } from '@amazon-ai-ops/shared-types';
 
 export interface ExecutionGateResult {
+  resultVerified: boolean;
   authorityBound: boolean;
   identityVerified: boolean;
   beforeAttached: boolean;
@@ -35,9 +15,9 @@ export interface ExecutionGateResult {
   reloadAttached: boolean;
   distinctEvidence: boolean;
   valuesMatch: boolean;
-  /** Concise operator-facing blocker messages. Empty when all gates are open. */
+  /** 当前中文阻断原因。 */
   blockers: string[];
-  /** True when all 7 gates are open. */
+  /** 本机成功结论及全部证据条件同时满足。 */
   eligible: boolean;
 }
 
@@ -74,6 +54,7 @@ export function selectExecutionReadbackGate(
 ): ExecutionGateResult {
   if (!projection || !selectedJobId) {
     return {
+      resultVerified: false,
       authorityBound: false,
       identityVerified: false,
       beforeAttached: false,
@@ -87,14 +68,15 @@ export function selectExecutionReadbackGate(
   }
 
   const { batch, jobs } = projection;
+  const resultVerified = batch.status === 'succeeded' && jobs.length > 0 && jobs.every(job => job.status === 'succeeded');
   const selectedJob = jobs.find((j) => j.id === selectedJobId) ?? null;
   const evidence = selectedJob?.evidence ?? [];
   const slots = evidenceBySlot(evidence, selectedJobId, batch.id);
 
-  // Gate 1: authority bound
+  // 执行授权必须绑定当前批次和任务。
   const authorityBound = Boolean(grantId) && grantId === batch.grantId && selectedJob?.grantId === batch.grantId;
 
-  // Gate 2: identity verified (all jobs in batch must have resolved IDs)
+  // 全批次的标准对象身份均须存在。
   const identityVerified = jobs.length > 0 && jobs.every(
     (job) =>
       Boolean(job.identity?.campaignId) &&
@@ -102,25 +84,26 @@ export function selectExecutionReadbackGate(
       Boolean(job.identity?.keywordId),
   );
 
-  // Gate 3–5: evidence slots
+  // 三段证据各自归属当前任务。
   const beforeAttached = Boolean(slots.before);
   const afterAttached = Boolean(slots.after);
   const reloadAttached = Boolean(slots.reload);
 
-  // Gate 6: distinct evidence (no duplicate artifact refs across the three slots)
+  // 三段证据不能复用同一原件。
   const artifactRefs = [slots.before, slots.after, slots.reload]
     .filter(Boolean)
     .map((e) => e!.artifactRef);
   const distinctEvidence = new Set(artifactRefs).size === artifactRefs.length;
 
-  // Gate 7: values match (after bid === reload bid exactly)
+  // 保存后与重新载入后的观测值必须完全一致。
   const valuesMatch =
     Boolean(slots.after) &&
     Boolean(slots.reload) &&
     Number.isSafeInteger(slots.after!.observedBidCents) && slots.after!.observedBidCents === slots.reload!.observedBidCents;
 
-  // Build blockers list
+  // 未完成核验不能仅凭证据齐全显示成功。
   const blockers: string[] = [];
+  if (!resultVerified) blockers.push('执行结果尚未由本机核验，已附加证据不能替代核验结论');
   if (!authorityBound) blockers.push('缺少执行授权绑定');
   if (!identityVerified) blockers.push('广告对象身份尚未全部核验');
   if (!beforeAttached) blockers.push('缺少变更前证据');
@@ -132,6 +115,7 @@ export function selectExecutionReadbackGate(
   const eligible = blockers.length === 0;
 
   return {
+    resultVerified,
     authorityBound,
     identityVerified,
     beforeAttached,
@@ -144,7 +128,7 @@ export function selectExecutionReadbackGate(
   };
 }
 
-/** Convenience: extracts just the blockers array for quick inline rendering. */
+/** 提供可直接展示的阻断列表。 */
 export function executionGateBlockers(
   projection: AdExecutionBatchProjection | null,
   selectedJobId: string | null,

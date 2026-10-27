@@ -1,7 +1,8 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const mainSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const mainSource = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
 const recommendationMetricSourceAuthority = readFileSync(
   new URL('./recommendation-metric-source-authority.ts', import.meta.url),
   'utf8',
@@ -62,19 +63,16 @@ const deprecatedProductionCalls = [
 
 describe('store-scoped production wiring', () => {
   it('does not call deprecated unscoped repositories from the Main production entrypoint', () => {
-    const violations = deprecatedProductionCalls.flatMap(([label, pattern]) => {
-      const matches = mainSource.match(pattern) ?? [];
-      return matches.map((match) => `${label}: ${match}`);
-    });
+    const violations = mainRuntimeModuleContracts().flatMap(({ file, source }) => deprecatedProductionCalls.flatMap(([label, pattern]) => {
+      const matches = source.match(pattern) ?? [];
+      return matches.map((match) => `${file}: ${label}: ${match}`);
+    }));
 
     expect(violations).toEqual([]);
   });
 
   it('binds legacy-shaped logs and metrics IPC reads to Main-owned active store authority', () => {
-    const ipcBlock = mainSource.slice(
-      mainSource.indexOf('// Logs'),
-      mainSource.indexOf("registerTrackedIpcHandler('v1_5:keywords:build-opportunities'"),
-    );
+    const ipcBlock = mainRuntimeSectionContract("registerTrackedIpcHandler('logs:get'", "registerTrackedIpcHandler('v1_5:keywords:build-opportunities'");
 
     expect(ipcBlock).toContain('resolveBusinessStoreAuthority()');
     expect(ipcBlock).toContain('findByDateRangeForStore');
@@ -86,10 +84,7 @@ describe('store-scoped production wiring', () => {
   });
 
   it('builds the daily report from the captured store business date and store capsule', () => {
-    const dailyReportBlock = mainSource.slice(
-      mainSource.indexOf('async function runDailyReportGeneration'),
-      mainSource.indexOf('// IPC Handlers'),
-    );
+    const dailyReportBlock = mainRuntimeSectionContract('async function runDailyReportGeneration', '// IPC Handlers');
 
     expect(dailyReportBlock).toContain('const today = context.businessDate');
     expect(dailyReportBlock).toContain('storeCapsuleFor(store)');
@@ -98,10 +93,7 @@ describe('store-scoped production wiring', () => {
   });
 
   it('uses immutable store authority for metrics, approval evidence, and writable target lookup', () => {
-    const businessMetricsWhere = mainSource.slice(
-      mainSource.indexOf('function businessMetricsWhere('),
-      mainSource.indexOf('function collectBusinessBatchScopeMismatches('),
-    );
+    const businessMetricsWhere = mainRuntimeSectionContract('function businessMetricsWhere(', 'function collectBusinessBatchScopeMismatches(');
 
     expect(businessMetricsWhere).toContain('store_id = ?');
     expect(businessMetricsWhere).not.toContain('store_name');

@@ -22,6 +22,22 @@ describe('toUserFacingError', () => {
     expect(message).toBe('领星 ERP 登录未完成：仍停留在账号登录页');
   });
 
+  it('redacts credentials and local paths from ordinary errors and fallbacks', () => {
+    const message = toUserFacingError(new Error('读取失败 C:\\Users\\Private Operator\\store.db\npassword=private-password'), '失败');
+    expect(message).toContain('读取失败');
+    expect(message).not.toContain('Private Operator');
+    expect(message).not.toContain('store.db');
+    expect(toUserFacingError(new Error('连接失败 password=private-password'), '失败')).not.toContain('private-password');
+    expect(toUserFacingError(null, '请重试 /private/profile.db')).not.toContain('/private');
+  });
+
+  it('replaces raw technical exceptions with the supplied operator recovery', () => {
+    for (const raw of ['SQLITE_ERROR: no such table: authority_private', 'TypeError: missing property', 'EPERM: C:\\private\\data.db',
+      "Error invoking remote method 'private-method': INTERNAL_REQUEST_ID=request-private"]) {
+      expect(toUserFacingError(new Error(raw), '读取失败，请刷新后重试。')).toBe('读取失败，请刷新后重试。');
+    }
+  });
+
   it('turns live-collection blockers into operator actions', () => {
     expect(toUserFacingError(
       new Error('Browser session is not ready. Set LINGXING_USERNAME and LINGXING_PASSWORD and pass --login.'),
@@ -112,5 +128,10 @@ describe('toReadbackUserFacingError', () => {
       new Error("Error invoking remote method 'export': Error: 结果核对状态冲突：建议版本已变化，请刷新后重试。"),
       '导出回读证据失败。',
     )).toBe('结果核对状态冲突：建议版本已变化，请刷新后重试。');
+  });
+
+  it('redacts sensitive suffixes from stable readback business blockers', () => {
+    expect(toReadbackUserFacingError(new Error('结果核对被阻断：请重试 password=private-password'), '校验失败。'))
+      .toBe('结果核对被阻断：请重试 [已脱敏]');
   });
 });

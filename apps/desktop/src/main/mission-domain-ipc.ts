@@ -52,6 +52,7 @@ export const MISSION_DOMAIN_IPC_ROUTES = Object.freeze({
   'mission-domain:experiments:append-observation': 'experiments.appendObservation',
   'mission-domain:causal:list-events': 'causal.listEvents',
   'mission-domain:causal:append-event': 'causal.appendEvent',
+  'mission-domain:causal:export-timeline': 'causal.exportTimeline',
 } satisfies Record<string, MissionDomainOperation>);
 
 export const MISSION_DOMAIN_IPC_CHANNELS = Object.freeze(

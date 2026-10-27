@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -6,306 +6,21 @@ import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from 
 import { TaskBanner } from '../components/workspace';
 import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
-import type { AppRoute, OperationEventView } from '../types';
-
-export const OPERATION_EVENT_PAGE_COPY = {
-  title: PAGE_HEADER_TITLES.operationEvents,
-  description: '把 Coupon、BD、大促、调价、库存、Listing 和站外动作挂载进 LLM 推理上下文，AI 解释广告波动时会读取这些时间轴标记，避免只看广告表格误判。',
-  primaryTask: '把关键运营动作标记进 LLM 上下文',
-  timelinePanelTitle: '运营事件时间轴',
-  newEventPanelTitle: '新增运营事件',
-};
-
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  coupon: 'Coupon / 折扣券',
-  deal: 'Deal / 促销活动',
-  bd: 'BD 秒杀',
-  ld: 'LD 秒杀',
-  promotion: '大促 / 活动',
-  price_change: '价格调整',
-  listing_change: 'Listing 修改',
-  external_traffic: '站外流量',
-  offsite_promotion: '站外推广',
-  inventory: '库存变化',
-  inventory_issue: '库存异常',
-  review_change: '评分 / Review 变化',
-  note: '人工备注',
-  manual_note: '人工备注',
-};
-
-const IMPACT_LABELS: Record<string, string> = {
-  conversion_up: '预期转化上升',
-  conversion_down: '预期转化下降',
-  traffic_up: '预期流量上升',
-  traffic_down: '预期流量下降',
-  acos_up: '可能推高 ACOS',
-  acos_down: '可能降低 ACOS',
-  unknown: '影响待观察',
-};
-
-const EVENT_USAGE_HINTS: Record<string, string> = {
-  coupon: '优惠券通常会抬高转化预期。AI 会允许短期测试花费，但会重点检查 Coupon 期间是否仍然无订单或 ACOS 失控。',
-  deal: '促销活动会改变正常转化基线。AI 会把 Deal 窗口和普通日期拆开解释，避免误判是否应该加价或降价。',
-  bd: 'BD/秒杀会改变流量和转化基线。AI 会把活动日单独解释，避免把活动流量误判为自然稳定放量。',
-  ld: 'LD/秒杀适合标记短期流量峰值。后续复盘会比较活动前、中、后的点击、订单和 ACOS。',
-  promotion: '大促会放大曝光和预算消耗。AI 会结合阶段判断是放量窗口、测词窗口，还是高风险消耗。',
-  price_change: '价格变化会直接影响 CVR 和 ACOS。调价当天前后的广告阈值不能用同一套解释。',
-  listing_change: 'Listing 修改会影响点击率和转化率。AI 会把标题、主图、五点或 backend terms 的变化纳入广告波动解释。',
-  external_traffic: '站外流量可能带来非广告归因波动。AI 会降低对单日转化异常的误判。',
-  offsite_promotion: '站外推广可能带来非广告归因波动。AI 会降低对单日转化异常的误判。',
-  inventory: '库存变化会影响广告扩量空间。AI 会把库存充足、低库存或补货窗口作为动作风险背景。',
-  inventory_issue: '库存异常会使广告表现失真。AI 会避免在缺货、断货、低库存期间给出激进加价或扩量建议。',
-  review_change: '评分和 Review 变化会改变转化基础。AI 会检查转化下滑是否可能来自口碑变化，而不是关键词本身。',
-  note: '人工备注用于记录其他影响广告判断的信息，会作为 AI 背景，但不会直接触发执行动作。',
-  manual_note: '人工备注用于记录其他影响广告判断的信息，会作为 AI 背景，但不会直接触发执行动作。',
-};
-
-const EVENT_PRESETS = [
-  {
-    label: 'Coupon/折扣',
-    eventType: 'coupon',
-    impactExpectation: 'conversion_up',
-    title: 'Coupon 开始',
-    notes: '填写折扣力度、开始/结束时间、是否只覆盖当前 ASIN。',
-  },
-  {
-    label: 'BD/秒杀',
-    eventType: 'bd',
-    impactExpectation: 'traffic_up',
-    title: 'BD 活动开始',
-    notes: '填写活动价、活动时段、库存准备和报名 ASIN。',
-  },
-  {
-    label: '大促',
-    eventType: 'promotion',
-    impactExpectation: 'traffic_up',
-    title: '大促活动窗口',
-    notes: '填写活动类型、预算策略、是否允许短期 ACOS 上浮。',
-  },
-  {
-    label: 'Deal/促销',
-    eventType: 'deal',
-    impactExpectation: 'conversion_up',
-    title: 'Deal 促销开始',
-    notes: '填写活动类型、活动价、持续时间、关联 ASIN 和预算策略。',
-  },
-  {
-    label: '调价',
-    eventType: 'price_change',
-    impactExpectation: 'conversion_down',
-    title: '产品价格调整',
-    notes: '填写原价、新价、生效时间；AI 会复核调价前后 CVR/ACOS。',
-  },
-  {
-    label: '库存异常',
-    eventType: 'inventory_issue',
-    impactExpectation: 'conversion_down',
-    title: '库存异常或断货风险',
-    notes: '填写可售库存、预计补货时间；避免 AI 给出扩量建议。',
-  },
-  {
-    label: 'Listing 修改',
-    eventType: 'listing_change',
-    impactExpectation: 'unknown',
-    title: 'Listing 内容修改',
-    notes: '填写标题、主图、五点、A+ 或 backend terms 的具体变化。',
-  },
-];
-
-function navigate(route: AppRoute) {
-  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
-}
-
-export type OperationEventViewMode = 'product' | 'global' | 'all';
-
-export function defaultOperationEventViewMode(scopeAsin?: string): OperationEventViewMode {
-  return normalizeAsin(scopeAsin) ? 'product' : 'all';
-}
-
-export function filterOperationEventsForView(
-  events: OperationEventView[],
-  mode: OperationEventViewMode,
-  selectedAsin?: string,
-): OperationEventView[] {
-  const asin = normalizeAsin(selectedAsin);
-  return (events || []).filter((event) => {
-    const eventAsin = normalizeAsin(event.asin);
-    const hasAdObject = Boolean(event.campaignName || event.adGroupName);
-    const isGlobal = !eventAsin && !hasAdObject;
-    if (mode === 'global') return isGlobal;
-    if (mode === 'product') return isGlobal || Boolean(asin && eventAsin === asin);
-    return true;
-  });
-}
-
-export function buildOperationEventDraftForScope(
-  scope: ReturnType<typeof useScopeStore.getState>['scope'],
-  mode: OperationEventViewMode,
-) {
-  return {
-    eventDate: scope.dateTo || scope.dateFrom,
-    storeName: scope.storeName,
-    marketplaceCode: scope.marketplaceCode,
-    asin: mode === 'product' ? scope.asin || '' : '',
-    campaignName: '',
-    adGroupName: '',
-    eventType: 'coupon',
-    impactExpectation: 'unknown',
-    title: '',
-    notes: '',
-    evidencePath: '',
-  };
-}
-
-export function operationEventScopeLabel(event: OperationEventView, selectedAsin?: string): string {
-  const eventAsin = normalizeAsin(event.asin);
-  const hasAdObject = Boolean(event.campaignName || event.adGroupName);
-  if (!eventAsin && !hasAdObject) return '全局';
-  if (hasAdObject) return '广告对象';
-  if (eventAsin && eventAsin === normalizeAsin(selectedAsin)) return '产品';
-  return '其他产品';
-}
-
-export function operationEventCardClassName(eventId: number, recentSavedEventId?: number | null): string {
-  return eventId === recentSavedEventId ? 'event-card event-card-just-saved' : 'event-card';
-}
-
-export function operationEventTimelineCardView(
-  event: OperationEventView,
-  selectedAsin?: string,
-  recentSavedEventId?: number | null,
-) {
-  const scopeLabel = operationEventScopeLabel(event, selectedAsin);
-  const impactLabel = formatImpact(event.impactExpectation);
-  const eventAsin = normalizeAsin(event.asin);
-  const contextTarget = scopeLabel === '产品' && eventAsin
-    ? `产品 ${eventAsin}`
-    : scopeLabel === '广告对象'
-      ? formatEventScope(event)
-      : '全店/全范围';
-
-  return {
-    ariaLabel: `${event.title}，${scopeLabel}事件，${impactLabel}，将进入 AI 上下文`,
-    className: [
-      operationEventCardClassName(event.id, recentSavedEventId),
-      'event-card-ai-context-ready',
-    ].join(' '),
-    contextDetail: `已绑定${contextTarget}，${impactLabel}，广告表现和 AI 诊断会读取。`,
-    contextLabel: 'AI 上下文',
-    scopeLabel,
-  };
-}
-
-export function operationEventInlineSaveLabel(saving: boolean): string {
-  return saving ? '正在保存...' : '保存到上下文';
-}
-
-interface OperationEventInlineSaveButtonInput {
-  baseClassName: string;
-  canSave: boolean;
-  saving: boolean;
-}
-
-export interface OperationEventInlineSaveButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export function operationEventInlineSaveButtonView(input: OperationEventInlineSaveButtonInput): OperationEventInlineSaveButtonView {
-  return {
-    ariaBusy: input.saving ? true : undefined,
-    className: [input.baseClassName, input.saving ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: input.saving || !input.canSave,
-    label: input.saving ? '保存中...' : '保存到上下文',
-    showSpinner: input.saving,
-  };
-}
-
-export function operationEventRefreshButtonView(loading: boolean): OperationEventInlineSaveButtonView {
-  return {
-    ariaBusy: loading ? true : undefined,
-    className: ['secondary-button', loading ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: loading,
-    label: loading ? '刷新中...' : '刷新',
-    showSpinner: loading,
-  };
-}
-
-export function operationEventRowDeleteButtonView(input: {
-  eventId: number;
-  deletingEventId?: number | null;
-}): OperationEventInlineSaveButtonView {
-  const active = input.deletingEventId === input.eventId;
-  const locked = input.deletingEventId != null;
-  return {
-    ariaBusy: active ? true : undefined,
-    className: ['secondary-button compact-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: locked,
-    label: active ? '归档中...' : '归档',
-    showSpinner: active,
-  };
-}
-
-export function operationEventFormClassName(recentlyCleared: boolean): string {
-  return recentlyCleared ? 'operation-event-form operation-event-form-cleared' : 'operation-event-form';
-}
-
-export function buildOperationEventTaskState(input: {
-  visibleEventCount: number;
-  totalEventCount: number;
-  specificEventCount: number;
-  viewMode: OperationEventViewMode;
-  selectedAsin?: string;
-  canSave: boolean;
-  saving: boolean;
-}) {
-  const scopeText = input.viewMode === 'product' && normalizeAsin(input.selectedAsin)
-    ? `当前产品 ${normalizeAsin(input.selectedAsin)}`
-    : input.viewMode === 'global'
-      ? '全店/全范围'
-      : '全部事件';
-  return {
-    title: input.visibleEventCount
-      ? `${scopeText}已有 ${input.visibleEventCount} 条运营事件`
-      : `${scopeText}还缺运营事件上下文`,
-    detail: input.visibleEventCount
-      ? `其中 ${input.specificEventCount} 条绑定产品或广告对象；AI 会在广告表现和建议解释时读取这些事件。`
-      : `先为${scopeText}记录 Coupon、BD、调价、库存或 Listing 变化，避免 AI 只看广告表格误判波动原因。`,
-    primaryActionLabel: input.saving ? '正在保存...' : '记录事件',
-    primaryActionBusy: input.saving,
-    primaryActionBusyLabel: '正在保存...',
-    primaryActionDisabled: input.saving,
-    secondaryActionLabel: '查看广告表现',
-  };
-}
-
-function normalizeAsin(value?: string): string {
-  return String(value || '').trim().toUpperCase();
-}
-
-function formatEventType(type: string): string {
-  return EVENT_TYPE_LABELS[type] || type;
-}
-
-function formatImpact(impact?: string): string {
-  if (!impact) return '影响待观察';
-  return IMPACT_LABELS[impact] || impact;
-}
-
-function formatEventScope(event: OperationEventView): string {
-  const parts = [
-    event.campaignName ? `Campaign: ${event.campaignName}` : '',
-    event.adGroupName ? `Ad group: ${event.adGroupName}` : '',
-    event.asin ? `ASIN: ${event.asin}` : '',
-  ].filter(Boolean);
-  return parts.length ? parts.join(' / ') : '全店/全范围';
-}
+import type { OperationEventView } from '../types';
+import { WorkspaceActionButton } from '../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
+import { businessPipelineScopeKey } from '../components/business-data';
+import { rendererRuntimeLog } from '../runtime-log';
+import { OPERATION_EVENT_PAGE_COPY, EVENT_TYPE_LABELS, IMPACT_LABELS, EVENT_USAGE_HINTS, EVENT_PRESETS, navigate, type OperationEventViewMode, defaultOperationEventViewMode, filterOperationEventsForView, buildOperationEventDraftForScope, operationEventScopeLabel, operationEventCardClassName, operationEventTimelineCardView, operationEventInlineSaveLabel, type OperationEventInlineSaveButtonView, operationEventInlineSaveButtonView, operationEventRefreshButtonView, operationEventRowDeleteButtonView, operationEventFormClassName, buildOperationEventTaskState, formatEventType, formatImpact, formatEventScope } from './operation-events-model';
+export { OPERATION_EVENT_PAGE_COPY, type OperationEventViewMode, defaultOperationEventViewMode, filterOperationEventsForView, buildOperationEventDraftForScope, operationEventScopeLabel, operationEventCardClassName, operationEventTimelineCardView, operationEventInlineSaveLabel, type OperationEventInlineSaveButtonView, operationEventInlineSaveButtonView, operationEventRefreshButtonView, operationEventRowDeleteButtonView, operationEventFormClassName, buildOperationEventTaskState } from './operation-events-model';
 
 export function OperationEventsPage() {
   const { scope } = useScopeStore();
+  const authority = useMissionControlStoreContext();
+  const operationKey = `${authority.authorityKey}|${businessPipelineScopeKey(scope)}`;
+  const operation = useWorkspaceOperation(operationKey);
+  const loadSequence = useRef(0);
   const [events, setEvents] = useState<OperationEventView[]>([]);
   const [viewMode, setViewMode] = useState<OperationEventViewMode>(defaultOperationEventViewMode(scope.asin));
   const [draft, setDraft] = useState(() => buildOperationEventDraftForScope(scope, defaultOperationEventViewMode(scope.asin)));
@@ -317,6 +32,7 @@ export function OperationEventsPage() {
   const [recentDraftClearTick, setRecentDraftClearTick] = useState<number | null>(null);
   const [deletingEventId, setDeletingEventId] = useState<number | null>(null);
   const [eventEditorOpen, setEventEditorOpen] = useState(false);
+  const groupBusy = saving || deletingEventId !== null || loading;
 
   const visibleEvents = useMemo(
     () => filterOperationEventsForView(events, viewMode, scope.asin),
@@ -350,7 +66,7 @@ export function OperationEventsPage() {
     canSave: canSaveEvent,
     saving,
   });
-  const refreshButton = operationEventRefreshButtonView(loading);
+  const refreshButton = operationEventRefreshButtonView(loading && !saving && deletingEventId === null);
 
   function applyPreset(preset: (typeof EVENT_PRESETS)[number]) {
     setDraft({
@@ -378,6 +94,8 @@ export function OperationEventsPage() {
   });
 
   async function loadEvents() {
+    const isCurrent = operation.capture();
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError('');
     try {
@@ -388,20 +106,35 @@ export function OperationEventsPage() {
         marketplaceCode: scope.marketplaceCode,
         limit: 300,
       });
+      if (!isCurrent() || sequence !== loadSequence.current) return;
       setEvents(Array.isArray(rows) ? rows : []);
     } catch (caught) {
+      rendererRuntimeLog.error('operation_events.load_failed', { error: caught });
+      if (!isCurrent() || sequence !== loadSequence.current) return;
       setError(toUserFacingError(caught, '读取运营事件失败'));
     } finally {
-      setLoading(false);
+      if (isCurrent() && sequence === loadSequence.current) setLoading(false);
     }
   }
 
+  async function refreshEvents() {
+    const ticket = operation.begin();
+    if (!ticket) return;
+    try { await loadEvents(); } finally { ticket.finish(); }
+  }
+
   useEffect(() => {
+    setEvents([]);
+    setSaving(false);
+    setDeletingEventId(null);
+    setMessage('');
+    setError('');
+    setEventEditorOpen(false);
     const nextViewMode = defaultOperationEventViewMode(scope.asin);
     setViewMode(nextViewMode);
     setDraft(buildOperationEventDraftForScope(scope, nextViewMode));
-    loadEvents();
-  }, [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.asin]);
+    void loadEvents();
+  }, [operationKey]);
 
   useEffect(() => {
     if (!recentSavedEventId) return undefined;
@@ -416,6 +149,9 @@ export function OperationEventsPage() {
   }, [recentDraftClearTick]);
 
   async function saveEvent() {
+    if (!canSaveEvent) return;
+    const ticket = operation.begin();
+    if (!ticket) return;
     const submittedDraft = draft;
     const resetDraft = buildOperationEventDraftForScope(scope, viewMode);
     setSaving(true);
@@ -432,33 +168,43 @@ export function OperationEventsPage() {
         notes: submittedDraft.notes || undefined,
         evidencePath: submittedDraft.evidencePath || undefined,
       });
+      if (!ticket.isCurrent()) return;
       setMessage('运营事件已记录，会进入广告表现和 AI 诊断上下文。');
       await loadEvents();
+      if (!ticket.isCurrent()) return;
       const createdId = Number(created?.id);
       if (Number.isInteger(createdId) && createdId > 0) setRecentSavedEventId(createdId);
       setEventEditorOpen(false);
     } catch (caught) {
+      rendererRuntimeLog.error('operation_events.save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setDraft(submittedDraft);
       setError(toUserFacingError(caught, '保存运营事件失败'));
       setMessage('保存失败，已恢复刚才填写的事件。');
     } finally {
-      setSaving(false);
+      if (ticket.isCurrent()) setSaving(false);
+      ticket.finish();
     }
   }
 
   async function archiveEvent(id: number) {
-    if (deletingEventId != null) return;
+    const ticket = operation.begin();
+    if (!ticket) return;
     setDeletingEventId(id);
     setError('');
     setMessage('正在归档运营事件...');
     try {
       await (window as any).electronAPI.deleteOperationEvent(id);
+      if (!ticket.isCurrent()) return;
       setMessage('运营事件已归档，历史记录仍保留。');
       await loadEvents();
     } catch (caught) {
+      rendererRuntimeLog.error('operation_events.archive_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setError(toUserFacingError(caught, '归档运营事件失败'));
     } finally {
-      setDeletingEventId(null);
+      if (ticket.isCurrent()) setDeletingEventId(null);
+      ticket.finish();
     }
   }
 
@@ -474,15 +220,16 @@ export function OperationEventsPage() {
         description={taskState.detail}
         meta={`${specificEventCount} 条已绑定产品或广告对象 · 共 ${events.length} 条事件`}
         primaryAction={{
-          label: taskState.primaryActionLabel,
+          label: saving ? '记录事件' : taskState.primaryActionLabel,
           onClick: openEventEditor,
-          disabled: taskState.primaryActionDisabled,
-          busy: taskState.primaryActionBusy,
+          disabled: taskState.primaryActionDisabled || groupBusy,
+          disabledReason: '当前事件操作处理中，请等待完成后打开编辑器。',
+          busy: false,
           busyLabel: taskState.primaryActionBusyLabel,
         }}
         secondaryActions={[
-          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant') },
-          { label: '查看优化建议', onClick: () => navigate('recommendations') },
+          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant'), disabled: groupBusy, disabledReason: '当前事件操作处理中，请等待完成后进入广告表现。' },
+          { label: '查看优化建议', onClick: () => navigate('recommendations'), disabled: groupBusy, disabledReason: '当前事件操作处理中，请等待完成后查看建议。' },
         ]}
         status={visibleEvents.length ? `${visibleEvents.length} 条当前事件` : '待补充上下文'}
         title={taskState.title}
@@ -490,6 +237,7 @@ export function OperationEventsPage() {
       />
 
       <div className="business-stack">
+        {!scope.asin && <p className="muted-line">当前产品视图需要先锁定 ASIN。<WorkspaceActionButton className="secondary-button compact-button" disabled={groupBusy} disabledReason="当前事件操作处理中，请等待完成后选择产品。" onClick={() => navigate('product-management')}>前往产品管理</WorkspaceActionButton></p>}
         <div className="operation-events-workbench-toolbar">
           <div className="operation-events-workbench-summary" aria-label="运营事件摘要">
             <div>
@@ -510,14 +258,14 @@ export function OperationEventsPage() {
             </div>
           </div>
         </div>
-        {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
+        {message && <p className={saving || deletingEventId !== null ? 'muted-line' : 'ready-line'} role="status" aria-live="polite">{message}</p>}
         {error && <p className="blocked-line">{error}</p>}
 
         <Panel title={OPERATION_EVENT_PAGE_COPY.timelinePanelTitle} tone={visibleEvents.length ? 'success' : 'warning'}>
           <div className="business-pill-row operation-events-view-switch">
-            <button
+            <WorkspaceActionButton disabledReason={!scope.asin ? '当前尚未锁定产品，请到产品管理选择产品并锁定 ASIN。' : '当前事件操作尚未结束，请等待完成后切换。'}
               className={`secondary-button compact-button ${viewMode === 'product' ? 'button-active' : ''}`}
-              disabled={!scope.asin}
+              disabled={(!scope.asin) || groupBusy}
               onClick={() => {
                 setViewMode('product');
                 setDraft(buildOperationEventDraftForScope(scope, 'product'));
@@ -525,8 +273,8 @@ export function OperationEventsPage() {
               type="button"
             >
               当前产品
-            </button>
-            <button
+            </WorkspaceActionButton>
+            <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy}
               className={`secondary-button compact-button ${viewMode === 'global' ? 'button-active' : ''}`}
               onClick={() => {
                 setViewMode('global');
@@ -535,14 +283,14 @@ export function OperationEventsPage() {
               type="button"
             >
               全局事件
-            </button>
-            <button
+            </WorkspaceActionButton>
+            <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy}
               className={`secondary-button compact-button ${viewMode === 'all' ? 'button-active' : ''}`}
               onClick={() => setViewMode('all')}
               type="button"
             >
               全部事件
-            </button>
+            </WorkspaceActionButton>
           </div>
           {loading && <p className="muted-line">正在读取运营事件...</p>}
           {!loading && eventsByDate.length === 0 && (
@@ -578,10 +326,10 @@ export function OperationEventsPage() {
                         {event.notes && <p className="muted-line">{event.notes}</p>}
                         {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
                         <div className="action-row">
-                          <button
+                          <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'}
                             aria-busy={deleteButton.ariaBusy}
                             className={deleteButton.className}
-                            disabled={deleteButton.disabled}
+                            disabled={(deleteButton.disabled) || groupBusy}
                             onClick={() => {
                               void archiveEvent(event.id);
                             }}
@@ -589,7 +337,7 @@ export function OperationEventsPage() {
                           >
                             {deleteButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
                             <span>{deleteButton.label}</span>
-                          </button>
+                          </WorkspaceActionButton>
                         </div>
                       </article>
                     );
@@ -638,9 +386,9 @@ export function OperationEventsPage() {
             </StatusPill>
           </div>
           <div className="action-row operation-events-prototype-actions">
-            <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
+            <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy} className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
               {taskState.secondaryActionLabel}
-            </button>
+            </WorkspaceActionButton>
           </div>
         </Panel>
 
@@ -681,9 +429,9 @@ export function OperationEventsPage() {
               </div>
             </div>
             <div className="business-pill-row">
-              <button
+              <WorkspaceActionButton disabledReason={!scope.asin ? '当前尚未锁定产品，请到产品管理选择产品并锁定 ASIN。' : '当前事件操作尚未结束，请等待完成后切换。'}
                 className={`secondary-button compact-button ${viewMode === 'product' ? 'button-active' : ''}`}
-                disabled={!scope.asin}
+                disabled={(!scope.asin) || groupBusy}
                 onClick={() => {
                   setViewMode('product');
                   setDraft(buildOperationEventDraftForScope(scope, 'product'));
@@ -691,8 +439,8 @@ export function OperationEventsPage() {
                 type="button"
               >
                 当前产品
-              </button>
-              <button
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy}
                 className={`secondary-button compact-button ${viewMode === 'global' ? 'button-active' : ''}`}
                 onClick={() => {
                   setViewMode('global');
@@ -701,22 +449,22 @@ export function OperationEventsPage() {
                 type="button"
               >
                 全局事件
-              </button>
-              <button
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy}
                 className={`secondary-button compact-button ${viewMode === 'all' ? 'button-active' : ''}`}
                 onClick={() => setViewMode('all')}
                 type="button"
               >
                 全部事件
-              </button>
+              </WorkspaceActionButton>
             </div>
             <div className="action-row">
-              <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy} className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
                 查看广告表现
-              </button>
-              <button className="primary-button" onClick={() => navigate('recommendations')} type="button">
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy} className="primary-button" onClick={() => navigate('recommendations')} type="button">
                 生成 AI+规则建议
-              </button>
+              </WorkspaceActionButton>
             </div>
           </Panel>
         </div>
@@ -727,9 +475,9 @@ export function OperationEventsPage() {
               <strong>通过弹窗记录事件</strong>
               <p>折扣、BD、调价、库存、Listing 变更和人工备注都在弹窗里填写；主页面只保留时间线和上下文说明。</p>
             </div>
-            <button className="primary-button" onClick={openEventEditor} type="button">
+            <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy} className="primary-button" onClick={openEventEditor} type="button">
               新增运营事件
-            </button>
+            </WorkspaceActionButton>
           </div>
         </Panel>
         </ProgressiveDetails>
@@ -757,66 +505,68 @@ export function OperationEventsPage() {
                 <span>{viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '当前范围'}</span>
                 <h2 id="operation-event-modal-title">{OPERATION_EVENT_PAGE_COPY.newEventPanelTitle}</h2>
               </div>
-              <button className="secondary-button compact-button" disabled={saving} onClick={closeEventEditor} type="button">关闭</button>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} className="secondary-button compact-button" disabled={(saving) || groupBusy} onClick={closeEventEditor} type="button">关闭</WorkspaceActionButton>
             </header>
 
             <div className="product-config-modal-body operation-event-modal-body">
+              {groupBusy && <p id="operation-event-fields-pending" role="note">当前保存或读取尚未结束，字段暂时锁定，请等待完成后继续编辑。</p>}
+              <p id="operation-event-fixed-identity" role="note">店铺与站点继承当前已选择店铺，不能在事件表单跨店修改；需要切店时请使用顶部店铺入口。</p>
               <div className="quick-template-row operation-event-modal-presets" aria-label="运营事件快速模板">
                 {EVENT_PRESETS.map((preset) => (
-                  <button
+                  <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} disabled={(false) || groupBusy}
                     className="secondary-button compact-button"
                     key={preset.label}
                     onClick={() => applyPreset(preset)}
                     type="button"
                   >
                     {preset.label}
-                  </button>
+                  </WorkspaceActionButton>
                 ))}
               </div>
               <div className={operationEventFormClassName(Boolean(recentDraftClearTick))}>
                 <FormTable>
                   <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告表现和 AI 阶段判断。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       type="date"
                       value={draft.eventDate}
                       onChange={(event) => setDraft({ ...draft, eventDate: event.target.value })}
                     />
                   </FormTableRow>
-                  <FormTableRow label="店铺" required hint="默认继承当前全局范围；需要跨店复盘时才手动调整。">
-                    <input
+                  <FormTableRow label="店铺" required hint="按当前店铺锁定，切店请使用顶部店铺入口。">
+                    <input readOnly aria-describedby="operation-event-fixed-identity"
                       value={draft.storeName}
                       onChange={(event) => setDraft({ ...draft, storeName: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="站点" required hint="当前计价防线固定按站点和 USD 解释。">
-                    <input
+                    <input readOnly aria-describedby="operation-event-fixed-identity"
                       value={draft.marketplaceCode}
                       onChange={(event) => setDraft({ ...draft, marketplaceCode: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="ASIN" hint="可选；留空表示全店/全范围事件。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="可选；留空表示全店/全范围"
                       value={draft.asin}
                       onChange={(event) => setDraft({ ...draft, asin: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="广告活动" hint="可选；用于绑定具体 campaign，减少 AI 跨对象误判。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="可选；用于绑定具体 campaign"
                       value={draft.campaignName}
                       onChange={(event) => setDraft({ ...draft, campaignName: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="广告组" hint="可选；用于绑定具体广告组或测词单元。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="可选；用于绑定具体广告组"
                       value={draft.adGroupName}
                       onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="事件类型" required hint={selectedTypeHint}>
-                    <select
+                    <select disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       value={draft.eventType}
                       onChange={(event) => setDraft({ ...draft, eventType: event.target.value })}
                     >
@@ -826,7 +576,7 @@ export function OperationEventsPage() {
                     </select>
                   </FormTableRow>
                   <FormTableRow label="预期影响" required hint="用于提示 AI 对转化、流量和 ACOS 的解释方向。">
-                    <select
+                    <select disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       value={draft.impactExpectation}
                       onChange={(event) => setDraft({ ...draft, impactExpectation: event.target.value })}
                     >
@@ -836,21 +586,21 @@ export function OperationEventsPage() {
                     </select>
                   </FormTableRow>
                   <FormTableRow label="事件标题" required hint="写运营能一眼识别的事件名称。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="例如：10% Coupon 开始、大促报名、主图更新"
                       value={draft.title}
                       onChange={(event) => setDraft({ ...draft, title: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="证据路径" hint="可选：截图、活动页面或本地证明文件路径。">
-                    <input
+                    <input disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="可选：截图、活动页面或本地证明文件路径"
                       value={draft.evidencePath}
                       onChange={(event) => setDraft({ ...draft, evidencePath: event.target.value })}
                     />
                   </FormTableRow>
                   <FormTableRow label="备注" hint="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景。">
-                    <textarea
+                    <textarea disabled={groupBusy} aria-describedby={groupBusy ? 'operation-event-fields-pending' : undefined}
                       placeholder="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景"
                       value={draft.notes}
                       onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
@@ -862,34 +612,34 @@ export function OperationEventsPage() {
                 <strong>{formatEventType(draft.eventType)}</strong>
                 <p>{selectedTypeHint}</p>
               </div>
-              {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
+              {message && <p className={saving || deletingEventId !== null ? 'muted-line' : 'ready-line'} role="status" aria-live="polite">{message}</p>}
               {error && <p className="blocked-line">{error}</p>}
             </div>
 
             <footer className="product-config-modal-footer">
-              <button
+              <WorkspaceActionButton disabledReason={groupBusy ? '当前事件操作尚未结束，请等待返回后重试。' : '请补齐事件日期、店铺、站点和事件标题后保存。'}
                 aria-busy={inlineSaveButton.ariaBusy}
                 className={inlineSaveButton.className}
-                disabled={inlineSaveButton.disabled}
+                disabled={(inlineSaveButton.disabled) || groupBusy}
                 onClick={saveEvent}
                 type="button"
               >
                 {inlineSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
                 <span>{inlineSaveButton.label}</span>
-              </button>
-              <button
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'}
                 aria-busy={refreshButton.ariaBusy}
                 className={refreshButton.className}
-                disabled={refreshButton.disabled}
+                disabled={(refreshButton.disabled) || groupBusy}
                 onClick={() => {
-                  void loadEvents();
+                  void refreshEvents();
                 }}
                 type="button"
               >
                 {refreshButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
                 <span>{refreshButton.label}</span>
-              </button>
-              <button className="secondary-button" disabled={saving} onClick={closeEventEditor} type="button">关闭</button>
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'当前事件读取、保存或归档尚未结束，请等待返回后继续。'} className="secondary-button" disabled={(saving) || groupBusy} onClick={closeEventEditor} type="button">关闭</WorkspaceActionButton>
             </footer>
           </section>
         </div>

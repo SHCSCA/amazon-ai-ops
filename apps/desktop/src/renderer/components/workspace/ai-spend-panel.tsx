@@ -1,7 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useId, useLayoutEffect, useState } from 'react';
 import { AI_PURPOSES, type AiSpendPolicyInput, type AiSpendProjection, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { V16_API_VERSION, type V16ServicesApi } from '@amazon-ai-ops/shared-types/src/v16-api';
 import { Panel } from '../ui';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { useWorkspaceOperation, type WorkspaceOperationTicket } from './use-workspace-operation';
+import { WorkspaceActionButton } from './action-feedback';
 
 type Fields = { [K in Exclude<keyof AiSpendPolicyInput, 'enabled' | 'expectedRevision'>]: string };
 const empty: Fields = { providerBaseUrl: '', model: '', windowStartsAt: '', windowEndsAt: '', budgetMicrousd: '',
@@ -23,11 +26,15 @@ export function AiSpendPanel({ storeContext }: { storeContext: StoreContextEnvel
   const [projection, setProjection] = useState<AiSpendProjection>();
   const [fields, setFields] = useState<Fields>(empty);
   const [enabled, setEnabled] = useState(false);
-  const [busy, setBusy] = useState(true);
+  const [active, setActive] = useState<'refresh' | 'save' | null>(null);
   const [message, setMessage] = useState('');
-  const mounted = useRef(true);
-  const request = <T,>(input: T) => ({ apiVersion: V16_API_VERSION, storeContext, input });
+  const request = <T,>(input: T) => ({ apiVersion: V16_API_VERSION, storeContext: { ...storeContext }, input });
   const contextKey = JSON.stringify(storeContext);
+  const operation = useWorkspaceOperation(contextKey);
+  const busy = operation.busy;
+  const lockId = useId();
+  const disabledReason = !api ? '当前应用尚未连接 AI 费用服务，请重新打开应用。'
+    : '当前 AI 费用或预算操作正在处理，请等待完成后继续。';
   function apply(result: AiSpendProjection) {
     setProjection(result);
     const policy = result.policy;
@@ -37,28 +44,44 @@ export function AiSpendPanel({ storeContext }: { storeContext: StoreContextEnvel
       return [key, moneyKeys.has(key) ? String(Number(value) / 1000000) : timeKeys.has(key) ? String(value).slice(0, 16) : String(value)];
     })) as Fields : empty);
   }
-  async function refresh(): Promise<boolean> {
-    if (!api) { setMessage('当前应用尚未连接 AI 费用服务，请重新打开应用。'); setBusy(false); return false; }
-    setBusy(true);
+  async function readProjection(ticket: WorkspaceOperationTicket): Promise<boolean> {
     try {
+      if (!api) throw new Error('AI 费用服务未连接');
       const result = await api.aiSpendGet(request({}));
-      if (!mounted.current) return false;
+      if (!ticket.isCurrent()) return false;
       if (!result.success) throw new Error(result.error);
       apply(result.data);
       return true;
-    } catch { if (mounted.current) setMessage('读取 AI 费用失败，请刷新后核对当前预算状态。'); return false; }
-    finally { if (mounted.current) setBusy(false); }
+    } catch (error) {
+      rendererRuntimeLog.error('ai_spend.read_failed', { error });
+      if (ticket.isCurrent()) setMessage('读取 AI 费用失败，请刷新后核对当前预算状态。');
+      return false;
+    }
   }
-  useEffect(() => {
-    mounted.current = true;
+  async function refresh(): Promise<void> {
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setActive('refresh'); setMessage('正在读取本店费用…');
+    try {
+      const loaded = await readProjection(ticket);
+      if (ticket.isCurrent() && loaded) setMessage('');
+    }
+    finally {
+      if (ticket.isCurrent()) { setActive(null); }
+      ticket.finish();
+    }
+  }
+  useLayoutEffect(() => {
+    setProjection(undefined); setFields(empty); setEnabled(false); setMessage(''); setActive(null);
     void refresh();
-    return () => { mounted.current = false; };
   }, [contextKey]);
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (busy || !api) return;
-    setBusy(true); setMessage('正在保存本店 AI 预算…');
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setActive('save'); setMessage('正在保存本店 AI 预算…');
     try {
+      if (!api) throw new Error('AI 预算保存服务未连接');
       const data: Record<string, string | number> = {};
       for (const [key, value] of Object.entries(fields)) {
         if (moneyKeys.has(key)) {
@@ -69,23 +92,30 @@ export function AiSpendPanel({ storeContext }: { storeContext: StoreContextEnvel
         else data[key] = value;
       }
       const result = await api.aiSpendSave(request({ ...data, enabled, expectedRevision: projection?.policy?.revision ?? 0 } as unknown as AiSpendPolicyInput));
-      if (!mounted.current) return;
+      if (!ticket.isCurrent()) return;
       if (!result.success) throw new Error(result.error);
-      const reloaded = await refresh();
-      if (mounted.current) setMessage(reloaded ? '本店 AI 预算已保存并重新读取。报价用于估算，账单未确认时保留未知费用。' : '预算已保存，但刷新失败，请重新读取后核对。');
-    } catch { if (mounted.current) setMessage('预算未保存。请核对完整字段、日期、正数报价与模型上限，刷新后重试。'); }
-    finally { if (mounted.current) setBusy(false); }
+      const reloaded = await readProjection(ticket);
+      if (ticket.isCurrent()) setMessage(reloaded ? '本店 AI 预算已保存并重新读取。报价用于估算，账单未确认时保留未知费用。' : '预算已保存，但刷新失败，请重新读取后核对。');
+    } catch (error) {
+      rendererRuntimeLog.error('ai_spend.save_failed', { error });
+      if (ticket.isCurrent()) setMessage('预算未保存。请核对完整字段、日期、正数报价与模型上限，刷新后重试。');
+    } finally {
+      if (ticket.isCurrent()) setActive(null);
+      ticket.finish();
+    }
   }
   return <Panel title="AI 费用与预算">
     <p>自动调用先预留已复核模型上限对应的费用。预算缺失、不足或窗口内有未知费用时，保留规则或模板结果。此预算不授予广告操作权限。</p>
     <p role="status" aria-live="polite">{message || (busy ? '正在读取本店费用…' : projection?.policy?.enabled ? '本店已配置自动付费预算，调用时仍须检查有效期和余额。' : '本店未启用自动付费预算。')}</p>
     <p>已计费用：{currency(projection?.committedMicrousd)} · 请求预留：{currency(projection?.reservedMicrousd)} · 可用余额：{currency(projection?.remainingMicrousd)} · 未知费用：{projection?.unknownCount ?? '未知'} 笔</p>
-    <button className="secondary-button" type="button" disabled={busy || !api} aria-busy={busy} onClick={() => void refresh()}>刷新费用与预算</button>
+    <WorkspaceActionButton className="secondary-button" type="button" disabled={busy || !api} disabledReason={disabledReason}
+      busy={busy && active === 'refresh'} busyLabel="读取费用中…" onClick={() => void refresh()}>刷新费用与预算</WorkspaceActionButton>
     <details>
       <summary>配置或调整本店 AI 预算</summary>
       <p>先核对服务商报价、计费规则和模型硬性上限，再批准独立预算。报价采用不含缓存优惠的最高单价；典型样本测量值不能代替上限或预算。</p>
       <form onSubmit={save} aria-busy={busy}>
-        <fieldset disabled={busy || !api} style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', border: 0, padding: 0 }}>
+        {(busy || !api) && <p id={lockId}>{disabledReason}</p>}
+        <fieldset disabled={busy || !api} aria-describedby={busy || !api ? lockId : undefined} style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', border: 0, padding: 0 }}>
           <legend className="sr-only">本店 AI 预算设置</legend>
           {Object.keys(labels).map(key => <label key={key} style={{ display: 'grid', gap: 4 }}>{labels[key as keyof Fields]}
             <input required type={timeKeys.has(key) ? 'datetime-local' : numericKeys.has(key) ? 'number' : key.includes('Url') || key === 'pricingReference' ? 'url' : 'text'}
@@ -93,7 +123,8 @@ export function AiSpendPanel({ storeContext }: { storeContext: StoreContextEnvel
               value={fields[key as keyof Fields]} onChange={event => setFields(current => ({ ...current, [key]: event.target.value }))} />
           </label>)}
           <label><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />启用本店自动付费预算</label>
-          <button className="primary-button" type="submit">{busy ? '正在保存…' : '批准并保存 AI 预算'}</button>
+          <WorkspaceActionButton className="primary-button" type="submit" disabled={busy || !api} disabledReason={disabledReason}
+            busy={busy && active === 'save'} busyLabel="正在保存…">批准并保存 AI 预算</WorkspaceActionButton>
         </fieldset>
       </form>
     </details>

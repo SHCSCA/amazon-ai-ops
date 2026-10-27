@@ -561,3 +561,25 @@ describe('buildDeliveryReadinessMatrix', () => {
     expect(input.readbackVerifiedCount).toBe(2);
   });
 });
+
+
+describe('unread delivery business data', () => {
+  it('keeps unread counts unknown and guides the current store to configuration', () => {
+    const input = buildDeliveryReadinessMatrixInput({ data: null, readiness: null, aiAvailable: false });
+    expect(input.businessDataAvailable).toBe(false);
+    const matrix = buildDeliveryReadinessMatrix(input);
+    const data = matrix.items.find(item => item.key === 'data');
+    expect(data).toMatchObject({ statusLabel: '未知', route: 'settings', nextAction: '去系统设置' });
+    expect(data?.detail).toContain('未知'); expect(data?.detail).not.toMatch(/0\/8|0 行/);
+    const context = matrix.items.find(item => item.key === 'businessContext');
+    expect(context?.detail).toContain('未知'); expect(context?.detail).not.toMatch(/0 条|0 个/);
+    expect(matrix.primaryNextAction).toContain('系统设置'); expect(matrix.status).not.toBe('ready');
+  });
+  it('preserves actual measured zero when the business pipeline was read successfully', () => {
+    const input = buildDeliveryReadinessMatrixInput({ data: { collection: { fileAudit: { realReportFileCount: 0, importedRowCount: 0 } },
+      quant: { importedRows: 0, actionableRows: 0 } } as any, readiness: null, aiAvailable: false });
+    expect(input.businessDataAvailable).toBe(true);
+    const data = buildDeliveryReadinessMatrix(input).items.find(item => item.key === 'data');
+    expect(data?.detail).toContain('0/8'); expect(data?.detail).not.toContain('未知');
+  });
+});

@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 
-const RESERVED_LOGIN_CREDENTIAL_KEYS = new Set([
+export const RESERVED_LOGIN_CREDENTIAL_KEYS: ReadonlySet<string> = new Set([
   'login_username',
   'login_remember_password',
   'login_password_encrypted',

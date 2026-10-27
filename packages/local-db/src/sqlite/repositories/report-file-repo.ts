@@ -257,5 +257,5 @@ function isBusinessReportFileName(filePathOrName: string): boolean {
 function isBusinessReportFileRecord(file: ReportFileRecord): boolean {
   if (!['downloaded', 'imported', 'import_failed'].includes(file.status)) return false;
   if (!Number.isFinite(file.fileSize) || file.fileSize <= 0) return false;
-  return isBusinessReportFileName(file.fileName || file.filePath);
+  return isBusinessReportFileName(file.filePath) && isBusinessReportFileName(file.fileName || file.filePath);
 }

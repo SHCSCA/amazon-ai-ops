@@ -1,3 +1,4 @@
+import { runtimeLogger } from './runtime-logger';
 import type {
   ArchiveStoreInput,
   CreateStoreConnectionInput,
@@ -369,12 +370,9 @@ async function reportPostCommitFailure(
       return;
     }
   } catch (reportingError) {
-    console.error('[StoreIPC] post-commit failure reporter failed', reportingError);
+    runtimeLogger.error('store.post_commit_error_reporter_failed', { operation: scope.operation, error: reportingError });
   }
-  console.error(
-    `[StoreIPC] ${scope.operation} committed but post-commit publication failed`,
-    error,
-  );
+  runtimeLogger.error('store.post_commit_publication_failed', { operation: scope.operation, error });
 }
 
 /**

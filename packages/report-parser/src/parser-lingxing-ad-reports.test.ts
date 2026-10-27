@@ -24,7 +24,7 @@ describe('ReportParser Lingxing ad report rows', () => {
     const record: Record<string, unknown> = { '店铺名称': 'FT-US', '国家': 'US', '广告活动': 'Campaign A', '广告组': 'Group A',
       '关键词': 'door lock', '投放': 'separate expression', '用户搜索词': 'door lock', '日期': '2026-09-01', '花费-本币': 3, '广告销售额-本币': 30 };
     const parse = (headers: readonly string[], row = record, reportType = 'user_search_term') => (new ReportParser() as any).parseSheet(
-      XLSX.utils.aoa_to_sheet([headers, headers.map(header => row[header] ?? '')]), 'report.xlsx', { reportType, requireRegisteredTemplate: true });
+      XLSX.utils.aoa_to_sheet([[...headers], headers.map(header => row[header] ?? '')]), 'report.xlsx', { reportType, requireRegisteredTemplate: true });
     expect(parse(template.headers)).toMatchObject({ success: true, templateRevision: template.revision,
       data: [expect.objectContaining({ targeting: 'door lock', searchTerm: 'door lock', cost: 3 })] });
     for (const headers of [template.headers.filter(h => h !== '花费-本币'), [...template.headers, '未知字段'], [...template.headers, '花费']]) {

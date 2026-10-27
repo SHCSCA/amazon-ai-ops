@@ -1,0 +1,334 @@
+.scope-bar {
+  display: grid;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  isolation: isolate;
+  margin: 0 -16px 10px;
+  padding: 6px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--aao-line);
+  border-radius: 0;
+  background: var(--aao-surface-2);
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.scope-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.scope-title-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scope-compact-trigger {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.scope-compact-trigger:hover,
+.scope-compact-trigger:focus-visible {
+  border-color: var(--aao-line-strong);
+  background: #fff;
+  filter: none;
+}
+
+.scope-title-row span {
+  color: var(--aao-ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scope-title-row strong {
+  color: var(--aao-ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.scope-title-row em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aao-ink-3);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scope-helper,
+.scope-details-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scope-details-panel {
+  margin-top: 1px;
+}
+
+.scope-details-panel .progressive-details {
+  border-color: var(--line-soft);
+  background: var(--panel-subtle);
+}
+
+.scope-details-panel .progressive-details summary {
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scope-details-panel .progressive-details-body {
+  gap: 6px;
+  padding: 8px 10px;
+  color: #41536a;
+  font-size: 12px;
+}
+
+.scope-details-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.scope-details-facts span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--aao-line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 8px;
+  color: var(--aao-ink);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.scope-details-facts b {
+  color: var(--aao-ink-3);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.scope-title-row .scope-title-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.scope-title-action-field {
+  display: grid;
+  min-width: 230px;
+  gap: 3px;
+}
+
+.scope-title-row .scope-title-actions select {
+  min-width: 230px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  background: #fff;
+}
+
+.scope-topbar-fact {
+  display: inline-flex;
+  min-height: 22px;
+  max-width: 210px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--aao-line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 2px 6px;
+  color: var(--aao-ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scope-topbar-fact b {
+  flex: 0 0 auto;
+  color: var(--aao-ink-3);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.scope-compact-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding-top: 4px;
+  border-top: none;
+}
+
+.scope-fact {
+  display: inline-flex;
+  min-height: 22px;
+  max-width: min(100%, 360px);
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--aao-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 2px 6px;
+  color: var(--aao-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.scope-fact b {
+  flex: 0 0 auto;
+  color: var(--aao-ink-3);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scope-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.scope-summary div,
+.page-header-rail-card {
+  display: grid;
+  gap: 4px;
+}
+
+.scope-summary span,
+.page-header-rail span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scope-summary strong,
+.page-header-rail strong {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.scope-batch-note {
+  display: grid;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scope-batch-note span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.scope-batch-note .blocked-line {
+  margin: 0;
+}
+
+.scope-visible-warning {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #ffd28a;
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  padding: 5px 8px;
+  color: #7a4400;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.scope-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.scope-actions select {
+  min-width: 280px;
+}
+
+.workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-strip-compact {
+  margin-top: 12px;
+}
+
+.workflow-step {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  padding: 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-step:hover {
+  border-color: #9ebbe0;
+  background: #f8fbff;
+}
+
+.workflow-step-static,
+.workflow-step-static:hover {
+  cursor: default;
+}
+
+.workflow-step span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-step strong {
+  min-height: 32px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.workflow-step p {
+  margin: 0;
+  color: #33465c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+

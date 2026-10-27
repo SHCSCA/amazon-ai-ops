@@ -2,7 +2,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { missionControlContextKey, normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import { TodayWorkspace } from './today-workspace';
+import type { MissionControlTodayProjection } from '@amazon-ai-ops/shared-types';
+import { TodayWorkspace, todayOperatorCopy } from './today-workspace';
 
 function ordinaryText(markup: string): string {
   return markup
@@ -66,6 +67,55 @@ const projection = {
 };
 
 describe('TodayWorkspace', () => {
+  it('redacts credentials and diagnostic paths before rendering ordinary projection copy', () => {
+    const secret = 'sk-' + 'privatecredential'.repeat(3);
+    const text = todayOperatorCopy(`请重试 C:\\Private Folder\\report.xlsx token=${secret}`, '请刷新后重试。');
+    expect(text).not.toContain('Private Folder');
+    expect(text).not.toContain('report.xlsx');
+    expect(text).not.toContain(secret);
+    expect(text).toContain('请重试');
+    const markup = renderToStaticMarkup(<TodayWorkspace loading={false} onNavigate={() => undefined}
+      projection={{ ...projection, blockers: [`请重试 C:\\Private Folder\\report.xlsx token=${secret}`] }} storeContext={context} />);
+    expect(ordinaryText(markup)).not.toContain(secret);
+    expect(ordinaryText(markup)).not.toContain('Private Folder');
+  });
+  it.each([
+    { proposalCount: 0, blocked: false, secondaryLabel: '运行分析' },
+    { proposalCount: 2, blocked: false, secondaryLabel: '查看建议' },
+    { proposalCount: 2, blocked: true, secondaryLabel: '查看建议' },
+  ])('keeps one primary action with $proposalCount proposals and blocked=$blocked', ({ proposalCount, blocked, secondaryLabel }) => {
+    const value: MissionControlTodayProjection = {
+      ...projection,
+      blockers: blocked ? ['当前条件未满足，请先核对数据。'] : [],
+      nextAction: { ...projection.nextAction, available: !blocked },
+      analysis: {
+        activeMissionId: 'mission-today',
+        evidencePackageCount: 1,
+        proposalCount,
+        humanEligibleCount: proposalCount,
+        policyEligibleCount: 0,
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <TodayWorkspace
+        capabilities={productionCapabilities}
+        loading={false}
+        onNavigate={() => undefined}
+        projection={value}
+        storeContext={context}
+      />,
+    );
+    const buttons = markup.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) ?? [];
+    const primaryButtons = buttons.filter(button => /\bworkspace-button--primary\b/.test(button));
+    expect(primaryButtons).toHaveLength(1);
+    expect(primaryButtons[0]).toContain('data-action-priority="primary"');
+    expect(primaryButtons[0]).toContain('data-action-id="review-ad-facts"');
+    const secondary = buttons.find(button => button.includes(`>${secondaryLabel}</button>`));
+    expect(secondary).toContain('workspace-button--secondary');
+    expect(secondary).toContain('data-action-priority="secondary"');
+    expect(primaryButtons[0].includes('disabled=""')).toBe(blocked);
+  });
+
   it('renders the authoritative US/USD projection and its real next action', () => {
     const reached: string[] = [];
     const markup = renderToStaticMarkup(

@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -9,7 +10,7 @@ function source(): string {
 }
 
 function css(): string {
-  return readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  return readStyleComposition(new URL('../styles.css', import.meta.url));
 }
 
 function classNames(element: ReactElement): string[] {

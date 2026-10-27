@@ -357,16 +357,24 @@
 
 .summary-strip__item dd {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--workspace-space-2);
   align-items: baseline;
   min-width: 0;
 }
 
 .summary-strip__item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--workspace-text);
   font-size: var(--workspace-font-key-number);
   font-variant-numeric: tabular-nums;
   line-height: var(--workspace-line-key-number);
+}
+
+.summary-strip__item small {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .summary-strip__item[data-tone="attention"] strong {

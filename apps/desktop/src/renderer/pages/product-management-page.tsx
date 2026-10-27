@@ -1,6 +1,7 @@
+import { BusinessDataConfigurationGuard, BusinessDataConfigurationNotice } from '../components/business-data-configuration';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { localizeProductStage } from '@amazon-ai-ops/business-presenters';
+
 import { FormTable, FormTableRow, StatusPill } from '../components/ui';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { ResponsiveInspector, TaskBanner, WorkbenchPanel } from '../components/workspace';
@@ -8,384 +9,33 @@ import { formatPercent, formatUsd } from '../formatters';
 import { hasFormalReportCoverage, importedReportTypeCoverageCount } from '../report-coverage';
 import { useScopeStore } from '../scope-store';
 import { buildCostInputFromProduct, DEFAULT_COST, productCostInputHint } from './product-config-page';
-import {
-  buildProductManagementSummaries,
-  buildProductTimeline,
-  mergeProductStrategyContexts,
-  normalizeProductPortfolioRows,
-  type ProductManagementSummary,
-  type ProductTimelineItem,
-} from '../product-management';
-import type { AppRoute, BusinessDataPipeline, OperationScope, ProductStrategyContextView } from '../types';
+import { mergeProductStrategyContexts, normalizeProductPortfolioRows, type ProductManagementSummary } from '../product-management';
+import type { ProductStrategyContextView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
-
-type ProductManagementRoutes = {
-  adQuant: AppRoute;
-  recommendations: AppRoute;
-  keywordOpportunities: AppRoute;
-  listingOptimization: AppRoute;
-  operationEvents: AppRoute;
-  productConfig: AppRoute;
-};
-
-export function productManagementActionRoutes(): ProductManagementRoutes {
-  return {
-    adQuant: 'ad-quant',
-    recommendations: 'recommendations',
-    keywordOpportunities: 'keyword-opportunities',
-    listingOptimization: 'listing-optimization',
-    operationEvents: 'operation-events',
-    productConfig: 'product-config',
-  };
-}
-
-type ProductStage = 'cold_start' | 'keyword_exploration' | 'stable_conversion' | 'scaling' | 'profit_harvesting' | 'declining_repair';
-type ProductInspectorTab = 'detail' | 'edit' | 'daily' | 'timeline';
-
-const PRODUCT_INSPECTOR_TABS: Array<{ key: ProductInspectorTab; label: string }> = [
-  { key: 'detail', label: '概览' },
-  { key: 'edit', label: '维护' },
-  { key: 'daily', label: '日级' },
-  { key: 'timeline', label: '事件' },
-];
-
-export function productInspectorTabTarget(
-  current: ProductInspectorTab,
-  key: string,
-): ProductInspectorTab {
-  const currentIndex = PRODUCT_INSPECTOR_TABS.findIndex((item) => item.key === current);
-  if (key === 'Home') return PRODUCT_INSPECTOR_TABS[0].key;
-  if (key === 'End') return PRODUCT_INSPECTOR_TABS[PRODUCT_INSPECTOR_TABS.length - 1].key;
-  if (key !== 'ArrowLeft' && key !== 'ArrowRight') return current;
-  const delta = key === 'ArrowRight' ? 1 : -1;
-  const nextIndex = (currentIndex + delta + PRODUCT_INSPECTOR_TABS.length) % PRODUCT_INSPECTOR_TABS.length;
-  return PRODUCT_INSPECTOR_TABS[nextIndex].key;
-}
-
-const STAGE_OPTIONS: Array<{ value: ProductStage; label: string }> = [
-  { value: 'cold_start', label: '冷启动' },
-  { value: 'keyword_exploration', label: '测词期' },
-  { value: 'stable_conversion', label: '稳定转化' },
-  { value: 'scaling', label: '放量期' },
-  { value: 'profit_harvesting', label: '利润收割' },
-  { value: 'declining_repair', label: '异常修复' },
-];
-
-export const PRODUCT_QUICK_COST_FIELDS = [
-  { key: 'purchaseCost', label: '采购成本', placeholder: '例如 103.00' },
-  { key: 'fbaFee', label: 'FBA 费用', placeholder: '例如 6.00' },
-  { key: 'minPrice', label: '最低可接受售价', placeholder: '例如 39.99' },
-] as const;
-
-export const PRODUCT_QUICK_TARGET_FIELDS = [
-  { key: 'targetAcos', label: '目标 ACOS', placeholder: '例如 0.35' },
-  { key: 'targetTacos', label: '目标 TACOS', placeholder: '例如 0.12' },
-  { key: 'targetNetMargin', label: '目标净利率', placeholder: '例如 0.15' },
-] as const;
-
-function buildDraftFromProduct(product: any, scopeAsin?: string) {
-  return {
-    asin: product?.asin || scopeAsin || '',
-    parentAsin: product?.parentAsin || product?.parent_asin || '',
-    msku: product?.msku || '',
-    sku: product?.sku || '',
-    title: product?.title || '',
-    productStage: (product?.productStage || product?.product_stage || 'keyword_exploration') as ProductStage,
-    status: product?.status || 'active',
-  };
-}
-
-function toNumber(value: string | number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-export function productTimelineScopeLabel(scope: ProductTimelineItem['scope']): string {
-  if (scope === 'global') return '全局';
-  if (scope === 'ad_object') return '广告对象';
-  return '产品';
-}
-
-export function productTimelineScopeTone(scope: ProductTimelineItem['scope']): 'ready' | 'pending' | 'warning' {
-  if (scope === 'global') return 'pending';
-  if (scope === 'ad_object') return 'warning';
-  return 'ready';
-}
-
-export function buildProductManagementPageModel(input: {
-  data: BusinessDataPipeline | null | undefined;
-  scopeAsin?: string;
-  authoritativeData?: BusinessDataPipeline | null;
-  supplementalProducts?: ProductStrategyContextView[];
-}) {
-  const canonicalAsin = String(input.scopeAsin || '').trim().toUpperCase();
-  const requestedAsin = canonicalAsin || String(input.data?.scope?.asin || '').trim().toUpperCase();
-  const authoritativeCandidate = input.authoritativeData || input.data;
-  const authoritativeAsin = String(authoritativeCandidate?.scope?.asin || '').trim().toUpperCase();
-  const selectedAuthority = requestedAsin && authoritativeAsin === requestedAsin
-    ? authoritativeCandidate
-    : undefined;
-  const productContexts = mergeProductStrategyContexts(
-    input.data?.productContext?.products || [],
-    input.supplementalProducts || [],
-  );
-  const products = buildProductManagementSummaries({
-    products: productContexts,
-    diagnostics: input.data?.quant?.diagnostics || [],
-    ledgers: input.data?.productHistory?.ledgers || [],
-    events: input.data?.operations?.events || [],
-    canonicalSummary: selectedAuthority?.quant && canonicalAsin
-      ? {
-          asin: requestedAsin,
-          cost: selectedAuthority.quant.totalSpend,
-          sales: selectedAuthority.quant.totalSales,
-          orders: selectedAuthority.quant.totalOrders,
-          clicks: selectedAuthority.quant.totalClicks,
-        }
-      : undefined,
-  });
-  const selectedProduct = requestedAsin
-    ? products.find((item) => item.asin === requestedAsin)
-    : undefined;
-  const timeline = selectedProduct
-    ? buildProductTimeline({
-        selectedAsin: selectedProduct.asin,
-        events: selectedAuthority?.operations?.events || input.data?.operations?.events || [],
-      })
-    : [];
-  const selectedLedger = selectedProduct
-    ? (selectedAuthority?.productHistory?.ledgers || input.data?.productHistory?.ledgers || [])
-        .find((ledger) => ledger.asin.toUpperCase() === selectedProduct.asin.toUpperCase())
-    : undefined;
-
-  return {
-    products,
-    selectedProduct,
-    selectedDailyRows: selectedLedger?.daily || [],
-    timeline,
-    emptyReason: products.length ? '' : '当前范围还没有产品配置或可识别 ASIN 的广告数据。',
-  };
-}
-
-type ProductManagementPageModel = ReturnType<typeof buildProductManagementPageModel>;
-type ProductManagementTaskFeedbackTone = 'ready' | 'pending' | 'warning' | 'blocked';
-
-interface ProductManagementActionButtonInput {
-  active: boolean;
-  baseClassName: string;
-  label: string;
-  busyLabel: string;
-  disabled?: boolean;
-  groupBusy?: boolean;
-}
-
-export interface ProductManagementActionButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export function productManagementActionButtonView({
-  active,
-  baseClassName,
-  label,
-  busyLabel,
-  disabled = false,
-  groupBusy = false,
-}: ProductManagementActionButtonInput): ProductManagementActionButtonView {
-  return {
-    ariaBusy: active ? true : undefined,
-    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: Boolean(disabled || active || groupBusy),
-    label: active ? busyLabel : label,
-    showSpinner: active,
-  };
-}
-
-export function buildCredentialSandboxSummary(scope: Pick<OperationScope, 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode'>) {
-  const period = String(scope.dateTo || scope.dateFrom || 'local').slice(0, 7) || 'local';
-  const marketplace = String(scope.marketplaceCode || 'LOCAL').trim().toUpperCase() || 'LOCAL';
-  const sandboxId = `#FL-${marketplace}-${period}`;
-
-  return {
-    label: '凭证映射通过',
-    status: 'Main 托管',
-    sandboxId,
-    scopeLine: `${marketplace} / ${period} / UI 不作明文留存`,
-    detail: 'login-credentials 已托管至 Main 系统加密区；Renderer 只接收账号标识与非秘密状态，不接收或回填已保存密码。',
-  };
-}
-
-export function buildProductManagementTaskState(input: {
-  model: ProductManagementPageModel;
-  loading: boolean;
-  error?: string | null;
-  saving: boolean;
-  saveMessage?: string;
-  saveError?: string;
-  importedRows: number;
-  hasImportedMetrics: boolean;
-  importedReportTypeCount?: number;
-  formalDataReady?: boolean;
-}) {
-  const routes = productManagementActionRoutes();
-  const selected = input.model.selectedProduct;
-  const productCount = input.model.products.length;
-  const importedReportTypeCount = Math.max(0, Number(input.importedReportTypeCount ?? 8));
-  const formalDataReady = input.formalDataReady ?? (input.hasImportedMetrics && importedReportTypeCount >= 8);
-
-  let title = '先查看并锁定一个产品';
-  let detail = '选择产品行只打开详情；确认后使用显式“锁定”动作，广告表现、优化建议、运营事件、关键词和 Listing 才会按该 ASIN 读取数据库。';
-  let primaryActionLabel = productCount ? '补齐产品配置' : '补齐产品配置';
-  let primaryRoute: AppRoute = routes.productConfig;
-  let primaryActionDisabled = false;
-  let primaryActionBusy = false;
-  let primaryBusyLabel = '读取中...';
-  let feedbackLabel = productCount ? '未锁定产品上下文' : '缺少产品配置';
-  let feedbackDetail = productCount ? '查看产品不会改变全局范围；锁定前后都能明确看到当前 ASIN。' : input.model.emptyReason;
-  let feedbackTone: ProductManagementTaskFeedbackTone = 'warning';
-  let secondaryActions: Array<{ label: string; route: AppRoute; disabled?: boolean }> = [
-    { label: '导入校验', route: 'data-import-validation' },
-  ];
-
-  if (input.loading) {
-    title = '正在读取产品上下文';
-    detail = '正在读取产品、广告指标、日级账本和运营事件，读取完成后再锁定产品。';
-    primaryActionLabel = '读取中...';
-    primaryRoute = routes.productConfig;
-    primaryActionDisabled = true;
-    primaryActionBusy = true;
-    feedbackLabel = '读取产品数据';
-    feedbackDetail = '请等待当前数据管道返回，按钮已锁定防止重复操作。';
-    feedbackTone = 'pending';
-    secondaryActions = [];
-  } else if (input.error) {
-    title = '产品数据读取失败';
-    detail = '产品工作台依赖当前范围、产品配置、广告指标和运营事件；先处理读取错误后再继续。';
-    primaryActionLabel = '回到工作范围';
-    primaryRoute = 'operation-scope';
-    feedbackLabel = '读取失败';
-    feedbackDetail = input.error;
-    feedbackTone = 'blocked';
-    secondaryActions = [{ label: '导入校验', route: 'data-import-validation' }];
-  } else if (!productCount) {
-    title = '先补齐产品配置';
-    detail = '当前范围没有可识别产品。先建立 ASIN、标题、SKU、成本和目标阈值，再进入广告表现。';
-    primaryActionLabel = '补齐产品配置';
-    primaryRoute = routes.productConfig;
-    secondaryActions = [{ label: '导入校验', route: 'data-import-validation' }];
-  } else if (selected && !input.hasImportedMetrics) {
-    title = `当前产品：${selected.title}`;
-    detail = `${selected.asin} 已锁定为产品上下文；当前缺少导入广告指标，先完成真实报表入库后再运行 AI。`;
-    primaryActionLabel = '先导入广告指标';
-    primaryRoute = 'data-import-validation';
-    feedbackLabel = '缺少导入指标';
-    feedbackDetail = `当前产品只有 ${input.importedRows} 行广告指标，AI 量化和优化建议暂不作为主动作。`;
-    feedbackTone = 'warning';
-    secondaryActions = [
-      { label: '维护运营事件', route: routes.operationEvents },
-      { label: '打开完整配置', route: routes.productConfig },
-    ];
-  } else if (selected && !formalDataReady) {
-    title = `当前产品：${selected.title}`;
-    detail = `${selected.asin} 已锁定为产品上下文；当前仅 ${importedReportTypeCount}/8 类逐类入库，正式数据门未闭合。`;
-    primaryActionLabel = '补齐逐类入库';
-    primaryRoute = 'data-import-validation';
-    feedbackLabel = '正式数据门未闭合';
-    feedbackDetail = `${input.importedRows} 行指标来自 ${importedReportTypeCount}/8 类报表；补齐 8 类前不把 AI 量化作为主动作。`;
-    feedbackTone = 'warning';
-    secondaryActions = [
-      { label: '维护运营事件', route: routes.operationEvents },
-      { label: '打开完整配置', route: routes.productConfig },
-    ];
-  } else if (selected) {
-    title = `当前产品：${selected.title}`;
-    detail = `${selected.asin} 已作为广告表现、优化建议、运营事件、关键词和 Listing 的共享上下文。`;
-    primaryActionLabel = '进入 AI 量化';
-    primaryRoute = routes.adQuant;
-    feedbackLabel = '已锁定产品上下文';
-    feedbackDetail = `${input.importedRows} 行广告指标可用于当前产品分析。`;
-    feedbackTone = 'ready';
-    secondaryActions = [
-      { label: '维护运营事件', route: routes.operationEvents },
-      { label: '关键词机会', route: routes.keywordOpportunities },
-      { label: 'Listing 优化', route: routes.listingOptimization },
-    ];
-  }
-
-  if (input.saving) {
-    feedbackLabel = '正在保存产品信息';
-    feedbackDetail = '保存只更新本地产品配置；全局 ASIN 仅由显式锁定动作更新。';
-    feedbackTone = 'pending';
-  } else if (input.saveError) {
-    feedbackLabel = '保存失败';
-    feedbackDetail = input.saveError;
-    feedbackTone = 'blocked';
-  } else if (input.saveMessage) {
-    feedbackLabel = '产品信息已保存';
-    feedbackDetail = input.saveMessage;
-    feedbackTone = 'ready';
-  }
-
-  return {
-    title,
-    detail,
-    primaryActionLabel,
-    primaryRoute,
-    primaryActionDisabled,
-    primaryActionBusy,
-    primaryBusyLabel,
-    feedbackLabel,
-    feedbackDetail,
-    feedbackTone,
-    secondaryActions,
-  };
-}
-
-export function buildProductManagementOptionView(input: {
-  selected: boolean;
-  productTitle: string;
-  asin: string;
-  hasImportedMetrics: boolean;
-  dailyDays: number;
-}) {
-  const className = [
-    'product-management-option',
-    input.selected ? 'product-management-option-active product-management-option-locked' : '',
-  ].filter(Boolean).join(' ');
-  const actionTag = input.selected ? '已锁定' : '点击锁定';
-  const statusLine = input.selected
-    ? `${input.productTitle} / ${input.asin} 已锁定，工具栏已解冻，后续页面按 ${input.asin} 读取数据库。${input.hasImportedMetrics ? `日级 ${input.dailyDays} 天可用于产品分析。` : '当前缺少导入指标，先去导入校验。'}`
-    : `点击锁定 ${input.productTitle} / ${input.asin}，后续页面会按该产品读取数据库。`;
-
-  return {
-    className,
-    ariaPressed: input.selected,
-    actionTag,
-    statusLine,
-  };
-}
-
-function navigate(route: AppRoute) {
-  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
-}
-
-function stageLabel(stage?: string): string {
-  return localizeProductStage(stage);
-}
+import { WorkspaceActionButton } from '../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
+import { businessPipelineScopeKey } from '../components/business-data';
+import { rendererRuntimeLog } from '../runtime-log';
+import { productManagementActionRoutes, ProductStage, ProductInspectorTab, PRODUCT_INSPECTOR_TABS, productInspectorTabTarget, STAGE_OPTIONS, PRODUCT_QUICK_COST_FIELDS, PRODUCT_QUICK_TARGET_FIELDS, buildDraftFromProduct, toNumber, productTimelineScopeLabel, productTimelineScopeTone, buildProductManagementPageModel, type ProductManagementActionButtonView, productManagementActionButtonView, buildCredentialSandboxSummary, buildProductManagementTaskState, buildProductManagementOptionView, navigate, stageLabel } from './product-management-model';
+export { productManagementActionRoutes, productInspectorTabTarget, PRODUCT_QUICK_COST_FIELDS, PRODUCT_QUICK_TARGET_FIELDS, productTimelineScopeLabel, productTimelineScopeTone, buildProductManagementPageModel, type ProductManagementActionButtonView, productManagementActionButtonView, buildCredentialSandboxSummary, buildProductManagementTaskState, buildProductManagementOptionView } from './product-management-model';
 
 export function ProductManagementPage() {
-  const { data, loading, error, scope } = useBusinessDataPipeline();
+  const { data, loading, error, scope, configurationRequired } = useBusinessDataPipeline();
+  const storeAuthority = useMissionControlStoreContext();
   const {
     data: portfolioData,
     loading: portfolioLoading,
     error: portfolioError,
+    configurationRequired: portfolioConfigurationRequired,
   } = useBusinessDataPipeline({ mode: 'portfolio' });
   const { setScope } = useScopeStore();
   const lockedAsin = String(scope.asin || '').trim().toUpperCase();
   const [focusedAsin, setFocusedAsin] = useState('');
+  const readKey = `${storeAuthority.authorityKey}|${businessPipelineScopeKey(scope)}`;
+  const readOperation = useWorkspaceOperation(readKey);
+  const operationKey = `${readKey}|${focusedAsin}`;
+  const operation = useWorkspaceOperation(operationKey);
   const [inspectorTab, setInspectorTab] = useState<ProductInspectorTab>('detail');
   const [configuredProducts, setConfiguredProducts] = useState<ProductStrategyContextView[]>([]);
   const [configuredProductsLoading, setConfiguredProductsLoading] = useState(true);
@@ -393,6 +43,7 @@ export function ProductManagementPage() {
   const [productPoolReloadToken, setProductPoolReloadToken] = useState(0);
   const productSearchRef = useRef<HTMLInputElement | null>(null);
   const queueData = portfolioData || data;
+  const businessConfigurationRequired = configurationRequired || portfolioConfigurationRequired;
   const supplementalProducts = useMemo(() => mergeProductStrategyContexts(
     data?.productContext?.products || [],
     configuredProducts,
@@ -490,8 +141,6 @@ export function ProductManagementPage() {
     if (!selected) return;
     setDraft(buildDraftFromProduct(selectedContext || selected, selected.asin));
     setCost(buildCostInputFromProduct(selectedContext || {}));
-    setSaveMessage('');
-    setSaveError('');
   }, [selected, selectedContext]);
 
   useEffect(() => {
@@ -501,33 +150,48 @@ export function ProductManagementPage() {
   }, []);
 
   useEffect(() => {
+    setSaving(false);
+    setSaveError('');
+    setSaveMessage('');
+  }, [operationKey]);
+
+  useEffect(() => {
+    setFocusedAsin('');
+    setConfiguredProducts([]);
+  }, [storeAuthority.authorityKey]);
+
+  useEffect(() => {
     let cancelled = false;
+    const isCurrent = readOperation.capture();
     async function loadConfiguredProducts() {
+      setConfiguredProducts([]);
       setConfiguredProductsLoading(true);
       setConfiguredProductsError('');
       try {
         const rows = await (window as any).electronAPI?.getProducts?.();
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         setConfiguredProducts(normalizeProductPortfolioRows(rows, scope));
       } catch (caught) {
-        if (!cancelled) {
+        rendererRuntimeLog.error('product_management.load_failed', { error: caught });
+        if (!cancelled && isCurrent()) {
           setConfiguredProductsError(toUserFacingError(caught, '读取完整产品配置池失败。'));
         }
       } finally {
-        if (!cancelled) setConfiguredProductsLoading(false);
+        if (!cancelled && isCurrent()) setConfiguredProductsLoading(false);
       }
     }
     void loadConfiguredProducts();
     return () => {
       cancelled = true;
     };
-  }, [productPoolReloadToken, scope.marketplaceCode, scope.storeName]);
+  }, [productPoolReloadToken, readKey]);
 
   function lockProduct(asin: string) {
     setScope({ asin, currency: 'USD' });
   }
 
   function openProductInspector(asin: string, panel: ProductInspectorTab = 'detail') {
+    if (saving || operation.busy) return;
     setFocusedAsin(asin);
     setInspectorTab(panel);
   }
@@ -561,6 +225,8 @@ export function ProductManagementPage() {
   }
 
   async function saveProduct() {
+    const ticket = operation.begin();
+    if (!ticket) return;
     setSaving(true);
     setSaveMessage('');
     setSaveError('');
@@ -575,6 +241,7 @@ export function ProductManagementPage() {
         },
         cost,
       });
+      if (!ticket.isCurrent()) return;
       if (!result?.success) throw new Error('保存接口没有返回成功状态。');
       const nextAsin = draft.asin.trim().toUpperCase();
       setFocusedAsin(nextAsin);
@@ -583,9 +250,12 @@ export function ProductManagementPage() {
         : '产品信息已保存；尚未改变全局产品范围，如需切换请使用“锁定为当前产品”。');
       window.dispatchEvent(new Event('business-ui:data-updated'));
     } catch (caught) {
+      rendererRuntimeLog.error('product_management.save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setSaveError(toUserFacingError(caught, '保存产品信息失败。'));
     } finally {
-      setSaving(false);
+      if (ticket.isCurrent()) setSaving(false);
+      ticket.finish();
     }
   }
 
@@ -620,10 +290,10 @@ export function ProductManagementPage() {
       header: '广告表现',
       width: 'minmax(190px, 1fr)',
       cell: (product) => (
-        <div>
+        businessConfigurationRequired ? <span>未读取</span> : (<div>
           <strong>{formatUsd(product.cost)} / ACOS {formatPercent(product.acos * 100)}</strong>
           <p>销售 {formatUsd(product.sales)} / 订单 {product.orders}</p>
-        </div>
+        </div>)
       ),
     },
     {
@@ -631,10 +301,10 @@ export function ProductManagementPage() {
       header: '数据 / 风险',
       width: 'minmax(175px, 0.9fr)',
       cell: (product) => (
-        <div>
+        businessConfigurationRequired ? <span>未读取</span> : (<div>
           <strong>{product.activeDays ? `${product.activeDays} 个活跃日` : '暂无日级指标'}</strong>
           <p>{product.lastMetricDate || '日期待导入'} / {product.highRiskCount ? `${product.highRiskCount} 个高风险` : `${product.eventCount} 个事件`}</p>
-        </div>
+        </div>)
       ),
     },
     {
@@ -646,10 +316,10 @@ export function ProductManagementPage() {
         return (
           <div className="product-management-row-actions">
             <StatusPill tone={isLocked ? 'ready' : 'pending'}>{isLocked ? '当前已锁定' : '仅查看'}</StatusPill>
-            <button
+            <WorkspaceActionButton disabledReason={isLocked ? '该产品已锁定为当前产品；如需切换，请锁定其他产品或取消锁定。' : '正在保存当前产品信息，请等待完成后切换。'}
               aria-pressed={isLocked}
               className="secondary-button compact-button"
-              disabled={isLocked || saving}
+              disabled={(isLocked || saving) || saving}
               onClick={(event) => {
                 event.stopPropagation();
                 lockProduct(product.asin);
@@ -658,37 +328,40 @@ export function ProductManagementPage() {
               type="button"
             >
               {isLocked ? '已锁定' : '锁定'}
-            </button>
+            </WorkspaceActionButton>
           </div>
         );
       },
     },
-  ], [lockedAsin, saving]);
+  ], [businessConfigurationRequired, lockedAsin, saving]);
 
   const selectionStatus = selected && !focusedIsLocked
     ? `正在查看 ${selected.title} / ${selected.asin}，没有改变全局产品范围。${lockedProduct ? `当前锁定产品仍为 ${lockedProduct.asin}。` : '当前尚未锁定产品。'}`
-    : lockedOptionFeedback?.statusLine || '尚未锁定产品；选择产品行只会打开详情，只有“锁定”动作才会改变全局 ASIN。';
+    : businessConfigurationRequired ? `当前${lockedAsin ? `已锁定 ${lockedAsin}` : '尚未锁定产品'}；广告指标尚未读取。` : lockedOptionFeedback?.statusLine || '尚未锁定产品；选择产品行只会打开详情，只有“锁定”动作才会改变全局 ASIN。';
 
   return (
     <div className="business-stack product-management-page-stack">
+      {businessConfigurationRequired && <BusinessDataConfigurationNotice />}
       <TaskBanner
         compact
-        description={taskState.detail}
-        meta={taskState.feedbackDetail}
+        description={businessConfigurationRequired ? '当前业务数据尚未读取；本地产品队列和产品信息仍可维护。' : taskState.detail}
+        meta={businessConfigurationRequired ? '广告表现、日级指标与运营事件：未读取' : taskState.feedbackDetail}
         primaryAction={{
           label: taskState.primaryActionLabel,
           onClick: () => navigate(taskState.primaryRoute),
-          disabled: taskState.primaryActionDisabled,
+          disabled: taskState.primaryActionDisabled || saving,
+          disabledReason: saving ? '正在保存当前产品信息，请等待返回后继续。' : '正在读取产品数据，请等待当前范围返回。',
           busy: taskState.primaryActionBusy,
           busyLabel: taskState.primaryBusyLabel,
         }}
         secondaryActions={taskState.secondaryActions.slice(0, 2).map((action) => ({
           label: action.label,
           onClick: () => navigate(action.route),
-          disabled: action.disabled,
+          disabled: action.disabled || saving,
+          disabledReason: '正在保存当前产品信息，请等待返回后继续。',
         }))}
-        status={taskState.feedbackLabel}
-        title={taskState.title}
+        status={businessConfigurationRequired ? '当前业务数据未读取' : taskState.feedbackLabel}
+        title={businessConfigurationRequired ? '维护当前店铺本地产品信息' : taskState.title}
         tone={taskState.feedbackTone === 'ready' ? 'confirmed' : taskState.feedbackTone === 'blocked' ? 'blocked' : 'attention'}
       />
 
@@ -703,15 +376,15 @@ export function ProductManagementPage() {
               <>
                 <label className="product-management-search">
                   <span>搜索产品</span>
-                  <input
+                  <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined}
                     onChange={(event) => setProductSearch(event.target.value)}
                     placeholder="ASIN / 标题 / SKU / 阶段"
                     ref={productSearchRef}
                     value={productSearch}
                   />
                 </label>
-                <button className="secondary-button compact-button" disabled={saving} onClick={() => navigate(routes.productConfig)} type="button">批量配置</button>
-                <button className="secondary-button compact-button" disabled={!lockedAsin || saving} onClick={clearLockedProduct} type="button">取消锁定</button>
+                <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'} className="secondary-button compact-button" disabled={(saving) || saving} onClick={() => navigate(routes.productConfig)} type="button">批量配置</WorkspaceActionButton>
+                <WorkspaceActionButton disabledReason={saving ? '正在保存当前产品信息，请等待完成。' : '当前尚未锁定产品，请先在队列选择产品并点击锁定。'} className="secondary-button compact-button" disabled={(!lockedAsin || saving) || saving} onClick={clearLockedProduct} type="button">取消锁定</WorkspaceActionButton>
               </>
             )}
             footer={(
@@ -754,15 +427,16 @@ export function ProductManagementPage() {
         >
           {selected && (
             <div className="product-management-modal-body">
+              {saving && <p id="product-management-fields-pending" role="note">当前保存或读取尚未结束，字段暂时锁定，请等待完成后继续编辑。</p>}
               <div aria-label="产品详情页签" className="product-management-modal-tabs" role="tablist">
                 {PRODUCT_INSPECTOR_TABS.map((tab) => {
                   const active = inspectorTab === tab.key;
                   return (
-                    <button
+                    <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'}
                       aria-controls={`product-inspector-panel-${tab.key}`}
                       aria-selected={active}
                       className={active ? 'primary-button compact-button' : 'secondary-button compact-button'}
-                      disabled={saving}
+                      disabled={(saving) || saving}
                       id={`product-inspector-tab-${tab.key}`}
                       key={tab.key}
                       onClick={() => selectInspectorTab(tab.key)}
@@ -772,7 +446,7 @@ export function ProductManagementPage() {
                       type="button"
                     >
                       {tab.label}
-                    </button>
+                    </WorkspaceActionButton>
                   );
                 })}
               </div>
@@ -793,7 +467,8 @@ export function ProductManagementPage() {
                       </div>
                       <StatusPill tone={focusedIsLocked ? 'ready' : 'pending'}>{focusedIsLocked ? '已锁定' : '仅查看'}</StatusPill>
                     </div>
-                    <div className="product-management-current-metrics">
+                    <BusinessDataConfigurationGuard configurationRequired={businessConfigurationRequired}>
+<div className="product-management-current-metrics">
                       <div><span>阶段</span><strong>{stageLabel(selected.stage)}</strong></div>
                       <div><span>花费</span><strong>{formatUsd(selected.cost)}</strong></div>
                       <div><span>销售</span><strong>{formatUsd(selected.sales)}</strong></div>
@@ -801,8 +476,9 @@ export function ProductManagementPage() {
                       <div><span>订单</span><strong>{selected.orders}</strong></div>
                       <div><span>风险</span><strong>{selected.highRiskCount}</strong></div>
                     </div>
+</BusinessDataConfigurationGuard>
                     <p className="muted-line">
-                      {formalDataReady
+                      {businessConfigurationRequired ? '当前业务数据尚未读取；量化门槛保持阻断。' : formalDataReady
                         ? '正式 8/8 报表门已闭合；只有锁定该产品后，广告表现和建议才会读取该 ASIN。'
                         : `正式数据门尚未闭合：当前 ${importedReportTypeCount}/8 类逐类入库，AI 量化保持阻断。`}
                     </p>
@@ -813,23 +489,23 @@ export function ProductManagementPage() {
                   <>
                     <FormTable>
                       <FormTableRow label="ASIN" required hint="产品配置主键；保存只更新本地配置，显式锁定后其他页面才会沿用该 ASIN。">
-                        <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
+                        <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
                       </FormTableRow>
                       <FormTableRow label="标题" hint="用于运营识别，不自动提交到 Amazon 或领星。">
-                        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题" />
+                        <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题" />
                       </FormTableRow>
                       <FormTableRow label="MSKU / SKU" hint="本地识别字段，可与 ERP 或 Amazon 后台对齐。">
                         <div className="inline-input-grid">
-                          <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} placeholder="MSKU" />
-                          <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} placeholder="SKU" />
+                          <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} placeholder="MSKU" />
+                          <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} placeholder="SKU" />
                         </div>
                       </FormTableRow>
                       <FormTableRow label="阶段 / 状态" required hint="阶段和状态会参与 AI 阶段判断、动态阈值和建议风险解释。">
                         <div className="inline-input-grid">
-                          <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
+                          <select disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
                             {STAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                           </select>
-                          <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+                          <select disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined} value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
                             <option value="active">正常运营</option>
                             <option value="paused">暂停推广</option>
                             <option value="clearance">清货</option>
@@ -842,7 +518,7 @@ export function ProductManagementPage() {
                           {PRODUCT_QUICK_COST_FIELDS.map((field) => (
                             <span className="inline-field" key={field.key}>
                               <span className="inline-field-label">{field.label}</span>
-                              <input
+                              <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined}
                                 aria-label={field.label}
                                 type="number"
                                 step="0.01"
@@ -859,7 +535,7 @@ export function ProductManagementPage() {
                           {PRODUCT_QUICK_TARGET_FIELDS.map((field) => (
                             <span className="inline-field" key={field.key}>
                               <span className="inline-field-label">{field.label}</span>
-                              <input
+                              <input disabled={saving} aria-describedby={saving ? 'product-management-fields-pending' : undefined}
                                 aria-label={field.label}
                                 type="number"
                                 step="0.01"
@@ -877,8 +553,7 @@ export function ProductManagementPage() {
                   </>
                 )}
 
-                {inspectorTab === 'daily' && (
-                  model.selectedDailyRows.length ? (
+                {inspectorTab === 'daily' && (<BusinessDataConfigurationGuard configurationRequired={businessConfigurationRequired}>{model.selectedDailyRows.length ? (
                     <div className="table-wrap product-management-detail-table">
                       <table className="business-table">
                         <thead>
@@ -911,11 +586,9 @@ export function ProductManagementPage() {
                     <p className="muted-line">
                       当前产品还没有可回查的日级广告指标。请先完成完整 8 类报表采集并导入 DB。
                     </p>
-                  )
-                )}
+                  )}</BusinessDataConfigurationGuard>)}
 
-                {inspectorTab === 'timeline' && (
-                  model.timeline.length ? (
+                {inspectorTab === 'timeline' && (<BusinessDataConfigurationGuard configurationRequired={businessConfigurationRequired}>{model.timeline.length ? (
                     <div className="event-timeline product-management-timeline">
                       {model.timeline.map((item) => (
                         <article className="event-card product-management-event" key={`${item.event.id}-${item.scope}`}>
@@ -935,31 +608,30 @@ export function ProductManagementPage() {
                     <p className="muted-line">
                       当前产品还没有产品事件或全局事件。记录 Coupon、BD、调价、Listing 或库存变化后，AI 会使用这些背景。
                     </p>
-                  )
-                )}
+                  )}</BusinessDataConfigurationGuard>)}
               </div>
 
               <footer className="product-config-modal-footer">
                 {inspectorTab === 'edit' ? (
                   <>
-                    <button aria-busy={openConfigButton.ariaBusy} className={openConfigButton.className} disabled={openConfigButton.disabled} onClick={() => navigate(routes.productConfig)} type="button">
+                    <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'} aria-busy={openConfigButton.ariaBusy} className={openConfigButton.className} disabled={(openConfigButton.disabled) || saving} onClick={() => navigate(routes.productConfig)} type="button">
                       {openConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
                       <span>{openConfigButton.label}</span>
-                    </button>
-                    <button aria-busy={saveProductButton.ariaBusy} className={saveProductButton.className} disabled={saveProductButton.disabled} onClick={saveProduct} type="button">
+                    </WorkspaceActionButton>
+                    <WorkspaceActionButton disabledReason={saving ? '正在保存当前产品信息，请等待完成后继续。' : '请填写产品 ASIN 后保存；产品信息只写入当前店铺。'} aria-busy={saveProductButton.ariaBusy} className={saveProductButton.className} disabled={(saveProductButton.disabled) || saving} onClick={saveProduct} type="button">
                       {saveProductButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
                       <span>{saveProductButton.label}</span>
-                    </button>
+                    </WorkspaceActionButton>
                   </>
                 ) : (
                   <>
-                    <button className="secondary-button" onClick={() => selectInspectorTab('edit')} type="button">维护信息</button>
+                    <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'} disabled={(false) || saving} className="secondary-button" onClick={() => selectInspectorTab('edit')} type="button">维护信息</WorkspaceActionButton>
                     {focusedIsLocked ? (
-                      <button className="primary-button" onClick={() => navigate(formalDataReady ? routes.adQuant : 'data-import-validation')} type="button">
-                        {formalDataReady ? '进入广告表现' : '补齐逐类入库'}
-                      </button>
+                      <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'} disabled={(false) || saving} className="primary-button" onClick={() => navigate(businessConfigurationRequired ? 'settings' : formalDataReady ? routes.adQuant : 'data-import-validation')} type="button">
+                        {businessConfigurationRequired ? '打开店铺配置' : formalDataReady ? '进入广告表现' : '补齐逐类入库'}
+                      </WorkspaceActionButton>
                     ) : (
-                      <button className="primary-button" onClick={() => lockProduct(selected.asin)} type="button">锁定为当前产品</button>
+                      <WorkspaceActionButton disabledReason={'正在保存当前产品信息，请等待完成后继续。'} disabled={(false) || saving} className="primary-button" onClick={() => lockProduct(selected.asin)} type="button">锁定为当前产品</WorkspaceActionButton>
                     )}
                   </>
                 )}

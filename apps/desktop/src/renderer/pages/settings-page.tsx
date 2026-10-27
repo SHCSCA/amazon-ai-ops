@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+// 保留页面编排与原有交互，纯值规则和展示规则按职责复用。
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { AiSpendPanel } from '../components/workspace/ai-spend-panel';
 import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
-import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -11,567 +11,31 @@ import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scop
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
-
-const DEFAULT_AI_PERSONA = [
-  '你是中文亚马逊广告运营顾问，擅长结合真实广告报表、产品阶段、成本结构和运营事件做量化分析。',
-  '请用运营能直接理解的中文解释阈值、风险和建议；字段结构由系统固定输出合同约束，人设只影响表达风格，不执行广告动作。',
-].join('');
-
-const DEFAULT_AI_SETTINGS: AiProviderSettings = {
-  aiApiKey: '',
-  aiBaseUrl: 'https://api.deepseek.com',
-  aiModel: 'deepseek-v4-flash',
-  aiTemperature: '0.3',
-  aiMaxTokens: '8192',
-  aiOutputLanguage: '简体中文',
-  aiPersona: DEFAULT_AI_PERSONA,
-  aiLastTestStatus: '',
-  aiLastTestAt: '',
-  aiLastTestBaseUrl: '',
-  aiLastTestModel: '',
-  aiLastTestMessage: '',
-};
-const STRUCTURED_AI_OUTPUT_TOKEN_FLOOR = 8192;
-
-const DEFAULT_RULE_CONFIG: SettingsRuleConfig = {
-  targetAcos: 0.25,
-  highAcosThreshold: 0.4,
-  noOrderClickThreshold: 30,
-  minSpend: 10,
-  bidAdjustPercent: 0.1,
-  maxBidDecrement: 0.2,
-  brandWordWhitelist: [],
-  coreWordWhitelist: [],
-  maxCpc: 5,
-  minCpc: 0.02,
-  enableAutoLowerBid: false,
-  enableAutoAddNegative: false,
-};
-
-const SAFETY_POLICIES = [
-  '不允许无边界批量写入广告账户。',
-  '任意真实写入前必须有人工审批。',
-  '每次执行必须保留执行前、执行后和回读证据。',
-  '执行对象必须与店铺、站点、广告活动、广告组、ASIN 和投放对象范围完全匹配。',
-];
-
-const DIAGNOSTIC_CHECKS = [
-  'AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。',
-  '广告建议解释：确认建议来自当前范围真实广告指标，并标记 AI 或规则来源。',
-  'Listing 草案：确认 Listing 读取、关键词机会和草案来源，不自动提交 Amazon。',
-  '最终交付：确认真实报表、量化、AI、审批、回读和安装包证据是否闭环。',
-];
-
-function readString(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
-function readNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-function readBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'string') {
-    if (value.toLowerCase() === 'true') return true;
-    if (value.toLowerCase() === 'false') return false;
-  }
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function normalizeList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
-  if (typeof value === 'string') {
-    return value
-      .split(/[,，\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
-}
-
-function listToText(value: string[]): string {
-  return value.join(', ');
-}
-
-function parseListInput(value: string): string[] {
-  return Array.from(new Set(normalizeList(value)));
-}
-
-export function aiAuditIntroText(): string {
-  return '只显示最近调用的模型、固定输出格式、证据包规模和成败状态；不保存 API Key，也不展示完整提示词。';
-}
-
-export function aiAuditPurposeText(): string {
-  return '用于排查 AI 是否成功返回固定字段、是否带输出格式版本、是否带证据包摘要。';
-}
-
-export function aiAuditLogFormatLine(log: Pick<AiCallLogView, 'schemaVersion' | 'promptVersion'>): string {
-  return `输出格式 ${aiCallOutputFormatLabel(log)}`;
-}
-
-export function aiAuditLogTitle(log: Pick<AiCallLogView, 'promptKey'>): string {
-  return aiCallKindLabel(log);
-}
-
-export function aiSettingsActionHint(input: { canSaveSettings: boolean; keyPresent: boolean; canTestAi: boolean }): string {
-  if (!input.canSaveSettings) return '当前预览环境只能查看配置；请在桌面应用中保存或清除 API Key。';
-  if (!input.keyPresent) return '填写 API Key 后才能测试连接。';
-  if (!input.canTestAi) return '当前预览环境不能发起 AI 连接测试。';
-  return '';
-}
-
-export function storagePathDisplay(value: unknown, label: string): string {
-  const pathValue = readString(value).trim();
-  return pathValue || `${label}会在桌面应用中显示。`;
-}
-
-export function settingsAiContractPrimaryCopy(): string {
-  return aiContractPrimaryCopy();
-}
-
-export function settingsAiContractTags(): TagMetricItem[] {
-  return aiOutputContractTags().map((tag) => ({
-    label: tag.label,
-    detail: tag.detail,
-    tone: tag.tone,
-  }));
-}
-
-export function settingsAiContractVersionItems(): TagMetricItem[] {
-  return aiOutputContracts.map((contract) => ({
-    label: `${contract.label} v1`,
-    value: '系统固定',
-    detail: `${contract.usedBy}：${contract.consumedAs}`,
-    tone: 'neutral',
-  }));
-}
-
-function tagToneToStatusPillTone(tone: TagMetricItem['tone']): 'ready' | 'warning' | 'blocked' | 'pending' {
-  if (tone === 'ready' || tone === 'warning' || tone === 'blocked') return tone;
-  return 'pending';
-}
-
-function clampStructuredAiMaxTokens(value: string): string {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return String(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR);
-  return String(Math.max(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR, Math.trunc(parsed)));
-}
-
-function normalizeAiSettings(settings: Record<string, unknown> | null | undefined): AiProviderSettings {
-  return {
-    aiApiKey: readString(settings?.aiApiKey ?? settings?.ai_api_key, DEFAULT_AI_SETTINGS.aiApiKey),
-    aiKeyConfigured: readBoolean(settings?.aiKeyConfigured ?? settings?.ai_key_configured, false),
-    aiBaseUrl: readString(settings?.aiBaseUrl ?? settings?.ai_base_url, DEFAULT_AI_SETTINGS.aiBaseUrl),
-    aiModel: readString(settings?.aiModel ?? settings?.ai_model, DEFAULT_AI_SETTINGS.aiModel),
-    aiTemperature: readString(settings?.aiTemperature ?? settings?.ai_temperature, DEFAULT_AI_SETTINGS.aiTemperature),
-    aiMaxTokens: readString(settings?.aiMaxTokens ?? settings?.ai_max_tokens, DEFAULT_AI_SETTINGS.aiMaxTokens),
-    aiOutputLanguage: readString(settings?.aiOutputLanguage ?? settings?.ai_output_language, DEFAULT_AI_SETTINGS.aiOutputLanguage),
-    aiPersona: readString(settings?.aiPersona ?? settings?.ai_persona, DEFAULT_AI_SETTINGS.aiPersona),
-    aiLastTestStatus: readString(settings?.aiLastTestStatus ?? settings?.ai_last_test_status, DEFAULT_AI_SETTINGS.aiLastTestStatus) as AiProviderSettings['aiLastTestStatus'],
-    aiLastTestAt: readString(settings?.aiLastTestAt ?? settings?.ai_last_test_at, DEFAULT_AI_SETTINGS.aiLastTestAt),
-    aiLastTestBaseUrl: readString(settings?.aiLastTestBaseUrl ?? settings?.ai_last_test_base_url, DEFAULT_AI_SETTINGS.aiLastTestBaseUrl),
-    aiLastTestModel: readString(settings?.aiLastTestModel ?? settings?.ai_last_test_model, DEFAULT_AI_SETTINGS.aiLastTestModel),
-    aiLastTestMessage: readString(settings?.aiLastTestMessage ?? settings?.ai_last_test_message, DEFAULT_AI_SETTINGS.aiLastTestMessage),
-  };
-}
-
-function testedStatusForSettings(settings: AiProviderSettings): AiConnectionStatus {
-  const normalizeBaseUrl = (value: unknown) => String(value || '').trim().replace(/\/+$/, '');
-  const baseMatches = normalizeBaseUrl(settings.aiLastTestBaseUrl) === normalizeBaseUrl(settings.aiBaseUrl);
-  const modelMatches = settings.aiLastTestModel === settings.aiModel;
-  if (!settings.aiKeyConfigured && !settings.aiApiKey.trim()) return 'unconfigured';
-  if (baseMatches && modelMatches && settings.aiLastTestStatus === 'available') return 'available';
-  if (baseMatches && modelMatches && settings.aiLastTestStatus === 'failed') return 'failed';
-  return 'pending_test';
-}
-
-function normalizeRuleConfig(config: Record<string, unknown> | null | undefined): SettingsRuleConfig {
-  return {
-    targetAcos: readNumber(config?.targetAcos, DEFAULT_RULE_CONFIG.targetAcos),
-    highAcosThreshold: readNumber(config?.highAcosThreshold, DEFAULT_RULE_CONFIG.highAcosThreshold),
-    noOrderClickThreshold: readNumber(config?.noOrderClickThreshold, DEFAULT_RULE_CONFIG.noOrderClickThreshold),
-    minSpend: readNumber(config?.minSpend ?? config?.minimumSpend, DEFAULT_RULE_CONFIG.minSpend),
-    bidAdjustPercent: readNumber(config?.bidAdjustPercent ?? config?.lowerBidPercent, DEFAULT_RULE_CONFIG.bidAdjustPercent),
-    maxBidDecrement: readNumber(config?.maxBidDecrement ?? config?.maxLowerBidPercent, DEFAULT_RULE_CONFIG.maxBidDecrement),
-    brandWordWhitelist: normalizeList(config?.brandWordWhitelist ?? config?.brandWhitelist),
-    coreWordWhitelist: normalizeList(config?.coreWordWhitelist ?? config?.coreWhitelist),
-    maxCpc: readNumber(config?.maxCpc, DEFAULT_RULE_CONFIG.maxCpc ?? 5),
-    minCpc: readNumber(config?.minCpc, DEFAULT_RULE_CONFIG.minCpc ?? 0.02),
-    enableAutoLowerBid: readBoolean(config?.enableAutoLowerBid, DEFAULT_RULE_CONFIG.enableAutoLowerBid ?? false),
-    enableAutoAddNegative: readBoolean(config?.enableAutoAddNegative, DEFAULT_RULE_CONFIG.enableAutoAddNegative ?? false),
-  };
-}
-
-function statusLabel(status: AiConnectionStatus): string {
-  const labels: Record<AiConnectionStatus, string> = {
-    unconfigured: '未配置',
-    pending_test: '待测试',
-    testing: '测试中',
-    available: 'AI 可用',
-    failed: 'AI 不可用',
-  };
-  return labels[status];
-}
-
-function statusTone(status: AiConnectionStatus): 'ready' | 'pending' | 'blocked' | 'warning' {
-  if (status === 'available') return 'ready';
-  if (status === 'testing' || status === 'pending_test') return 'pending';
-  if (status === 'failed') return 'blocked';
-  return 'warning';
-}
-
-function displayAiStatusLabel(status: AiConnectionStatus, keyPresent: boolean): string {
-  if (status === 'pending_test' && keyPresent) return '待测试';
-  return statusLabel(status);
-}
-
-function displayAiStatusTone(status: AiConnectionStatus, keyPresent: boolean): 'ready' | 'pending' | 'blocked' | 'warning' {
-  if (status === 'pending_test' && keyPresent) return 'pending';
-  return statusTone(status);
-}
-
-export function settingsPrimaryAiStatusItems(
-  settings: Pick<AiProviderSettings, 'aiBaseUrl' | 'aiModel'>,
-  status: AiConnectionStatus,
-  keyPresent: boolean,
-) {
-  return [
-    { label: 'API Key', value: keyPresent ? '已配置（已隐藏）' : '未配置' },
-    { label: 'Base URL', value: settings.aiBaseUrl || '未配置' },
-    { label: 'Model', value: settings.aiModel || '未配置' },
-    { label: '连接状态', value: status === 'pending_test' ? '已配置，待测试' : statusLabel(status) },
-  ];
-}
-
-export function settingsAiTaskTitle(input: { status: AiConnectionStatus; keyPresent: boolean }): string {
-  if (!input.keyPresent || input.status === 'unconfigured') return '先填写 API Key 并保存';
-  if (input.status === 'testing') return '正在测试当前 AI 连接';
-  if (input.status === 'available') return 'AI 连接已可用';
-  if (input.status === 'failed') return 'AI 连接需要处理';
-  return '测试当前 AI 连接';
-}
-
-export function settingsAiConnectionFeedback(input: {
-  status: AiConnectionStatus;
-  keyPresent: boolean;
-  saving: boolean;
-  message?: string;
-}): { label: string; detail: string; tone: 'ready' | 'pending' | 'blocked' | 'warning' } {
-  const message = String(input.message || '').trim();
-  if (input.saving) {
-    return {
-      label: '正在保存 AI 设置',
-      detail: 'API Key 会交给主进程本地安全存储，页面不会回显明文。',
-      tone: 'pending',
-    };
-  }
-  if (/^AI 设置保存失败|^AI Key 清除失败/.test(message)) {
-    return {
-      label: 'AI 设置处理失败',
-      detail: message,
-      tone: 'blocked',
-    };
-  }
-  if (/^AI 设置已保存|^AI Key 已清除/.test(message)) {
-    return {
-      label: '设置保存完成',
-      detail: message,
-      tone: 'ready',
-    };
-  }
-  if (!input.keyPresent || input.status === 'unconfigured') {
-    return {
-      label: '等待 API Key',
-      detail: '填写并保存 Key 后，再测试当前 Base URL 和模型是否可用。',
-      tone: 'warning',
-    };
-  }
-  if (input.status === 'testing') {
-    return {
-      label: '正在测试 AI 连接',
-      detail: '主进程正在用当前 Base URL、模型和脱敏 Key 做握手验证。',
-      tone: 'pending',
-    };
-  }
-  if (input.status === 'available') {
-    return {
-      label: 'AI 连接测试通过',
-      detail: message || '测试通过，当前模型可用于广告诊断、建议解释和 Listing 草案。',
-      tone: 'ready',
-    };
-  }
-  if (input.status === 'failed') {
-    return {
-      label: 'AI 连接测试失败',
-      detail: message || '请检查 Base URL、模型名称、API Key 或服务端额度后重新测试。',
-      tone: 'blocked',
-    };
-  }
-  return {
-    label: '等待连接测试',
-    detail: '当前连接字段已有配置变化，需要重新测试后再让 AI 参与建议生成。',
-    tone: 'pending',
-  };
-}
-
-type SettingsTaskActionKind = 'edit-connection' | 'test-connection' | 'open-contract';
-
-export function buildSettingsTaskBannerState(input: {
-  canSaveSettings: boolean;
-  canTestAi: boolean;
-  keyPresent: boolean;
-  loading: boolean;
-  message?: string;
-  saving: boolean;
-  status: AiConnectionStatus;
-}) {
-  const feedback = settingsAiConnectionFeedback({
-    status: input.status,
-    keyPresent: input.keyPresent,
-    saving: input.saving,
-    message: input.message,
-  });
-  const needsConnection = !input.keyPresent || input.status === 'unconfigured';
-  const busy = input.loading || input.saving || input.status === 'testing';
-  const primaryAction: {
-    kind: SettingsTaskActionKind;
-    label: string;
-    busy: boolean;
-    busyLabel: string;
-    disabled: boolean;
-    disabledReason?: string;
-  } = needsConnection
-    ? {
-        kind: 'edit-connection',
-        label: '填写并保存 AI 设置',
-        busy,
-        busyLabel: input.loading ? '正在读取设置...' : '正在保存...',
-        disabled: !input.canSaveSettings,
-        disabledReason: input.canSaveSettings ? undefined : '当前预览环境不能保存 AI 设置，请在桌面应用中操作。',
-      }
-    : {
-        kind: 'test-connection',
-        label: input.status === 'available' ? '重新测试当前连接' : '测试当前连接',
-        busy,
-        busyLabel: input.loading ? '正在读取设置...' : input.saving ? '正在保存...' : '正在测试...',
-        disabled: !input.canTestAi,
-        disabledReason: input.canTestAi ? undefined : '当前环境不能发起 AI 连接测试。',
-      };
-  const secondaryActions: Array<{
-    kind: SettingsTaskActionKind;
-    label: string;
-    disabled?: boolean;
-    disabledReason?: string;
-  }> = [];
-  if (!needsConnection) {
-    secondaryActions.push({
-      kind: 'edit-connection',
-      label: '编辑连接',
-      disabled: !input.canSaveSettings,
-      disabledReason: input.canSaveSettings ? undefined : '当前预览环境不能保存 AI 设置。',
-    });
-  }
-  secondaryActions.push({ kind: 'open-contract', label: '查看输出合同' });
-
-  return {
-    title: input.loading ? '正在读取 AI 设置' : settingsAiTaskTitle({ status: input.status, keyPresent: input.keyPresent }),
-    description: input.loading ? '正在从主进程读取 AI 连接、模型和脱敏 Key 状态。' : feedback.detail,
-    statusLabel: input.loading ? '读取中' : feedback.label,
-    statusTone: input.loading ? 'pending' as const : feedback.tone,
-    tone: input.loading
-      ? 'neutral' as const
-      : feedback.tone === 'ready'
-        ? 'confirmed' as const
-        : feedback.tone === 'blocked'
-          ? 'blocked' as const
-          : 'attention' as const,
-    primaryAction,
-    secondaryActions: secondaryActions.slice(0, 2),
-  };
-}
-
-export function settingsSecondaryStatusMessage(message: string): string {
-  const text = message.trim();
-  if (!text) return '';
-  if (/^(AI 设置|AI Key|AI 连接|正在测试 AI 连接|请先填写 API Key|saveSettings 未接入|testAiSettings 未接入)/.test(text)) {
-    return '';
-  }
-  return text;
-}
-
-interface SettingsRuleActionButtonInput {
-  active: boolean;
-  baseClassName: string;
-  busyLabel: string;
-  disabled?: boolean;
-  label: string;
-}
-
-export interface SettingsRuleActionButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export function settingsRuleActionButtonView(input: SettingsRuleActionButtonInput): SettingsRuleActionButtonView {
-  return {
-    ariaBusy: input.active ? true : undefined,
-    className: [input.baseClassName, input.active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: Boolean(input.disabled || input.active),
-    label: input.active ? input.busyLabel : input.label,
-    showSpinner: input.active,
-  };
-}
-
-type SettingsLocalActionKey = 'clear-ai-key' | 'copy-diagnostics';
-type SettingsModalMode = 'ai-contract' | 'ai-connection' | 'rules' | null;
-
-interface SettingsLocalActionButtonInput {
-  action: SettingsLocalActionKey;
-  activeAction: SettingsLocalActionKey | null;
-  baseClassName: string;
-  busyLabel: string;
-  disabled?: boolean;
-  label: string;
-}
-
-export interface SettingsLocalActionButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export function settingsLocalActionButtonView(input: SettingsLocalActionButtonInput): SettingsLocalActionButtonView {
-  const active = input.activeAction === input.action;
-  return {
-    ariaBusy: active ? true : undefined,
-    className: [input.baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: Boolean(input.disabled || active || (input.activeAction && !active)),
-    label: active ? input.busyLabel : input.label,
-    showSpinner: active,
-  };
-}
-
-function settingsLocalActionButtonContent(view: SettingsLocalActionButtonView) {
-  if (!view.showSpinner) return view.label;
-  return (
-    <span className="button-content">
-      <span aria-hidden="true" className="button-spinner" />
-      <span>{view.label}</span>
-    </span>
-  );
-}
-
-function percentLabel(value: number): string {
-  return `${(value * 100).toFixed(0)}%`;
-}
-
-function finiteRuleNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-export function settingsRuleConfigFieldFeedback(config: SettingsRuleConfig): Partial<Record<keyof SettingsRuleConfig, string>> {
-  const feedback: Partial<Record<keyof SettingsRuleConfig, string>> = {};
-  if (!finiteRuleNumber(config.targetAcos) || config.targetAcos <= 0) feedback.targetAcos = '目标 ACOS 必须大于 0';
-  if (!finiteRuleNumber(config.highAcosThreshold) || config.highAcosThreshold <= 0) {
-    feedback.highAcosThreshold = '高 ACOS 阈值必须大于 0';
-  } else if (finiteRuleNumber(config.targetAcos) && config.highAcosThreshold < config.targetAcos) {
-    feedback.highAcosThreshold = '高 ACOS 阈值不能低于目标 ACOS';
-  }
-  if (!finiteRuleNumber(config.noOrderClickThreshold) || config.noOrderClickThreshold < 1) {
-    feedback.noOrderClickThreshold = '无订单点击阈值必须至少为 1';
-  }
-  if (!finiteRuleNumber(config.minSpend) || config.minSpend < 0) feedback.minSpend = '最低花费不能为负数';
-  if (!finiteRuleNumber(config.bidAdjustPercent) || config.bidAdjustPercent <= 0 || config.bidAdjustPercent > 1) {
-    feedback.bidAdjustPercent = '降价比例必须在 0 到 1 之间';
-  }
-  if (!finiteRuleNumber(config.maxBidDecrement) || config.maxBidDecrement <= 0 || config.maxBidDecrement > 1) {
-    feedback.maxBidDecrement = '最大降价比例必须在 0 到 1 之间';
-  } else if (finiteRuleNumber(config.bidAdjustPercent) && config.maxBidDecrement < config.bidAdjustPercent) {
-    feedback.maxBidDecrement = '最大降价比例不能低于单次降价比例';
-  }
-  if (config.minCpc !== undefined && (!finiteRuleNumber(config.minCpc) || config.minCpc < 0)) feedback.minCpc = '最低 CPC 不能为负数';
-  if (config.maxCpc !== undefined && (!finiteRuleNumber(config.maxCpc) || config.maxCpc <= 0)) feedback.maxCpc = '最高 CPC 必须大于 0';
-  if (
-    finiteRuleNumber(config.minCpc)
-    && finiteRuleNumber(config.maxCpc)
-    && Number(config.minCpc) > Number(config.maxCpc)
-  ) {
-    feedback.minCpc = '最低 CPC 不能高于最高 CPC';
-  }
-  return feedback;
-}
-
-function validateRuleConfigForSave(config: SettingsRuleConfig): string[] {
-  const errors: string[] = [];
-  if (!finiteRuleNumber(config.targetAcos) || config.targetAcos <= 0) errors.push('目标 ACOS 必须大于 0');
-  if (!finiteRuleNumber(config.highAcosThreshold) || config.highAcosThreshold <= 0) errors.push('高 ACOS 阈值必须大于 0');
-  if (finiteRuleNumber(config.targetAcos) && finiteRuleNumber(config.highAcosThreshold) && config.highAcosThreshold < config.targetAcos) {
-    errors.push('高 ACOS 阈值不能低于目标 ACOS');
-  }
-  if (!finiteRuleNumber(config.noOrderClickThreshold) || config.noOrderClickThreshold < 1) errors.push('无订单点击阈值必须至少为 1');
-  if (!finiteRuleNumber(config.minSpend) || config.minSpend < 0) errors.push('最低花费不能为负数');
-  if (!finiteRuleNumber(config.bidAdjustPercent) || config.bidAdjustPercent <= 0 || config.bidAdjustPercent > 1) {
-    errors.push('降价比例必须在 0 到 1 之间');
-  }
-  if (!finiteRuleNumber(config.maxBidDecrement) || config.maxBidDecrement <= 0 || config.maxBidDecrement > 1) {
-    errors.push('最大降价比例必须在 0 到 1 之间');
-  }
-  if (finiteRuleNumber(config.bidAdjustPercent) && finiteRuleNumber(config.maxBidDecrement) && config.maxBidDecrement < config.bidAdjustPercent) {
-    errors.push('最大降价比例不能低于单次降价比例');
-  }
-  if (config.minCpc !== undefined && (!finiteRuleNumber(config.minCpc) || config.minCpc < 0)) errors.push('最低 CPC 不能为负数');
-  if (config.maxCpc !== undefined && (!finiteRuleNumber(config.maxCpc) || config.maxCpc <= 0)) errors.push('最高 CPC 必须大于 0');
-  if (finiteRuleNumber(config.minCpc) && finiteRuleNumber(config.maxCpc) && Number(config.minCpc) > Number(config.maxCpc)) {
-    errors.push('最低 CPC 不能高于最高 CPC');
-  }
-  return errors;
-}
-
-function clearAiTestState(settings: AiProviderSettings): AiProviderSettings {
-  return {
-    ...settings,
-    aiLastTestStatus: '',
-    aiLastTestAt: '',
-    aiLastTestBaseUrl: '',
-    aiLastTestModel: '',
-    aiLastTestMessage: '',
-  };
-}
-
-type AiSettingsField = keyof AiProviderSettings;
-
-export function shouldResetAiTestForSettingsField(field: AiSettingsField): boolean {
-  return field === 'aiApiKey' || field === 'aiBaseUrl' || field === 'aiModel';
-}
-
-function updateAiSettingsField(
-  settings: AiProviderSettings,
-  field: AiSettingsField,
-  value: string | boolean,
-): AiProviderSettings {
-  const next = { ...settings, [field]: value } as AiProviderSettings;
-  return shouldResetAiTestForSettingsField(field) ? clearAiTestState(next) : next;
-}
-
-function api(): Record<string, any> {
-  return ((window as any).electronAPI || {}) as Record<string, any>;
-}
+import { rendererRuntimeLog } from '../runtime-log';
+import { useWorkspaceOperation, type WorkspaceOperationTicket } from '../components/workspace/use-workspace-operation';
+import { useOptionalMissionControlStoreContext } from '../mission-control/store-context';
+import { DEFAULT_AI_SETTINGS, DEFAULT_RULE_CONFIG, type SettingsLocalActionKey, type SettingsModalMode, DIAGNOSTIC_CHECKS, type SettingsTaskActionKind, SAFETY_POLICIES, STRUCTURED_AI_OUTPUT_TOKEN_FLOOR, DEFAULT_AI_PERSONA } from './settings-contracts';
+import { api, normalizeAiSettings, testedStatusForSettings, normalizeRuleConfig, settingsRuleConfigFieldFeedback, readString, validateRuleConfigForSave, percentLabel, clampStructuredAiMaxTokens, updateAiSettingsField, listToText, parseListInput } from './settings-values';
+import { aiSettingsActionHint, settingsRuleActionButtonView, settingsLocalActionButtonView, settingsPrimaryAiStatusItems, settingsAiConnectionFeedback, buildSettingsTaskBannerState, settingsSecondaryStatusMessage, displayAiStatusTone, displayAiStatusLabel, settingsAiContractPrimaryCopy, settingsAiContractTags, tagToneToStatusPillTone, aiAuditIntroText, aiAuditPurposeText, aiAuditLogTitle, aiAuditLogFormatLine, storagePathDisplay, settingsLocalActionButtonContent, settingsAiContractVersionItems } from './settings-presentation';
 
 export function SettingsPage({ embedded = false, storeContext }: { embedded?: boolean; storeContext?: StoreContextEnvelope } = {}) {
+  const authority = useOptionalMissionControlStoreContext();
+  const operationKey = JSON.stringify([authority?.authorityKey, authority?.contextEpoch, authority?.phase, storeContext]);
+  const operation = useWorkspaceOperation(operationKey);
+  const activeTicket = useRef<WorkspaceOperationTicket | null>(null);
+  const apiKeyLabelId = useId();
+  const apiKeyHintId = useId();
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+  const activeAction = operation.busy ? runningAction : null;
   const [aiSettings, setAiSettings] = useState<AiProviderSettings>(DEFAULT_AI_SETTINGS);
   const [ruleConfig, setRuleConfig] = useState<SettingsRuleConfig>(DEFAULT_RULE_CONFIG);
   const [aiStatus, setAiStatus] = useState<AiConnectionStatus>('unconfigured');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [savingAi, setSavingAi] = useState(false);
-  const [savingRules, setSavingRules] = useState(false);
+  const savingAi = activeAction === 'save-ai' || activeAction === 'clear-ai-key';
+  const savingRules = activeAction === 'save-rules';
   const [copyNotice, setCopyNotice] = useState('');
-  const [localAction, setLocalAction] = useState<SettingsLocalActionKey | null>(null);
+  const localAction: SettingsLocalActionKey | null = activeAction === 'clear-ai-key' || activeAction === 'copy-diagnostics' ? activeAction : null;
   const [storagePaths, setStoragePaths] = useState<StoragePathsView>({});
   const [aiCallLogs, setAiCallLogs] = useState<AiCallLogView[]>([]);
   const [settingsModal, setSettingsModal] = useState<SettingsModalMode>(null);
@@ -585,7 +49,9 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
   const canLoadStoragePaths = typeof apiSurface.getStoragePaths === 'function';
   const canLoadAiCallLogs = typeof apiSurface.listAiCallLogs === 'function';
   const keyPresent = Boolean(aiSettings.aiApiKey.trim() || aiSettings.aiKeyConfigured);
-  const canRunAiTest = canTestAi && keyPresent;
+  const canRunAiTest = canTestAi && keyPresent && Boolean(storeContext);
+  const settingsDisabledReason = operation.busy ? '当前设置操作正在处理中，请稍候。'
+    : loading ? '正在读取设置，请稍候。' : '';
   const aiActionHint = aiSettingsActionHint({
     canSaveSettings,
     keyPresent,
@@ -595,7 +61,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
     active: savingRules,
     baseClassName: 'primary-button',
     busyLabel: '保存中...',
-    disabled: !canSaveRules,
+    disabled: !canSaveRules || operation.busy || loading,
     label: '保存系统回退规则',
   });
   const clearAiKeyButton = settingsLocalActionButtonView({
@@ -603,7 +69,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
     activeAction: localAction,
     baseClassName: 'secondary-button',
     busyLabel: '清除中...',
-    disabled: savingAi || !canSaveSettings || !keyPresent,
+    disabled: operation.busy || loading || !canSaveSettings || !keyPresent,
     label: '清除本地 AI Key',
   });
   const copyDiagnosticsButton = settingsLocalActionButtonView({
@@ -611,23 +77,39 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
     activeAction: localAction,
     baseClassName: 'secondary-button',
     busyLabel: '复制中...',
+    disabled: operation.busy || loading,
     label: '复制支持检查清单',
   });
 
   function closeSettingsModal() {
-    if (savingAi || savingRules) return;
+    if (activeTicket.current?.isCurrent()) return;
     setSettingsModal(null);
   }
 
+  function beginSettingsAction(action: string): WorkspaceOperationTicket | null {
+    if (loading) return null;
+    const ticket = operation.begin();
+    if (!ticket) return null;
+    activeTicket.current = ticket;
+    setRunningAction(action);
+    return ticket;
+  }
+
+  function finishSettingsAction(ticket: WorkspaceOperationTicket): void {
+    if (activeTicket.current === ticket) activeTicket.current = null;
+    ticket.finish();
+  }
+
   const settingsDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
-    dismissDisabled: savingAi || savingRules,
+    dismissDisabled: savingAi || savingRules || operation.busy,
     onDismiss: closeSettingsModal,
     open: Boolean(settingsModal),
   });
 
-  async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
+  async function refreshAiSettingsFromStore(isCurrent: () => boolean): Promise<AiProviderSettings | null> {
     if (!canLoadSettings) return null;
     const settings = await apiSurface.getSettings();
+    if (!isCurrent()) return null;
     const next = normalizeAiSettings(settings);
     setAiSettings(next);
     setAiStatus(testedStatusForSettings(next));
@@ -636,13 +118,14 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
 
   useEffect(() => {
     let mounted = true;
+    const isCurrent = operation.capture();
     async function load() {
       setLoading(true);
       const notes: string[] = [];
       try {
         if (canLoadSettings) {
           const settings = await apiSurface.getSettings();
-          if (mounted) {
+          if (mounted && isCurrent()) {
             const next = normalizeAiSettings(settings);
             setAiSettings(next);
             setAiStatus(testedStatusForSettings(next));
@@ -652,24 +135,25 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
         }
         if (canLoadRules) {
           const rules = await apiSurface.getRuleConfig();
-          if (mounted) setRuleConfig(normalizeRuleConfig(rules));
+          if (mounted && isCurrent()) setRuleConfig(normalizeRuleConfig(rules));
         } else {
           notes.push('getRuleConfig 未接入，阈值使用页面默认值。');
         }
         if (canLoadStoragePaths) {
           const paths = await apiSurface.getStoragePaths();
-          if (mounted) setStoragePaths(paths || {});
+          if (mounted && isCurrent()) setStoragePaths(paths || {});
         } else {
           notes.push('getStoragePaths 未接入，路径显示为不可用。');
         }
         if (canLoadAiCallLogs) {
           const logs = await apiSurface.listAiCallLogs({ limit: 5 });
-          if (mounted) setAiCallLogs(Array.isArray(logs) ? logs : []);
+          if (mounted && isCurrent()) setAiCallLogs(Array.isArray(logs) ? logs : []);
         }
       } catch (caught) {
+        rendererRuntimeLog.error('settings.load_failed', { error: caught });
         notes.push(toUserFacingError(caught, '读取设置失败。'));
       } finally {
-        if (mounted) {
+        if (mounted && isCurrent()) {
           setMessage(notes.join(' '));
           setLoading(false);
         }
@@ -679,7 +163,15 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
     return () => {
       mounted = false;
     };
-  }, [apiSurface, canLoadAiCallLogs, canLoadRules, canLoadSettings, canLoadStoragePaths]);
+  }, [apiSurface, canLoadAiCallLogs, canLoadRules, canLoadSettings, canLoadStoragePaths, operationKey]);
+
+  useLayoutEffect(() => {
+    setMessage('');
+    setCopyNotice('');
+    setLoading(true);
+    setSettingsModal(null);
+    setAiStatus(current => current === 'testing' ? testedStatusForSettings(aiSettings) : current);
+  }, [operationKey]);
 
   useEffect(() => {
     if (!keyPresent && aiStatus !== 'unconfigured') setAiStatus('unconfigured');
@@ -734,11 +226,14 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       setMessage('saveSettings 未接入，当前环境只能编辑页面表单。');
       return;
     }
-    setSavingAi(true);
+    const ticket = beginSettingsAction('save-ai');
+    if (!ticket) return;
     setMessage('');
     try {
       await apiSurface.saveSettings(aiSettings);
-      const refreshed = await refreshAiSettingsFromStore();
+      if (!ticket.isCurrent()) return;
+      const refreshed = await refreshAiSettingsFromStore(ticket.isCurrent);
+      if (!ticket.isCurrent()) return;
       if (!refreshed) {
         const nextSettings = { ...aiSettings, aiApiKey: '', aiKeyConfigured: true };
         setAiSettings(nextSettings);
@@ -746,14 +241,16 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       }
       setMessage('AI 设置已保存。API Key 仅显示为已配置状态，不在页面展示明文。');
     } catch (caught) {
+      rendererRuntimeLog.error('settings.ai_save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setMessage(`AI 设置保存失败：${toUserFacingError(caught, 'AI 设置保存失败。')}`);
     } finally {
-      setSavingAi(false);
+      finishSettingsAction(ticket);
     }
   }
 
   async function testAiSettings() {
-    if (!canTestAi) {
+    if (!canTestAi || !storeContext) {
       setMessage('testAiSettings 未接入，无法在当前环境发起连接测试。');
       return;
     }
@@ -762,13 +259,17 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       setMessage('请先填写 API Key，再测试连接。');
       return;
     }
+    const ticket = beginSettingsAction('test-ai');
+    if (!ticket) return;
     setAiStatus('testing');
     setMessage('正在测试 AI 连接...');
     try {
       const result = await apiSurface.testAiSettings({ ...aiSettings, storeContext });
+      if (!ticket.isCurrent()) return;
       const success = Boolean(result?.success);
       const resultMessage = readString(result?.message, success ? 'AI 连接可用。' : 'AI 连接失败。');
-      const refreshed = await refreshAiSettingsFromStore();
+      const refreshed = await refreshAiSettingsFromStore(ticket.isCurrent);
+      if (!ticket.isCurrent()) return;
       if (!refreshed) {
         setAiStatus(success ? 'available' : 'failed');
         setAiSettings((current) => ({
@@ -782,8 +283,12 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       }
       setMessage(resultMessage);
     } catch (caught) {
+      rendererRuntimeLog.error('settings.ai_test_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setAiStatus('failed');
       setMessage(`AI 连接测试失败：${toUserFacingError(caught, 'AI 连接测试失败。')}`);
+    } finally {
+      finishSettingsAction(ticket);
     }
   }
 
@@ -792,8 +297,8 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       setMessage('saveSettings 未接入，无法清除本地 AI Key。');
       return;
     }
-    setLocalAction('clear-ai-key');
-    setSavingAi(true);
+    const ticket = beginSettingsAction('clear-ai-key');
+    if (!ticket) return;
     setMessage('正在清除本地 AI Key...');
     try {
       await apiSurface.saveSettings({
@@ -807,7 +312,9 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
         aiLastTestModel: '',
         aiLastTestMessage: '',
       });
-      const refreshed = await refreshAiSettingsFromStore();
+      if (!ticket.isCurrent()) return;
+      const refreshed = await refreshAiSettingsFromStore(ticket.isCurrent);
+      if (!ticket.isCurrent()) return;
       if (!refreshed) {
         setAiSettings({
           ...aiSettings,
@@ -823,10 +330,11 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       }
       setMessage('AI Key 已清除。需要重新填写并测试后，AI 才会参与建议生成。');
     } catch (caught) {
+      rendererRuntimeLog.error('settings.ai_key_clear_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setMessage(`AI Key 清除失败：${toUserFacingError(caught, 'AI Key 清除失败。')}`);
     } finally {
-      setSavingAi(false);
-      setLocalAction(null);
+      finishSettingsAction(ticket);
     }
   }
 
@@ -840,32 +348,41 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
       setMessage(`阈值保存已阻断：${validationErrors.join('；')}。`);
       return;
     }
-    setSavingRules(true);
+    const ticket = beginSettingsAction('save-rules');
+    if (!ticket) return;
     setMessage('');
     try {
       await apiSurface.saveRuleConfig(ruleConfig);
+      if (!ticket.isCurrent()) return;
       setMessage('系统回退规则已保存。');
     } catch (caught) {
+      rendererRuntimeLog.error('settings.rules_save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setMessage(`阈值保存失败：${toUserFacingError(caught, '阈值保存失败。')}`);
     } finally {
-      setSavingRules(false);
+      finishSettingsAction(ticket);
     }
   }
 
   async function copyDiagnostics() {
-    setLocalAction('copy-diagnostics');
+    const ticket = beginSettingsAction('copy-diagnostics');
+    if (!ticket) return;
     setCopyNotice('正在复制支持检查清单...');
     try {
       await navigator.clipboard.writeText(DIAGNOSTIC_CHECKS.join('\n'));
+      if (!ticket.isCurrent()) return;
       setCopyNotice('支持检查清单已复制。');
     } catch (caught) {
+      rendererRuntimeLog.error('settings.copy_diagnostics_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setCopyNotice(`复制失败：${toUserFacingError(caught, '复制失败。')}`);
     } finally {
-      setLocalAction(null);
+      finishSettingsAction(ticket);
     }
   }
 
   function runSettingsTaskAction(kind: SettingsTaskActionKind) {
+    if (activeTicket.current?.isCurrent() || loading) return;
     if (kind === 'test-connection') {
       void testAiSettings();
       return;
@@ -892,20 +409,23 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
           status={<StatusPill tone={settingsTaskBannerState.statusTone}>{settingsTaskBannerState.statusLabel}</StatusPill>}
           primaryAction={{
             label: settingsTaskBannerState.primaryAction.label,
-            busy: settingsTaskBannerState.primaryAction.busy,
+            busy: activeAction === 'test-ai',
             busyLabel: settingsTaskBannerState.primaryAction.busyLabel,
-            disabled: settingsTaskBannerState.primaryAction.disabled,
-            disabledReason: settingsTaskBannerState.primaryAction.disabledReason,
+            disabled: operation.busy || loading || settingsTaskBannerState.primaryAction.disabled,
+            disabledReason: settingsDisabledReason || settingsTaskBannerState.primaryAction.disabledReason,
             onClick: () => runSettingsTaskAction(settingsTaskBannerState.primaryAction.kind),
           }}
           secondaryActions={settingsTaskBannerState.secondaryActions.map((action) => ({
             label: action.label,
-            disabled: action.disabled,
-            disabledReason: action.disabledReason,
+            disabled: operation.busy || loading || action.disabled,
+            disabledReason: settingsDisabledReason || action.disabledReason,
             onClick: () => runSettingsTaskAction(action.kind),
           }))}
           meta="API Key 仅由主进程本机安全存储；AI 输出仍受固定合同和人工审批边界约束。"
         />
+        {settingsDisabledReason && <p id="settings-operation-reason" role="status">{settingsDisabledReason}</p>}
+        {!storeContext && <p className="warning-line">请先选择店铺后测试 AI 连接；系统设置仍可保存。</p>}
+        {!canSaveRules && <p className="warning-line">当前应用未提供规则保存接口。</p>}
 
         <Panel
           title="AI 服务连接"
@@ -967,7 +487,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
           </div>
           <div className="settings-panel-action-line">
             <span>店铺配置会覆盖目标 ACOS 与 AI 开关；这里仅维护未覆盖字段的系统回退值，不会直接写入广告账户。</span>
-            <button className="secondary-button" disabled={savingRules} onClick={() => setSettingsModal('rules')} type="button">
+            <button className="secondary-button" disabled={operation.busy || loading} onClick={() => { if (!activeTicket.current?.isCurrent()) setSettingsModal('rules'); }} type="button">
               编辑规则阈值
             </button>
           </div>
@@ -1116,7 +636,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
                 </div>
                 <button
                   className="secondary-button compact-button"
-                  disabled={savingAi || savingRules}
+                  disabled={operation.busy}
                   onClick={closeSettingsModal}
                   type="button"
                 >
@@ -1124,7 +644,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
                 </button>
               </header>
 
-              <div className="settings-modal-body">
+              <fieldset className="settings-modal-body" disabled={operation.busy || loading} style={{ border: 0, margin: 0, minWidth: 0 }}>
                 {settingsModal === 'ai-contract' && (
                   <>
                     <div className="settings-ai-contract-copy">
@@ -1151,8 +671,11 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
                 {settingsModal === 'ai-connection' && (
                   <>
                     <FormTable>
-                      <FormTableRow label="API Key" required hint="仅保存脱敏状态，页面不展示完整 Key。">
+                      <FormTableRow label="API Key" labelId={apiKeyLabelId} hintId={apiKeyHintId} required hint="仅保存脱敏状态，页面不展示完整 Key。">
                         <input
+                          aria-labelledby={apiKeyLabelId}
+                          aria-describedby={apiKeyHintId}
+                          aria-required={aiSettings.aiKeyConfigured !== true}
                           autoComplete="off"
                           placeholder="DeepSeek 或 OpenAI Compatible API Key"
                           type="password"
@@ -1337,20 +860,21 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
                     </FormTableRow>
                   </FormTable>
                 )}
-              </div>
+              </fieldset>
+              {settingsDisabledReason && <p role="status">{settingsDisabledReason}</p>}
 
               <footer className="settings-modal-footer">
                 {settingsModal === 'ai-connection' && (
                   <>
                     <button
-                      aria-busy={savingAi || undefined}
-                      className={savingAi ? 'primary-button button-loading' : 'primary-button'}
-                      disabled={!canSaveSettings || savingAi}
+                      aria-busy={activeAction === 'save-ai' || undefined}
+                      className={activeAction === 'save-ai' ? 'primary-button button-loading' : 'primary-button'}
+                      disabled={!canSaveSettings || operation.busy || loading}
                       onClick={saveAiSettings}
                       type="button"
                     >
-                      {savingAi && <span className="button-spinner" aria-hidden="true" />}
-                      <span>{savingAi ? '保存中...' : '保存 AI 设置'}</span>
+                      {activeAction === 'save-ai' && <span className="button-spinner" aria-hidden="true" />}
+                      <span>{activeAction === 'save-ai' ? '保存中...' : '保存 AI 设置'}</span>
                     </button>
                     <button
                       aria-busy={clearAiKeyButton.ariaBusy}
@@ -1377,7 +901,7 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
                 )}
                 <button
                   className="secondary-button"
-                  disabled={savingAi || savingRules}
+                  disabled={operation.busy}
                   onClick={closeSettingsModal}
                   type="button"
                 >
@@ -1392,3 +916,9 @@ export function SettingsPage({ embedded = false, storeContext }: { embedded?: bo
     </div>
   );
 }
+
+export { type SettingsRuleActionButtonView, type SettingsLocalActionButtonView } from './settings-contracts';
+
+export { settingsRuleConfigFieldFeedback, shouldResetAiTestForSettingsField } from './settings-values';
+
+export { aiAuditIntroText, aiAuditPurposeText, aiAuditLogFormatLine, aiAuditLogTitle, aiSettingsActionHint, storagePathDisplay, settingsAiContractPrimaryCopy, settingsAiContractTags, settingsAiContractVersionItems, settingsPrimaryAiStatusItems, settingsAiTaskTitle, settingsAiConnectionFeedback, buildSettingsTaskBannerState, settingsSecondaryStatusMessage, settingsRuleActionButtonView, settingsLocalActionButtonView } from './settings-presentation';

@@ -182,12 +182,16 @@ export type FormTableFeedbackTone = 'ready' | 'pending' | 'blocked' | 'warning';
 
 export function FormTableRow({
   label,
+  labelId,
+  hintId,
   required,
   children,
   hint,
   feedback,
 }: {
   label: string;
+  labelId?: string;
+  hintId?: string;
   required?: boolean;
   children: React.ReactNode;
   hint?: React.ReactNode;
@@ -199,12 +203,12 @@ export function FormTableRow({
   return (
     <label className={`form-table-row${feedback ? ` form-table-row-${feedback.tone}` : ''}`}>
       <span className="form-table-label">
-        {label}
+        {labelId ? <span id={labelId}>{label}</span> : label}
         {required && <b aria-label="必填">*</b>}
       </span>
       <span className="form-table-control">
         {children}
-        {hint && <small>{hint}</small>}
+        {hint && <small id={hintId}>{hint}</small>}
         <span className="form-table-feedback-slot">
           {feedback ? (
             <small className={`form-table-feedback form-table-feedback-${feedback.tone}`} role="status" aria-live="polite">
@@ -251,6 +255,9 @@ export interface DecisionActionItem {
   tone: IndustrialTone;
   onClick?: () => void;
   disabled?: boolean;
+  disabledReason?: string;
+  busy?: boolean;
+  busyLabel?: string;
 }
 
 export function DecisionActionStrip({
@@ -260,6 +267,7 @@ export function DecisionActionStrip({
   items: DecisionActionItem[];
   ariaLabel?: string;
 }) {
+  const groupBusy = items.some(item => item.busy);
   return (
     <div
       aria-label={ariaLabel}
@@ -267,19 +275,26 @@ export function DecisionActionStrip({
       data-hover-fade="true"
       role="group"
     >
-      {items.map((item) => (
+      {items.map((item) => {
+        const disabled = Boolean(item.disabled || item.busy || groupBusy);
+        const reason = item.disabledReason || (groupBusy ? '当前审批操作正在处理，请等待完成。' : '请先补齐当前动作的复核条件。');
+        return (
         <button
-          className={`decision-action decision-action-${item.tone}`}
+          className={`decision-action decision-action-${item.tone}${item.busy ? ' button-loading' : ''}`}
           data-decision-action="true"
-          disabled={item.disabled}
+          disabled={disabled}
+          aria-busy={item.busy || undefined}
+          aria-description={disabled ? reason : undefined}
           key={item.label}
           onClick={item.onClick}
           type="button"
         >
-          <strong>{item.label}</strong>
+          {item.busy && <span className="button-spinner" aria-hidden="true" />}
+          <strong>{item.busy ? item.busyLabel || '处理中…' : item.label}</strong>
           {item.detail && <span>{item.detail}</span>}
+          {disabled && <small className="task-banner__disabled-reason">{reason}</small>}
         </button>
-      ))}
+      ); })}
     </div>
   );
 }

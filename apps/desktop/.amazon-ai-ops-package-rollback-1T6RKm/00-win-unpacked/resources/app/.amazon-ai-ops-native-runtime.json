@@ -1,8 +1,0 @@
-{
-  "kind": "amazon-ai-ops-isolated-native-package",
-  "schemaVersion": 1,
-  "electronVersion": "28.3.3",
-  "modulesAbi": "119",
-  "betterSqlite3Sha256": "AD19705C7938A60EF5557E31D152843CC42364684913847FBD623484430283A3",
-  "duckDbSha256": "8E86A77E39ADC3C28B44A5816AFEDCA39A337464C102C37917945EB404BE1685"
-}

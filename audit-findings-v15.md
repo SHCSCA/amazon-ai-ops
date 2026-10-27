@@ -1,5 +1,7 @@
 # V15 对抗式审计报告 — 原型 vs 实现逐页比对
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](docs/PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 **审计日期**：2026-07-02
 **审计范围**：`amazon-ai-ops-business-prototype/pages/*.html` vs `apps/desktop/src/renderer/`
 **审计方法**：逐页逐组件深度比对，原型为"预期"，实现为"实际"

@@ -1,3 +1,6 @@
+import { recordCredentialFailure } from './credential-error-diagnostics';
+import { runtimeLogger, type RuntimeLogPort } from './runtime-logger';
+
 export interface AiKeyStore {
   get(key: string): string | null;
   set(key: string, value: string): void;
@@ -17,14 +20,19 @@ const AI_API_KEY_STORAGE_FIELDS = new Set<string>([
   ...LEGACY_AI_API_KEY_KEYS,
 ]);
 
-export function readPersistedAiApiKey(store: AiKeyStore, cipher: AiKeyCipher): string {
+export function isPersistedAiApiKeyField(key: string): boolean {
+  return AI_API_KEY_STORAGE_FIELDS.has(key);
+}
+
+export function readPersistedAiApiKey(store: AiKeyStore, cipher: AiKeyCipher, logger: RuntimeLogPort = runtimeLogger): string {
   const encryptedKey = store.get(AI_API_KEY_ENCRYPTED);
   if (encryptedKey) {
     deleteLegacyPlaintextKeys(store);
     if (!cipher.isEncryptionAvailable()) return '';
     try {
       return cipher.decrypt(encryptedKey).trim();
-    } catch {
+    } catch (error) {
+      recordCredentialFailure('ai_key_decrypt', error, logger);
       return '';
     }
   }
@@ -45,7 +53,8 @@ export function readPersistedAiApiKey(store: AiKeyStore, cipher: AiKeyCipher): s
   try {
     store.set(AI_API_KEY_ENCRYPTED, cipher.encrypt(legacyKey));
     return legacyKey;
-  } catch {
+  } catch (error) {
+    recordCredentialFailure('ai_key_migrate', error, logger);
     return '';
   } finally {
     deleteLegacyPlaintextKeys(store);
@@ -74,7 +83,7 @@ export function savePersistedAiApiKey(
 
 export function stripPersistedAiApiKeyFields<T>(settings: Record<string, T>): Record<string, T> {
   return Object.fromEntries(
-    Object.entries(settings).filter(([key]) => !AI_API_KEY_STORAGE_FIELDS.has(key)),
+    Object.entries(settings).filter(([key]) => !isPersistedAiApiKeyField(key)),
   ) as Record<string, T>;
 }
 
@@ -82,9 +91,10 @@ export function resolveAiSettingsWithPersistedKey(
   settings: Record<string, string>,
   store: AiKeyStore,
   cipher: AiKeyCipher,
+  logger: RuntimeLogPort = runtimeLogger,
 ): Record<string, string> {
   const safeSettings = stripPersistedAiApiKeyFields(settings);
-  const apiKey = readPersistedAiApiKey(store, cipher);
+  const apiKey = readPersistedAiApiKey(store, cipher, logger);
   return {
     ...safeSettings,
     aiApiKey: apiKey,

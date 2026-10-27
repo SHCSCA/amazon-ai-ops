@@ -1,3 +1,5 @@
 # V1.6 进展入口
 
-统一使用 [PROGRESS.md](../PROGRESS.md) 和 [BLOCKED.md](../BLOCKED.md)。需求核对清单是 [v16_requirements_index.json](v16_requirements_index.json)，验收定义是 [v16_required_test_manifest.json](v16_required_test_manifest.json)。完成必须由当前执行证据证明。
+更新日期：2026-10-27。当前为APP_NEEDS_WORK / INTERNAL NON_READY，最近完整L1为8506/8526、20失败，L2/L3未执行。
+
+事实统一见 [PROJECT_STATUS](PROJECT_STATUS.md)、[PROGRESS](../PROGRESS.md)，当前缺口见 [BLOCKED](../BLOCKED.md)，继续执行见 [开发交接](DEVELOPMENT_HANDOFF.md)。旧百分比不作当前验收依据。

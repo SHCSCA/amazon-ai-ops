@@ -15,6 +15,7 @@ export interface DeliveryReadinessFailure {
 }
 
 export interface DeliveryReadinessView {
+  verificationProtocol?: 'v16.current-publication/1';
   available: boolean;
   path: string | null;
   exists: boolean;
@@ -49,6 +50,12 @@ export interface CurrentDeliveryPackageEvidence {
 
 export interface DeliveryReadinessAuthority {
   currentPackage?: CurrentDeliveryPackageEvidence | null;
+  currentVersion?: string;
+}
+
+function requiresV16Publication(version: string | undefined): boolean {
+  const match = version?.match(/^(\d+)\.(\d+)\.\d+(?:[-+].*)?$/);
+  return Boolean(match && (Number(match[1]) > 1 || Number(match[1]) === 1 && Number(match[2]) >= 6));
 }
 
 function readStringList(value: unknown): string[] {
@@ -214,6 +221,12 @@ export function normalizeDeliveryReadiness(
     : [];
   const authorityFailures: DeliveryReadinessFailure[] = [
     ...packageFailures,
+    ...(requiresV16Publication(authority.currentVersion) ? [{
+      gateId: 'final-readiness',
+      code: 'V16_LEGACY_READINESS_REFUSED',
+      message: '当前版本需要重新验证 V1.6 原生证据和发布闭包；旧版验收投影不能授权生产交付。',
+      evidencePath: filePath,
+    }] : []),
     ...(previewOnly ? [{
       gateId: 'final-readiness',
       code: 'PREVIEW_ONLY_FINAL_READINESS',

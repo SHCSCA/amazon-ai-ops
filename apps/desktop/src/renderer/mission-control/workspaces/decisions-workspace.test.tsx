@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { DecisionRecord, MissionControlCapabilityProjection, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { createPreviewDecisionDomainApi } from './mission-domain-window-api';
 import { createPreviewAnalysisAuthorityApi } from './analysis-authority-window-api';
+import { decisionDraft } from './decision-workspace-editor';
 import {
   AnalysisProposalBusinessTable,
   AnalysisProposalAuthorityStatus,
@@ -362,6 +363,41 @@ describe('DecisionsWorkspace', () => {
     )).toBe('当前店铺的决策证据不一致，请刷新后重试。');
     expect(decisionOperatorCopy('审批已记录，请刷新列表。', 'fallback'))
       .toBe('审批已记录，请刷新列表。');
+  });
+
+  it('redacts paths and credentials from ordinary decision and fact copy', () => {
+    const raw = '审批失败 C:\\Users\\Private Operator\\data.db\npassword=private-password';
+    const safe = decisionOperatorCopy(raw, '请刷新后重试');
+    expect(safe).toContain('审批失败');
+    for (const secret of ['Private Operator', 'data.db', 'private-password']) expect(safe).not.toContain(secret);
+    const markup = renderToStaticMarkup(<DecisionEvidenceFacts facts={['证据不可读 /private/authority.db', 'password=private-password']} />);
+    expect(markup).not.toContain('/private');
+    expect(markup).not.toContain('private-password');
+  });
+
+  it('reserves successful status color for verified decisions and keeps attached facts neutral', () => {
+    const css = readFileSync(new URL('./decisions-workspace.css', import.meta.url), 'utf8');
+    const statusRule = css.match(/([^{}]+)\{[^{}]*color: #087956;[^{}]*\}/)?.[1] ?? '';
+    expect(statusRule).toContain('data-status="verified"');
+    expect(statusRule).not.toContain('approved');
+    expect(statusRule).not.toContain('blocked');
+    expect(css).toContain('span[data-status="可审批"] { background: #edf3fd; color: #1f5bc9; }');
+    expect(css).toContain('.decision-domain-evidence-grid ul svg { flex: 0 0 auto; margin-top: 1px; color: #526079; }');
+    const markup = renderToStaticMarkup(<DecisionEvidenceFacts facts={['尚未核验的观察记录']} />);
+    expect(markup).toContain('data-evidence-status="attached"');
+    expect(markup).not.toContain('data-evidence-status="verified"');
+  });
+
+  it('explains unavailable decision controls and reports editor save busy state', () => {
+    const blocked = renderToStaticMarkup(<DecisionsWorkspace apiOverride={createPreviewDecisionDomainApi()}
+      blockedReason="未开放" capabilities={[]} previewMode={false} storeContext={context} view="decisions/recommendations" />);
+    expect(blocked).toContain('请到待判断工作台，确认当前店铺已开放新建经营决策');
+    expect(blocked).toContain('已经是第一页');
+    const editor = renderToStaticMarkup(<DecisionDialog busy record={null} draft={decisionDraft(context)}
+      onChange={() => undefined} onClose={() => undefined} onSave={() => undefined} />);
+    expect(editor).toContain('aria-busy="true"');
+    expect(editor).toContain('保存中…');
+    expect(editor).toContain('请等待完成后再关闭编辑器');
   });
 
   it('keeps relation ids, revisions and action values inside the decision dialog diagnostics', () => {

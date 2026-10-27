@@ -502,4 +502,5 @@ module.exports = {
   assertMatchingAuthorityCurrentnessProofs,
   captureAuthoritySnapshotCurrentness,
   runReadonlySqliteOnlineBackupSync,
+  runChild,
 };

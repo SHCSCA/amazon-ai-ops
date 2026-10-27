@@ -1,3 +1,4 @@
+import { readStyleComposition } from './css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -34,7 +35,7 @@ describe('task-first workspace style layers', () => {
 
   it('keeps visible workspace copy at 12px or above and uses explicit focus-visible rings', () => {
     const css = styleFiles.map(style).join('\n');
-    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const legacyCss = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).not.toMatch(/font-size:\s*(?:[0-9]|1[01])px/);
     expect(legacyCss).not.toMatch(/font-size:\s*(?:[0-9]|1[01])px/);
@@ -49,7 +50,7 @@ describe('task-first workspace style layers', () => {
   it('assigns vertical scrolling to app content and only horizontal overflow to priority tables', () => {
     const shell = style('shell.css');
     const table = style('priority-table.css');
-    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const legacyCss = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(shell).toMatch(/\.app-content\s*\{[^}]*overflow-y:\s*auto/s);
     expect(shell).toMatch(/\.app-content\s*\{[^}]*overflow-x:\s*hidden/s);
@@ -172,12 +173,12 @@ describe('task-first workspace style layers', () => {
 
   it('uses purposeful transitions, never transition all, and provides reduced-motion fallback', () => {
     const css = styleFiles.map(style).join('\n');
-    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const legacyCss = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).not.toMatch(/transition:\s*all\b/);
     expect(legacyCss).not.toMatch(/transition:\s*all\b/);
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-    expect(css).toMatch(/animation-duration:\s*0\.01ms/);
+    expect(css).toMatch(/animation-duration:\s*0ms/);
     expect(css).not.toMatch(/linear-gradient|radial-gradient|filter:\s*drop-shadow/);
   });
 

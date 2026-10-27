@@ -31,18 +31,35 @@ function parseMustRequirements(text) {
   return text.split(/\r?\n/).flatMap((line, i) => {
     if (/^#{1,6} /.test(line)) section = line.replace(/^#+ /, '');
     const match = line.match(/^\|\s*(V16-[A-Z0-9-]+)\s*\|\s*MUST\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/);
-    return match ? [{ id: match[1], title: match[2], priority: 'MUST', section, line: i + 1, acceptanceIds: match[3].match(/AC-[A-Z0-9-]+/g) ?? [] }] : [];
+    return match ? [{ id: match[1], title: match[2], priority: 'MUST', section, line: i + 1, acceptanceIds: parseAcceptanceIds(match[3]) }] : [];
   });
+}
+function parseAcceptanceIds(text) {
+  const ids = [];
+  const expression = /AC-[A-Z0-9-]+(?:\s*[～~–—]\s*AC-[A-Z0-9-]+)?/g;
+  if (/[～~–—]/.test(text.replace(expression, ''))) throw new Error('INVALID_ACCEPTANCE_RANGE:' + text);
+  for (const token of text.match(expression) ?? []) {
+    const endpoints = token.split(/\s*[～~–—]\s*/);
+    if (endpoints.length === 1) { ids.push(token); continue; }
+    const start = endpoints[0].match(/^(AC-[A-Z0-9-]+-)(\d+)$/);
+    const end = endpoints[1].match(/^(AC-[A-Z0-9-]+-)(\d+)$/);
+    if (!start || !end || start[1] !== end[1] || start[2].length !== end[2].length
+      || Number(end[2]) < Number(start[2]) || Number(end[2]) - Number(start[2]) > 999) {
+      throw new Error('INVALID_ACCEPTANCE_RANGE:' + token);
+    }
+    for (let n = Number(start[2]); n <= Number(end[2]); n += 1) ids.push(start[1] + String(n).padStart(start[2].length, '0'));
+  }
+  return [...new Set(ids)];
 }
 const unique = list => Array.isArray(list) && list.length > 0 && new Set(list).size === list.length;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const absoluteFile = (root, file) => path.resolve(root, file).replaceAll('\\', '/');
 
-function summarizeVitest(report, testFiles, root = process.cwd()) {
+function summarizeVitest(report, testFiles, root = process.cwd(), recordedSourceRoot = root) {
   const issues = [];
   const files = report?.testResults;
   if (!unique(testFiles) || !Array.isArray(files) || !files.length) return { success: false, total: 0, passed: 0, failed: 0, skipped: 0, issues: ['EMPTY_OR_MISSING_TESTS'] };
-  const actual = files.map(file => absoluteFile(root, file.name ?? ''));
+  const actual = files.map(file => absoluteFile(root, path.relative(recordedSourceRoot, absoluteFile(recordedSourceRoot, file.name ?? ''))));
   const expected = testFiles.map(file => absoluteFile(root, file));
   if (!unique(actual) || !same([...actual].sort(), [...expected].sort())) issues.push('REQUIRED_FILES_NOT_EXECUTED');
   const assertions = files.flatMap(file => Array.isArray(file.assertionResults) ? file.assertionResults : []);
@@ -58,10 +75,29 @@ function summarizeVitest(report, testFiles, root = process.cwd()) {
   return { success: !issues.length, ...result, issues };
 }
 
-function verifyEvidence(test, identity, root = process.cwd()) {
+function verifyEvidence(test, identity, root = process.cwd(), trustedNativeEnvironment) {
+  const native = require('./v16-native-artifacts'), ledger = new Map();
+  try {
+    const roots = require('./v16-trusted-runtime').artifactRoots(trustedNativeEnvironment);
+    const result = native.withArtifactLedger(ledger, () => verifyEvidenceContents(test, identity, root, trustedNativeEnvironment), roots);
+    if (result.success) {
+      native.withArtifactLedger(ledger, () => { for (const record of ledger.values()) native.readArtifact(root, record); }, roots);
+      result.inputArtifacts = [...new Map([...ledger.values(), ...(result.inputArtifacts ?? [])].map(record => [record.path.toLowerCase(), record])).values()].sort((a, b) => a.path.localeCompare(b.path));
+    }
+    return result;
+  } catch (error) {
+    return { testId: test.testId, layer: test.layer, success: false, total: 0, passed: 0, failed: 0, skipped: 0, caseIds: [], inputArtifacts: [], issues: ['MISSING_OR_INVALID_EVIDENCE: ' + error.message], diagnostics: [native.structuredFailure('v16.evidence_inputs_failed', error, { testId: test.testId })] };
+  }
+}
+function evidenceBytes(root, file, expectedSha256) {
+  const absolute = path.resolve(root, file);
+  const expected = expectedSha256 ?? sha256(fs.readFileSync(absolute));
+  return require('./v16-native-artifacts').readArtifact(root, { path: absolute, sha256: expected }).bytes;
+}
+function verifyEvidenceContents(test, identity, root, trustedNativeEnvironment) {
   const issues = [];
   try {
-    const evidence = readJson(path.resolve(root, test.evidencePath));
+    const evidence = JSON.parse(evidenceBytes(root, test.evidencePath));
     if (evidence.schemaVersion !== 'v16.evidence/1' || evidence.testId !== test.testId || evidence.layer !== test.layer) issues.push('EVIDENCE_CONTRACT_MISMATCH');
     for (const key of ['sourceRevision', 'sourceSha256', 'packageVersion']) if (!identity?.[key] || evidence.identity?.[key] !== identity[key]) issues.push('STALE_IDENTITY:' + key);
     if (['L4', 'L5', 'L6', 'L7'].includes(test.layer)) {
@@ -73,28 +109,33 @@ function verifyEvidence(test, identity, root = process.cwd()) {
     const start = Date.parse(evidence.execution?.startedAt), end = Date.parse(evidence.execution?.finishedAt);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end > Date.now() + 1000) issues.push('INVALID_EXECUTION_TIME');
     if (evidence.artifact?.format !== test.format) issues.push('RUNNER_FORMAT_MISMATCH');
-    const bytes = fs.readFileSync(path.resolve(root, evidence.artifact.path));
+    const bytes = evidenceBytes(root, evidence.artifact.path);
     if (sha256(bytes) !== evidence.artifact.sha256) issues.push('RUNNER_HASH_MISMATCH');
     const raw = JSON.parse(bytes.toString('utf8'));
     let result;
     let caseIds = [];
     if (test.format === 'vitest-json') {
-      result = summarizeVitest(raw, test.testFiles, root);
+      const recordedRoot = trustedNativeEnvironment?.recordedSourceRoot ?? root;
+      result = summarizeVitest(raw, test.testFiles, root, recordedRoot);
       caseIds = (raw.testResults ?? []).flatMap(file => (file.assertionResults ?? [])
         .filter(assertion => assertion.status === 'passed')
-        .map(assertion => `${path.relative(root, absoluteFile(root, file.name)).replaceAll('\\', '/')}::${String(assertion.fullName).trim()}`));
+        .map(assertion => `${path.relative(recordedRoot, absoluteFile(recordedRoot, file.name)).replaceAll('\\', '/')}::${String(assertion.fullName).trim()}`));
       issues.push(...result.issues);
       if (raw.startTime < start || raw.startTime > end || !Number.isFinite(raw.startTime)) issues.push('STALE_RUNNER_TIME');
     } else if (test.format === 'checks-json') {
-      // Runtime/business acceptance needs a schema-specific verifier of native artifacts.
-      // A producer's boolean summary cannot establish UI, package, store or Ads truth.
-      if (['L4','L5','L6','L7'].includes(test.layer)) issues.push('NATIVE_ARTIFACT_VERIFICATION_REQUIRED');
+      // 运行和业务验收必须重验原生协议与原件，汇总布尔值不能替代授权及现场证据。
       const checks = raw.checks;
       if (test.layer === 'L2') caseIds = (checks ?? []).filter(check => check.passed).map(check => check.id);
       if (!unique(test.requiredChecks) || !Array.isArray(checks) || !unique(checks.map(check => check.id)) || !same(checks.map(c => c.id).sort(), [...test.requiredChecks].sort())) issues.push('REQUIRED_CHECKS_NOT_EXECUTED');
       result = { success: raw.success === true, total: checks?.length ?? 0, passed: checks?.filter(c => c.passed === true).length ?? 0, failed: checks?.filter(c => c.passed !== true).length ?? 0, skipped: 0 };
       if (!result.success || !result.total || result.failed) issues.push('CHECKS_FAILED');
       if (raw.sourceSha256 !== identity.sourceSha256 || raw.testId !== test.testId) issues.push('CHECKS_IDENTITY_MISMATCH');
+      if (['L4', 'L5', 'L6', 'L7'].includes(test.layer)) {
+        const native = require('./v16-native-evidence').verifyNativeEvidence(raw, test, identity, root, evidence.execution, trustedNativeEnvironment);
+        result = native;
+        caseIds = native.caseIds;
+        issues.push(...native.issues);
+      }
       if (test.layer === 'L2') {
         for (const check of checks ?? []) {
           if (!Array.isArray(check.commands) || check.commands.length !== (check.id === 'main-preload-build' ? 2 : 1)) {
@@ -105,35 +146,45 @@ function verifyEvidence(test, identity, root = process.cwd()) {
             if (command.exitCode !== 0 || !command.executable || !command.args?.length
               || Date.parse(command.startedAt) < start || Date.parse(command.finishedAt) > end
               || !(Date.parse(command.finishedAt) >= Date.parse(command.startedAt))) issues.push('FAILED_COMMAND:' + check.id);
-            if (!command.log?.sha256 || sha256(fs.readFileSync(path.resolve(root, command.log.path))) !== command.log.sha256) issues.push('COMMAND_LOG_MISMATCH:' + check.id);
+            if (!command.log?.sha256 || sha256(evidenceBytes(root, command.log.path, command.log.sha256)) !== command.log.sha256) issues.push('COMMAND_LOG_MISMATCH:' + check.id);
           }
           if (check.id === 'package-script-contracts') {
-            const runner = fs.readFileSync(path.resolve(root, check.runner.path));
-            if (sha256(runner) !== check.runner.sha256 || !summarizeVitest(JSON.parse(runner), ['scripts/package-scripts.test.mjs', 'scripts/build-windows-package.test.mjs'], root).success) issues.push('PACKAGE_SCRIPT_RUNNER_FAILED');
+            const runner = evidenceBytes(root, check.runner.path, check.runner.sha256);
+            if (sha256(runner) !== check.runner.sha256 || !summarizeVitest(JSON.parse(runner), ['scripts/package-scripts.test.mjs', 'scripts/build-windows-package.test.mjs'], root, trustedNativeEnvironment?.recordedSourceRoot ?? root).success) issues.push('PACKAGE_SCRIPT_RUNNER_FAILED');
           }
         }
       }
     } else { issues.push('UNSUPPORTED_RUNNER'); result = { total: 0, passed: 0, failed: 0, skipped: 0 }; }
     for (const key of ['total', 'passed', 'failed', 'skipped']) if (evidence.result?.[key] !== result[key]) issues.push('EVIDENCE_COUNT_MISMATCH:' + key);
     if (evidence.result?.success !== true) issues.push('EVIDENCE_NOT_PASSED');
-    return { testId: test.testId, layer: test.layer, ...result, caseIds, success: !issues.length, issues };
+    return { testId: test.testId, layer: test.layer, ...result, caseIds: issues.length ? [] : caseIds, inputArtifacts: issues.length ? [] : (result.inputArtifacts ?? []), success: !issues.length, issues };
   } catch (error) {
-    return { testId: test.testId, layer: test.layer, success: false, total: 0, passed: 0, failed: 0, skipped: 0, issues: ['MISSING_OR_INVALID_EVIDENCE: ' + error.message] };
+    return { testId: test.testId, layer: test.layer, success: false, total: 0, passed: 0, failed: 0, skipped: 0, caseIds: [], inputArtifacts: [], issues: ['MISSING_OR_INVALID_EVIDENCE: ' + error.message], diagnostics: [require('./v16-native-artifacts').structuredFailure('v16.evidence_read_failed', error, { testId: test.testId })] };
   }
 }
 
-function verifyManifest(manifest, root = process.cwd(), current = sourceIdentity(root)) {
+function verifyManifest(manifest, root = process.cwd(), current, trustedRuntime) {
   const issues = [];
+  let frozen;
+  if (trustedRuntime) {
+    try {
+      frozen = require('./v16-trusted-runtime').validateFrozenBuild(trustedRuntime.frozenBuild, current);
+      current = frozen.identity;
+    } catch (error) {
+      return { schemaVersion: 'v16.manifest-verification/1', verifiedAt: new Date().toISOString(), identity: current ?? {}, success: false, issues: ['FROZEN_BUILD_UNAVAILABLE:' + error.message], details: [], diagnostics: [require('./v16-native-artifacts').structuredFailure('v16.frozen_build_failed', error)] };
+    }
+  }
+  current ??= sourceIdentity(root);
   const tests = manifest?.requiredTests;
   if (manifest?.schemaVersion !== 'v16.manifest/1') issues.push('MANIFEST_VERSION_MISMATCH');
   if (!Array.isArray(tests) || !unique(tests.map(test => test.testId))) issues.push('EMPTY_OR_DUPLICATE_REQUIRED_TESTS');
   try {
-    const definition = readJson(path.join(root, 'docs/v16_required_test_manifest.json'));
+    const definition = frozen?.requiredManifestDefinition ?? readJson(path.join(root, 'docs/v16_required_test_manifest.json'));
     const contract = test => ({ testId: test.testId, layer: test.layer, format: test.format, testFiles: test.testFiles, requiredChecks: test.requiredChecks, requirementIds: test.requirementIds });
     if (!same(definition.requiredTests.map(contract), (tests ?? []).map(contract))) issues.push('REQUIRED_MANIFEST_CONTRACT_CHANGED');
     const all = definition.requiredTests.find(test => test.testId === 'V16-T-L1-ALL');
     if (all) {
-      const inventory = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
+      const inventory = frozen?.testInventory ?? execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
         .split('\0').filter(file => /^(apps|packages|scripts)\/.+\.(test|spec)\.[cm]?[jt]sx?$/.test(file) && fs.existsSync(path.join(root, file)));
       if (!same([...new Set(inventory)].sort(), [...all.testFiles].sort())) issues.push('TEST_INVENTORY_INCOMPLETE');
     }
@@ -141,6 +192,12 @@ function verifyManifest(manifest, root = process.cwd(), current = sourceIdentity
   for (const key of ['sourceRevision', 'sourceSha256', 'packageVersion']) if (manifest?.identity?.[key] !== current[key]) issues.push('STALE_MANIFEST:' + key);
   if (manifest?.identity?.packageHashes) {
     try {
+      if (trustedRuntime) {
+        const native = require('./v16-native-artifacts'), trusted = require('./v16-trusted-runtime');
+        const environment = trustedRuntime.nativeEnvironment;
+        const roots = trusted.artifactRoots(environment);
+        native.withArtifactLedger(new Map(), () => trusted.providedPackage(root, manifest.identity, environment), roots);
+      } else {
       const release = path.join(root, 'apps/desktop/release');
       const version = current.packageVersion;
       const files = { installer: `AmazonAIOpsAgent-${version}.exe`, portable: `AmazonAIOpsAgent-${version}-portable.exe`, zip: `AmazonAIOpsAgent-${version}.zip`, mainBundle: 'win-unpacked/resources/app/dist/main/index.js' };
@@ -149,9 +206,10 @@ function verifyManifest(manifest, root = process.cwd(), current = sourceIdentity
       }
       const appContent = require('./package-ui-evidence').buildAppContentManifest(path.join(release, 'win-unpacked/resources/app'));
       if (appContent.sha256.toLowerCase() !== String(manifest.identity.packageHashes.appContent).toLowerCase()) issues.push('CURRENT_PACKAGE_CONTENT_MISMATCH');
+      }
     } catch (error) { issues.push('CURRENT_PACKAGE_UNAVAILABLE:' + error.message); }
   }
-  const details = (Array.isArray(tests) ? tests : []).map(test => verifyEvidence(test, { ...current, packageHashes: manifest.identity?.packageHashes }, root));
+  const details = (Array.isArray(tests) ? tests : []).map(test => verifyEvidence(test, { ...current, packageHashes: manifest.identity?.packageHashes }, root, trustedRuntime?.nativeEnvironment));
   if (details.some(test => !LAYERS.includes(test.layer))) issues.push('INVALID_TEST_LAYER');
   return { schemaVersion: 'v16.manifest-verification/1', verifiedAt: new Date().toISOString(), identity: current, success: issues.length === 0 && details.length > 0 && details.every(d => d.success), issues, details };
 }
@@ -170,7 +228,7 @@ function main() {
   process.exitCode = result.success ? 0 : 1;
 }
 if (require.main === module) {
-  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+  try { main(); } catch (error) { console.error(JSON.stringify(require('./v16-native-artifacts').structuredFailure('v16.manifest_verification_failed', error))); process.exitCode = 1; }
 }
 
-module.exports = { LAYERS, sha256, readJson, writeJson, sourceIdentity, parseMustRequirements, summarizeVitest, verifyEvidence, verifyManifest, cliArg, main };
+module.exports = { LAYERS, sha256, readJson, writeJson, sourceIdentity, parseMustRequirements, parseAcceptanceIds, summarizeVitest, verifyEvidence, verifyManifest, cliArg, main };

@@ -25,13 +25,12 @@ const {
   validatePackageLaunchSmokeEvidence,
   validatePackageLaunchWindowReadyMarker,
 } = require('./smoke-package-launch.js');
+const { assertExactEvidencePath, resolvePackageEvidencePaths } = require('./package-evidence-paths.js');
 
 const generatedAt = new Date().toISOString();
-const launchContractFixtureRoot = mkdtempSync(join(
-  process.env.TEMP || 'D:\\Temp',
-  'amazon-ai-ops-launch-contract-',
-));
-afterAll(() => rmSync(launchContractFixtureRoot, { force: true, recursive: true }));
+const launchContractFixtureRoot = resolvePackageEvidencePaths(process.cwd(), `${Date.now()}${process.pid}`).packageLaunchUserDataRoot;
+mkdirSync(launchContractFixtureRoot, { recursive: true });
+afterAll(() => rmSync(assertExactEvidencePath(launchContractFixtureRoot, launchContractFixtureRoot), { force: true, recursive: true }));
 
 function currentEvidence(overrides = {}) {
   return {
@@ -432,9 +431,9 @@ describe('package launch smoke isolated runtime contract', () => {
     });
   });
 
-  it('creates disjoint D-drive profiles and launches the portable wrapper detached without PowerShell pipes', () => {
-    const source = readFileSync('scripts/smoke-package-launch.js', 'utf8');
-    expect(source).toContain("path.join('D:\\\\Temp', 'amazon-ai-ops-package-launch-smoke', String(runId))");
+  it('creates disjoint local-drive profiles and launches the portable wrapper detached without PowerShell pipes', () => {
+    const source = ['contracts', 'runtime'].map(name => readFileSync(`scripts/package-launch-${name}.js`, 'utf8')).join('\n');
+    expect(source).toContain('resolvePackageEvidencePaths(root, runId).packageLaunchUserDataRoot');
     expect(source).toContain("unpacked: prepareIsolatedUserData('win-unpacked')");
     expect(source).toContain("portable: prepareIsolatedUserData('portable')");
     expect(source).toContain('launchUnpacked(unpackedExe, isolatedUserData.unpacked)');
@@ -450,7 +449,7 @@ describe('package launch smoke isolated runtime contract', () => {
   });
 
   it('uses bounded PowerShell process inspection without CIM and bounds taskkill too', () => {
-    const source = readFileSync('scripts/smoke-package-launch.js', 'utf8');
+    const source = readFileSync('scripts/package-launch-processes.js', 'utf8');
     expect(WINDOWS_PROCESS_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
     expect(WINDOWS_PROCESS_COMMAND_ATTEMPTS).toBe(3);
     expect(TASKKILL_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
@@ -584,7 +583,7 @@ describe('package launch smoke isolated runtime contract', () => {
   });
 
   it('reads a stable current marker file and binds the evidence artifact bytes', () => {
-    const userDataDir = mkdtempSync('D:\\Temp\\amazon-ai-ops-smoke-marker-test-');
+    const userDataDir = mkdtempSync(join(launchContractFixtureRoot, 'marker-'));
     try {
       const expectedExecutablePath = join(userDataDir, 'runtime', 'AmazonAIOpsAgent.exe');
       const expectedRendererPath = packagedRendererPathForExecutable(expectedExecutablePath);
@@ -639,7 +638,7 @@ describe('package launch smoke isolated runtime contract', () => {
   });
 
   it('requires the win-unpacked stdout marker and native visible-window proof in the final pass contract', () => {
-    const source = readFileSync('scripts/smoke-package-launch.js', 'utf8');
+    const source = readFileSync('scripts/package-launch-runtime.js', 'utf8');
     expect(source).toContain("text.includes('[App] window-created')");
     expect(source).not.toContain("marker = '[App] ipc-ready'");
     expect(source).toContain('runtimeProcess?.windowVisible === true');

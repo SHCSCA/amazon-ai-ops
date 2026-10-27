@@ -1,5 +1,7 @@
 # V1.6 验证追踪规格
 
+> 2026-10-27 文档对齐：本文定义合同、方法或验收案例，不提供当前通过结论。现行状态、失败与后续计划统一见 [项目状态](PROJECT_STATUS.md)；当前仍为 APP_NEEDS_WORK / INTERNAL NON_READY。正文中的旧检查点只适用于当时版本。
+
 版本：1.0；适用完整 L1–L8。旧验证禁令已于本任务解除。本规格和清单本身不产生完成信用。
 
 ## 唯一需求与测试定义
@@ -67,21 +69,33 @@ L1/L3 的夹具证明代码行为，不能替代 L4–L7 的真实包体、正�
 
 版本 `v16.accessibility-delta/1`；对比基线为 v1.5.1 primitives。负责人为当前实现者，发布核验由交付验收复核。下列状态表示当前包的完整验证状态；源码测试通过不自动改为 PASS，未进行屏幕阅读器操作时不声明屏幕阅读器通过或 WCAG 等级。
 
-| 复用 primitive | v1.6 新交互 / 风险 | 验证方法 | 当前状态 |
-|---|---|---|---|
-| App Shell / sidebar | 六模块、22 入口、折叠及搜索；活动项与焦点丢失 | 实包逐入口点击、键盘进入、折叠恢复、屏幕阅读器读出当前项 | PENDING |
-| WorkspaceSubviewShell | 跨模块子视图；中间页、Home/End/方向键 | 实包记录初始、末项及恢复后的焦点/选中值；每页截图 | PENDING |
-| PageFrame / TaskBanner | 唯一主动作、busy、阻断与恢复 | 常规两档、wide/minimum 检查位置/可达性；实际失败与恢复 | PENDING |
-| ReasonRequiredDialog | 审批、模式变更和修正原因；不可逆确认焦点 | 初始焦点、Tab/Shift+Tab 约束、Escape、关闭恢复、滚动正文和可达 footer | PENDING |
-| ResponsiveInspector | 授权、对象与执行证据详情 | 宽屏侧栏/小窗抽屉、键盘关闭、焦点返回触发控件 | PENDING |
-| PriorityDataTable / virtual table | 分页/虚拟行、行选择与刷新 | 典型/最大样本键盘遍历、选中回显、屏幕阅读器行列标签 | PENDING |
-| WorkspaceState / status | UNKNOWN、永久无法判定、禁止重试 | 中文原因、规范终态、非成功色、一次只读对账、历史读取 | PENDING |
-| FormTable / controls | disabled 原因、保存中锁定与校验 | 实际无效输入/保存失败/重试，确认有可达原因与恢复动作 | PENDING |
-| Progress / motion | 分阶段进度、取消与旧响应抑制 | reduced-motion 开启后实包操作；动画关闭仍能判断阶段/结果 | PENDING |
-| Store / AI settings | 切店、重连、预算及账单状态 | 125%/minimum、键盘、忙态读出，账单归原店且不泄密 | PENDING |
+| 复用 primitive | v1.6 新交互 / 风险 | keyboard / focus 风险 | screen-reader 风险 | reduced-motion / zoom 风险 | 验证方法 | owner | 当前状态 |
+|---|---|---|---|---|---|---|---|
+| App Shell / sidebar | 六模块、22 入口、折叠及搜索 | 切店或折叠使活动项与焦点丢失 | 当前入口、活动店铺读出不一致 | 125% 或 minimum 隐藏入口 | 实包逐入口点击、键盘进入、折叠恢复、屏幕阅读器读出当前项 | 桌面导航维护者 | PENDING |
+| WorkspaceSubviewShell | 跨模块子视图与中间页 | Home/End/方向键与焦点恢复错误 | 选中子视图与面板标签未关联 | zoom 后页签不可达 | 实包记录初始、末项及恢复后的焦点/选中值；每页截图 | 工作区导航维护者 | PENDING |
+| PageFrame / TaskBanner | 唯一主动作、busy、阻断与恢复 | 主动作或恢复入口无法键盘进入 | 忙态与阻断原因未被读出 | wide/minimum 压缩任务与反馈 | 常规两档、wide/minimum 检查位置/可达性；实际失败与恢复 | 共享工作区组件维护者 | PENDING |
+| ReasonRequiredDialog | 审批、模式变更和修正原因 | 初始焦点、Tab 约束、Escape 或关闭恢复错误 | 对话框标题与原因标签未关联 | zoom 后正文或 footer 不可达 | 初始焦点、Tab/Shift+Tab 约束、Escape、关闭恢复、滚动正文和可达 footer | 共享对话框维护者 | PENDING |
+| ResponsiveInspector | 授权、对象与执行证据详情 | 小窗抽屉关闭后未返回触发控件 | 抽屉状态与标题未读出 | zoom 后详情遮挡关闭入口 | 宽屏侧栏/小窗抽屉、键盘关闭及焦点恢复；原命名 dialog 用真实 NVDA+Tab 请求读出标题，关闭按钮保留自动公告，分别标记语音来源 | 详情面板维护者 | PENDING |
+| PriorityDataTable / virtual table | 分页、虚拟行、行选择与刷新 | 虚拟行刷新使当前行焦点丢失 | 行列标签或选择数量错误 | zoom 后关键列或滚动入口不可达 | 典型/最大样本键盘遍历、选中回显、屏幕阅读器行列标签 | 表格组件维护者 | PENDING |
+| WorkspaceState / status | UNKNOWN、永久无法判定、禁止重试 | 只读恢复或历史入口不可达 | 未知状态被读为成功或遗漏原因 | reduced-motion 下状态只能靠动画辨认 | 中文原因、规范终态、非成功色、一次只读对账、历史读取 | 状态反馈维护者 | PENDING |
+| FormTable / controls | disabled 原因、保存中锁定与校验 | disabled 原因无法聚焦或恢复 | 无效字段与错误提示未关联 | zoom 后原因或操作被截断 | 实际无效输入/保存失败/重试，确认有可达原因与恢复动作 | 表单组件维护者 | PENDING |
+| Progress / motion | 分阶段进度、取消与旧响应抑制 | 取消后焦点丢失或重复提交 | 当前阶段与取消结果未读出 | reduced-motion 下仍需静态阶段与结果 | reduced-motion 开启后实包操作；动画关闭仍能判断阶段/结果 | 进度反馈维护者 | PENDING |
+| Store / AI settings | 切店、重连、预算及账单状态 | 切店旧响应抢焦点或忙态控件重入 | 费用或错误被读到另一店铺 | 125%/minimum 账单与预算入口不可达 | 125%/minimum、键盘、忙态读出，账单归原店且不泄密 | 店铺配置维护者 | PENDING |
 
 ## NFR Baseline 与 Budget 记录合同
 
-关联 V16-PERF-005/006/007/008、AC-PERF-005/006/007/008。先记录典型/最大支持样本定义及其 SHA-256、机器等级、包体和 DB/schema；样本上限须由实际支持能力验证。Baseline 保留原始样本、次数、P50/P95/峰值、时间窗及测量方法。Budget 另存 metric、fixture、environment、percentile/window、threshold、owner、approval、revision；不得从 Baseline 自动填入批准阈值。
+关联 V16-PERF-005/006/007/008、AC-PERF-005/006/007/008。先记录典型/最大支持样本定义及其 SHA-256、机器等级、包体和 DB/schema；样本上限须由实际支持能力验证。Baseline 保留原始样本、次数、P50/P95/峰值、时间窗及测量方法。Budget 另存 metric、fixture、environment、percentile/window、threshold、owner、approval、revision；不得从 Baseline 自动填入批准阈值。 开发阶段另存的内部工程阈值只用于软件实测比较，须保留提出依据、修订及独立审查，不能按当前实测倒推；它不产生本段正式Budget的用户批准，也不批准AI费用。
 
-预算目录必须覆盖 cold/warm startup、store switch、首页/模块 projection、exact-eight import、analysis、memory search、Main/Renderer 峰值内存与交互、DB/evidence growth、取消/恢复/离线降级，以及独立 AI latency/token/cost。尚未测量或尚未批准的记录使用 PENDING/UNKNOWN，当前包超预算形成 blocker，不能自动提高阈值。预算确认只在测量完成、可审查的记录准备好后交给用户。
+预算目录必须覆盖 cold/warm startup、store switch、首页/模块 projection、exact-eight import、analysis、memory search、Main/Renderer 峰值内存与交互、DB/evidence growth、取消/恢复/离线降级，以及独立 AI latency/token/cost。Main/Renderer使用绑定PID及进程创建时间的原生累计峰值（MiB，process-lifetime-peak）；memory search使用一次预先选定唯一命中查询的单调毫秒端点差，零命中/清空为正确性对照，准备与详情核对不计入耗时。单轮evidence-growth（bytes，after-sample）仅作诊断；正式evidence-daily-growth（bytes，at-least-24h-endpoint-net-byte-change）须使用至少24小时端点原件及相同定义的批准预算，保留负净变化，不证明中间瞬态或gross写入量。窗口完整上下文是计划元数据，不代表两端实时Main观测。尚未测量或尚未批准的记录使用 PENDING/UNKNOWN，当前包超预算形成 blocker，不能自动提高阈值。正式预算确认只在测量完成、可审查的记录准备好后交给用户；内部36目标定义审查与软件测试不代替正式批准、实际EXE比较或日窗口观察。
+
+## V16 原生证据与发布实现入口
+
+`scripts/v16-native-evidence-cli.js` 将真实采集原件封装为 `v16.evidence/1`；内部 `v16.native-checks/1` 的固定适配器必须重验当前包、运行收据、独立截图/日志、正式库快照与业务链，成功后才返回具体caseIds。不能只修改汇总布尔值或给旧报告补一个新schema标签。
+
+`scripts/publish-v16-release.js` 从同一runtime manifest重新计算L1–L7、完整MUST追踪和发布闭包，生成 `v16.delivery-bundle/1` 与 `v16.publication-closure/1`；`verify-v16-readiness-aggregation.js` 每次复验当前输入及匹配包。完整协议还在独立复核及生产交付页接线中，不能将存在这些文件视为L8已通过。
+
+发布入口在读取/验证输入前撤销旧README和readiness的READY声明。新包先以PREPARING/NON_READY保存于专用pending目录；失败仅将本次新建产物标为ABORTED/NON_READY，历史包保持原件。发布摘要排除验证诊断时间，保留全部语义失败、caseIds与输入摘要；正式状态仍必须重算，不信文件内的APP_READY自述。发布只能创建新的closure/bundle路径，不能覆盖历史发布闭包。
+
+晋升后的包头对满足核心门的包使用 `READY_CANDIDATE` 和 `requiresCurrentPublicationClosure=true`，该字段不授予READY信用。读取端必须复验当前source/package identity、全部输入原件、README、bundle和完整发布闭包；任一变化或缺失都返回NON_READY。输出不可写与README降级分别尝试并记录各自失败；进程意外退出后不得从候选包头恢复正式状态。
+
+包内worker可显式指定私有 `readmePath/closurePath/readinessPath`，默认CLI仍使用仓库README。Main配置的工作包根和可信构建库存决定读取范围，Renderer不能通过payload指定验证实现或替换构建定义。每次操作的nonce/权限世代通过后才可交付结果；这条生产接线仍在开发，尚无当前包验收信用。

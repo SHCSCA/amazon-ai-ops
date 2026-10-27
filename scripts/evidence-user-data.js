@@ -1,5 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  DEFAULT_EVIDENCE_USER_DATA_ROOT,
+  normalizeEvidenceUserDataPath,
+  normalizeWindowsPath,
+  resolveEvidenceUserDataRoot,
+} = require('../apps/desktop/src/main/evidence-path-policy.cjs');
 
 const EVIDENCE_MODE_ENV = 'AMAZON_AI_OPS_EVIDENCE_MODE';
 const EVIDENCE_USER_DATA_DIR_ENV = 'AMAZON_AI_OPS_USER_DATA_DIR';
@@ -9,35 +15,10 @@ const PACKAGE_UI_EVIDENCE_MODE = 'package-ui';
 const PACKAGE_LAUNCH_SMOKE_MODE = 'package-launch-smoke';
 const EVIDENCE_USER_DATA_LOG_PREFIX = '[App] evidence-user-data ';
 const EVIDENCE_USER_DATA_RUNTIME_MARKER = 'evidence-user-data-runtime.json';
-const ALLOWED_USER_DATA_ROOT = 'D:\\Temp';
-const ALLOWED_TOP_LEVEL_SEGMENT = /^amazon-ai-ops(?:-|$)/i;
-
-function normalizeWindowsPath(filePath) {
-  return path.win32.normalize(filePath).replace(/[\\/]+$/, '').toLowerCase();
-}
+const ALLOWED_USER_DATA_ROOT = DEFAULT_EVIDENCE_USER_DATA_ROOT;
 
 function validateEvidenceUserDataPath(requestedPath, options = {}) {
-  const value = String(requestedPath || '');
-  if (!value || value !== value.trim() || value.includes('\0')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be a non-empty path without surrounding whitespace or NUL bytes.`);
-  }
-  const normalized = path.win32.normalize(value);
-  if (!path.win32.isAbsolute(normalized) || normalized.startsWith('\\\\')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be an absolute local Windows path.`);
-  }
-  if (path.win32.parse(normalized).root.toUpperCase() !== 'D:\\') {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be located on the D: drive.`);
-  }
-  if (normalized.slice(2).includes(':')) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} may not contain an alternate data stream.`);
-  }
-  const relative = path.win32.relative(ALLOWED_USER_DATA_ROOT, normalized);
-  if (!relative || relative.startsWith('..\\') || relative === '..' || path.win32.isAbsolute(relative)) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must be a child of ${ALLOWED_USER_DATA_ROOT}.`);
-  }
-  if (!ALLOWED_TOP_LEVEL_SEGMENT.test(relative.split('\\')[0])) {
-    throw new Error(`${EVIDENCE_USER_DATA_DIR_ENV} must use an amazon-ai-ops-prefixed directory under ${ALLOWED_USER_DATA_ROOT}.`);
-  }
+  const normalized = normalizeEvidenceUserDataPath(requestedPath);
 
   const requireExisting = options.requireExisting !== false;
   if (requireExisting) {
@@ -102,6 +83,18 @@ function validateEvidenceUserDataIdentity({ actualUserDataDir, evidenceMode, exp
 function parseEvidenceUserDataLog(output) {
   const lines = String(output || '').split(/\r?\n/);
   for (const line of lines) {
+    if (line.trimStart().startsWith('{')) {
+      try {
+        const record = JSON.parse(line);
+        const identity = record.context?.identity;
+        if (record.event === 'app.evidence_user_data'
+          && identity && typeof identity === 'object' && !Array.isArray(identity)
+          && typeof identity.mode === 'string' && typeof identity.overridden === 'boolean'
+          && typeof identity.userDataDir === 'string') return identity;
+      } catch {
+        // 混合进程输出可以包含不完整行，继续识别后续可信格式。
+      }
+    }
     const markerIndex = line.indexOf(EVIDENCE_USER_DATA_LOG_PREFIX);
     if (markerIndex < 0) continue;
     try {
@@ -159,6 +152,7 @@ module.exports = {
   buildEvidenceUserDataEnv,
   inspectPackagedUserDataOverrideContract,
   normalizeWindowsPath,
+  resolveEvidenceUserDataRoot,
   parseEvidenceUserDataLog,
   readEvidenceUserDataRuntimeMarker,
   validateEvidenceUserDataIdentity,

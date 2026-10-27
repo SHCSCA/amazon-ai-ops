@@ -1,5 +1,12 @@
+import { readStyleComposition } from './styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { appCompositionSource } from './app-composition.test-support';
+import { recommendationCompositionSource } from './pages/recommendation-composition.test-support';
+import { deliveryCompositionSource } from './pages/delivery-composition.test-support';
+import { collectionCompositionSource } from './pages/collection-composition.test-support';
+import { importValidationCompositionSource } from './pages/import-validation-composition.test-support';
+import { listingCompositionSource } from './pages/listing-composition.test-support';
 
 const PAGE_FILES = [
   'pages/dashboard-page.tsx',
@@ -92,6 +99,20 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
 ] as const;
 
 function rendererSource(relativePath: string): string {
+  if (relativePath === 'pages/data-import-validation-page.tsx') return importValidationCompositionSource();
+  if (relativePath === 'pages/listing-optimization-page.tsx') return listingCompositionSource();
+  const workspacePaths: Record<string, string> = {
+    'pages/dashboard-page.tsx': 'pages/dashboard-workspace.tsx',
+    'pages/readback-page.tsx': 'pages/readback-view.tsx',
+    'pages/ad-quant-page.tsx': 'pages/ad-quant-workspace.tsx',
+    'pages/approval-page.tsx': 'pages/approval-workspace.tsx',
+    'pages/keyword-opportunities-page.tsx': 'pages/keyword-opportunities-workspace.tsx',
+  };
+  if (workspacePaths[relativePath]) return readFileSync(new URL(workspacePaths[relativePath], import.meta.url), 'utf8');
+  if (relativePath === 'pages/data-collection-page.tsx') return collectionCompositionSource();
+  if (relativePath === 'pages/delivery-page.tsx') return deliveryCompositionSource();
+  if (relativePath === 'App.tsx') return appCompositionSource();
+  if (relativePath === 'pages/recommendations-page.tsx') return recommendationCompositionSource();
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 }
 
@@ -119,7 +140,8 @@ describe('prototype parity design system integration', () => {
       const workbenchContract = tableFirstWorkbenchContracts[pageFile];
       if (workbenchContract) {
         for (const marker of workbenchContract) {
-          expect(source, `${pageFile} should include ${marker}`).toContain(marker);
+          expect(pageFile === 'pages/readback-page.tsx' && marker === 'readbackWizardSteps'
+          ? rendererSource('pages/readback-workspace.tsx') : source, `${pageFile} should include ${marker}`).toContain(marker);
         }
         continue;
       }
@@ -134,14 +156,16 @@ describe('prototype parity design system integration', () => {
       const source = rendererSource(pageFile);
 
       for (const marker of markers) {
-        expect(source, `${pageFile} should include ${marker}`).toContain(marker);
+        const markerSource = pageFile === 'pages/readback-page.tsx' && marker === 'readbackWizardSteps'
+          ? rendererSource('pages/readback-workspace.tsx') : source;
+        expect(markerSource, `${pageFile} should include ${marker}`).toContain(marker);
       }
     }
   });
 
   it('keeps production renderer assets offline and light-theme only', () => {
     const indexHtml = rendererSource('index.html');
-    const styles = rendererSource('styles.css');
+    const styles = readStyleComposition(new URL('./styles.css', import.meta.url));
 
     expect(indexHtml).not.toContain('fonts.googleapis.com');
     expect(styles).not.toContain('fonts.googleapis.com');
@@ -156,7 +180,7 @@ describe('prototype parity design system integration', () => {
     const loginStylesStart = appSource.indexOf('const loginStyles');
     const loginStylesEnd = appSource.indexOf('export function describeLoginSession', loginStylesStart);
     const loginStylesSource = appSource.slice(loginStylesStart, loginStylesEnd);
-    const sharedStylesSource = rendererSource('styles.css');
+    const sharedStylesSource = readStyleComposition(new URL('./styles.css', import.meta.url));
 
     expect(loginStylesSource).toContain('var(--aao-bg)');
     expect(loginStylesSource).toContain('var(--aao-surface)');

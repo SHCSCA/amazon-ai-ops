@@ -539,6 +539,7 @@ function unavailableTodayProjection(
       },
     ],
     blockers: ['今日真实投影提供器尚未接入 Main。'],
+    blockerActions: [{ id: 'today-projection-unavailable', code: 'TODAY_PROJECTION_UNAVAILABLE', reason: '今日准备状态暂不可用，请检查采集与连接。', recoveryLabel: '检查采集与连接', targetView: 'collection/reports', requiredCapabilityId: 'collection.reports.view' }],
     attentionItems: [],
     nextAction: {
       id: 'open-collection',

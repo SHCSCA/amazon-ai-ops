@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -98,68 +99,53 @@ describe('system AI runtime config', () => {
   });
 
   it('binds Mission generation revisions and both AI phases to one immutable Main snapshot', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const captureStart = source.indexOf('function captureRecommendationGenerationRuntimeSnapshot');
-    const captureEnd = source.indexOf('async function runRecommendationGeneration', captureStart);
-    const capture = source.slice(captureStart, captureEnd);
+    const source = mainRuntimeModuleContract('main-ai-settings-runtime.ts').replace(/\r\n/g, '\n');
+    const capture = mainRuntimeFunctionContract('captureRecommendationGenerationRuntimeSnapshot');
     expect(capture).toContain('currentStoreRuntimeAnalysisConfig()');
     expect(capture).toContain('aiSettings: { ...readAiSettingsForMain() }');
     expect(capture).toContain('deepFreezeGenerationSnapshot(snapshot)');
 
-    const authorityStart = source.indexOf('captureGenerationAuthority: () => {');
-    const authorityEnd = source.indexOf('currentRuleRevision:', authorityStart);
-    const authority = source.slice(authorityStart, authorityEnd);
+    const authoritySource = mainRuntimeFunctionContract('initApp');
+    const authorityStart = authoritySource.indexOf('captureGenerationAuthority: () => {');
+    const authorityEnd = authoritySource.indexOf('currentRuleRevision:', authorityStart);
+    const authority = authoritySource.slice(authorityStart, authorityEnd);
     expect(authority).toContain('const captured = captureRecommendationGenerationRuntimeSnapshot()');
     expect(authority).toContain('storeRuntimeRuleRevisionPayload(captured.runtimeConfig)');
     expect(authority).toContain('resolveSystemAiRuntimeConfig(captured.aiSettings)');
     expect(authority).toContain('runRecommendationGeneration(scope, captured)');
 
-    const generationStart = source.indexOf('async function runRecommendationGeneration');
-    const generationEnd = source.indexOf('interface AdStrategyGenerationSummary', generationStart);
-    const generation = source.slice(generationStart, generationEnd);
+    const generation = mainRuntimeFunctionContract('runRecommendationGeneration');
     expect(generation).toContain('const runtimeConfig = generationRuntime.runtimeConfig');
     expect(generation).toContain('aiSettings: generationRuntime.aiSettings');
     expect(generation).toContain('generationRuntime.aiSettings,');
     expect(generation).not.toContain('currentStoreRuntimeAnalysisConfig()');
     expect(generation).not.toContain('readAiSettingsForMain()');
 
-    const explanationsStart = source.indexOf('async function enrichAdRecommendationsWithAiExplanations');
-    const explanationsEnd = source.indexOf('async function enrichAdRecommendationsWithStrategyDiagnosis', explanationsStart);
-    const explanations = source.slice(explanationsStart, explanationsEnd);
+    const explanations = mainRuntimeFunctionContract('enrichAdRecommendationsWithAiExplanations');
     expect(explanations).not.toContain('readAiSettingsForMain()');
 
-    const diagnosisStart = explanationsEnd;
-    const diagnosisEnd = source.indexOf('function buildAiInsightsFromValidation', diagnosisStart);
-    const diagnosis = source.slice(diagnosisStart, diagnosisEnd);
+    const diagnosis = mainRuntimeFunctionContract('enrichAdRecommendationsWithStrategyDiagnosis');
     expect(diagnosis).toContain('const settings = options.aiSettings');
     expect(diagnosis).not.toContain('readAiSettingsForMain()');
   });
 
   it('feeds only Main-sealed causal memory into both production AI prompt phases', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const compositionStart = source.indexOf('const analysisAuthorityService = new AnalysisAuthorityService');
-    const compositionEnd = source.indexOf('const executionAuthorityService', compositionStart);
-    const composition = source.slice(compositionStart, compositionEnd);
+    const source = mainRuntimeModuleContract('main-ai-settings-runtime.ts').replace(/\r\n/g, '\n');
+    const composition = mainRuntimeFunctionContract('initApp');
     expect(composition).toContain('captureTrustedAnalysisCausalMemory(scope)');
 
-    const captureStart = source.indexOf('function captureTrustedAnalysisCausalMemory');
-    const captureEnd = source.indexOf('function trustedCausalMemoryText', captureStart);
-    const capture = source.slice(captureStart, captureEnd);
+    const capture = mainRuntimeFunctionContract('captureTrustedAnalysisCausalMemory');
     expect(capture).toContain('Object.isFrozen(scope.causalMemory)');
     expect(capture).toContain("/^[a-f0-9]{64}$/.test(memoryDigest)");
     expect(capture).toContain('Object.isFrozen(item.proofs)');
     expect(capture).toContain("['unknown', 'still_unknown'].includes(status.toLowerCase())");
 
-    const generationStart = source.indexOf('async function runRecommendationGeneration');
-    const generationEnd = source.indexOf('interface AdStrategyGenerationSummary', generationStart);
-    const generation = source.slice(generationStart, generationEnd);
+    const generation = mainRuntimeFunctionContract('runRecommendationGeneration');
     expect(generation).toContain('trustedCausalMemory');
     expect(generation).not.toMatch(/submitted\.(causalMemory|memoryDigest)/);
     expect(generation).toContain('causalMemoryPrompt');
 
-    const promptStart = source.indexOf('function buildTrustedCausalMemoryPrompt');
-    const promptEnd = source.indexOf('async function runRecommendationGeneration', promptStart);
-    const promptBuilder = source.slice(promptStart, promptEnd);
+    const promptBuilder = mainRuntimeFunctionContract('buildTrustedCausalMemoryPrompt');
     expect(promptBuilder).toContain('历史已验证结果，仅供上下文');
     expect(promptBuilder).toContain('不能替代当前 8 类报表、当前广告对象与竞价、人工审批');
     expect(promptBuilder).toContain('memoryDigest');
@@ -168,52 +154,43 @@ describe('system AI runtime config', () => {
     expect(promptBuilder).not.toContain('event.eventId');
     expect(promptBuilder).not.toContain('event.missionId');
 
-    const explanationsStart = source.indexOf('async function enrichAdRecommendationsWithAiExplanations');
-    const explanationsEnd = source.indexOf('async function enrichAdRecommendationsWithStrategyDiagnosis', explanationsStart);
-    const explanations = source.slice(explanationsStart, explanationsEnd);
+    const explanations = mainRuntimeFunctionContract('enrichAdRecommendationsWithAiExplanations');
     expect(explanations).toContain('causalMemoryPrompt');
     expect(explanations).toContain('withCausalMemoryUserContext');
     expect(explanations).toContain('buildCausalMemorySystemPersona');
     expect(explanations).not.toContain('buildAiPersonaWithCausalMemory');
 
-    const diagnosisStart = explanationsEnd;
-    const diagnosisEnd = source.indexOf('function buildAiInsightsFromValidation', diagnosisStart);
-    const diagnosis = source.slice(diagnosisStart, diagnosisEnd);
+    const diagnosis = mainRuntimeFunctionContract('enrichAdRecommendationsWithStrategyDiagnosis');
     expect(diagnosis).toContain('causalMemoryPrompt');
     expect(diagnosis).toContain('withCausalMemoryUserContext');
     expect(diagnosis).toContain('buildCausalMemorySystemPersona');
     expect(diagnosis).not.toContain('buildAiPersonaWithCausalMemory');
 
-    const rendererHandlerStart = source.indexOf("registerTrackedIpcHandler('recommendations:generate'");
-    const rendererHandlerEnd = source.indexOf('\n', rendererHandlerStart);
-    const rendererHandler = source.slice(rendererHandlerStart, rendererHandlerEnd);
+    const ipcSource = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
+    const rendererHandlerStart = ipcSource.indexOf("registerTrackedIpcHandler('recommendations:generate'");
+    const rendererHandlerEnd = ipcSource.indexOf('\n', rendererHandlerStart);
+    const rendererHandler = ipcSource.slice(rendererHandlerStart, rendererHandlerEnd);
     expect(rendererHandler).not.toContain('captureTrustedAnalysisCausalMemory');
     expect(generation).toContain('scope: gate.scope');
     expect(generation).not.toContain('scope: submitted');
   });
 
   it('threads Mission analysis cancellation through both AI phases and every recommendation write', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const generationStart = source.indexOf('async function runRecommendationGeneration');
-    const generationEnd = source.indexOf('interface AdStrategyGenerationSummary', generationStart);
-    const generation = source.slice(generationStart, generationEnd);
+    const source = mainRuntimeModuleContract('main-ai-settings-runtime.ts').replace(/\r\n/g, '\n');
+    const generation = mainRuntimeFunctionContract('runRecommendationGeneration');
     expect(generation).toContain('submitted.signal instanceof AbortSignal');
     expect(generation).toContain('signal: analysisSignal');
     expect(generation).toContain('causalMemoryPrompt,\n    analysisSignal,');
-    const persistence = generation.slice(generation.indexOf('// Save to database'));
+    const persistence = generation.slice(generation.indexOf('for (const rec of recommendations) {'));
     expect(persistence).toContain('for (const rec of recommendations) {\n    analysisSignal?.throwIfAborted();');
-    expect(persistence).toContain('analysisSignal?.throwIfAborted();\n  console.log');
+    expect(persistence).toContain('analysisSignal?.throwIfAborted();\n  runtimeLog.log');
 
-    const explanationsStart = source.indexOf('async function enrichAdRecommendationsWithAiExplanations');
-    const explanationsEnd = source.indexOf('async function enrichAdRecommendationsWithStrategyDiagnosis', explanationsStart);
-    const explanations = source.slice(explanationsStart, explanationsEnd);
+    const explanations = mainRuntimeFunctionContract('enrichAdRecommendationsWithAiExplanations');
     expect(explanations).toContain('explainer.explain({');
     expect(explanations).toContain('}, { signal });');
     expect(explanations).toContain('catch (error) {\n      signal?.throwIfAborted();');
 
-    const diagnosisStart = explanationsEnd;
-    const diagnosisEnd = source.indexOf('function buildAiInsightsFromValidation', diagnosisStart);
-    const diagnosis = source.slice(diagnosisStart, diagnosisEnd);
+    const diagnosis = mainRuntimeFunctionContract('enrichAdRecommendationsWithStrategyDiagnosis');
     expect(diagnosis).toContain('.diagnose(diagnosisInput, { signal: options.signal })');
     expect(diagnosis).toContain('options.signal?.throwIfAborted();\n  recordAdStrategyAiCallLog');
   });

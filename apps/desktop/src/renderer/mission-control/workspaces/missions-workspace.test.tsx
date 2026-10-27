@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../../styles/css-source.test-support';
 import React from 'react';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -190,13 +191,18 @@ describe('MissionsWorkspace contracts', () => {
   });
 
   it('releases fixed dialog backdrops from the workspace container at compact desktop size', () => {
-    const css = readFileSync(new URL('../../styles/mission-control-shell.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../../styles/mission-control-shell.css', import.meta.url));
     expect(css).toMatch(/\.mission-control-workspace-root:has\(\.mission-control-dialog-backdrop\)\s*\{[^}]*container-type:\s*normal;/s);
   });
 
   it('uses only current-store completed batches, enabled rules and existing products', () => {
     const source = readFileSync(new URL('./missions-workspace.tsx', import.meta.url), 'utf8');
-    const defaults = source.slice(source.indexOf('function missionDraft'), source.indexOf('export function buildCreateMissionInput'));
+    const inputs = readFileSync(new URL('./mission-workspace-inputs.ts', import.meta.url), 'utf8');
+    const editors = readFileSync(new URL('./mission-workspace-editors.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("from './mission-workspace-editors'");
+    const start = inputs.indexOf('function missionDraft');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const defaults = inputs.slice(start, inputs.indexOf('export function buildCreateMissionInput'));
     expect(defaults).not.toContain('BATCH-');
     expect(defaults).not.toContain('-ACTIVE');
     expect(source).toContain('getBusinessBatchOptions');
@@ -204,9 +210,9 @@ describe('MissionsWorkspace contracts', () => {
     expect(source).not.toContain('getOperationScope?.()');
     expect(source).toContain('listPolicyVersions');
     expect(source).toContain('listStoreProducts');
-    expect(source).toContain('先采集');
-    expect(source).toContain('先启用策略');
-    expect(source).toContain('先添加产品');
+    expect(editors).toContain('先采集');
+    expect(editors).toContain('先启用策略');
+    expect(editors).toContain('先添加产品');
   });
 
   it('submits the current-store product ASIN instead of its local database row id', () => {

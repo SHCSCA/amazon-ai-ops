@@ -1,5 +1,6 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
+import { executionCompositionSource } from './execution-composition.test-support';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type {
@@ -423,7 +424,7 @@ describe('execution workspace', () => {
   });
 
   it('routes UNKNOWN reconciliation through the real read-only Main authority without retrying execution', () => {
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source).toContain('UNKNOWN · 队列已停止');
     expect(source).toContain('禁止自动重试');
     expect(source).toContain('人工接管');
@@ -438,7 +439,7 @@ describe('execution workspace', () => {
     expect(executionCapabilityReady(previewExecutionCapabilities, EXECUTION_CAPABILITY_IDS.cancel, false)).toBe(false);
     expect(executionCapabilityReady(previewExecutionCapabilities, 'execution.queue.kill-switch', true)).toBe(false);
 
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source.indexOf('if (!startCapabilityReady)', source.indexOf('const resolveIdentity')))
       .toBeLessThan(source.indexOf('api.resolveIdentity', source.indexOf('const resolveIdentity')));
     expect(source.indexOf('if (!startCapabilityReady)', source.indexOf('const createBatch')))
@@ -456,7 +457,7 @@ describe('execution workspace', () => {
   });
 
   it('uses readable authority selectors instead of typed opaque production ids', () => {
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source).toContain('当前运营任务');
     expect(source).toContain('有效执行授权');
     expect(source).toContain('已决定广告对象');
@@ -473,7 +474,7 @@ describe('execution workspace', () => {
       .toEqual([archived.id, fixture.mission.id]);
     expect(selectableExecutionMissions(context, [archived, foreign, fixture.mission]).map((mission) => mission.id))
       .toEqual([fixture.mission.id]);
-    expect(readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8'))
+    expect(executionCompositionSource())
       .toContain("listMissions(context, { includeArchived: true })");
 
     const selections = buildExecutableGrantSelections({
@@ -627,7 +628,7 @@ describe('execution workspace', () => {
   });
 
   it('applies the current selection guard before listener updates and when deriving console rows', () => {
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     const listener = source.indexOf('return api.onProgress((event) => {');
     const listenerGuard = source.indexOf('executionProgressBelongsToSelection(', listener);
     const listenerWrite = source.indexOf('setProgressEvents(', listener);
@@ -651,7 +652,7 @@ describe('execution workspace', () => {
       3,
     )).toBe(true);
 
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source).toContain('mutationSequence.current += 1');
     expect(source).toContain('const commitMutation = (commit: () => void) =>');
     expect(source).toContain("browserReadyGrantIdRef.current === selected!.batch.grantId");
@@ -669,7 +670,7 @@ describe('execution workspace', () => {
     expect(preferredExecutionJobId(projection, 'JOB-SECOND')).toBe('JOB-SECOND');
     expect(preferredExecutionJobId(projection, 'MISSING-JOB')).toBe('JOB-FIRST');
 
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source).toContain('name="selected-execution-job"');
     expect(source).toContain('onChange={() => setSelectedJobId(job.id)}');
     expect(source).not.toMatch(/aria-label="选择当前执行对象"[^>]+readOnly[^>]+type="radio"/);
@@ -713,12 +714,108 @@ describe('execution workspace', () => {
   });
 
   it('does not ship fixed example objects, reasons or an unimplemented experiment as production facts', () => {
-    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    const source = executionCompositionSource();
     expect(source).not.toContain('smart lock exact');
     expect(source).not.toContain('US Exact Core');
     expect(source).not.toContain('近 7 日 CPC 上扬但转化率稳定');
     expect(source).not.toContain('核心词竞价弹性');
     expect(source).not.toContain('实验详情（未接入）');
     expect(source).toContain('当前批次没有可核验的关联经营实验');
+  });
+});
+
+
+describe('execution browser navigation presentation', () => {
+  function renderSurface(previewEnabled: boolean) {
+    const capabilities = previewEnabled ? previewExecutionCapabilities
+      : previewExecutionCapabilities.map(capability => ({ ...capability, state: 'PRODUCTION_NATIVE' as const }));
+    return <ExecutionWorkspace apiOverride={createPreviewExecutionAuthorityApi()} blockedReason=""
+      capabilities={capabilities} previewEnabled={previewEnabled} storeContext={context} />;
+  }
+
+  function navigation(markup: string) {
+    const tabs = markup.match(/<div class="execution-browser-tabs"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
+    const sidebar = markup.match(/<nav aria-label="领星广告管理导航"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? '';
+    const buttons = (html: string) => [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)];
+    const notices = [...markup.matchAll(/<p\b([^>]*)>([\s\S]*?)<\/p>/g)]
+      .filter(match => /\bclass="execution-browser-navigation-reason"/.test(match[1]));
+    return { tabs, sidebar, tabsButtons: buttons(tabs), sideButtons: buttons(sidebar), notices };
+  }
+
+  function sharedReason(markup: string, elements: ReturnType<typeof navigation>) {
+    expect(elements.notices).toHaveLength(1);
+    const id = elements.notices[0][1].match(/\bid="([^"]+)"/)?.[1];
+    expect(id).toBeTruthy();
+    expect(markup.split('id="' + id + '"')).toHaveLength(2);
+    expect(elements.notices[0][2].trim()).not.toBe('');
+    for (const button of [...elements.tabsButtons, ...elements.sideButtons].filter(match => match[1].includes('disabled=""'))) {
+      expect(button[1].match(/\baria-describedby="([^"]+)"/)?.[1]).toBe(id);
+    }
+    expect(elements.tabs + elements.sidebar).not.toContain('task-banner__action-shell');
+    expect(elements.tabs + elements.sidebar).not.toContain('task-banner__disabled-reason');
+    for (const html of [elements.tabs, elements.sidebar]) {
+      expect(html.replace(/<button\b[^>]*>[\s\S]*?<\/button>/g, '').trim()).toBe('');
+    }
+    return id;
+  }
+
+  it('renders one visible shared reason for twelve live navigation buttons without action wrappers', () => {
+    const markup = renderToStaticMarkup(renderSurface(false));
+    const elements = navigation(markup);
+    expect(elements.tabsButtons).toHaveLength(4);
+    expect(elements.sideButtons).toHaveLength(8);
+    sharedReason(markup, elements);
+    expect(elements.notices[0][2]).toBe('真实页面在已打开的广告浏览器中操作；请在该浏览器切换页面。');
+    for (const button of [...elements.tabsButtons, ...elements.sideButtons]) expect(button[1]).toContain('disabled=""');
+    expect(elements.tabsButtons.slice(0, 3).map(button => button[2])).toEqual(['首页', '广告管理', '搜索词报告']);
+    expect(elements.tabsButtons.slice(0, 3).every(button => button[1].includes('role="tab"'))).toBe(true);
+    expect(elements.tabsButtons[1][1]).toContain('aria-selected="true"');
+    expect(elements.tabsButtons[3][1]).toContain('aria-label="新建领星标签（未接入）"');
+    expect(elements.sideButtons.filter(button => button[1].includes('aria-current="page"')).map(button => button[2])).toEqual(['关键词']);
+  });
+
+  it('keeps only preview tabs enabled while every unavailable preview control resolves its shared reason', () => {
+    const markup = renderToStaticMarkup(renderSurface(true));
+    const elements = navigation(markup);
+    expect(elements.tabsButtons).toHaveLength(4);
+    expect(elements.sideButtons).toHaveLength(8);
+    sharedReason(markup, elements);
+    expect(elements.notices[0][2]).toContain('仅开发预览');
+    for (const button of elements.tabsButtons.slice(0, 3)) {
+      expect(button[1]).not.toContain('disabled=""');
+      expect(button[1]).not.toContain('aria-describedby=');
+    }
+    for (const button of [elements.tabsButtons[3], ...elements.sideButtons]) expect(button[1]).toContain('disabled=""');
+  });
+
+  it('gives simultaneous execution surfaces distinct shared description ids', () => {
+    const markup = renderToStaticMarkup(<>{renderSurface(false)}{renderSurface(true)}</>);
+    const surfaces = [...markup.matchAll(/<section class="execution-visible-browser"[^>]*>([\s\S]*?)<\/section>/g)];
+    expect(surfaces).toHaveLength(2);
+    const ids = surfaces.map(surface => sharedReason(surface[1], navigation(surface[1])));
+    expect(new Set(ids).size).toBe(2);
+  });
+});
+
+describe('执行来源展开语义', () => {
+  it('生产初始状态折叠且每个原按钮通过唯一controls绑定自己的面板', () => {
+    const capabilities = previewExecutionCapabilities.map(capability => ({ ...capability, state: 'PRODUCTION_NATIVE' as const }));
+    const surface = () => <ExecutionWorkspace apiOverride={createPreviewExecutionAuthorityApi()} blockedReason="" capabilities={capabilities} previewEnabled={false} storeContext={context} />;
+    const markup = renderToStaticMarkup(<>{surface()}{surface()}</>);
+    const buttons = [...markup.matchAll(/<button\b([^>]*)>(?:(?!<\/button>)[\s\S])*?执行来源<\/button>/g)];
+    const panels = [...markup.matchAll(/<section\b([^>]*class="execution-authority-bar"[^>]*)>/g)];
+    expect(buttons).toHaveLength(2); expect(panels).toHaveLength(2);
+    const controlledIds = buttons.map((button, index) => {
+      expect(button[1]).toContain('aria-expanded="false"');
+      expect(button[1]).not.toContain('aria-pressed=');
+      expect(button[1]).toContain('type="button"');
+      const controlledId = /aria-controls="([^"]+)"/.exec(button[1])?.[1];
+      expect(controlledId).toBeTruthy();
+      expect(/\bid="([^"]+)"/.exec(panels[index][1])?.[1]).toBe(controlledId);
+      expect(panels[index][1]).toContain('aria-label="执行来源与队列创建"');
+      expect(panels[index][1]).toContain('hidden=""');
+      return controlledId;
+    });
+    expect(new Set(controlledIds).size).toBe(2);
   });
 });

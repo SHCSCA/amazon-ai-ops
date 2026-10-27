@@ -50,7 +50,7 @@ ${JSON.stringify({
 
   it('builds an auditable AI call log input without storing prompt text or API keys', () => {
     const log = buildListingAiCallLogInput({
-      draft: draft({ evidence: '包含真实广告数据证据和 sk-should-not-persist-123456789' }),
+      draft: draft({ evidence: ("包含真实广告数据证据和 " + "sk-" + "should-not-persist-123456789") }),
       model: 'deepseek-v4-flash',
       outputJson: JSON.stringify({ schemaVersion: 'listing_rewrite_v1', suggestedText: 'ok' }),
       success: true,

@@ -1,5 +1,7 @@
 # Amazon AI Ops 前端体验与生产可信性重构计划
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../../PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > **执行方式：** 主代理担任 Project Leader；实现阶段使用 `superpowers:subagent-driven-development`，每个任务由独立实现代理和独立复核代理完成。创意实现以 `docs/superpowers/specs/2026-07-13-task-first-workspace-design.md` 获得用户确认作为 Task 5A 的启动闸门。
 
 **目标：** 把当前 16 路由、卡片堆叠、技术信息前置的 Electron 界面，重构为 7 个日常工作区加 1 个系统工作区；让用户进入任意页面后立即知道“当前阻塞、下一安全动作、正在处理的业务对象”，最终交付重新构建并验证的 Windows EXE 与一致的 READY 证据链。

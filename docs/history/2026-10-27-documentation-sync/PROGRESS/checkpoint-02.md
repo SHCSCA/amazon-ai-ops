@@ -1,0 +1,798 @@
+## 2026-10-21 R29–R35（2026-10-22续验）：7350完整内部回归通过，布局补丁待实际验证
+
+当前C033554完整冻结exec76840已真实exit0，internal-run终态PASSED；原7350中旧7349全部保留，重复余量16保持，仅新增一个配置回读案例。L2四类/五命令及两文件32合同案例通过，L3实际28文件192案例通过，三份verifyEvidence成功，21项历史hook对照通过。独立终态审查PASSED_INTERNAL_CHAIN_ONLY：REVIEW ce57919c37def2cb07d96918439fd097168b661f26a86850911f93dc1dafc8ae。未授当前包、UI、完整保护snapshot或开发完成信用，五项已知布局缺陷仍为软件欠项。
+
+Root已实际逐张查看历史C002622的wide22原PNG并核对摘要，发现Mission两入口主体裸排及四任务按钮全宽堆叠、审批/已决策队列标题与授权禁用说明窄列、多处短动作/辅助标签换行；A另在100%/125%原图独立确认Mission与授权卡可读性问题。today全流程首列疑点仅在wide底部入图，尚须具体代码定位。机器矩阵issues为零不能替代像素人工检查；当前未做新App或输入控制，旧图只授历史排障事实，不授C033554视觉、NVDA或正式信用。
+
+冻结身份仍source 1a10bf7aac426ae86c3002f201e1bfc17a3b3d29fc9d166ef9f9d390470d7a9d / full d2a274299b0bf7459b085e72c3cb1bf3d3447a65c3ce7066c5f9ce5258cf5cb8，HEAD e0a00c4、工作区保留。L1实际625文件7350全部passed、7334 unique、原10组重复及native10/policy20秒边界保持；未执行新的Windows包链。此身份的全部内部通过作为本轮实际工程事实保存，布局修复改变源后仍须新的完整冻结验收。
+
+本次只改两个fixture模块和对应测试，复用正式StoreRuntimeConfigService、StoreCoordinator及ConfigurationBus为两店真实context创建并回读完整七字段配置，再生成原逻辑备份和三个coldProfile。隔离AI推荐关闭、真实连接与授权门保留；关闭AI不等于停止采集调度。未直接SQL写配置、未修改生产缺配置require或admission，不为真实店铺暗配默认值，不产生真实批准、费用、Grant或Ads执行信用。
+
+实际RED明确为旧generator加新runtime公开导出及新tests：原4例通过，新例因current:null失败；不是缺export TypeError。随后仅应用generator，六文件49/49实际通过；所选旧48例全名次数完整保留，仅新增1例，原断言及预算保留。独立实际合审VERIFIED_ACTUAL_TARGETED_RED_GREEN：output/development-completion-2026-10-16/independent/r34-fixture-config-actual-review-3f77c3f6-082b-4c65-bc4a-5165be600ea0/REVIEW.json SHA fab40117873d3057b704d4565a83ea909c37b5048850ed2ca359ff763c1a851e。源码两阶段仅三目标，native、既有包体、canonical四项及原始两文件七stat保护按原件闭合。49只授定向工程信用，不授新整链或包信用。
+
+R34纯caption探针的原激活实际按原门通过：一次SendInput接受3，point与actualCursor均1046,265，唯一观察六条件全true，原预算与topmost恢复保持。附加sidecar仍FAILED/零样本/无coverage：WinPS把armedAt默认解析Local而triggerAt已UTC，原-ge误拒机制已独立表达式复现。该探针没有NVDA；旧完整UI自然读屏失败原因仍UNKNOWN，不算reader或开发完成。新候选仍须原collector完成完整20自然语音节点、十原语、motion和恢复，未放宽任何门。
+
+历史候选development-candidate-20261022T002622Z绑定旧25e/527：完整L1 625文件7349例、L2/L3、新四包、安全11静态加10实际对抗、隔离100行WAL备份恢复已通过；该旧候选UI caption仍失败，性能6轮12启动只有4个startup聚合、32软件目标缺样本及12外部AI目标缺样本，collectionComplete=false。旧全部实际成功与失败按各自身份保留，不计入新source当前验收；安全网络/Ads未instrumented、canonical跨窗stat等既有边界保持。
+
+布局根因已只读核实：Mission漏接既有CSS入口，OperatorFlow两子项误套旧三列，Memory选择器失配真实action-shell，审批窄header/授权原因挤压，SummaryStrip长时区挤压辅助说明。六源最小生产patch已静审PASS；新10项真实CSS几何回归v1因日志格式静审BLOCKED，v2仅接项目真实统一日志API并保持全部断言/预算，已复审PASS。尚未应用或执行，不把静态审查当实际GREEN。接下来仅先应用新test/support与清单唯一登记进行真实RED，再应用六源生产补丁验证GREEN与保留回归；当前MAINT继续冻结，实际修复后再一次性对齐并重新冻结最终整链。
+
+172项正式MUST继续UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY。全部六内部退出条件实际闭合前不能称开发完成或只剩真实环境；真实账号、正式数据、费用与具体候选授权、真实调用/Ads回读及业务观察时间继续独立验收。新电脑历史结果UNKNOWN；正常用户入口继续真实Windows应用及canonical userData，模拟工作台仅历史，不合成授权、费用或APP_READY。
+
+## 2026-10-21 R29–R35（2026-10-22续验）：真实截图发现布局欠项，当前全量仍执行中
+
+当前源码1a10/fullD2A完整回归exec76840仍运行，冻结源未因本次观察修改。新增视觉缺陷进入软件剩余项：先查明确样式接线和共享布局根因，以最小范围修复并实际验证；本候选全量终态继续保留，修正后须以新冻结候选完成全量与包体整链，不能凭本轮回归成功宣布开发完成。完整自然NVDA仍未通过，安全仍需最终同源新包复验。
+
+Root已实际逐张查看历史C002622的wide22原PNG并核对摘要，发现Mission两入口主体裸排及四任务按钮全宽堆叠、审批/已决策队列标题与授权禁用说明窄列、多处短动作/辅助标签换行；A另在100%/125%原图独立确认Mission与授权卡可读性问题。today全流程首列疑点仅在wide底部入图，尚须具体代码定位。机器矩阵issues为零不能替代像素人工检查；当前未做新App或输入控制，旧图只授历史排障事实，不授C033554视觉、NVDA或正式信用。
+
+当前新候选output/v16-evidence/development-candidate-20261022T033554Z，source 1a10bf7aac426ae86c3002f201e1bfc17a3b3d29fc9d166ef9f9d390470d7a9d / full d2a274299b0bf7459b085e72c3cb1bf3d3447a65c3ce7066c5f9ce5258cf5cb8，HEAD仍e0a00c4且工作区改动保留。03:35:54启动新完整冻结exec76840；native-node与全仓module-boundaries实际exit0，L1自03:36:18执行中，L2/L3尚未进入。清单625文件，全部case数和通过数待本次实际终态，不挪用旧7349通过。
+
+本次只改两个fixture模块和对应测试，复用正式StoreRuntimeConfigService、StoreCoordinator及ConfigurationBus为两店真实context创建并回读完整七字段配置，再生成原逻辑备份和三个coldProfile。隔离AI推荐关闭、真实连接与授权门保留；关闭AI不等于停止采集调度。未直接SQL写配置、未修改生产缺配置require或admission，不为真实店铺暗配默认值，不产生真实批准、费用、Grant或Ads执行信用。
+
+实际RED明确为旧generator加新runtime公开导出及新tests：原4例通过，新例因current:null失败；不是缺export TypeError。随后仅应用generator，六文件49/49实际通过；所选旧48例全名次数完整保留，仅新增1例，原断言及预算保留。独立实际合审VERIFIED_ACTUAL_TARGETED_RED_GREEN：output/development-completion-2026-10-16/independent/r34-fixture-config-actual-review-3f77c3f6-082b-4c65-bc4a-5165be600ea0/REVIEW.json SHA fab40117873d3057b704d4565a83ea909c37b5048850ed2ca359ff763c1a851e。源码两阶段仅三目标，native、既有包体、canonical四项及原始两文件七stat保护按原件闭合。49只授定向工程信用，不授新整链或包信用。
+
+R34纯caption探针的原激活实际按原门通过：一次SendInput接受3，point与actualCursor均1046,265，唯一观察六条件全true，原预算与topmost恢复保持。附加sidecar仍FAILED/零样本/无coverage：WinPS把armedAt默认解析Local而triggerAt已UTC，原-ge误拒机制已独立表达式复现。该探针没有NVDA；旧完整UI自然读屏失败原因仍UNKNOWN，不算reader或开发完成。新候选仍须原collector完成完整20自然语音节点、十原语、motion和恢复，未放宽任何门。
+
+历史候选development-candidate-20261022T002622Z绑定旧25e/527：完整L1 625文件7349例、L2/L3、新四包、安全11静态加10实际对抗、隔离100行WAL备份恢复已通过；该旧候选UI caption仍失败，性能6轮12启动只有4个startup聚合、32软件目标缺样本及12外部AI目标缺样本，collectionComplete=false。旧全部实际成功与失败按各自身份保留，不计入新source当前验收；安全网络/Ads未instrumented、canonical跨窗stat等既有边界保持。
+
+R34维护基线保持冻结不写。README/PROGRESS/BLOCKED为冻结排除的状态文档，由既有writer核对前后源码/full相同。当前全量终态后先处理本次已见界面缺陷和实际定向验证，再一次性对齐维护基线并重新冻结；最终同源版本仍需新四包、真实读屏、36本地性能、安全、恢复、正式字节备份、正常真实应用及最终独审，全部旧失败原件保留。
+
+172项正式MUST继续UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY。全部六内部退出条件实际闭合前不能称开发完成或只剩真实环境；真实账号、正式数据、费用与具体候选授权、真实调用/Ads回读及业务观察时间继续独立验收。新电脑历史结果UNKNOWN；正常用户入口继续真实Windows应用及canonical userData，模拟工作台仅历史，不合成授权、费用或APP_READY。
+
+## 2026-10-21 R29–R35（2026-10-22续验）：配置夹具修正已验证，新冻结全量回归执行中
+
+当前新候选output/v16-evidence/development-candidate-20261022T033554Z，source 1a10bf7aac426ae86c3002f201e1bfc17a3b3d29fc9d166ef9f9d390470d7a9d / full d2a274299b0bf7459b085e72c3cb1bf3d3447a65c3ce7066c5f9ce5258cf5cb8，HEAD仍e0a00c4且工作区改动保留。03:35:54启动新完整冻结exec76840；native-node与全仓module-boundaries实际exit0，L1自03:36:18执行中，L2/L3尚未进入。清单625文件，全部case数和通过数待本次实际终态，不挪用旧7349通过。
+
+本次只改两个fixture模块和对应测试，复用正式StoreRuntimeConfigService、StoreCoordinator及ConfigurationBus为两店真实context创建并回读完整七字段配置，再生成原逻辑备份和三个coldProfile。隔离AI推荐关闭、真实连接与授权门保留；关闭AI不等于停止采集调度。未直接SQL写配置、未修改生产缺配置require或admission，不为真实店铺暗配默认值，不产生真实批准、费用、Grant或Ads执行信用。
+
+实际RED明确为旧generator加新runtime公开导出及新tests：原4例通过，新例因current:null失败；不是缺export TypeError。随后仅应用generator，六文件49/49实际通过；所选旧48例全名次数完整保留，仅新增1例，原断言及预算保留。独立实际合审VERIFIED_ACTUAL_TARGETED_RED_GREEN：output/development-completion-2026-10-16/independent/r34-fixture-config-actual-review-3f77c3f6-082b-4c65-bc4a-5165be600ea0/REVIEW.json SHA fab40117873d3057b704d4565a83ea909c37b5048850ed2ca359ff763c1a851e。源码两阶段仅三目标，native、既有包体、canonical四项及原始两文件七stat保护按原件闭合。49只授定向工程信用，不授新整链或包信用。
+
+R34纯caption探针的原激活实际按原门通过：一次SendInput接受3，point与actualCursor均1046,265，唯一观察六条件全true，原预算与topmost恢复保持。附加sidecar仍FAILED/零样本/无coverage：WinPS把armedAt默认解析Local而triggerAt已UTC，原-ge误拒机制已独立表达式复现。该探针没有NVDA；旧完整UI自然读屏失败原因仍UNKNOWN，不算reader或开发完成。新候选仍须原collector完成完整20自然语音节点、十原语、motion和恢复，未放宽任何门。
+
+历史候选development-candidate-20261022T002622Z绑定旧25e/527：完整L1 625文件7349例、L2/L3、新四包、安全11静态加10实际对抗、隔离100行WAL备份恢复已通过；该旧候选UI caption仍失败，性能6轮12启动只有4个startup聚合、32软件目标缺样本及12外部AI目标缺样本，collectionComplete=false。旧全部实际成功与失败按各自身份保留，不计入新source当前验收；安全网络/Ads未instrumented、canonical跨窗stat等既有边界保持。
+
+维护基线已在保留旧77773字节的条件下仅插入R34规范段，当前source身份不变、full因该implementationInventory文档记录更新为d2a274。该基线现停止修改；README/PROGRESS/BLOCKED为冻结排除的状态文档，仍由既有writer前后核全量冻结相同。新内部结果后依次重建/依赖审计/四包实跑/双档数据/全UI及真实读屏/36本地性能/安全/隔离恢复、整链四文件保护、正式字节备份、真实应用正常启动及最终独审。
+
+172项正式MUST继续UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY。全部六内部退出条件实际闭合前不能称开发完成或只剩真实环境；真实账号、正式数据、费用与具体候选授权、真实调用/Ads回读及业务观察时间继续独立验收。新电脑历史结果UNKNOWN；正常用户入口继续真实Windows应用及canonical userData，模拟工作台仅历史，不合成授权、费用或APP_READY。
+
+## 2026-10-21 R29–R34（2026-10-22续验）：保留性能与诊断实际失败，最小修正待复验
+
+当前候选output/v16-evidence/development-candidate-20261022T002622Z，source 25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e / full 52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723。完整L1 7349/7349、L2四类/五命令、L3 192/192、新七步构建与依赖、新四种包型实跑和典型/最大隔离样本均已通过，各按本轮原件绑定，不挪用旧包。
+
+2026-10-22T02:44:12隔离包WAL在线备份与恢复实际PASSED，exec78815正常exit0。真实Electron44.2.0/ABI149运行固定生产备份子进程，隔离源前后100行/main与WAL哈希/4152B一致；snapshot及恢复副本100行、integrity ok、8192B、同SHA952d272032ee2a377db7fab98b1c40e74c420a94d53fcf47797aaccfca4ce98b。两spawnSync记录status0/signalnull，不虚构close事件。独立实际窄审PASS_NARROW_ACTUAL，output/development-completion-2026-10-16/independent/r33-packaged-backup-actual-review-80bd1320-7387-4a24-9fef-796c2a74794f/REVIEW.json SHA2d9c84fe7c2fc7e59b8188500261baeb4acef35e71e0245d070f08931993d780。此项未打开正式数据库，不提供canonical或整链stat信用。
+
+2026-10-22T02:54:08原性能采集报告collectionComplete=false、issueCount50；宿主exec21959返回1，未持久CLI原生退出码或spawn-exit-close收据，不能倒推出CLI原生码1或2。6轮样本为典型/最大各3，每轮cold+warm共12次owned Main启动，实际Main与launcher均exit0、Renderer0、cleanup与零权限admission已独审。50问题精确为6条同StoreRuntimeAnalysisConfigError、32个软件目标缺样本、12个外部AI目标缺样本；36软件目标只有4个startup聚合各3样本，P95重算一致，未授预算或完整性能信用。正式缺配置require按设计拒绝，隔离生成器尚未调用运行配置服务；正确修正通过StoreCoordinator真实context、StoreRuntimeConfigService及ConfigurationBus在逻辑备份前创建两店配置。新patch仅外置staging未应用，生产require/admission/授权门与原阈值保持。失败窄复核output/development-completion-2026-10-16/independent/r34-performance-failed-actual-review-eb9f8f14-14f4-478f-adef-dd40adc19fa9/REVIEW.json SHAf7e0cc97da1ad36d406f618f51645d6b40a4f0e98c1d72871d5dd1e6536cadf9；未持久完整after binding/native/canonical的范围不补信用。
+
+2026-10-22 UI实际exit 1/FAILED。88矩阵记录为四档各22入口，record issues为0，原件哈希已独审，但未授目视信用。首caption setup原生一次SendInput接受3条，66次cursorMatches全部false，23次Main/exactRoot为true、7次pointOwned为true，未同次满足全部原条件；原始错误UI_CAPTION_INPUT_NOT_OBSERVED_WITHIN_SETUP，上层仅断言1!==0。约3秒失败，并非30秒setup预算用尽；具体原因仍UNKNOWN，不能仅凭末次坐标归因坐标公式或真实用户输入。
+
+十原语均UNVERIFIED且observations为空；自然speech节点0、motion0、恢复流程未执行。原生输入、原1秒观察/30秒setup及后续节点时限不放宽。置顶恢复到原false/tokenClosed true仅提供清理信用；NVDA正常STOP/ACK后exit/close0且未force，原15秒内；Main held身份正常exit0。失败原件与225个精确引用已封独审：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r33-ui-failed-actual-review-7e26544a-ec87-4edd-bd47-aa37884da3e7\REVIEW.json SHA 48b5dec97e97c39c8a5acd5f64f809bc6ea221eaeb21c87be0d0aae07d9ff4f4。
+
+本轮source/full与包身份保持；UI门canonical只覆盖DB/WAL/LocalState字节，未观察SHM或跨链stat，不能补为四项通过。最终正常启动前仍需整条软件链四文件保护核对，复用现有r2备份桥接，不回写时间戳、不打开正式库诊断。
+
+安全套件本轮02:01:28实际PASSED/exit0：静态11项与单次实包NODE_ENV development注入10项检查均按原件通过，两CLI spawn→exit/close0、42.391s/31.844s，均在原180秒预算内，无timeout。14唯一工具pin、Acorn8.16.0两物理原件及前后完整七stat、当前source/full/三bundle和五tuple保护闭合。独立实际报告output/development-completion-2026-10-16/independent/r33-package-security-actual-review-d6558d8b-1c92-4dd1-a138-30e276cd7a59/REVIEW.json，SHA33e3fb134627015fa68b244c2edcf46a816f471f66a26939c7563fb724703f57。
+
+安全合同仅授这两类门信用。全程网络和Ads为NOT_INSTRUMENTED，normalStartupSchedulerMayRun=true、exeExitCodeObservedByWrapper=false；不从CLI正常码补出EXE正常码或全局断网/零Ads结论。canonical此安全窗四文件byte/size/existence保持，但未持久跨窗stat；后续整链只比较R31实际存有的ino/mtimeMs/nlink，不声称canonical具备七stat。
+
+读屏原UI caption失败原因继续UNKNOWN。v3纯坐标诊断实际exec16876/nativeLASTEXITCODE皆1，03:05:37终态FAILED_DIAGNOSTIC；caption调用0、samples0，无coverage/坐标/DPI/INPUT布局采样，不是原caption再次失败。首错JSON.parse位于admitSidecarReady；PS对最终ready路径CreateNew并允许Read后才Write/Flush/Dispose，存在非原子发布窗口，与实际解析错误吻合，但失效瞬间partial bytes未保留，不称确为0B。finally取消后sidecar自然exit/close1、未kill，Main/launcher exit0，source/full及全部pin保持；canonical此窗未单独记录，不补通过。实际窄审output/development-completion-2026-10-16/independent/r33-caption-v3-failed-actual-review-c8bda7f1-7dbf-426a-b8e9-bd617a98d703/REVIEW.json SHA8e01be85d1a1f185cc0f32563dc8dce541189fad3990b78348e2ba9069ffa36d。新v4仅准备修正同一握手ready/start完整发布，旧v1/v2/v3及失败全保留，原门/预算不改；尚未执行。软件六退出条件仍未全部闭合，不能声明开发完成或只剩真实环境。172项UNVERIFIED与APP_NEEDS_WORK / INTERNAL NON_READY保持，正常用户入口继续真实应用，不合成授权、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29–R34（2026-10-22续验）：安全及隔离备份通过，读屏与性能配置仍待收口
+
+当前候选output/v16-evidence/development-candidate-20261022T002622Z，source 25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e / full 52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723。完整L1 7349/7349、L2四类/五命令、L3 192/192、新七步构建与依赖、新四种包型实跑和典型/最大隔离样本均已通过，各按本轮原件绑定，不挪用旧包。
+
+2026-10-22T02:44:12隔离包WAL在线备份与恢复实际PASSED，exec78815正常exit0。真实Electron44.2.0/ABI149运行固定生产备份子进程，隔离源前后100行/main与WAL哈希/4152B一致；snapshot及恢复副本100行、integrity ok、8192B、同SHA952d272032ee2a377db7fab98b1c40e74c420a94d53fcf47797aaccfca4ce98b。两spawnSync记录status0/signalnull，不虚构close事件。独立实际窄审PASS_NARROW_ACTUAL，output/development-completion-2026-10-16/independent/r33-packaged-backup-actual-review-80bd1320-7387-4a24-9fef-796c2a74794f/REVIEW.json SHA2d9c84fe7c2fc7e59b8188500261baeb4acef35e71e0245d070f08931993d780。此项未打开正式数据库，不提供canonical或整链stat信用。
+
+2026-10-22T02:54:08原性能采集实际exit1，collectionComplete=false、issueCount50。典型与最大两档各3次样本全部报StoreRuntimeAnalysisConfigError：当前店铺还没有运行配置，发生在v1_5:business-ui:data-pipeline。保留6次原始失败及原阈值，不能称36本地工程目标通过或推断预算超限根因。正式配置require门按设计拒绝；只读初查发现隔离fixture初始化尚未调用StoreRuntimeConfigService，而真实设置界面已有显式创建路径，最小修正仍在核对，尚未改源码或合成授权。独立实际失败复核正在进行。
+
+2026-10-22 UI实际exit 1/FAILED。88矩阵记录为四档各22入口，record issues为0，原件哈希已独审，但未授目视信用。首caption setup原生一次SendInput接受3条，66次cursorMatches全部false，23次Main/exactRoot为true、7次pointOwned为true，未同次满足全部原条件；原始错误UI_CAPTION_INPUT_NOT_OBSERVED_WITHIN_SETUP，上层仅断言1!==0。约3秒失败，并非30秒setup预算用尽；具体原因仍UNKNOWN，不能仅凭末次坐标归因坐标公式或真实用户输入。
+
+十原语均UNVERIFIED且observations为空；自然speech节点0、motion0、恢复流程未执行。原生输入、原1秒观察/30秒setup及后续节点时限不放宽。置顶恢复到原false/tokenClosed true仅提供清理信用；NVDA正常STOP/ACK后exit/close0且未force，原15秒内；Main held身份正常exit0。失败原件与225个精确引用已封独审：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r33-ui-failed-actual-review-7e26544a-ec87-4edd-bd47-aa37884da3e7\REVIEW.json SHA 48b5dec97e97c39c8a5acd5f64f809bc6ea221eaeb21c87be0d0aae07d9ff4f4。
+
+本轮source/full与包身份保持；UI门canonical只覆盖DB/WAL/LocalState字节，未观察SHM或跨链stat，不能补为四项通过。最终正常启动前仍需整条软件链四文件保护核对，复用现有r2备份桥接，不回写时间戳、不打开正式库诊断。
+
+安全套件本轮02:01:28实际PASSED/exit0：静态11项与单次实包NODE_ENV development注入10项检查均按原件通过，两CLI spawn→exit/close0、42.391s/31.844s，均在原180秒预算内，无timeout。14唯一工具pin、Acorn8.16.0两物理原件及前后完整七stat、当前source/full/三bundle和五tuple保护闭合。独立实际报告output/development-completion-2026-10-16/independent/r33-package-security-actual-review-d6558d8b-1c92-4dd1-a138-30e276cd7a59/REVIEW.json，SHA33e3fb134627015fa68b244c2edcf46a816f471f66a26939c7563fb724703f57。
+
+安全合同仅授这两类门信用。全程网络和Ads为NOT_INSTRUMENTED，normalStartupSchedulerMayRun=true、exeExitCodeObservedByWrapper=false；不从CLI正常码补出EXE正常码或全局断网/零Ads结论。canonical此安全窗四文件byte/size/existence保持，但未持久跨窗stat；后续整链只比较R31实际存有的ino/mtimeMs/nlink，不声称canonical具备七stat。
+
+读屏具体原因仍UNKNOWN。调用顺序只读检查未发现已读harness在原1秒观察中显式并发鼠标、焦点、截图或缩放；不排除NVDA本体、Windows、Playwright内部或外部输入，不作归因。短只读侧车诊断v1/v2均未执行且保留，静审要求补齐失败生命周期回收；v3正在按同组最小问题修正，原caption一次调用/30秒setup/1秒观察/3秒侧车均不扩。软件六退出条件未全部闭合，不能声明只剩真实环境；172项UNVERIFIED与APP_NEEDS_WORK / INTERNAL NON_READY保持。正常用户入口继续真实Windows应用，不合成授权、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29–R33（2026-10-22续验）：实包安全整链已通过，读屏激活继续诊断
+
+当前候选output/v16-evidence/development-candidate-20261022T002622Z，source 25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e / full 52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723。完整L1 7349/7349、L2四类/五命令、L3 192/192、新七步构建与依赖、新四种包型实跑和典型/最大隔离样本均已通过，各按本轮原件绑定，不挪用旧包。
+
+2026-10-22 UI实际exit 1/FAILED。88矩阵记录为四档各22入口，record issues为0，原件哈希已独审，但未授目视信用。首caption setup原生一次SendInput接受3条，66次cursorMatches全部false，23次Main/exactRoot为true、7次pointOwned为true，未同次满足全部原条件；原始错误UI_CAPTION_INPUT_NOT_OBSERVED_WITHIN_SETUP，上层仅断言1!==0。约3秒失败，并非30秒setup预算用尽；具体原因仍UNKNOWN，不能仅凭末次坐标归因坐标公式或真实用户输入。
+
+十原语均UNVERIFIED且observations为空；自然speech节点0、motion0、恢复流程未执行。原生输入、原1秒观察/30秒setup及后续节点时限不放宽。置顶恢复到原false/tokenClosed true仅提供清理信用；NVDA正常STOP/ACK后exit/close0且未force，原15秒内；Main held身份正常exit0。失败原件与225个精确引用已封独审：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r33-ui-failed-actual-review-7e26544a-ec87-4edd-bd47-aa37884da3e7\REVIEW.json SHA 48b5dec97e97c39c8a5acd5f64f809bc6ea221eaeb21c87be0d0aae07d9ff4f4。
+
+本轮source/full与包身份保持；UI门canonical只覆盖DB/WAL/LocalState字节，未观察SHM或跨链stat，不能补为四项通过。最终正常启动前仍需整条软件链四文件保护核对，复用现有r2备份桥接，不回写时间戳、不打开正式库诊断。
+
+安全套件本轮02:01:28实际PASSED/exit0：静态11项与单次实包NODE_ENV development注入10项检查均按原件通过，两CLI spawn→exit/close0、42.391s/31.844s，均在原180秒预算内，无timeout。14唯一工具pin、Acorn8.16.0两物理原件及前后完整七stat、当前source/full/三bundle和五tuple保护闭合。独立实际报告output/development-completion-2026-10-16/independent/r33-package-security-actual-review-d6558d8b-1c92-4dd1-a138-30e276cd7a59/REVIEW.json，SHA33e3fb134627015fa68b244c2edcf46a816f471f66a26939c7563fb724703f57。
+
+安全合同仅授这两类门信用。全程网络和Ads为NOT_INSTRUMENTED，normalStartupSchedulerMayRun=true、exeExitCodeObservedByWrapper=false；不从CLI正常码补出EXE正常码或全局断网/零Ads结论。canonical此安全窗四文件byte/size/existence保持，但未持久跨窗stat；后续整链只比较R31实际存有的ino/mtimeMs/nlink，不声称canonical具备七stat。
+
+读屏具体原因仍UNKNOWN。现有原布局、归一化或真实用户干扰均未获根因证明；先以原held Main启动/原caption一次调用与全新隔离profile准备短只读sidecar诊断，不改生产/collector源码、不改通过条件或时限。软件六退出条件未全部闭合，不能声明只剩真实环境；172项UNVERIFIED与APP_NEEDS_WORK / INTERNAL NON_READY保持，正常用户入口继续真实应用，不合成授权、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29–R33（2026-10-22续验）：新包UI在读屏前置激活失败，继续诊断
+
+当前候选output/v16-evidence/development-candidate-20261022T002622Z，source 25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e / full 52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723。完整L1 7349/7349、L2四类/五命令、L3 192/192、新七步构建与依赖、新四种包型实跑和典型/最大隔离样本均已通过，各按本轮原件绑定，不挪用旧包。
+
+2026-10-22 UI实际exit 1/FAILED。88矩阵记录为四档各22入口，record issues为0，原件哈希已独审，但未授目视信用。首caption setup原生一次SendInput接受3条，66次cursorMatches全部false，23次Main/exactRoot为true、7次pointOwned为true，未同次满足全部原条件；原始错误UI_CAPTION_INPUT_NOT_OBSERVED_WITHIN_SETUP，上层仅断言1!==0。约3秒失败，并非30秒setup预算用尽；具体原因仍UNKNOWN，不能仅凭末次坐标归因坐标公式或真实用户输入。
+
+十原语均UNVERIFIED且observations为空；自然speech节点0、motion0、恢复流程未执行。原生输入、原1秒观察/30秒setup及后续节点时限不放宽。置顶恢复到原false/tokenClosed true仅提供清理信用；NVDA正常STOP/ACK后exit/close0且未force，原15秒内；Main held身份正常exit0。失败原件与225个精确引用已封独审：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r33-ui-failed-actual-review-7e26544a-ec87-4edd-bd47-aa37884da3e7\REVIEW.json SHA 48b5dec97e97c39c8a5acd5f64f809bc6ea221eaeb21c87be0d0aae07d9ff4f4。
+
+本轮source/full与包身份保持；UI门canonical只覆盖DB/WAL/LocalState字节，未观察SHM或跨链stat，不能补为四项通过。最终正常启动前仍需整条软件链四文件保护核对，复用现有r2备份桥接，不回写时间戳、不打开正式库诊断。
+
+当前先用现有held Main与全新隔离profile端口准备只读坐标/输入状态诊断，不先改算法或放宽原门；同源实包原定安全静态与实际NODE_ENV对抗正在独立执行，未取得终态前不授通过。软件六项退出条件尚未全部闭合，不能声明只剩真实环境；APP_NEEDS_WORK / INTERNAL NON_READY和172项UNVERIFIED保持。用户正常入口继续真实Windows应用，内部样本不进入canonical userData，不恢复浏览器模拟工作台，不合成批准/费用/Ads执行或APP_READY。
+
+## 2026-10-21 R29–R32（2026-10-22续验）：完整内部回归及构建前独审通过
+
+2026-10-22 01:19 UTC实际检查点：当前候选output/v16-evidence/development-candidate-20261022T002622Z，源码25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e，完整冻结输入52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723。完整进程正常exit 0；L1 625文件7349/7349、L2四类与五命令、L3 28文件192/192、三份verifyEvidence全部通过，零failed/skipped。2130实现模块零超999行。
+
+独立实际复核逐项确认原7110案例多重集完整保留并新增239，与前两次625文件7349案例集合相同；旧10项native失败本轮均passed，原policy 20秒案例本轮1884ms passed。旧全量FAILED及其原件保留，旧policy超时原因仍UNKNOWN，本轮通过不表示找到了该次超时根因。recent-hook原13业务断言及现21案例核对通过。
+
+唯一构建前完整保护快照与R31.after逐字节相同，源码/完整输入、源Node127原生两文件、旧四包与app6199、canonical四文件均不变；.gitignore和现有pyc两文件全部七项stat不变，未恢复时间戳。独审原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r32-full-terminal-actual-review-12d6f503-8cb7-458a-a699-16912a6e0431\REVIEW.json SHA 57259306deca871d1053657f6c95c418643da7ce2c21a5d63ab5dac883aaabb8。
+
+当前只取得完整内部回归及构建前独审信用。接下来构建同源新四包并实际运行、隔离双档样本、22入口/自然NVDA读屏/110张截图及失败恢复、36目标工程性能、静态11项与实际对抗安全、隔离WAL备份恢复、正式字节备份、真实应用无参数正常启动及15槽最终独审。六项开发退出条件尚未全部闭合；172项正式MUST全部UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+正常用户入口继续真实Windows应用和canonical userData；内部样本保持隔离，不恢复浏览器模拟工作台。真实账号/正式数据、具体费用和候选批准、真实调用/写入回读及完整业务观察继续另行验收；不合成授权、账单、Ads执行或APP_READY。
+
+## 2026-10-21 R29→R32（2026-10-22续验）原预算2179ms通过，C002622完整整链重跑中
+
+C131938旧全量FAILED完整保留：7349案例实际7348通过/1个20000ms超时、零pending/todo，原10native失败全部转通过。独立实际复核确认7349名称及旧623/7110覆盖全保留、L2/L3/诊断未进入，source/full/native/旧四包/App/canonical及两个raw全部7stat与R31.apply.after严格相同，不放行该旧候选构建。
+
+原20秒用例受控复验实际1/1通过、2179ms、spawn/exit/close 0，前后完整保护快照均a0f4bcdd。12个相关测试/生产/配置文件与旧三个候选字节相同，原20000ms/5000ms及全部断言不变，独立实际审查通过。系统事件只证明整轮L1跨休眠；该case在WakeTime后10.104秒开始，并未跨休眠。根因继续UNKNOWN，此次只证明原预算下未复现，不称产品修复、不抹除失败信用。
+
+后续长时运行已使用单一隐藏owned临时执行租约，真实ACTIVE，UTC04:24:30.043638到期或专属stop.request正常释放，同线程finally清除运行请求。该保障只防止空闲休眠打断任务，不改变应用源码、持久电源方案、用户主动睡眠、锁屏或屏保，不提供产品修复、性能或正式验收信用；任务结束后核正常释放。
+
+新C002622已实际启动完整L1–L3：source25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e/full52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723保持，MAINT77773B未改，库存625、全仓2130模块零超限。native-node及module-boundaries已通过，完整L1仍运行。后续全部同源四包/界面读屏/恢复/工程性能/安全/备份/正常真实应用和最终独审仍须实际闭合，172 MUST保持UNVERIFIED，不提前授开发完成或APP_READY。
+
+## 2026-10-21 R29→R32（2026-10-22续验）7348项通过，单个20秒超时待核
+
+C131938完整L1于2026-10-22T00:18:36Z结束为FAILED：625文件、7349案例，实际7348通过/1失败、零pending/todo；唯一verify-policy-version-load-stability.test.mjs的production policy adapter loads versions once across ordinary React renders触发原20000ms预算。原10项native桥接失败已转为通过；R31唯一fixture补齐及237完整回归/独审原件均保留。当前未进入诊断对账、L2/L3、Windows构建和后续包体软件验收。
+
+L1步骤记录源码25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e及完整冻结输入52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723前后未变。全部保护正在按R31.apply.after a0f4bcdd重新独审，未修改任何源文件、原失败报告或时间戳。
+
+系统事件证实整轮验证跨过休眠与恢复，但该失败suite实际在恢复后约10秒开始，不与休眠窗口相交，不能把单个超时归因为休眠。根因仍UNKNOWN；下一步保留原20秒及全部断言做受控复验，并为后续长时运行使用临时、有到期/释放机制的运行保障，不以修改预算或忽略用例获得通过。全量整链须重新取得实际PASS，172 MUST和APP_READY信用不提升。
+
+## 2026-10-21 R29→R31 唯一模型补齐与237项回归已独审，新冻结整链执行中
+
+C120307的完整L1原始FAILED及独立实际复核完整保留：625文件7349案例实际7339通过/10失败，原623文件及7110案例名称多重集全保留，新增239，零pending/todo；顶层suite统计矛盾原样记录，未进入L2/L3或构建。其source/full/native/旧四包/App/canonical及两个raw完整保护均与MAINT.after严格一致。
+
+已定位为共享测试Main模型缺少当前已支持direct形状中的openApprovedExternalTarget函数声明，旧raw安全原件在更早合同门被正确拒绝，遮蔽后续正负断言。唯一修改scripts/v16-native-test-fixture.mjs的Main字面量增加92B/1行，原七语句和全部其它字节完整保留；真实collector及hash派生保持，生产validator、白名单、三个测试文件53案例、安全184案例、全部断言与预算均未改变。stage获独立静态审查后精确应用；before/after只允许sourceFiles和implementationInventory中这一fixture两行与派生身份变化，所有其余保护保持。
+
+原三文件定向RED实际43通过/10失败，合并四文件GREEN实际237/237、零问题、实际exit/close 0；完整53原桥接及184安全案例均覆盖，未使用只改单一失败断言或忽略用例的方式。应用与完整237回归均已独立实际复核：唯一+92B精确插入及逆复原、原53与184案例名称多重集完整、原10失败全部转通过、无过滤且spawn/exit/close正常，before/after全对象一致；本次相关GREEN只提供其自身软件信用，不授新完整回归或包体信用。
+
+新候选C131938已启动：源码25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e，完整冻结输入52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723；MAINT77773B/101be4499445a3f4ed02c51325908cb5c63e8748d4899d2a919098188be745a5未改变。native-node及全仓模块检查已通过，完整L1正在执行，随后L2/L3及原生重验、新四包/界面读屏/性能/安全/备份/正常真实应用和最终独审仍须实际闭合。172 MUST保持UNVERIFIED，开发完成和仅待真实环境状态仍未授予。
+
+## 2026-10-21 R29→R31 共享安全测试模型已对齐，237项通过并启动新冻结整链
+
+C120307的完整L1原始FAILED及独立实际复核完整保留：625文件7349案例实际7339通过/10失败，原623文件及7110案例名称多重集全保留，新增239，零pending/todo；顶层suite统计矛盾原样记录，未进入L2/L3或构建。其source/full/native/旧四包/App/canonical及两个raw完整保护均与MAINT.after严格一致。
+
+已定位为共享测试Main模型缺少当前已支持direct形状中的openApprovedExternalTarget函数声明，旧raw安全原件在更早合同门被正确拒绝，遮蔽后续正负断言。唯一修改scripts/v16-native-test-fixture.mjs的Main字面量增加92B/1行，原七语句和全部其它字节完整保留；真实collector及hash派生保持，生产validator、白名单、三个测试文件53案例、安全184案例、全部断言与预算均未改变。stage获独立静态审查后精确应用；before/after只允许sourceFiles和implementationInventory中这一fixture两行与派生身份变化，所有其余保护保持。
+
+原三文件定向RED实际43通过/10失败，合并四文件GREEN实际237/237、零问题、实际exit/close 0；完整53原桥接及184安全案例均覆盖，未使用只改单一失败断言或忽略用例的方式。应用和回归的独立实际复核继续进行；本次相关GREEN只提供其自身软件信用，不授新完整回归或包体信用。
+
+新候选C131938已启动：源码25e4a690d347c8eaa21af5b8cc4cc2138359f9a1682676f76e8fd82fe7e12f2e，完整冻结输入52775867741b5ebd365e6a290c50ebc9ecf118b4b0fc3a772386d664bb409723；MAINT77773B/101be4499445a3f4ed02c51325908cb5c63e8748d4899d2a919098188be745a5未改变。native-node及全仓模块检查已通过，完整L1正在执行，随后L2/L3及原生重验、新四包/界面读屏/性能/安全/备份/正常真实应用和最终独审仍须实际闭合。172 MUST保持UNVERIFIED，开发完成和仅待真实环境状态仍未授予。
+
+## 2026-10-21 R29→R31 完整L1发现10项原生桥接失败，进入定向修复
+
+C120307完整L1已实际FAILED：625文件、7349案例逐项7339通过/10失败，零pending/todo；失败分布为v16-native-evidence-cli一项、v16-native-evidence两项、v16-trusted-runtime七项。顶层numFailedTestSuites=0不能替代逐case失败结论。native-node及全仓2130模块零超限已通过；该候选未进入诊断对账、L2/L3、Windows构建或后续软件验收。全部原始失败保留。
+
+L1步骤记录源码3137dc65439067047fdca3c9d0a430ae5d5d6e8805b6fd338c980fe3eeadaa8c与完整输入e20b7a5abc9c0a816e639a3c90e230f1de45f3fb605058a6e4e19d8c3953abf7前后未变；正式字节、原生、旧四包/App和raw保护正在独立复采核对。当前修复聚焦三个桥接测试及其共享夹具与新安全语义检查的失配，原因仍待只读诊断确认；不得放宽生产安全门、原业务断言或预算。已启动原三文件定向RED复现。
+
+六项退出条件的独立静态差距盘点已留档，仅代表现有实现与验收链的梳理，未授开发完成信用。修复后需相关完整GREEN、新维护前缀及重新冻结，再完成全量L1–L3与同源四包、完整读屏界面/性能/安全/备份/正常真实应用和最终独审。172 MUST仍全部UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+## 2026-10-21 R29→R30 维护基线已冻结，625文件完整软件验收执行中
+
+安全V7完整184/184、原172全文/名称顺序、184 RED181/3到GREEN及所有已记录保护已独审；全仓2130模块零超999行。正式r2编译诊断实际完成并独审：真实旧C对照11/11，官方buildMain三端口保持原选项且只write:false/metafile，实际Main编译5956884B、helper65389B和Acorn242818B实际内联；当前Main两项语义判断均true。全部生成字节未执行，dist/release/build-state与正式四文件无写，所有frozen/source/native/四包/App/canonical/raw/dist/self/Acorn/compilerHost保护前后相同。此成功仅授未打包编译形状与different-source旧包静态对照信用，不授Windows包运行、NODE_ENV对抗或APP_READY。所有旧失败及副错原件保留。
+
+MAINT v2已按已审精确前缀落盘：原73727B完整保留、offset202插入4046B，当前77773B/101be4499445a3f4ed02c51325908cb5c63e8748d4899d2a919098188be745a5。全部源码身份3137dc65439067047fdca3c9d0a430ae5d5d6e8805b6fd338c980fe3eeadaa8c不变，仅implementationInventory维护文档一行及full派生变化；当前完整冻结输入e20b7a5abc9c0a816e639a3c90e230f1de45f3fb605058a6e4e19d8c3953abf7。全部历史字节、六项软件退出条件、172 MUST UNVERIFIED及真实Windows/canonical入口边界保持；维护文档和全部源码现停止写入。
+
+新候选已实际启动：G:\AI\amazon-ai-ops\output\v16-evidence\development-candidate-20261021T120307Z。使用锁定完整输入的run-frozen-internal-candidate入口，原生Node准备和全仓模块步骤已通过，完整625文件L1正在执行；其后原诊断对账、L2四类/五命令、L3业务及requiredEvidence重验，运行中的internal-run.json不提前授成功信用。后续进度只写本三状态文档及ignored原始报告，不修改冻结输入。
+
+后续严格依次执行同源新四包构建/依赖审计/实际四形态运行、双档软件样本、22入口/20自然读屏节点/110PNG/恢复、36本地工程性能、安全11项与真实NODE_ENV对抗、隔离WAL恢复、正式字节备份、普通args[]可见真实应用启动和15槽最终独审。当前仍未闭合全部六项软件退出条件，不能宣布开发完成或仅待真实环境；APP_NEEDS_WORK / INTERNAL NON_READY保持，不合成真实授权、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29→R30 真实包误判修正已落盘，完整184回归通过
+
+V7仅两目标精确落盘：安全helper从V6已审字节更新为942行65389B，原安全测试62671B全文保留并追加12项至184；CLI其余9门/11编码与schema、package/lock/Acorn8.16.0不变。全包深扫描误拒的window页面导航、process.exitCode正常写由完整已审owner/module指纹仅准入原AST赋值节点，不按window/process/evaluate名称宽放；类字段/方法仅非计算key按名称处理，value和computed读取继续受检。新日志只附固定phase枚举，不输出实包源码/错误片段。
+
+实际TDD已完成并独审：新增测试先在旧V6 helper执行，完整184为181通过/3失败，恰3个真实合法结构正例失败，原172及9个新增负例全过；应用V7后完整184/184通过、零failed/pending/todo，全部184名称/顺序/祖先/标题同RED，原172同原GREEN2，实际spawn/exit/close0。原181/3及更早失败原件不改写。源码/完整输入、原生、四包、全部app内容、正式DB/WAL/SHM/Local State及原raw/cache记录前后保护相同，精确应用finally保持。
+
+当前源码3137dc65439067047fdca3c9d0a430ae5d5d6e8805b6fd338c980fe3eeadaa8c，full8916c31df91d5f800f9376f10ac42951bd5904ab5a1d58436aa6538d104e0736，L1库存625。当前全仓2130模块零超999行且完整输入前后相同。184是安全测试数，172项PRD MUST仍全部UNVERIFIED。读屏caption此前298定向GREEN继续按其原身份记录，不提供本轮20真实节点/110PNG完整实包信用。
+
+现已执行r2正式编译兼容诊断：显式绑定实际whole184 GREEN，重新核真实旧C包11静态门，官方buildMain三端口保持原参数仅write:false/metafile:true，校验真正V7 helper和固定Acorn内联后只解析真实Main字节；不执行生成的Main/worker/backup、不写dist/release/build-state。r2先捕获compilerHostBefore并先保存oldBoundary raw后再验证，旧失败首错/副错与原FAILED完整保留。当前执行结果尚未结束，不授编译或当前包安全成功信用。
+
+MAINT v2仅在ignored区准备，live仍原73727B。诊断通过后再对齐维护基线并新冻结完整L1–L3，完成同源四种Windows交付包、双档软件样本、22入口/20真实读屏/110PNG/恢复、36本地工程性能、安全11门与真实NODE_ENV对抗、隔离WAL恢复、正式字节备份、正常可见真实应用及15槽最终独审。六项软件退出条件尚未闭合，不能称开发完成或仅剩真实环境。APP_NEEDS_WORK / INTERNAL NON_READY保持，继续禁止合成批准、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29→R30 实际程序包兼容诊断失败，继续修正检查器
+
+V6完整安全模型GREEN2实际172/172及原名称/顺序/断言、实际child exit/close0和全部保护已独立核对；这是模型与当前源码回归信用，不能替代真实打包形状检查。原V5 171/172失败及更早RED2 95/77均保留。全仓2130模块零超999行、L1库存625保持。
+
+随后正式编译兼容诊断实际执行并FAILED：在真正旧C Main上的官方静态collector先被语义preflight拒绝，oldBoundaryValidation=false，尚未运行三条官方编译端口（compilerCalls和buildStatePort均为0）。固定事件semantic_parse_failed覆盖parse、索引、全局写、builtin与startup门，不能只凭事件名称把首错认定为语法错误；当前按实际包AST定位并修正有限安全slice的识别。旧C源与检查器源码不同，此诊断不授当前包、NODE_ENV对抗或正式验收信用。
+
+失败诊断finally另有compilerHostAfter数组对未赋值compilerHostBefore的比较副错，原FAILED及allGuardsUnchanged=false保持，不回写。独立对账确认已保存before/after snapshot完整字节相同且等GREEN2.after；原生、四包、完整app、正式DB/WAL/SHM/Local State、raw两原件、dist文件库存/七stat、工具自身及Acorn前后均相同。三项编译宿主库只有末端固定hash/size符合，因缺失前端七stat不能授完整前后元数据保护。首错与副错严格分开，不据此推断正式文件被改。
+
+当前源码仍9ef7144273e5abe7ae8e60e4cd549a9873086761435bdb3fecb76ebda92f14f7，full468fc781a484b6b66374f7567dc61123623ac7dc7e4332d5451c0231c4b32f1f。MAINT R30前缀及新apply工具仅暂存/已审，live仍73727B，未在失败诊断之后冻结。修正真实包兼容后，保留全部原172案例并追加必要复现，完整重跑及实际官方编译诊断通过，再更新MAINT开始新冻结L1–L3和同源四包/界面读屏性能安全备份完整链。六退出条件、172 MUST UNVERIFIED和APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+## 2026-10-21 R29→R30 安全172项实际闭合，完整新版本验收待执行
+
+安全V5完整实际172项为171通过、1失败，原FAILED不改写。独立AST诊断确认完整已审初始化前缀中的合法状态赋值被粗粒度immutable门误拒。V6仅修改语义helper：完整31前缀指纹与接线证明后，仅允许同一原AST赋值节点；其它重绑、端口写、控制流、更新/删除规则及默认空例外保持。原172测试全文、断言、预算、CLI其余9门/11编码、package和lock字节均不改。单helper已审精确应用实际PASSED，原生、四包、完整app、正式DB/WAL/SHM/Local State及原缓存原件前后保护保持。
+
+完整GREEN2已经实际执行：1文件172/172通过、零failed/pending、实际spawn/exit/close均0、所有保护相同。该172为安全测试案例数，不是172项PRD MUST验收。当前源码9ef7144273e5abe7ae8e60e4cd549a9873086761435bdb3fecb76ebda92f14f7，完整输入468fc781a484b6b66374f7567dc61123623ac7dc7e4332d5451c0231c4b32f1f，L1库存625。全仓尺寸实际2130模块、零超999行、完整输入前后相同。V6落盘和完整GREEN独立复核正在进行。
+
+读屏caption此前真实298/298定向回归与独立原件复核继续按其当时身份保留，不转记为当前完整实包20节点/110PNG验收。Acorn8.16.0已按原544项供应链政策实际安装，首次离线缺元数据失败保留，未升级其它依赖或运行安装脚本。当前旧C包属于旧源码25210a0c…，当前检查器与旧包不匹配；后续编译只读诊断只授兼容性信用。
+
+下一步完成官方编译兼容诊断、维护基线与工具引用对齐后，一次新冻结完整L1–L3，再完成同源四包、双档软件样本、22入口/20真实读屏节点/110PNG/恢复、36本地性能、安全11门及实际NODE_ENV对抗、隔离WAL恢复、正式字节备份、正常可见真实应用和15槽最终独审。六项软件退出条件未闭合，不能称开发完成或仅剩真实环境。172 MUST继续UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY保持，不合成批准、费用、Ads执行或APP_READY。
+
+## 2026-10-21 R29→R30 安全检查实际172例与单项合法前缀阻塞
+
+当前实际源码634384a5c72cfd82a73cdd5f665dcd59e316ea98626b0a156688365c92d0b99f、完整输入5f335b7a773a1c0d4c485bc2022e64811127b6215a43a0e3c797f475b6e350be，L1库存625。V5安全五目标经独立静审45ee35bc9800e54fbf713991dd63147cf1848fca5eea73f9bceeb407b397cf27后，按tests1/dependencies2/production2分段实际精确应用；每阶段原件wx、目标Buffer/双库存、非目标冻结及native/四包/6199 App文件/canonical/raw七stat入口、前后与finally保护均通过。
+
+Acorn固定8.16.0。首次offline安装被现有544条供应链策略检查因缺少@peculiar/json-schema登记元数据拒绝，实际exit1，原FAILED保留且全保护相同。第二份新工具只移除offline及相应标签，保持root过滤、frozen-lockfile、ignore-scripts和全部供应链策略；544条策略实际通过、进程正常0、根入口解析为固定两文件，Acorn原本正常硬链接nlink2及七stat完全保持，未升级其它依赖或重建Node原生。
+
+首次旧检查器172例为95通过/77失败，含76行为失败及1个测试体缺Acorn。安装后保持旧CLI完整重跑同172例仍95通过/77失败，已零缺模块错误，全部失败均行为断言，保护相同。应用正式CLI/helper后完整172例实际171通过/1失败，唯一失败为“supports the actual audited precondition guards and nested handler returns”的合法初始化正例误拒绝。这个尝试的GREEN标签不改变原FAILED事实；未改原断言/预算或跳过用例，当前正收口该已复现支持边界。此172为安全模型案例数，与172项PRD MUST验收信用无关。
+
+正式读屏19目标及关联十文件298/298、global2129/0的实际收口已独审8d1410bc9c6fa7744d8ff478f0867cfc4f75dd69280f8b42376742e84e1d5d3d确认，属于前一cda655源码的字节与关联回归信用。旧/新各2节点自然NVDA的实证也仅属旧C包诊断，不授当前完整20节点、110截图、新包或APP_READY。最新源码须全部同源刷新。
+
+下游新版security wrapper/Acorn专用身份观察/final helper/entry v6已静审3bb17af24d6707e4bf8f9893ea95346c6e0803dfcc15056c7c1d5e6cfc198653；尚未运行，当前源误拒绝修正后还需刷新其精确pins，不能复用过期文件信用。真实NODE_ENV对抗启动未运行。
+
+当前仍需单项语义收口及完整安全GREEN、实际新编译形状/官方CLI验证，再同步维护基线并重新冻结完整L1–L3、新四包、22入口/读屏/110截图/失败恢复、36工程性能、静态11+真实对抗、隔离WAL恢复/正式备份/可见真实正常应用及最终15项报告独审。全部软件门闭合前仍未开发完成，172正式MUST全部UNVERIFIED，真实授权/费用/Ads回读/业务观察时间另行验收。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-security-tests-apply-59636dc6-9e67-456b-b541-345fc16b7c1f\report.json（SHA-256 924e9188a530033ae50ccf9356e15eeafdbfbba412e03eeadb2a0ea839bf06c5，7571字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-security-dependencies-apply-262b3067-20ea-481e-9116-8a898ae37eb4\report.json（SHA-256 5eddbe5725ab7a00350c4f7cb476b52b3ffe81d64bfd0f4708986092007773e3，8586字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-security-production-apply-93b3a9c9-1910-42cd-97ec-0fa7ea04de91\report.json（SHA-256 5310e5f5b0b799eb0b60c6886b314588d9b000366c12d9ffff8baca130306646，8341字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-acorn-offline-install-41328924-739e-4aec-8cb3-1a8baf10390f\report.json（SHA-256 76f79ebc114c086060e8fa8dd07e6ef550b458516c75599383e178c9ea58a0ff，6694字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-acorn-policy-checked-install-adace294-0119-4d2f-9152-e4e52d2c3fe4\report.json（SHA-256 ea7e6ca6040f3f818f1bf717ef2126671ca3d35eba6ecd2e9dc2b85851f8d341，6507字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-security-old-red2-20261021T104635859Z-bf1b11b8-afb1-460b-ad80-1e119bc1a84d\report.json（SHA-256 31deddde8e9bc29e87d1dd2d93da25a9e04adc0c1755811761e4d6fa88d9bfd2，37008字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-security-complete-green-20261021T105017343Z-e5dbe5de-cb1a-47ba-ba15-51ab75ab57be\report.json（SHA-256 5453e3cd5902821cb45b928405c510af11af6e7b86e86f6067b3e71942454629，5599字节）。
+
+## 2026-10-21 R29→R30 正式读屏接线与298项关联回归
+
+当前源码cda6558696be7a5b316c81a8a3e2c4246310d36ca1393494357c46d9e3d4f2a1、完整输入411e31c1d5f0dbe6991e93f6a93434d70b3916325b20d745d9b699ba9d88f9e3，L1库存625。正式读屏19目标经独立静审后按16支持/测试目标及3生产接线分段精确应用；原字节wx备份、实际Buffer/双库存、runner source及canonical envelope派生、原生/旧四包/完整App/canonical/raw七stat的入口及前后保护均实际通过。
+
+旧接线在同一加强测试下真实102项中97通过、5失败；失败准确位于未执行setup、setup错误未中断open、治理/恢复仍继续，零缺模块导入失败。应用三生产接线后，普通十文件298/298实际通过，零失败/pending；独立只读实际复核已通过，确认旧102名称/顺序、19实际字节、全部保护及runner派生一致；只授字节与关联回归信用。独审原件G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\independent\r30-caption-applied-actual-review-b0fd553d-cc2b-4e06-8cb7-8774358c554f\review.json（SHA-256 8d1410bc9c6fa7744d8ff478f0867cfc4f75dd69280f8b42376742e84e1d5d3d）。全仓--all实际2129模块零违反；单独changed1430检查亦退出0，二者范围分别记录。
+
+窗口准备在reader ready与绑定后仅执行一次，沿既有可信Windows工具与统一只读启动快照端口取身份；原30秒setup内必须恢复同窗原置顶状态，失败5秒仅恢复清理。每节点仍独立10秒，STOP15秒及强制清理15秒保持。setup失败记录原异常，原owned STOP/close继续，治理保留十项UNVERIFIED并停止后续焦点/键盘/motion/recovery。新增C#原生资产纳入runner和999行尺寸门，没有新增Main/Preload/IPC或业务配置。
+
+此前r3c2旧/新各两节点真实自然语音、正常退出及置顶恢复已由独立原件复核；两组都成功，不是竞态因果RED/GREEN。正式接线的本轮298属于相关软件回归，当前旧C包仍为旧源码25210a0c，不授当前源码同源包、完整20节点/110截图或APP_READY。
+
+安全候选V4独审发现被排除CJS变量与真实同步函数的绑定碰撞；BLOCKED原件保留，作者正补有限支持合同的唯一绑定/模块路径，不扩张为任意JS安全证明。正式安全5目标尚未应用、依赖尚未安装，静态原9/11 FAILED和动态未运行状态保持。新候选中原162例须保留，语法与静态名单不能当实际通过。
+
+当前仍须安全正式CLI/模型与实际对抗闭合，再同步维护基线并新冻结完整L1–L3、新四包、22入口/20读屏节点/110截图/恢复、36本地工程性能、安全WAL恢复、正式字节备份、可见真实应用正常启动和最终独审。全部六软件退出条件闭合前不能称开发完成；全部172项正式MUST仍UNVERIFIED，真实环境授权/调用/写入回读与业务时间另行验收。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-caption-support-apply-eb0647b4-8e0d-425f-8222-ac14e7b49eb0\report.json（SHA-256 9b8c3e1f4ee5bdd4a4cc0eabbb0a56b5bdeb9347703feb7e189c944592362198，36595字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-caption-production-apply-8fa34ac9-ba9d-4dcb-8d0f-1d7cd31ab750\report.json（SHA-256 6630e3688d85268c6cab6ff9866fd79a1c78bca84cca91dfd32902eae731ea75，24610字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-caption-old-wiring-red-20261021T101652570Z-c58c4502-3735-48e4-9f51-1ea20a124f44\report.json（SHA-256 fcdd4ef7a0fd06ee91acbefff6137ef256444067fd8e024eb4e944773c034fef，7380字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-caption-related-ten-green-20261021T102057624Z-05f41569-7777-49f7-b7e8-a414383cbc5f\report.json（SHA-256 e6749dbff70a369ad4c25f1a4c71efbeb79658f4e41a082f5754cb0d1dd43356，5888字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-caption-boundaries-all-e2cc30d2-b4d1-4185-8105-3700f1ab92a4\report.json（SHA-256 a8180a8b610d95cf511d9307dd720e3688cb850ad5e1e79e62cd0ad9623a3ca5，520字节）。
+
+## 2026-10-21 R29→R30 读屏窗口置前实证与安全静审检查点
+
+当前实际源码5beadf77fbbdfe5d2e9d77d41066eaf7bbf48345b309e8913ae84730e38c974f、完整输入fe32ace1ba823612aea26f844a49da99eec7e71b5fa0bd463f7ca23c1d608d2d，L1库存624。读屏原节点10秒、STOP15秒及强制清理15秒保持；相关八文件256/256实际通过。旧C的623文件7110项、四包与88界面结果各保留旧身份，不能给新源码信用。
+
+原r3a运行在启动App前因Windows系统PowerShell正常硬链接数2被工具通用门拒绝，原FAILED保留；r3b按精确OS文件身份处理后启动App/NVDA，但标题栏点归属拒绝，零输入。新r3c2仅在held Main和精确自有窗口上临时置顶，单次原生标题栏激活后恢复原bool，所有归属、前台、自然语音与清理门保持。
+
+实际顺序旧组、新组均退出0；两组setup分别1072ms/869ms，恢复分别5ms/8ms，原false均已恢复false，未延长原30秒setup。各组两个真实侧栏节点均OBSERVED，包含原始NVDA自然语音、名称/角色、held Main出生身份、精确root、hostBefore/After与请求nonce；NVDA均正常STOP ACK与exit/close0，无强制终止。两组runner/capture保护均通过。旧版也通过，因此不能将此对照称为已证明arm竞态根因或旧RED/新GREEN。
+
+本次原生对照仍使用旧C包/隔离软件样本，明确不同于当前host源码，不授同源候选、完整软件验收或APP_READY信用。将已实证的单窗置前收敛到正式读屏工具后，仍需新冻结完整L1–L3、新四包、22入口/完整20节点/110截图/恢复、工程性能、安全与隔离WAL恢复、正式字节备份、可见真实正常应用和最终独立复核。
+
+正式安全检查原9/11 FAILED与动态未运行原件保持。语义修订V1/V2/V3均未应用；独审发现Object完整性、登记调用可达性与runtime隐式写等具体反例，正在新候选中封闭并保留旧案例。语法通过、静态模型名单和候选文件均不代表11/11或真实攻击检查通过。全部172项正式MUST继续UNVERIFIED；真实账号/数据/具体费用和批准/Ads回读/业务观察时间仍另需实际环境。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-native-diagnostic-r3c2-3c0d2975-ee2d-4a3f-b96b-e29035156abd\runs\old-5a8891ab-2ab8-45e2-a2fe-4ef9c553759a\report.json（SHA-256 2eb3b7e1cd324f6c8e2eea5a297d2b1f5524bd1ad6ae51c54e5742ed904ec1b9，8446字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-native-diagnostic-r3c2-3c0d2975-ee2d-4a3f-b96b-e29035156abd\runs\new-970ec55c-f1bc-4798-bceb-a24e7ea7e11b\report.json（SHA-256 bc2300290a5712b6e535c29ea5b944a0334de51373eed17bca0e2e4b0486f14c，8446字节）。
+
+实际原件：G:\AI\amazon-ai-ops\output\development-completion-2026-10-16\root\r30-reader-related-eight-green-20261021T085813007Z-6516517c-17f3-4ad5-859f-d881e5ccb4f7\report.json（SHA-256 e602e146fef9957631c039d191cc59c9e82a1e4beda4c94983cc5e93c0a40208，5707字节）。
+
+## 2026-10-21 R29候选后续R30读屏边界修正已落盘，真实前台与安全工具继续验证
+
+R30 reader/governance/collector三项修正已按独审union r2落盘，新增会话测试及L1库存同步到624。首次焦点前arm、失败会话立即STOP并禁止后续键盘/prepare/伪恢复、原STOP十五秒绝对截止及真实事件时刻均保留严格门。旧生产搭配加强后完整两文件实际69通过/28失败；修正后相同完整两文件97/97通过、零未执行，原FAILED保留。此为隔离端口回归，未授真实读屏或完整开发完成信用；关联八文件已实际256/256通过、零失败及未执行，起终源码、包体、原生及正式数据保护相同；原件root/r30-reader-related-eight-green-20261021T085813007Z-6516517c-17f3-4ad5-859f-d881e5ccb4f7/report.json。
+
+当前source5beadf77fbbdfe5d2e9d77d41066eaf7bbf48345b309e8913ae84730e38c974f，完整输入fe32ace1ba823612aea26f844a49da99eec7e71b5fa0bd463f7ca23c1d608d2d。精确应用的派生runner合同检查曾FAILED，新只读重验从已审原/新字节严格推导evidenceScript及envelope并PASSED_POST_APPLY_DERIVED_BINDING_RECONCILIATION，确认全部非目标源码/原生/当前包/App/正式数据和raw缓存保持；旧失败原件未改写，未回滚。
+
+真实旧对新最小诊断均在前台门失败，old为130ms、new为962ms的NOT_ESTABLISHED，均未进入first-focus/arm，不能证明提前arm是否解决原自然语音失败。两组自有NVDA均真实exit/close0、无force，完整起终保护一致。正在制作只操作已验证自有标题栏的有界激活诊断，保留原exactRoot/PID/出生、自然语音和10秒节点预算；不读取外部窗口内容、不伪造ACK，不以setup充节点耗时信用。
+
+安全语义工具v1仅staged且独审BLOCKED_STATIC_UNRUN，发现Object.assign逃逸、tracked注册缺实际可达链、真实S7 finally清理会被误拒三项。原五目标及原C静态9/11失败保留，作者在新revision修正并补反例；未应用安全源码或安装依赖，动态安全尚未执行。当前须完成真实读屏、当前安全、性能、重新冻结完整L1至L3及新四包、正式备份/正常应用与独立复核后，才可限定剩余真实环境；172仍UNVERIFIED。
+
+## 2026-10-21 R29候选隔离备份通过，R30读屏与静态安全继续收口
+
+当前C060229的packaged-backup/report.json已实际PASSED，执行会话3505退出0。两个真实当前EXE-as-Node进程分别退出0/null，包内backup child实际ABI149。隔离源持有WAL，100行和源主文件/WAL摘要前后相同；reader openedReadOnly/queryOnly均true，snapshot与restore各100行、integrity均ok，末行隔离WAL数据-100。当前Main32febaaa/AppBA8B前后相同。此为隔离软件恢复信用，尚非正式数据库升级前备份或真实历史恢复。
+
+package-security/report.json实际FAILED，执行会话39152退出1。静态原件9/11通过，两失败code为PACKAGED_DEV_DOWNGRADE_GUARD_PRESENT与LEGACY_SAVED_PASSWORD_IPC_ABSENT，adversarial未进入。原件static-run/原CLI输出及child生命周期完整保留，wrapper记canonicalUserDataUnchanged=true且bindingBefore/After相等。正在核对当前真实Main/Preload链与旧静态规则，不能直接称真实漏洞或将失败改为通过。正式仓库检查工具会作为修正对象，不能只用ignored替代工具变绿而留下默认入口错误。
+
+真实读屏失败和退出收尾仍按前节保留。最小arm-first阶段记录reader已独审PASS_STATIC_UNRUN，只供当前真实EXE的隔离对照，尚未实际跑；诊断工具v1静查有新增读取无界等待、finally写盘遮首错两阻断，r2正在制作。会话治理union静查另发现迟调close可接受原15秒之后退出，r2将保留事件实际观察时间并按原绝对截止拒绝迟到，补反例；原source/Python/pyc/MAINT尚未应用这些stage。
+
+当前冻结源码25210a0c/完整输入0fc470dd保持，历史FAILED与所有独审失败原件均保留。尚需真实读屏/恢复完整110图、36本地性能及冻结预算比较、当前安全静态及对抗全通过、正式字节备份/正常真实应用和最终独审；任何正式源码修正后需重新冻结完整L1–L3和同源新包全链，不复用旧包信用。172仍UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY。
+
+## 2026-10-21 R29候选真实读屏未通过，继续R30原生采集修复
+
+C060229的ui-software-run已实际FAILED，执行会话82223退出1。四档22入口共88项矩阵issues为空；10项治理读屏均未完成，首项UI_NVDA_OPERATION_DEADLINE_EXCEEDED，其余9项UI_NVDA_OWNED_FOREGROUND_NOT_ESTABLISHED，另UI_NVDA_OWNED_STOP_TIMEOUT。不得把页面截图或前台ACK计作自然读屏成功，也不得复用该失败运行获取完整110图/10项读屏信用。
+
+首请求07:22:13.497Z，13.594前台根窗口ACK成立，13.660请求已落盘；三条自然语音为窗口标题、文档标题和时间，未包含所需控件名。原件无阶段标记，无法唯一判定超时具体await或外部前台窗口身份。后段07:23:14.102Z至07:23:41.070Z的NVDA UIA主线程冻结不能反推首节点根因。STOP在07:23:54.064发出、56.680收到真ACK，56.699进入Exiting后未在原15秒内退出，随后自有SIGKILL；不能称STOP未消费或正常退出0。
+
+root/r30-post-ui-failure-protection-367049cb-fa2b-4001-b6d7-ae858d80cb55/report.json已PASSED_POST_UI_FAILURE_PROTECTION，snapshot摘要ad0fe0a0。点时核对当前源码25210a0c/完整输入0fc470dd、Node原生、当前新四包及App6199、正式四文件含mtime、pyc/gitignore七stat与MAINT均保持对应封存基线；未打开正式数据库。原失败与所有日志保持，不回写时间戳。
+
+R30仅在新的ignored stage准备先arm后真实focus、受限阶段记录及失败会话及时终止的最小方案，并准备当前冻结C真实EXE/NVDA的隔离旧对新诊断，真实源码尚未应用。Provider自然语音、名称角色、host前后、heldMain/nonce和原10秒节点/15秒退出预算均保持。时序竞争是可证代码风险，尚未证明为本次唯一根因。后续仍需最终冻结完整回归、新包和UI/读屏/恢复、原预算性能、安全/备份及正常真实应用与最终独审。
+
+最终汇总工具的容器报告接线已制作全新v5并独立静审PASS_STATIC_UNRUN（SHA9bc628da），旧工具与运行报告保持；实际最终工具及其拒绝分支未执行，不提供当前完成信用。172项仍UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY，开发完成目标继续推进。
+
+## 2026-10-21 R29当前新四包实际运行通过，进入界面及性能阶段
+
+当前C060229的windows-build/report.json实际PASSED，七步骤均完成，新鲜四包、ABI149隔离及源码/完整输入前后相同。build-local-proxy子进程正常退出0，监听及自有连接全部关闭，未改持久代理。依赖审计10根、4匹配版本、0问题且包内容未变化。独立8项复核通过，收据 independent/r29-current-windows-build-and-dependency-actual-review-11ac29ee-c8e9-4ea2-bfc7-35744b16145f/review.json（SHA4ecba110）。
+
+four-package-runtimes/report.json已实际PASSED，执行会话62725退出0。目录、安装、便携及ZIP形态全部真实启动验证通过，配置重启读取、包内Worker、原生保护与正式userData保护通过；安装卸载恢复及便携实际解压目录清理核对通过。新App摘要BA8BBC3D757688F2BB1BB52F22FCEFC9C74BFF9BD9D40B2611CEE6D146820483，Main32febaaa、Worker827bf63a、backup491abb67；EXE为共同Electron壳，不据其相同摘要复用旧App信用。
+
+源码25210a0c0b67dbb58e34de03a8f01d03318de3f3c7036c504a9ef75efe80536c及完整输入0fc470dd6ed3ca37f559c4ac81e85f88db71aa253b652b1f7a8f090e758ba2ec保持。典型/最大隔离软件样本正在生成，当前110图/22入口、真实NVDA与恢复、36本地工程性能及冻结阈值比较、安全/隔离WAL恢复、正式字节备份、正常真实应用和最终v4独审尚未完成。样本不提供真实登录、费用、批准或Ads信用。172仍UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY；只有全部软件退出条件通过后才可限定剩余真实环境。
+
+## 2026-10-21 R29当前冻结完整L1至L3通过，进入实包交付验证
+
+当前候选为 output/v16-evidence/development-candidate-20261021T060229Z。internal-run.json 已实际 PASSED，原执行进程正常退出0；L1为623文件7110项全部通过，L2为4/4，L3为192/192，零失败和待执行。原生Node ABI127、全仓2120模块零边界违规及三份生产证据验证通过。历史失败原件保留，不以旧包或旧计数授当前信用。
+
+源码摘要25210a0c0b67dbb58e34de03a8f01d03318de3f3c7036c504a9ef75efe80536c；完整冻结输入摘要0fc470dd6ed3ca37f559c4ac81e85f88db71aa253b652b1f7a8f090e758ba2ec。root/r29-final-internal-protection-80233c15-00e7-473c-96a6-3229a2222f19/report.json 已 PASSED_PRE_BUILD_PROTECTED_SNAPSHOT：当前源码、原生、旧四包、App及正式四文件字节与stat保持维护前缀后的基线。这里只提供内部验证与构建前保护信用。
+
+当前同源四包构建已启动，输出在候选 windows-build 与 build-local-proxy。其构建、依赖、四形态实测、110张当前界面截图、真实NVDA与恢复、工程性能原阈值比较、安全/隔离WAL恢复、正式字节备份、正常真实应用及v4最终独审尚未全部取得终态。172项正式需求继续UNVERIFIED，APP_NEEDS_WORK / INTERNAL NON_READY。软件门全部通过后方可声明开发完成、仅待真实环境验收；此轮仅对齐三状态文档。
+
+## 2026-10-21 R29新冻结追踪与实际范围独审完成
+
+独立当前静查independent/requirements-static-trace-links-review-5feeb516-64b7-401d-9bdf-816d4e8a426a.json（SHA7b1f7cd0，456556B）绑定新C060229/source25210a0c/full0fc470dd。172需求、570实现链接、942 Vitest链接（557组testId/caseId、556唯一case字符串）、78非文件链接/32检查键均与当前冻结一致；334实际文件SHA匹配、标题literal/each精确唯一，0断链/0歧义，双向关联完整。此为静查，172仍UNVERIFIED，执行/真实店铺/APP_READY信用均false，unknown-reconciliation强制check保留。
+
+47综合实际独审independent/r29-forty-seven-and-maintenance-actual-review-229b9868-ed44-488d-9004-f3e73a8de143/regression-review.json（SHAe83e449e，19107B）通过：47/1002完整并集及原991名称/顺序保持，原3失败与新增11真实行为RED均已绿，全部原预算与完整起终保护通过；后续合法维护前缀不计该轮漂移。MAINT实际独审同目录maintenance-review.json（SHAce1c3b45，4806B）仅授byte应用信用：原71917完整保留、offset202插1810，prewrite expected与wx备份先行，唯一维护库存及full变化，source与其它保护相同。
+
+当前冻结源/完整输入为25210a0c0b67dbb58e34de03a8f01d03318de3f3c7036c504a9ef75efe80536c /0fc470dd6ed3ca37f559c4ac81e85f88db71aa253b652b1f7a8f090e758ba2ec；MAINT73727B/0d888a93。新C output/v16-evidence/development-candidate-20261021T060229Z仍在623文件完整L1，根74976/exec48124，native-node及2120模块检查已过；L2/L3及新四包、依赖、110图/真实读屏恢复、工程性能/原预算对照、安全/隔离WAL恢复、正式字节备份、正常真实应用和v4最终独审尚待同C实际终态。原C042545 FAILED与历史两次canonical只读backup保留，SHM独占mtime归因UNKNOWN。仅三状态文档更新，source/测试/MAINT冻结；APP_NEEDS_WORK / INTERNAL NON_READY，尚未达到仅待真实环境。
+
+## 2026-10-21 R29综合回归通过并冻结新最终候选
+
+普通47文件1002/1002实际通过，零失败/未执行，实际child84972 exit/close0/null、外层exec99984实际exit0。原42文件820项、三旧失败文件103项、authority43项与readiness36项构成完整并集；原C对应991名称/顺序及新增11全部保留，原3失败与11真实行为RED均已转绿。原件root/r29-related-forty-seven-green-20261021T054741625Z-8d425bee-9442-49ec-99b7-70f9507fb95d/report.json，完整起终source25210a0c/full e76a52b8、native/四包/App及canonical全部byte/stat严格相同；该结果仅为综合回归，不复写旧C042545 FAILED或授新包信用。
+
+维护stage aa85c14f与应用工具7176abf8经a0bfb79a/80022057独立静审后已实际一次应用，原件root/r29-maintenance-prefix-apply-fade9e0f-4035-4249-b05d-d534bcfa4ef5/report.json为PASSED，exec48439实际exit0。仅offset202插1810B，原71917全部字节/六退出条件保留，新MAINT73727B/0d888a93467d9926b254d883043eb4f1b2b7cc12d97e098c9cd7be5d86a37e17；预写expected/wx原件先于写，仅1条维护库存SHA/size及full变化，source与非目标保护保持。
+
+新最终候选output/v16-evidence/development-candidate-20261021T060229Z已实际启动，根PID74976，exec48124不是PID。source25210a0c0b67dbb58e34de03a8f01d03318de3f3c7036c504a9ef75efe80536c，完整冻结full0fc470dd6ed3ca37f559c4ac81e85f88db71aa253b652b1f7a8f090e758ba2ec；native-node和全仓2120模块尺寸检查实际通过，零超限，完整623文件L1正在运行，L2/L3待本轮顺序终态。源码/测试/维护文档已冻结，仅本三份状态文档继续对齐。
+
+继续顺序完成同一新C的全量L1–L3、新四包及依赖审计、双档样本、22入口110图/真实NVDA及失败恢复、36项工程性能及原冻结预算对照、安全/隔离WAL恢复、正式字节备份、正常可见真实应用和新输入绑定的v4最终独审。新需求追踪静查正在独立刷新；172项验收仍全部UNVERIFIED，真实账号/报表/具体费用与候选授权/真实AI及Ads回读/业务观察边界保持，APP_NEEDS_WORK / INTERNAL NON_READY。上述软件门闭合前不称仅待真实环境。
+
+## 2026-10-21 R29三个旧失败转绿，数据库入口边界完成单文件回归
+
+普通完整三文件103/103实际通过，原54+34+15逐名/序保留，原全量3个失败均转绿；原C development-candidate-20261021T042545Z的FAILED、7096/7099及全部原件保留。实际原件root/r29-three-existing-tests-green-20261021T053512864Z-384de875-6165-4e0c-b49e-2d53147ec3d8/report.json；独立窄审4a698cbe仅授相关回归信用，不推断installed历史CLR唯一根因或真实包验收。
+
+缺--authority-db的旧案例实际报告证明两次canonical只读备份，SHMmtime变化的独占OS原因仍UNKNOWN，正式字节一致且未回写时间戳。V3现在缺/空白参数在resolver加载前拒绝、显式解析传{}不采用环境默认，并在全部异常分支清空authorityDbPath；原严格绝对/唯一/直接/realpath门保留，其它共享resolver接口不改。新11隔离测试在旧实现实际全部断言失败，旧32明确排除以避免再次读取正式库；RED原件root/r29-selector-isolated-old-red-656c473a-f412-482d-a639-e4b8ef21112a/report.json，独审74c2f3fc确认真实行为失败、非VM/导入错误，不授整文件信用。
+
+测试与生产已按先后各单目标实际应用并保留wx原件和预写expected；生产原件root/r29-authority-phase-byte-apply-40218850-6701-42cb-a020-c781c7ae6d3d/report.json已PASSED。source25210a0c0b67dbb58e34de03a8f01d03318de3f3c7036c504a9ef75efe80536c，full e76a52b8e3eb16ad85c5017a09ee74aefc0074a039b95bf4f46ca0f74d551a60；源码、runner与正式状态等非目标保护通过。完整43无过滤普通回归原件root/r29-authority-complete-green-20261021T054409120Z-823b3fa3-32a7-45bc-89d8-077a7a3d1f92/report.json实际43/43通过，全部原32与新11、原时限保留，canonical全部字节及mtime与起点一致。
+
+当前原42相关文件加三旧失败文件、authority与readiness共47文件完整综合回归正在执行，exec99984不是PID，终态尚待实际确认。维护前缀已独静审a0bfb79a但仍未应用（MAINT71917/dec9保持）；须相关综合实际GREEN后再一次对齐维护并冻结全量。新全量L1–L3、四包、110图/真实NVDA、工程性能、安全/隔离WAL恢复、正式字节备份、正常真实应用与最终v4独审均未取得本次新源码信用。172项UNVERIFIED、APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+## 2026-10-21 R29完整L1实际失败，保留原件并修正3项测试问题
+
+当前冻结候选output/v16-evidence/development-candidate-20261021T042545Z已实际FAILED，根52532/执行会话66480实际exit1。623文件7099项：7096通过、3失败、0未执行；旧6789项逐名/每文件顺序全部保留，原42文件820项与native84在本候选全部实际通过。独立实际窄审independent/r28-frozen-l1-failed-actual-review-c0205223-73bb-463e-99ae-5361249b9f43/review.json（SHAbb43cfad，19043B）确认该终态。全仓2120模块零超限及native-node通过；L2/L3未启动，新包与后续验收不给信用。
+
+3个失败分别为browser-login-staged-status旧1200字符反向切片遗漏已存在的确认标签，以及ZIP/installed两个隔离内存验证启动pwsh后遇到CLR0x80131506（退出3221225477）。ZIP原堆栈明确进入TaskbarJumpList，installed具体触发仍UNKNOWN。候选只修语义切片及后台子进程隐藏启动，保留原案例、业务断言、20秒时限与真实宿主，不重试、不切换运行时；静态候选不算修复验证，仍需普通完整文件和相关回归实际通过。所有FAILED原件保留，生产源码与MAINT未因这3项改动。
+
+source036828da/full9489ac01仍匹配，172项需求静查无断链而验收仍全部UNVERIFIED。追加只读保护观测另记录正式文件字节不变但mtime存在变化，来源尚未确认；不能把字节一致写成完全未触碰，禁止回写时间戳或恢复覆盖。完成最小修正、实际回归与当前状态对齐后，以新最终候选重跑完整L1–L3，再完成四包、双档样本、22入口/110图/真实读屏与恢复、工程性能、安全/隔离WAL恢复、正式字节备份、正常真实应用和最终独审。当前APP_NEEDS_WORK / INTERNAL NON_READY，尚未达到仅待真实环境。
+
+## 2026-10-21 R28当前冻结需求追踪静查完成
+
+独立静查原件independent/requirements-static-trace-links-review-c64f3430-eb5a-4330-86d8-b82d660b6306.json（SHA57e27ff4，129172B）绑定当前C development-candidate-20261021T042545Z、source036828da/full9489ac01及冻结index/manifest。172项需求的570条实现链接（196文件）全部存在且字节与冻结源一致；942条Vitest链接对应557组testId/caseId、138文件，字面与each展开标题均精确唯一定位；78条非文件链接对应32个requiredChecks，需求与测试双向关联完整。334文件引用已封存，0断链/0歧义。
+
+本结果仅为当前静态追踪完整性，172项仍UNVERIFIED，执行/真实店铺/APP_READY信用均false。L7的unknown-reconciliation虽无独立非文件acceptanceCases键，仍为manifest强制检查，后续实际验收不得遗漏。L2–L7实际原件及真实账号/数据/批准/费用/业务观察边界保持。当前623文件完整L1仍由同一实际根52532运行，原会话66480已持续核实存活；尚无该候选全量或新包终态，继续后续构建、四包、界面/读屏、性能、安全/恢复、正常启动及独审。
+
+## 2026-10-21 R28定向回归通过，最终冻结整链运行中
+
+普通完整单文件84/84和原42文件820/820均实际通过，零失败/未执行；820原件root/r28-observed-ui-focused-green-20261021T041623158Z-6bac7be3-c071-43ca-a93d-5083d07a008a/report.json，独立实际窄审c2545ea5通过。旧718名称/每文件顺序、本轮159和全部断言/预算保留，66个旧实现行为失败与4个旧fixture接口失败均转绿；R27的816/820 FAILED原件保留，不改写历史。
+
+维护候选经01eb6f1b独立静审后已一次实际应用，原件root/r23-maint-apply-20261021T042449889Z-257109b5-4fc4-4e2a-baf9-d2e7a594357e/report.json为PASSED；仅在offset202插入2903B，原69014B及六条件保留，新MAINT dec9b02c/71917B。source 036828da2788fc1a9297c38e9d162e5caff6690a21e211312ce3881d5ed87f4d不变，最终冻结full 9489ac01d9aaccdcacfa3197576fe761b8647efa11d2655b299adf24d7c4d775，仅1个维护库存记录变化，非目标保护通过。
+
+新最终候选output/v16-evidence/development-candidate-20261021T042545Z已启动完整L1–L3，真实根PID52532，执行会话66480不是PID；native-node与全仓2120模块尺寸检查已实际PASSED且零超限，623文件L1运行中。源码/测试/MAINT现已冻结，仅README/PROGRESS/BLOCKED继续记状态。后续依次完成当前新四包、双档样本、22入口/110图/真实读屏与失败恢复、36项工程性能、安全/隔离WAL恢复、正式字节备份、正常真实应用和v4独立最终复核。未取得该候选全量或实包结果，尚未达到仅待真实环境；172项UNVERIFIED、APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+## 2026-10-21 R28旧测试端口已补齐，完整回归待终态
+
+R27普通42文件820项的实际终态为816通过/4失败/0未执行，原件root/r27-observed-ui-focused-green-20261021T035910785Z-47c84908-d861-42fc-ada9-18c9bde628ff/report.json，FAILED独审855a15c6；本轮159项和66个原RED已全部转绿，但原718中4个producer/formal合同案例被旧fixture缺少candidates.evaluateAll接口阻断，不能把816记为整轮GREEN。所有失败原件保留。
+
+最小单文件候选PLAN138fbb79与byte-apply工具经9b073af8独立静审通过，仅补4处Locator/Inspector隔离端口、增加491B，保留原84例、全部断言/预算及四条正式合同主体。真实单文件应用原件root/r27-governance-fixture-apply-875420c4-ba9b-415f-9c4c-7e7649a3b565/report.json已PASSED：source 036828da2788fc1a9297c38e9d162e5caff6690a21e211312ce3881d5ed87f4d，full adfb96b316fe071cf144eb324f75d4e20a5c9e29a48bfa14c0da935456b36d00。预写expected、原件备份及完整起终保护通过，仅该test两库存记录与身份变化，MAINT69014B、缓存物理stat、原生/四包/App/正式数据保持。完整84项运行中，只有PASSED才顺序重跑原42文件；当前无新GREEN或新包信用。
+
+通过上述完整回归和实际窄审后，一次对齐维护基线，直接以全新最终冻结候选完成全量L1–L3、新四包、双档样本、22入口/110图/真实读屏与恢复、36项工程性能、安全/隔离恢复、正式字节备份、正常真实应用和最终独审；不再为额外test复制一套开发诊断工具或重复构建。实际软件缺陷仍以新实包结果闭合，当前尚未达到仅待真实环境。
+
+## 2026-10-21 R27修正已应用，完整相关回归运行中
+
+完整15目标scope独审835ddfab通过，final PLANc1e01a53仅在SEED追加rootReview。6个支持/测试目标与9个生产目标已按测试先行分别精确应用，原件root/r27-exact-support-tests-apply-6ef5f944-9c8c-4cc5-9380-8267db37e252/report.json及root/r27-exact-production-apply-df97a6e6-6740-4e17-82bd-fb490d060e18/report.json均为PASSED。当前source 5f86b893e009d825de08969d441bffc4f5b319275b87bfdd01f6a68eda518bfb，full 301dae6fadd49e3db4d56c8f92c4b342ca4be846579d7c2febf040678e6fcecb。修正包括共用执行导航说明、交付页真实读取忙碌状态、键盘恢复后的原预算最终settle、滚动/顺序焦点与详情dialog双真实节点，以及精确held Main根窗口的一次原生前台确认；前台ACK仍不代表真实语音。623库存、runner90及语义合同、两原生、当前四包/App、正式四文件、MAINT69014B和生成缓存原字节/stat保持。
+
+普通无过滤旧实现对照已完成：5文件159项实际93通过/66失败/0未执行，原件root/r27-observed-ui-old-red-20261021T035341561Z-7e7afe03-03d1-4037-ac87-d6753fb03e79/report.json，child86852实际exit1且起终保护通过。该FAILED为旧实现对照原件，不能称GREEN；行为失败及原案例保留正在独立逐项复核。当前42文件完整相关GREEN运行中，尚无通过或新包信用。其后必须按新R27执行PLAN重建并复验真实包，再一次维护对齐及冻结全量L1–L3、四包/22入口/110图/真实读屏恢复/性能/安全/隔离恢复/正式备份/正常真实应用和最终独审；尚未达到仅待真实环境。
+
+## 2026-10-21 R27已定位真实包读屏前台准备缺口
+
+R27元数据v3已于03:17:43Z实际完成，执行会话42463退出0；原件root/r27-current-nvda-metadata-4fc34fcf-583f-4583-84aa-7c33a2d513fe/report.json，SHA93c37345。独立实际窄审042e9683通过。原10s节点的09.458至19.443采样区间76次strict-root轮询全部为FOREGROUND、0 OWNED，说明这些时点GetForegroundWindow不等于本次Main根窗口；后续request/focus/name门尚未执行。首焦点前09.569及六个宿主阶段无障碍均为true及五项features，不能归因为当前节点窗AX关闭。90ms末段与非采样时刻仍UNKNOWN，未识别外部前台应用。Main与NVDA76272专属正常退出；源a716/full2340、当前3390包、两原生、正式四文件、MAINT69014B及生成缓存保持。v2在资料硬链接路径校验即停止的FAILED原件完整保留；v3仅用同字节独立资料副本，未放宽direct门。
+
+下一步修复采集器对精确绑定Main根窗口的原生前台准备与回读确认，保持单Main/provider、真实自然语音、名称角色和原预算；前台未取得必须明确失败。详情检查器另有独立采集遗漏，新的governance v2复用生产dialog容器及关闭按钮两个真实节点，并保留滚动与顺序焦点补丁；PLAN34bd5984待独审。其它显示/稳定状态候选仍未应用。全部修正合入及测试先行后，还须真实包复验、维护一次对齐和最终冻结的完整软件退出整链，尚未达到仅待真实环境。
+
+## 2026-10-21 R27元数据实测已完成，继续定位读屏回调缺口
+
+R27当前真实包元数据观测已于02:54:55Z正常完成，执行会话36136退出0（实际采集器PID86320）；原件root/r27-current-nvda-metadata-15c8a7bb-bd61-4d7d-9c99-ef1904ad12a0/report.json，SHA433a131e。原单节点10s内DOM焦点/Tab/refocus均实际切换，但采样至截止前25ms的preSynth回调增量为0，只有窗口之前一次启动回调；末段仍UNKNOWN。没有实际speech或读屏验收信用，也不能归因为名称/PID/全局读屏标记。Main与NVDA54032专属正常退出，源a716/full2340、当前3390包、两原生、正式四文件、MAINT69014B及生成缓存保护通过。
+
+三组显示/滚动/焦点/最终稳定状态候选与通用两阶段应用工具均已静审通过，仍未应用或运行；下一步只补当前owned窗口无障碍getter、原生前台和NVDA焦点事件计数，查清回调缺口后完成测试先行及真实包复验。维护对齐、最后冻结的全量L1–L3与四包/UI/性能/安全/恢复/正式备份/正常应用及独审继续待办，尚未达到仅待真实环境。
+
+## 2026-10-21 R26真实包复验FAILED，R27按当前原件继续收口
+
+本次执行会话77669实际退出1：原CLI构建（子进程60108）和typical fixture（29760）实际通过，真实UI采集（85164）失败；原件root/ui-dev-diagnostic-r26-20261021T020930679Z-0ea1fb89-8911-4469-87b8-da09345a3858/report.json及capture/report.json。新包App内容3390DC35672AC986C307DD9683E84CB7076D4F6751E25F49EE974865EE62B0DC，Main77FEB780574DD0BCC9975F807920F0DE5191E0994B41890492129C71E16A5768，sourcea716/full2340。四配置各22张已采集，并由两独立agent逐张实际目视88张原PNG；这只是开发诊断，不授最终新候选110图或正式信用。
+
+实际issues为10项治理：6次读屏原10s超时、1项不足两个实际节点、PriorityDataTable/FormTable重复prepare的原10s滚动门超时、Progress的Tab/ShiftTab未返回。设置页原因缺失与原delivery scope错误本轮不再出现，runtimeLogVerification.unexpected和missingOrRepeatedExpected均为空。真实Main81112持有原生出生证明后正常退出0，独立Renderer75396；NVDA82272专属STOP/ACK后exit/close0、未强停或早退。raw只有ready1行、0真实speech；无REJECT不足以区分无回调/无有效请求/名称角色不符/空字符串，根因仍UNKNOWN，独立原件root/r26-independent-current-nvda-failure-diagnosis-c61140d9-fdcd-4219-8570-8a53b15e29a4.json（SHA1426348e8fb901a1ec5ab07d0ab0c0c2f15dee9a74a41a1e0f97b468bf95feef）。源、原生、正式四文件及MAINT和当前新包保护通过；旧FAILED保留。
+
+另外目视确认100%实时执行页重复禁用说明挤压导航；两张交付页截图仍在读取，静读证明键盘恢复会重挂页面，而matrix此前settled已过期。现有三组新ignored候选分别处理共用导航说明、显式同预算滚动恢复/真实顺序焦点选择、键盘恢复后的唯一原预算settle及交付页aria-busy；均未apply或运行。读屏将先以当前包和全新owned配置做仅元数据观测，不合成speech或扩10s。最终维护基线对齐与全量同源软件退出整链尚未启动，仍未达到仅待真实环境。
+
+## 2026-10-21 R26修正与完整相关回归通过
+
+完整范围静审570aad9e绑定SEED996a910c，final PLANcf04ce31仅追加rootReview。三个目标已实际应用，执行会话50492退出0；原件root/r26-exact-apply-d9343e32-2f23-4a3c-a86e-f607bb7b6e5f/report.json为PASSED。当前source a716d9c469a86bf3f83d7d1a9b8d7c1a0659bd22cba84eec3dadfd7dc8e2c86f，full 2340f78268761a9d80e93a47f0f92d67f43f81da84bfaa308b3dbb0b6990d78e。修正测试模型短timer调度并加强noSpeech断言；harness从实际源码字节执行，标准__pycache__/规则仅使一个生成缓存移出源码输入。缓存原件30027B及时间属性保持，全部三个原件先行备份；完整预期快照精确一致，623库存、runner90、原生/四包/App/正式四文件及MAINT69014B保持。
+
+验证会话38264已于01:56:44.372Z实际退出0：先observer20全部PASS，再原40文件718项全部PASS，零失败、零pending，原预算保持。原件分别为root/r26-observer-model-green-20261021T014937677Z-90fc6f32-5967-4245-85b7-c0affc25689b/report.json及root/r26-native-reader-focused-green-20261021T015017159Z-cdddea61-0b3a-4596-8bbf-d86ffec5f235/report.json，源码/full起终保护通过。统一实际独审root/r26-independent-actual-review-d409d73f-ccbf-452f-b640-8fcc66cc84cb.json（SHA975badff6a9897a821ddcd8c92203da423983c0e0a7260b1f5f760803c85eb18）已核全量案例、历史失败及保护原件并通过；R25 FAILED保持历史。本次真实开发诊断已启动：root/ui-dev-diagnostic-r26-20261021T020930679Z-0ea1fb89-8911-4469-87b8-da09345a3858/report.json；执行计划d6468beb和工具d19f2411均已静审f0ab3d68通过，构建子进程60108已实际spawn，尚未得到构建或UI结果。后续仍须一次维护基线对齐与冻结后的全量软件退出整链。当前未获得新包或最终候选信用，尚未达到仅待真实环境验收。
+
+## 2026-10-20 R25完整相关回归FAILED，R26收口模型计时与生成缓存
+
+根77345于13:43:53Z实际exit1，原件root/r25-native-reader-focused-green-20261020T133748353Z-7c0dee88-4406-4172-a5c3-c6b6a3f86440/report.json：40文件718项为717 PASS/1 FAIL/0 PENDING，唯一失败为observer noSpeech在原5000ms预算内未完成。capture32、旧RED选中100在本轮均PASS，原R24的398案例相对同序保留；仍不能把717项改称整轮GREEN。独审root/r25-independent-failed-focused-run-actual-review-1c30c77b-6b0c-431b-bf62-5d75c17528ff.json（SHA6ac47a5bdbb65b063e272d9c2b481a336623787a5c6a7309e2a21627820658f9）完整核718及起终快照，未授通过信用。
+
+冻结保护同时失败：未跟踪、未忽略的scripts/__pycache__/v16-nvda-speech-observer.cpython-313.pyc被Python import更新，4855B变为30027B；完整差异仅该缓存在两数组中的SHA/大小及两个source身份/完整SHA，共7叶。27已审源码目标、两原生、四包、App6199文件、正式四文件及其它所有快照字段完全保持。当前source9c27ed56/full6f71cbc5；旧c413/full496184的诊断execution PLAN366d已失效，尚未执行构建或真实界面。
+
+静读已定位测试模型的短timer唤醒被更早deadline占用后遗留poll，noSpeech候选仅修改测试调度并加强原10s及owned close证据，真实reader、20案例和原5s预算保留，stage PLANcb09d6fb尚未应用或运行。缓存候选将harness从冻结.py实际字节compile+exec，保留module元数据，显式绕过读写pyc；另按标准__pycache__/目录边界分类生成物，保留现缓存原字节，不删除或回滚。两组候选在新ignored stage审查，必须按明确分类变化重新冻结并完整回归；MAINT原69014B和最终软件退出整链未启动，当前仍有软件工作。
+
+## 2026-10-20 R25生产修复已合入，40文件相关回归运行中
+
+新完整scope独审ea212f58绑定SEED e6a374f0，final PLAN948e12a1仅追加rootReview。15生产目标已通过实际应用，原件root/r25-exact-production-apply-f219357a-29d2-4445-ad23-c9e181a572be/report.json；根3148于13:37:10Z exit0，sourcec4138916/full496184e5，两个独立fresh Node快照及完整非目标保护通过，实际runner源45→90且semantic仅新增已审nativeRuntimeContract。32个capture用例原检查及预算保持，两行前置断言使旧实现100项对照全部收尾（30 PASS/70行为FAIL/0 PENDING，97未选），原三次FAILED保留。
+
+根77345正在按final PLAN固定40文件运行普通完整相关回归，原JSON与额外verbose均留档；不筛选、不授尚未取得的GREEN或EXE信用。当前源/测试/MAINT停写，仅三状态文档对齐。实际独审正在核15目标、全部快照/派生合同和旧实现对照；通过回归及实收据独审后，再按已审新helper与当前production report生成execution PLAN运行原CLI真实包构建、典型样本及完整界面开发诊断。MAINT原69014B与最终冻结整链仍未启动，尚未达到仅待真实环境。
+
+## 2026-10-20 R25测试先行阶段已合入，旧实现对照保留未执行项
+
+13:34:35Z补证已闭：仅在首新增断言前追加两行布尔检查（保留全部原严格断言/32名称/预算），静审295c1078及单目标实际应用均通过，原件root/r25-capture-guard-apply-bb2cb4d4-ef26-4405-9703-69626d856a8e/report.json；sourcea4c276aa/full5d123ca0。重跑root/r25-native-reader-old-red-r2-20261020T133257644Z-356de687-7698-4373-857f-b5d5ac916c28/report.json选中100项为30 PASS/70 FAIL/0 PENDING，另97为未选；capture四项均已收尾，1 PASS/3真实行为FAIL。stderr不再有Unhandled、still-running、Invalid array或缺模块，起终保护原件同SHA84347d3b，根45150及child74964真实退出1/null。此结果只证明有界失败断言恢复了本轮可报告的行为对照，不称修复Vitest底层；前三次FAILED完整保留。新完整scope仅覆盖该test staged引用及追加依赖/历史原件，GREEN仍40同文件，额外保留verbose日志，正在封审后合15生产目标；暂无GREEN或新包/真实语音信用。
+
+三组补丁的静审已闭合：producer48c09/da160、consumer v2 ccb6/d64d（原80用例字节保留、追加4分支）、正式package-ui接线78d50/09606（16目标、3新模块、39新增展开用例、真实runner源45→90）。完整根scope独审056de91c绑定SEED08671df4；final PLAN95b30e11仅追加rootReview，27目标分12支持/测试与15生产集成。正式接线16文件syntax实际全部exit0，不能代替功能运行。
+
+12支持/测试目标已通过精确应用和起终全字段保护，原件root/r25-exact-support-tests-apply-b5c1064b-a061-4d8f-b818-0311ce084e96/report.json；source489ff1ef/full29b7bdab，623库存、两原生、四包、App和正式四文件保持，15生产peer仍为旧字节，MAINT未改。根36599于13:08:35Z实际退出1，filtered旧实现对照原件root/r25-native-reader-old-red-20261020T130457571Z-517e917b-f11f-4da9-b309-d5bbc620b3eb/report.json：选中100项为29 PASS/67 FAIL/4 PENDING，其余97为筛选未选；67失败已逐项独读为旧行为/协议断言，无缺模块伪RED。4项capture无终态，原工具计数表明1项进入run、另3项尚待执行，不能计复现成功；JSON reporter将任务未收尾显示为pending并忽略独立unhandledErrors。单capture无筛选复跑root/r25-capture-full-old-red-20261020T131047442Z-051d8c58-f766-4410-9bc2-1ea967e7d9ef/report.json同样28 PASS/4 PENDING；child70632实际exit0，根17370因逐项pending实际exit1于13:14:36Z，stderr包含原生still-running警告，各保护通过。下一次仅追加verbose reporter采真实worker错误，保留原JSON、用例与预算；尚未合15生产目标或取得R25 GREEN、新包、真实界面信用。完整软件退出整链仍待完成。
+
+## 2026-10-20 R25读屏身份合同静审通过，正式应用接线仍在封版
+
+读屏producer七目标PLAN48c09c79、consumer四目标PLAN84096b94的共享接口已独立静审通过，原件root/r25-independent-producer-shared-consumer-static-review-8f03b3c5-b6df-4a84-ae6e-27f4ba0df4bb.json（SHAda160ee860e10e46c0010088b5f7878a014fcfde8c8a9dd6514f5d20a7dc2599）。新合同精确绑定单一Main accessibility provider、持有句柄出生身份、原生焦点窗口归属和独立当前Renderer；实际语音、节点、时间窗及本次NVDA停止原件均须交叉核验。这里只授静态接口信用，52项producer相关案例和80项consumer案例尚未执行，未获得新包或读屏通过信用。正式package-ui同次启动/活窗/读屏/退出及两可信原件引用接线仍待封版审查；发现缺失的完整源码身份配置端口，正在追踪现成来源，不能用runner摘要替代源码身份。R25尚未合入，source db55e4e4/full4c182afe、623测试文件库存及MAINT原件保持。后续仍须测试先行、当前真实应用完整界面复核与最终同源软件退出整链；尚不能称只差真实环境验收。
+
+## 2026-10-20 R24前台与焦点进程诊断已完成，软件修复仍待合入
+
+R24元数据v4于11:36:29Z完成（根45908 exit0），原件root/r24-nvda-metadata-30c8dc29-0bba-4245-aa40-1d7bd36dd0e3/report.json；状态DIAGNOSTIC_COMPLETED_NON_READY、无诊断issues，不授读屏验收或最终候选信用。两个独立原生检查点均证实精确绑定Main72384/HWND10099260处于前台；目标采样区间43次poll均OWNED_FOREGROUND、四个焦点/朗读前回调事件的focusPid均为Main72384而非Renderer74472，focus HWND3547240与主窗口句柄不同，归属关系尚待核。此结果支持定位现有renderer-only过滤不匹配实际provider，尚未证明子窗口归属或目标实际朗读；须补严格provider/window/当前Renderer目标绑定，不无条件接受多PID。末段163ms仍UNKNOWN，完整10秒不作连续证明。Main与NVDA66536正常退出，正式四文件、两原生、源码/包/完整输入保护通过，源69ea/full377b保持。实际原件独审进行中。
+
+设置原因关联、交付scope与collector真实页面同步八目标已按测试先行合入：四测试旧代码实际65项39 PASS/26 FAIL，均为行为/断言失败，无缺模块，起终保护完全一致；production四目标已合入并过全字段保护，source db55e4e4/full4c182afe，19文件398项相关GREEN于11:55:19Z实际PASSED（根89864 exit0、零失败/跳过，源码/完整输入/两原生/四包/app/正式数据起终完全一致），原件root/r24-three-fixes-focused-green-20261020T115030760Z-461f8e38-83a2-4fb3-a153-0f826a2184e8/report.json；实际窄独审root/r24-independent-three-fixes-actual-review-5c1b9102-df52-485d-ba5f-e2e0ab4d2656.json（SHAb2e45c3c10c506a1ca6e3b468d98c513edf430e0435d73a304b344d4e55a3080）通过，原R23的340名称/次数/每文件顺序保留；完整UI尚未重跑。旧ScopeBar stage及元数据v3新增准备预算阻断原件保留；v4仅修正单一准备截止。联合工具及实际RED原件均保留，623测试文件库存和原断言/预算保持。读屏producer/provider严格合同仍在隔离stage开发；consumer四文件stage已冻结（PLAN84096b94，静态原27→80，未运行），自身静审b27ab2f1通过、共享接口待最终联合审；原27案例和26断言完整，精确原件账本132→154。正式package-ui缺nativeLaunch及readerLaunch两个同次可信原件，已交同次启动/活窗/退出/不可变ref接线，明确属于软件待办；不接受witness自选证据或自选kind。键盘/滚动两类仍待当前包复核。最终全量L1–L3、同源四包、双档样本、完整界面/读屏/恢复/性能、安全与隔离恢复、正式字节备份、正常真实应用及独审均未闭合，仍未达到仅待真实环境。
+
+## 2026-10-20 R23完整界面诊断失败，R24按实证问题继续收口
+
+R24单目标元数据探针v2已于11:13:00Z实际完成，根96602 exit0，原件root/r24-nvda-metadata-6b4c7c81-28c9-4970-9a4a-74055d910864/report.json，状态DIAGNOSTIC_COMPLETED_NON_READY、nvdaAcceptancePassedfalse；实际窄独审root/r24-independent-actual-metadata-review-e3f9ca02-7aa5-4912-968c-4f4ad2da8ed0.json（SHA4de8b0c12f89053f7f6561beb99b835c74380cfc232cc87f75e48fac1ede2fe7）。Main57432/Renderer73036、NVDA62476正常退出，源/完整输入/两原生/四包/正式四文件保持。独审实际逐记录核source/implementation与原69ea/377b吻合，未独立逐树重哈完整App，appContent仅本次已审起终guard/launch身份信用。
+
+原始54行只含ready、计数和停止证明，没有焦点事件；ready到首counter区间出现1次preSynth和1次gainFocus，均未满足精确前台归属门。不能断定由目标focus触发、不能把ownedForeground0解释为完整10秒不在前台，也没有Main/Renderer焦点PID关系实证；末段52ms未知、整窗零回调字段为null。原plugin只在回调时查询前台，合并了空窗口、查询失败、不同owner和同Main不同HWND。下一版仅新增分原因/周期采样和独立原生只读检查点，不先强制激活、不放宽PID或采朗读/外应用内容。根源码继续69ea/full377b，所有R24补丁尚未合。
+
+范围同步旧b10 stage也已阻断：它依赖当前生产树未挂载的ScopeBar，直接挂旧组件测试不能授当前应用信用。独审root/r24-ui-scope-static-review-d54114f8-e3b9-47fc-bca2-9e0af8351a88/REVIEW.json（SHA8baa75de2890a71f8ab34494a44c2ab8acc0575a32c47fe1d65de62f9742d34c）保留；作者仅在新v2 stage改走真实collection/scope→OperationScopePage及对应Shell/registry/router浏览器夹具。设置stage静审54ed3fb9、交付stage静审537ebbb6已过，均仅静态未运行。MAINT旧69014B与最终冻结未启动保持。
+
+根73034于10:40:38Z实际exit1，原件root/ui-dev-diagnostic-r23-20261020T102206682Z-00dea41e-c0da-4c7d-bcb7-b89d1cd06f1d。原CLI新包构建、典型隔离fixture通过，四配置各22张页面PNG已采集；完整capture仍NON_READY/passedfalse，15项issues：四配置设置页两个disabled按钮缺少可访问原因关联，10项治理失败，另有真实运行日志异常。10治理分别为6项没有目标朗读、1项不足两个读屏节点、2项第二次准备时app-content滚动归零等待超时、1项Tab/ShiftTab焦点未返回；不能归为同一已证根因。真实日志5组10条delivery:evidence-status的V16_RENDERER_SCOPE_NOT_CURRENT发生于NVDA ready前，另行定位，不放宽Main门。
+
+NVDA插件真实ready后raw仅一行127B、零speech，nvda.log无回调异常；当前证据不能证明PID错配。只读诊断root/r23-independent-nvda-diagnosis-f3a36a90-f83a-4194-83c6-f33536919d9a.json（SHA94f1b4e3bdc9eac8e747124a60c56173da49260a1435b5f5470d492cfe961c89）分别列出已观察与UNKNOWN。Main77652持原生句柄真实exit0、launcher68152另记exit0，NVDA21744正常exit0，临时转接已关闭，正式四文件及source/full起终保持。当前包appContent为E210E53FB46F62DA019183093229E7EB889EC09AE5BEFB8E955D0DDA4F3CC199，Main为C87BBC1F3EC7C507C5200FECD92873BA901E6F7C770522AFA35317F05254B99C；均仅开发诊断，无最终候选信用。
+
+R24尚无源码合入或实际执行。设置两目标stage为root/r24-settings-reason-stage-a5677cd5-5711-46fd-8592-116a35c04e37/PLAN.json（SHAab4ade6eb9128d6cfe37bd491b198dad4ace7d3ef6db1f15486176703d68197b），静审54ed3fb9通过；原11案例/断言/预算完整，仅补两个按钮对既有原因的描述关联。交付三目标stage为root/r24-delivery-scope-stage-017f6b90-7693-4552-ad7d-a135f806a69f/PLAN.json（SHA84f410f9e1503b0731a016bc4c6890cd19b08b9041de860fb0f8d54229dfed15），尚待独审；生产仅evidence-status参数filter改scope，保留AI/建议派生筛选，原23测试加3合同案例，Main生产门不动。采集器范围同步另在暂存，采用现有ScopeBar真实保存/公开回读路径，不直接设置Zustand。
+
+单目标NVDA纯元数据探针旧stage a24a3045静审未过：两原生依赖字节保护缺失、首CIM出生身份不足、停止请求前提前exit0未拒绝、采样计数末段不能推定零；阻断原件root/r24-independent-nvda-probe-blocked-bf60122b-39b3-4cf9-af21-6889882e80a6.json（SHAd74a4661cd26c4aef0e5cdfde047320506c0c3dceca2890133054e890a9d0e1c）。作者准备新v2，不修改旧stage，不放宽读屏/授权/预算，不记录其他应用内容。必须先在R23同源包上完成该诊断，再按测试先行合源码。10:56:55Z重新只读核source/full仍69ea0a9d31a1e656648f9416e7ad1d25002d8012b55aa37b90d0e48086339248/377b50eeafc3a300885c5bddba6a5d4822fb8e8d9d016c5da9bcf5e344a6a54e、库存623，断点root/r24-active-checkpoint-20261020T105655745Z.json。MAINT仍旧69014B，已审2297B前缀未合，最终冻结未启动。后续软件退出条件继续待办，172项UNVERIFIED及APP_NEEDS_WORK保持。
+
+## 2026-10-20 R23导航公共接口340项及独审通过，完整界面开发诊断运行中（历史检查点）
+
+实际独审root/r23-independent-actual-review-96de0a70-bb4d-4d34-a194-9342ea238ed8.json（SHA32488bd9f9644708b3ecba532d31d7479018549155a501efa552890e411175cf）已核全部340逐项、旧330及decomp原8与新增2完整、红绿同测试字节、派生合同和各冻结/原生/包/app/正式数据保护。实体指纹核验完成于10:20:26.742Z，之后未重读被构建替换的release。根73034于10:22Z启动原CLI build→典型隔离fixture→完整capture，原件root/ui-dev-diagnostic-r23-20261020T102206682Z-00dea41e-c0da-4c7d-bcb7-b89d1cd06f1d；仅持临时7689→7897转接，结束自动关闭，不改持久配置。当前仍运行中、无本轮完整界面或最终候选信用；源/测试/MAINT停写，仅三状态文档对齐。
+
+根76801于09:54:04Z实际exit1；普通构建与典型隔离样本通过，完整界面采集失败原件为root/ui-dev-diagnostic-r22-20261020T094419210Z-004c9daa-0e7b-4f3b-b922-dbb9330873c3。99条错误均为公共工具缺少navigateToWorkspace函数；矩阵后续还依赖exerciseWorkspaceTabKeyboard。两个函数在已注册导航模块中已有实现，公共barrel解构和导出均漏出。当前零页面、零读屏/恢复/性能通过信用，失败原件保留。
+
+同轮真实collector63412→cmd57800→Main5316的父子、EXE、创建时刻、metric、双fresh marker和隔离profile绑定通过；Main持句柄记录真实exit0/signalnull，launcher退出另记。实际独审root/r22-independent-cli-diagnostic-review-r2-1d9215aa-fd86-4259-bdfa-d928b913a436.json（SHAfff66f8faffd69d4c08b314e943ae4c60caf258ea2889d658bc658e7ef4efd0b）确认该子链；不能据此判定完整界面通过。源/full和正式四文件保持，临时7689→7897转接已关闭。
+
+R23仅合入scripts/package-ui-evidence.js、package-ui-decomposition-contract.test.mjs、v16-ui-software-capture.test.mjs三个既有目标：公共导出132→134，增加两个真实barrel函数用例并强化消费者七项接口合同，不改导航实现、预算或授权。stage PLAN为root/r23-export-stage-72a36536-a4ff-46c2-9e2e-1f45084f3281/PLAN.json（SHA7843a2a099496a1d5c19676a113041a4b54629d7fe620dd35bc0b5c8c5fe93eb），最终静审root/r23-independent-stage-review-r3-c01bb60e-e7ca-4f70-8002-cc0d7c807543.json（SHA79233a4da36bbd27f78fa8c442f1996022ff98e8de06e87c0d29a4b3da56a226）。根组合PLAN为root/r23-reviewed-apply-composition-b87ee0bf-a78f-4ba1-b4e2-ceb195e5f7d6/PLAN.json（SHAf9bb15ebe316ec0b280322b5e8f665b2f570b09223e2993deb7574217d3af799）；旧r1/r2工具及无信用审查保留，未执行。
+
+先只合两test，原件root/r23-tests-apply-172811ca-8596-46fe-89fd-4a1821a96f33/report.json；同测试在旧barrel实际17项13 PASS/4 FAIL，恰为导出数量132与134不符、两个函数undefined、消费者导航undefined，无缺模块伪失败；原件root/r23-ui-export-old-red-20261020T101425940Z-e42d3359-7772-44a2-9bc1-6ebb6d13a15f/report.json。再仅合生产barrel，原件root/r23-production-apply-515fba8c-c5cf-4b80-9a33-b3b89150823b/report.json；r3工具逐源精算合法派生合同，仅evidenceScript及整体SHA变化，semantic/protected及其余冻结输入不变。根61958于10:19:23Z实际exit0，16文件340/340、零failed/pending、前后保护通过，原件root/r23-ui-export-focused-green-20261020T101638995Z-017ef61d-0202-4382-8c1c-aa6cd2dafad6/report.json；实收据独审进行中，尚无R23新包信用。当前source69ea0a9d31a1e656648f9416e7ad1d25002d8012b55aa37b90d0e48086339248/full377b50eeafc3a300885c5bddba6a5d4822fb8e8d9d016c5da9bcf5e344a6a54e，库存623，MAINT仍485684d4/69014B。独审后运行原CLI完整界面开发诊断，再维护对齐并重新冻结整链。
+
+## 2026-10-20 R22专项330及独审通过，原CLI真实包开发诊断运行中（历史检查点）
+
+根52333本轮普通构建及典型样本实际通过，原件root/ui-dev-diagnostic-20261020T082735567Z-f4a652a3-83b8-4daf-bfb8-d1af57cde161；UI已通过修正后的就绪定位，但原身份比较在08:33:48Z因PID不一致失败，源/包/正式数据保护均通过，无次生cleanup TypeError。临时7689→7897转接已结束并关闭。当前不存在完整软件候选通过结论。
+
+两次纯client观察均保持原evaluate返回及全部原断言，原件root/r21-identity-client-observation-bdfd7fd7d86946eaa7e1218385eede71及root/r21-identity-ancestry-observation-359fce85bf444cc4af72b38f264bafe2。后者实际CIM记录owned cmd72396→Main71884直接父子，Main EXE/profile/packaged均匹配，Main创建时刻08:44:20.369772Z与Electron metric 1792485860369.772吻合；guard仍失败，不授界面通过信用。实际查看截图可见隔离软件验收店铺A的真实应用窗口，不能代替22入口检查。本机Playwright 1.60 win32启动实现确实使用shell，process()返回launcher；不是应用Main PID。
+
+R22七目标静审原件root/r22-independent-stage-review-c4d26420-0f67-4b13-aa03-5eebd31a4b92.json SHA514609cf3a7f0a821441738e60cb6f6aeb7af37a6551b1d76638c4df7224aee7。先仅合两test/清单，实际旧代码65项34 PASS/31 FAIL，原15全PASS同序，正向shell卡原PID门，无missing-module/import伪RED；原件root/r22-runtime-old-red-20261020T092035895Z-778ed13f-ca72-4d53-aa00-2b79bb15d47f/report.json SHA0d81a704981931e18cfce89b2c32d0643e39c9c165efa09680a31a91ab2b8059。再仅合四生产目标，原件root/r22-production-apply-672533a1-f503-4ac6-838e-0a7aa7cf327b/report.json；阶段保护均通过，原生/包/app/正式四文件未变。严格cmd父子/EXE/创建时刻/metric/双fresh marker/profile绑定，shell缺证保锁，Main持句柄真实ExitCode与launcher分记，保持原预算/Renderer/身份/异常门，日志IO失败不截断回收。根60556实际exit1：15文件330项328 PASS/2 FAIL，零pending；原247及runtime65全过，两失败仅为Main-exit观察器的未退出预算案例与dispose幂等案例，已从本机Vitest1.6源码和实际failureDetails确认两处测试兼容问题：mock.contexts应为保存this的instances，PassThrough读端end晚于helper exit/close。仅单test改+150B，保留33名/1000ms/原EOF及幂等断言并加写端结束和读端事件屏障；静审root/r22-independent-test-correction-review-9d07c06b-79e1-4d6d-b7fc-6eab6bfd32f9.json SHA0f593a72f88208847f796b69fcbf9e7766a46b244dbc1452279bfe7e34d85d26，精确合入root/r22-main-exit-test-apply-20261020T093711891Z-84db4322-6f86-4f10-911d-4f698c0b3863/report.json。根70331实际15文件330/330通过，零failed/pending，前后保护通过；原件root/r22-runtime-focused-green-r2-20261020T093823863Z-92f2e496-bd50-4bb6-9207-ddbf6807a97a/report.json，实际独审root/r22-independent-green-r2-review-2c626b92-0ce9-4e66-a598-273b3f38d2b3.json SHA75349284d51cdffc716ce9ab4809b55d6a8c2389cd6f74b476d3ad788985658d通过，全部330逐名/顺序和6199 app文件等实体指纹均已核。根76801已启动原CLI build→typical fixture→完整UI开发诊断，原件root/ui-dev-diagnostic-r22-20261020T094419210Z-004c9daa-0e7b-4f3b-b922-dbb9330873c3，F夹具根amazon-ai-ops-ui-dev-r22-004c9daa-0e7b-4f3b-b922-dbb9330873c3；只持临时7689→本机7897转接，结束自动关。普通构建会替换release，全部产物仅开发诊断无最终候选信用，不手填CURRENT/L1；源/测试/MAINT停写，仅三状态文档更新；新七目标PLAN root/r22-followup-apply-composition-2b6ce0be-0ef3-4690-bbeb-7ebcb302171b/PLAN.json SHA20a253416135030d7cce80998c25bf41aa37673cbb295fdd81f06d22032d9584，原FAILED与原PLAN不改。原件root/r22-runtime-focused-green-20261020T092407513Z-eb952efa-4505-4761-9ea8-3ad471d5b65b/report.json；源外保护均通过，不能授新包运行信用。sourcea07389883284addfd3cff0f4ceb0469a15cb402eccd2acccd525bf910f6aa0d5/full71a91934e5900f6ae9e1412cf08854d9be799e6cfcbb45d108e328c4281410e1，库存623；MAINT仍485684d4/69014B，R21维护前缀未合。待专项及完整UI开发诊断收口，再一次维护对齐和最终冻结整链。
+
+## 2026-10-20 R21采集器修复定向通过，原CLI真实包界面开发诊断运行中
+
+已证失败来自采集器旧exact名称与包含店铺身份的生产按钮不符，以及close后读取Playwright client getter；实际窗口show/did-finish-load及22条Main info不能证明React路由或console无错。原件封存root/ui-runtime-readonly-diagnosis-seal-20261020T081220527Z.json SHA6efb1a29ab9b7f8dab09b6056cf108597eeb1e8c5c08adbfcca323529ed5b106。仅将就绪等待定位到有界section中的单一真实trigger，并在launch后缓存ChildProcess用于PID/关闭检查；原超时、严格可见性、exit0/signalnull、Renderer、身份、授权及锁边界保留。
+
+新15例先在旧生产实际14 FAIL/1 PASS，原件root/r21-runtime-old-red-20261020T081718428Z-fe202840-a42d-45a4-a358-944c6872281d/report.json；再仅合生产，14文件247/247通过，原件root/r21-runtime-focused-green-20261020T081917235Z-06c9dba6-904e-41cf-aa2c-f18eb23e616a/report.json。测试使用当前真实SSR/Chromium和明确单元模型的未spawn ChildProcess，不授真实EXE运行信用。清单只增新test，621→622；生产107行、新test276行，原失败和全部既有原件保留，当前source611258390f36640842dd35ea716728e05e557948e179e82a9ef57e00c030f38d/full1cfbdbe654fdded6d372b5587fb67924b10a5e4bba52a0d9c971e1fbf9ad9828，MAINT未改。
+
+首轮开发诊断根30608于08:23Z在构建阶段因7689拒绝连接失败，原件root/ui-dev-diagnostic-20261020T082202757Z-09950412-5265-497f-977e-54dbf18bd6a6保留。现本机Clash实际监听7897，原校验文件经7897实际GET 200；根52333仅持有临时loopback 7689→7897转接，原CLI子进程结束后自动关闭，未改系统或代理软件持久配置。根52333顺序执行原build-windows-package、典型隔离fixture及完整capture-v16-ui-software CLI，明确仅开发诊断、无最终候选信用，不改生产验证器或手填CURRENT/L1结果；源码/清单/MAINT在诊断中停写，仅三状态文档更新。该普通构建替换release输出，C103830此前完整内部/四包通过保留历史，不能充当R21最终软件验收。待诊断收口与维护对齐，再重新冻结完整内部/当前新包及全部软件退出条件。
+
+## 2026-10-20 当前四包及双档样本通过，软件UI采集失败待定位
+
+C103830依赖审计通过；目录/安装/便携/ZIP于2026-10-19T12:04:21Z全部PASSED，报告four-package-runtimes/report.json SHA91b0b26046691afed85961c13bbc482b418520911229b1d5c67e193a5070640d。典型与最大档两个样本子进程均实际exit/close0，样本于12:12:45Z PASSED，software-fixtures/report.json SHA59a2c2fa932b1666c55b93ec32a9aea1d52b53dbe55fedb55a05706c574c6680；均为明确隔离软件夹具，无真实授权/费用/执行信用。Windows r2规范发布及原FAILED保留已独审，原件independent/c103830-publication-actual-2026-10-19T11-56-44-040Z-24c8a482-674f-45bb-a4ca-c233a2eab7f7/REVIEW.json SHA09cdd77a484ee64e7a6961cb78286c571fb095330fc088ebf969e5806a805580。
+
+根13759实际exit1：UI子进程于12:14:27Z exit/close1，启动阶段等待exact按钮“店铺与站点”30秒超时，尚未采集页面PNG。原件ui-software-run/report.json FAILED与capture/report.json NON_READY（SHA09e15826a717070a963f324e84c9eba0e612d93f8c9a374115f84fdaaf6c464d）保留；另记录启动失败后的cleanup TypeError，不倒推首发原因。source/package/canonical保护均通过，冻结source12b726cb/fullb2475272保持。当前并行核导航契约及真实启动日志；不修改断言、预算、旧原件或冻结输入，不授UI/性能/恢复信用。其余软件退出条件仍待完成。
+
+## 2026-10-19T11:54Z 当前Windows新包构建通过，继续四形态软件验收
+
+当前621文件6789案例、L2 4/4、L3 28文件192案例及全部六步骤通过，独立逐案例审查原件 independent/c103830-internal-actual-2026-10-19T11-35-45-017Z-824e2c5f-8cbc-4dce-8896-4fe08006c5ab/REVIEW.json SHA1e1d9146eb3b35e811e0252f8a27813c87970eca25965f6567a8003251d6f62c。旧6789名称/次数/顺序、全部原失败及近期hook、本次source/full保护均已复核。
+
+首轮新包11:36Z因Electron下载直连超时失败，原FAILED和日志保留。仅给打包子进程接入既有7689代理和现有builder缓存，r2于11:48:40Z实际exit0、七步构建PASSED、freshCurrentRun及ABI149通过、源码ABI127原生绑定原字节不变；source12b726cb/fullb2475272前后一致。原件 output/v16-evidence/development-candidate-20261019T103830Z/windows-build-r2/report.json，新appContent为1DEE87B6B25F2FD3182482389D18F5CC9B23D0CEB93367D59FFA1B4D0B8BFDAD。
+
+根13759正在执行实际包/四产物完整性核对、保留首轮FAILED的规范报告发布，再顺序依赖审计、目录/安装/便携/ZIP实跑、双档样本及当前包UI；失败即停。发布工具只在本候选目录rename保留原FAILED、wx复制成功重试原字节并复验，源/测试/MAINT停写。后续实际视觉/读屏/恢复、36本地工程性能、安全与隔离恢复、正式字节备份、正常真实应用及最终独审仍待闭合；不能以构建通过宣称开发完成。
+
+## 2026-10-19T11:33Z 当前冻结完整内部整链通过，进入新Windows包阶段
+
+C103830 internal-run于11:32Z终态PASSED，六步骤均实际exit0、source/full前后保护true；完整L1为621文件6789/6789、L2静态4/4、L3业务28文件192/192，三封套生产验证器重验成功。近期hook21项亦PASSED。source12b726cbebf3b55a4113635357b9819c72d00e5d1a9b21e3e445803e67f27c64 / fullb24752726eb887ce1bdfac3eefe6d2253664f61cf1a0807048f8396e7deb3ddc保持。原件output/v16-evidence/development-candidate-20261019T103830Z/internal-run.json及三runner/封套，原失败原件全部保留。
+
+根48034继续新Windows构建、依赖与四形态实跑，之后双档样本/UI；当前这些后续步骤尚无通过信用。严格逐案例及172映射独立复核进行中，实际视觉/读屏/恢复、36本地工程性能、安全/隔离恢复、正式字节备份、正常真实应用及最终独审继续待办。全部软件门闭合前仍不称开发完成或仅待真实环境，172项UNVERIFIED与APP_NEEDS_WORK保持。
+
+## 2026-10-19T11:30Z 当前冻结全量L1已全部通过
+
+C103830的L1步骤已于11:29:25Z实际PASSED，原始runner逐assert核对为621文件、6789/6789 PASS，零failed/pending/todo、零空套件/失败文件；源码12b726cb/fullb2475272前后保护通过，原30项/两个未加载套件对账步骤亦已PASSED。原件output/v16-evidence/development-candidate-20261019T103830Z/V16-T-L1-ALL.runner.json及internal-run.json。当前根48034继续L2静态检查，L3及后续新构建/四包/样本/UI尚无本次通过信用；独立逐案例与完整内部终态复核进行中。所有旧FAILED保留，当前仍未完成全部软件退出条件。
+
+## 2026-10-19T10:39Z R20最终冻结，完整软件链实际运行中
+
+同字节产品红绿及普通七文件52项独审05c53c388ed83443b1d39e56b97de44367bb3f1ea5bbdc6a20615f1db4b58c77闭合，原52名称/次数/顺序、全部原断言/预算和保护保留。维护前缀静审15b78d744f01b9f4ffdb46dff2d673fe25aea6f5849a8f10427302529c009167通过；实际单次插入2335字节、保留原66679及六退出条件，apply原件root/r20-apply-20261019T103746339Z-cee85d15-2c62-429f-8ac1-17b5670089ce/report.json。
+
+候选output/v16-evidence/development-candidate-20261019T103830Z，source12b726cbebf3b55a4113635357b9819c72d00e5d1a9b21e3e445803e67f27c64 / fullb24752726eb887ce1bdfac3eefe6d2253664f61cf1a0807048f8396e7deb3ddc，库存621。根48034已实际启动完整内部→hook对账→新Windows构建→依赖→四形态→双档样本→当前包UI，失败即停；native/module已通过，L1自10:39:00Z运行中。源码、测试与MAINT停写，仅维护三份不入冻结的状态文档。界面实际视觉复核后再采36本地工程性能、安全/隔离恢复、正式字节备份、正常真实应用和最终独审仍待闭合；不能授当前运行中全量/新包信用。所有旧FAILED、超时原因UNKNOWN、172项UNVERIFIED与APP_NEEDS_WORK保持。
+
+## 2026-10-19T10:36Z 产品保存反馈修复后七文件52全部通过
+
+真实诊断记录同身份保存后成功提示约两毫秒后随配置重读清空，原件independent/product-save-feedback-dom-causal-2026-10-19T10-30-07-072Z-273eb29e-6cb0-40dc-941a-fd113c49f052.json SHAa50465ebb4805e2ffbaecfeb126a6a5f389ab0b400be858b859b0ba8c01b5587。只删产品初始化effect中两句反馈清理；保留草稿/成本刷新、完整operationKey清理及ticket/ABA/Main门，静态夹具标题回原值不代表数据库回滚。两目标精确暂存/原2案例14matcher及预算静审0d0e8442b3449f54612ded638a73799d067cf1c9247fb5e83935f858d8a85718通过；测试仅增加草稿前置断言和公开input刷新完成屏障。
+
+同字节加强测试在旧生产实际1 PASS/1 FAIL，准确失败于刷新后原成功全文检查；原件root/r20-product-old-red-20261019T103123673Z-19b841b2-a369-40f6-9a09-264aa711aeb0/report.json。再仅合生产两句删除，普通7文件52/52通过，零pending/todo，原件root/r20-final-seven-20261019T103318988Z-9142a93c-d997-4607-9954-3d6c22feb874/report.json SHAa3430690d42f84187cfe5fc3c47a591cc7eea7d235fc1e2a62bb3d6d48a98822，全部输入/原生/包/app/正式数据保护相同。source12b726cbebf3b55a4113635357b9819c72d00e5d1a9b21e3e445803e67f27c64 / fulld4251505e6588e6e53e06422ebea4a12689e203eb95c3eece13c85555211e256。2109模块零超限及diff检查通过，原件root/r19-boundaries-20261019T103521529Z-ded9e6df-ba99-435c-b934-4140aa5950c1/report.json。当前独审与维护前缀对齐中，尚未重冻或取得新完整回归、新包信用；后续软件退出条件仍待闭合。
+
+## 2026-10-19T10:20Z R20定向51通过，产品定位仍失败
+
+三文件最小变更及完整前后边界静审99e5b30e012a7dc40f6b9cbfccf507fa2d1aaf2132f952a234329ba1d1c2b949通过。普通七文件52例实际51 PASS、1 FAIL，唯一产品A→B→A案例在限定维护tabpanel后仍等不到成功回显，原件root/r20-ordinary-seven-20261019T101707597Z-03d3c663-4d01-4c67-ab5e-b4a2a1a9d91e/report.json，所有原生/包/app/正式数据及输入保护相同。两组13例、历史隔离检查、objects5、Readback19及配置合同均通过；局部通过不授新完整回归信用。当前继续通过实际DOM诊断产品保存区域与状态，未改MAINT或重冻，原FAILED保留。
+
+## 2026-10-19T10:13Z R19完整回归失败，R20最小修复中
+
+根82224实际exit1；候选development-candidate-20261019T094534Z的621文件实际617通过/4失败，6789案例实际6774 PASS、2 FAIL、13 PENDING。原始报告SHA75c23036c1a18d10186d3872b09157573b1d16cf3202292d6e4dcfc525c7a0b0；独审cd92aa4a46789e46516267eee086c3eeb728aefb76397b662566dd7b8492ef2d确认旧6788案例保留、新增有效批次反例通过，此前9个失败或待执行项及R19定向168项本轮全通过。source badb6474/full195eeb9d前后保护通过；L2/L3、新构建及四包未执行。
+
+新失败为产品成功全文在两个真实区域回显导致测试定位歧义、Missions/StoreFacts两个真实构建前置hook超时（13例未进入浏览器）、历史预览写隔离检查导航超时（未到攻击动作）。当前按真实“维护”tabpanel限定成功回显；全文件串行作为统一资源准入策略，保留fork隔离、621/6789、全部原断言与测试/hook/NFR预算，不宣称已证CPU/IO原因。静审9f6f9d77eb503491e930db1cc198c32bec02b200527928489c209ab761df50cc支持该策略。尚须定向、维护对齐和新冻结完整整链，其后全部软件退出条件仍待完成；未达到仅待真实环境，所有旧FAILED保留。
+
+## 2026-10-19T09:46Z R19已冻结，完整回归及新四包整链运行中
+
+相关10文件168/168通过、原167名称/次数/顺序保留，仅新增1个真实批次变化反例；独审fa403e0ba12f2b7250bdfd8e5c1ea598c2f4a9cf1c58772b9c4a8eb19e693800闭合。objects原5项待执行本轮全部实际通过，原30秒hook保持，实际两阶段日志worker66760合计约292.12ms。图实际独审158ebed6c5b253059e4a82e94b3855cd1eb3e14e8035e2c9258451837e2d82e6确认原选项/两夹具/公开同组件、每图4617→100输入，完整回归旧卡点原因仍UNKNOWN。模块2109/零超限和空白检查通过，原件 root/r19-boundaries-20261019T093938259Z-d67fb297-652e-4f35-bb27-33445e370887/report.json。
+
+MAINT已单次插入2403字节，完整保留原64276字节/六退出条件；实际合入及全保护通过，原件 root/r19-apply-20261019T094455571Z-e2fc4ca4-60e1-44d2-820a-28bc40695616/report.json。冻结source badb6474554cf5b019d64f44c58bb9b13337bda0dd3e3403fbc60eb4cd3db72a / full195eeb9df6857c5e281eecd6a2334bab66b2514240c0028569d1e2bb35610b04，库存621。候选 output/v16-evidence/development-candidate-20261019T094534Z 根82224已实际启动完整L1–L3→hook对账→新Windows构建→依赖→四形态；native/module已通过，L1结果尚未知。源码、测试与MAINT停写，仅维护不入冻结的状态文档。后续双档样本、22入口/读屏/恢复、36本地工程性能、安全/隔离恢复/正式字节备份、正常真实应用及最终独审继续待办。旧全量FAILED和本轮RED均保留，172项UNVERIFIED与APP_NEEDS_WORK / INTERNAL NON_READY保持。
+
+## 2026-10-19T09:34Z 回读最小修复同19项先红后绿通过
+
+真实Readback固定显式批次时，原pageOperation仍随未使用的pipeline fallback从null补齐而失效，可能撤销新导出。已只前移原effective currentBatchId并将key改为[scope,currentBatchId]；完整scope、店铺authority/epoch/phase、旧ticket/finish和Main重新校验全部保留。静态独审 da6be7d1249c80791322e0d73cfbc0a08a775273cad201a5f99351b511ef77c5 确认两目标精确操作和既有18案例/95matcher不变，新增1个真实fallback批次变化反例。
+
+先仅合入同一份19案例测试：旧生产实际18 PASS/1 FAIL，失败准确落在真实同批次pipeline提交后原“导出中...”busy保持检查，观察/载入均未超时，新增真实批次变化反例通过。原件 root/r19-readback-old-red-20261019T092833398Z-a68e9180-5614-4b50-b581-b43533db7302/report.json；独审71eff040f7815b115e929d61b23ea6bcf5d62d86941e60b5ace25f080ce6a3af。再只合生产最小变更，同字节测试实际19/19通过、零pending/todo；原件 root/r19-readback-new-green-20261019T093134045Z-c0dd9475-1608-4881-af61-963771f3b5b2/report.json。两轮均有实际子进程spawn/exit/close及全保护，原RED保留，不倒填C084全量当时具体时序。
+
+构建独立诊断原两fixture在低载约6.09秒完成，不能证明全量卡点原因。metafile显示4617输入中多数是未输出的图标barrel；唯一图标入口已准备改11个官方CSR子路径，实际11组件对象严格相同，所有JSX/props保留，独审0196a55906740588954bdd33483ff0309e2ba7e512d044b9e1e18d749905c233通过。当前根64838正在合入并按原选项/原30秒做新源码实际对照，暂无结果信用。之后仍须综合定向、模块/维护对齐、重新冻结完整回归及新包整链，尚未开发完成。
+
+## 2026-10-19T09:07Z R18完整回归仍失败，当前定位两处边界
+
+根6595实际exit1，候选 development-candidate-20261019T084653Z 的L1原件保留FAILED；源码16c8786f1e595a9c220e455450b3e57015ea1690ff633843a83fe7b37b250498 / full840fdea3e8e0a85058272c686b7f62450106ce34aeb38938a8fc7f2712d2fe9c前后保护通过。621文件中619通过/2失败；逐assert实际6782 PASS、1 FAIL、5 PENDING，不能采用顶层6787通过/0pending。上一轮两个Ads与记忆搜索超时case本轮均通过。
+
+唯一断言失败为 production-page-action-feedback.test.tsx 的Readback旧证据导出/会话代际案例，在查找“导出中...”按钮的isDisabled时超5000ms，正在核对真实组件与测试同步。objects-action-feedback.test.tsx仍因原30000ms beforeAll超时，5案例未进入断言；本轮日志只保存products第一次构建开始08:59:45.015Z/worker30044，未保存完成。该进程在随后现场采样已退出，不能事后还原其CPU、等待或退出原因；不得推断为已证CPU/IO/OOM。其它本轮Node/esbuild现场仍活跃，不能认定整链死锁。原件 V16-T-L1-ALL.runner.json 与L1.log均保留。L2/L3/新构建及四包未启动，当前包仍属于旧C064。后续全部软件退出条件仍待闭合，尚未开发完成。
+
+## 2026-10-19T08:47Z 定向49及独审通过，R18冻结完整整链运行中
+
+三个既有测试文件修正后普通3文件49项全部通过，零failed/pending/todo，旧49案例名称与顺序精确保留；源码/full、原生、四包、app及正式四文件前后保护相同。实际原件 root/r18-ordinary-node-phase-2026-10-19T08-43-14-163Z/report.json。objects的两次真实构建阶段日志均已保存，同一worker64032，products约3425.2741ms、events约1740.2313ms、hook合计5165.8238ms；原30秒hook保持。该次通过不能反推原超时根因已解决。独审1cf539ef98ca5e269fd9996631a3f86915596c08435c28ad7f9ec718670a25e3与bf4e93562fe9850b8476bfa1dea956b9d7cefd8e942b1c8c4c250c172062a7b4确认原断言与准备边界、实际日志及保存快照；模块2109/零超限与diff检查通过。
+
+MAINT仅增事实前缀并完整保留原61642字节及六退出条件；实际原件 root/r18-maint-2026-10-19T08-46-53-978Z/report.json。最终source 16c8786f1e595a9c220e455450b3e57015ea1690ff633843a83fe7b37b250498 / full 840fdea3e8e0a85058272c686b7f62450106ce34aeb38938a8fc7f2712d2fe9c，库存621。候选 output/v16-evidence/development-candidate-20261019T084653Z 根6595已启动完整L1–L3、hook对账、新Windows构建、依赖及四形态，失败即停止；当前尚无该整链通过信用。源码、测试与MAINT停止修改，只维护不在冻结清单的状态文档。后续界面/读屏/恢复、双档样本与36本地工程性能、安全备份、正常真实应用启动及最终独审继续待办。APP_NEEDS_WORK / INTERNAL NON_READY及172项UNVERIFIED保持，全部旧FAILED保留。
+
+## 2026-10-19T08:34Z 最终全量失败，三处测试准备边界定向修复中
+
+根74812实际exit1，C081003完整L1原件保留FAILED；源码/full前后保护通过。逐assert独审修正顶层计数误导：实际6780 PASS、3 FAIL、5 PENDING、0todo，621文件；旧6786个案例名称与次数均保留，仅新增2UTF8 case且已通过。三失败是两个Lingxing真实浏览器case及一个记忆搜索上下文漂移case的外层5秒超时；另objects-action-feedback组在两次串行esbuild前置准备的30秒hook超时，5案例未进入断言。独审原件 independent/r17-current-full-failed-objects-hook-review-2026-10-19T08-32-21-390Z-17cd7ab2-d1c7-435d-8162-99623fa157cf.json SHA4cfd9c0bea17da079941ab3bc3d639dcf51c3b02d0d86a2a30a9a491319d6940。未进入L2/L3/新构建。
+
+当前只修三个既有测试文件的准备/诊断边界：记忆漂移负例最小两条真实synthetic账本（完整正例仍12条/10行）；两Ads浏览器case沿用该文件已有30秒局部全生命周期预算并补初始化清理/阶段日志（不更改生产45秒或NFR阈值）；objects仍原30秒hook及顺序，仅补每次真实build阶段日志，尚无证据确定哪个build或OS资源原因。原失败原因边界UNKNOWN处不倒填，原所有断言/案例保留，不跳过/重试/全局提限。完成定向与独审、维护对齐后须重新冻结全量及新包整链，当前未开发完成。
+
+## 2026-10-19T08:10Z 三形态兼容实际通过，最终R17冻结整链已启动
+
+本轮独立复核已闭合：最终四源静审 d1c295a4299616d75db15e741ae3466167bc3384496b64f575c513bfd9b8f660；普通65及旧63保留 f47311b45ece1e6cc2ce03a22d7a669bb40509461e04130c41d0606c50d5dde5；旧包三形态实际复核 a08b2c1dc86e04d5b27a4e00e1b06d969cce51a8059d26dbd984bcf3e767ad9f；MAINT唯一2350字节插入及六条件保留 e812104bbfa174125c5cf5694ad0ebb5bb0f98a6e19410d1112bfb58239281c6。均限定各自范围，不授当前运行中全量或新包通过信用。
+
+根97808实际exit0，旧C064包安装/便携/ZIP三形态全PASSED，三实际子进程spawn/exit/close均已保存；安装含真实卸载/注册表恢复，ZIP临时目录已清理，所有源码/full、原生、四包、app和正式四文件前后保护相同。原件 root/r17-old-c064-three-form-compat-2026-10-19T08-01-43-594Z/report.json。该轮仅确认最终新脚本与旧包兼容，不替代新源码整链。
+
+MAINT只增一次事实前缀，原59292字节及六退出条件精确保留；原件 root/r17-maint-2026-10-19T08-10-03-613Z/report.json。最终冻结source 4ba308e4b7da6bb731a4916e9da673da45408280ae0df9f5a5b719d543139214 / full c601e516d952c36eff8688252f529c43a1297c384b3a7dd7398523a0b86eeebf，库存621。候选 output/v16-evidence/development-candidate-20261019T081003Z 根74812实际顺序启动完整L1–L3→hook对账→新Windows构建→依赖→四形态，任一失败停止；该身份暂无全量或新包通过信用。普通65已独审，原63保留，仅新增2编码case。后续双档样本、22入口/读屏/恢复、36工程性能、安全恢复、正式字节备份、正常真实应用启动及最终独审仍待完成。172项UNVERIFIED与APP_NEEDS_WORK保持。
+
+## 2026-10-19T08:01Z Windows脚本兼容修正普通65通过，三形态重新实跑
+
+仅累计四个原目标：两PS1及原两测试，修正BOM、默认路径、局部原生stderr策略和五处UTF8 JSON读取；保留PS5日志自动BOM识别与原退出/身份/清理门。普通4文件65/65通过，旧63逐case全部保留、仅新增2个独立编码案例，零failed/pending/todo；所有前后保护相同。实际原件 output/development-completion-2026-10-16/root/r17-targeted-utf8-2026-10-19T08-00-32-991Z/report.json。前旧包定向已完成安装/卸载及真实runtime17检查，但整体因PS5中文JSON读取失败保持FAILED。当前新三形态实跑中，只授旧包兼容定向信用；R17尚未写MAINT、重冻或取得新源码整链信用。
+
+## 2026-10-19T07:40Z 安装/卸载已实跑，继续修系统 PowerShell 的原生警告处理
+
+R17当前默认路径和BOM修正已获独立静审，普通相关4文件63/63通过。清理仅本次验证进程继承的PSModulePath后，旧C064包定向已实际完成安装器exit0和真实卸载，注册表恢复、无应用残留及正式数据保护均通过；安装后Node警告被系统PS5的Stop策略提前抛出，整体仍FAILED，便携/ZIP未运行。原件 root/r17-old-c064-three-form-compat-r3-2026-10-19T07-37-21-377Z/report.json；source/full、原生、四包、完整app和正式四文件全部前后相同。继续最小修验收脚本的原生stderr边界，保留实际退出码和诊断；不修改生产模块行为或屏蔽警告。尚未冻结R17或取得新源码实包信用。
+
+## 2026-10-19T07:08Z 当前构建、依赖和目录实跑通过，安装验收脚本解析失败
+
+后续定向：两个PS1仅加UTF-8 BOM、既有两测试保留pwsh并补系统PS5及BOM检查，普通相关4文件63/63通过/零pending/todo，原件 `root/r17-targeted-2026-10-19T07-13-44-678Z/report.json` SHA `1f5b0e3303403ead7adcf2a573f9fd44659f2fc708c7af455ed862bc7826ae8e`，全部前后保护相同；独立静审SHA `1fbe92cd2f355d28cdee6ed005b0985c5d6e1d9f68ebf7c28666ee733af08b4f`确认正文原字节保持。随后明确以旧C064包作兼容夹具实跑，安装入口在param默认求值的 `Join-Path $PSScriptRoot '..'` 因Path空而失败，仍未进入安装器。原件 `root/r17-old-c064-wrapper-compat-2026-10-19T07-15-50-334Z/report.json` SHA `4479653789356d4b3d7b8c3d5caa57e975a743031b4555bc564e5be4c89b15ab`；该旧包定向不授新源码信用。当前继续最小修复启动默认路径边界，MAINT尚未为R17冻结；旧63通过及新失败均保留。
+
+根session26356最终exit1。当前C064440新Windows构建PASS，原件SHA `cce9bf899b8ff60d767ef8e66ae05d71933c0d5b344eba41ebef1bea32331e10`；包依赖PASS且packageUnchanged，原件SHA `eb108fe6f7f297a094c661484c4d721cf0a49ad5cd8c3ca10978960a6d8b3f45`。当前appContent `475459100F0DF5EF5E2E0C50D267F057AFBF8ED3175F39D179DDD3897A9069E0`，Worker `0abd32766d6d3e0f19816514049ef6620274a3fcd829e7e1aee83bf9c3e68cd5`；源码/完整输入保护通过。当前完整内部独审SHA `a31e8d28a825188bb2fd8b3fc8d1fee458e2db6fd997f83c5c8cc782f5e80a64`确认942文件案例精确匹配、原案例无增删，172仍UNVERIFIED。
+
+四形态报告整体FAILED，目录step实际PASSED/exit0、17检查字段全true；安装step在434ms内exit1，`installed.stderr.log`为Windows PowerShell文件解析错误，包含中文乱码和引号token错误，未进入安装器/App。便携和ZIP未执行。初查两个wrapper为UTF-8无BOM，公开ZIP入口明确使用powershell.exe，原语法单测只启动pwsh；正在用无副作用解析对比确认兼容边界。保留当前四形态FAILED，不以目录通过覆盖总体结果；尚未开发完成。
+
+## 2026-10-19T06:58Z 最终冻结完整内部回归通过，当前构建及实包验收段运行中
+
+候选 `output/v16-evidence/development-candidate-20261019T064440Z` 同源621文件6786/6786、L2四类4/4和L3业务28文件192/192全部通过，零failed/pending/todo；六步骤及最终source/full保护均通过，三证据封套重验成功。internal-run SHA `927d81bb31fedf469c41cbaab0903e93ac780b09d472d27752607ef6f4a51a0c`，L1 raw SHA `7d110825f358485682126d98e38ead492606a9a507ab08f1a5d66475cc7a9637`，L3 raw SHA `76538fc6150bd973bac09224fcb2d0b3a2d42e76afe0d915c3b51f9feaa2dced`。近期hook21项亦实际通过，原件SHA `f05408eb0855340e134c2bbbe4c8e529ee9d425cbb67803181a779f4f6b7d4fc`；旧全部FAILED保持。
+
+R16精确增量独审SHA `e8af3c184bc04882947da79539469a60e7a4251a832c132cc916312b3e4cb692`已闭合。当前source d0320b…f1e83/full3cb6…0d93d保持，根session26356顺序进入新Windows构建/依赖/四形态实际运行；尚无本次新包通过信用。当前完整942条文件案例追踪独立实际复核进行中；后续软件样本、界面/读屏/恢复、36目标工程性能、安全/WAL恢复及正式字节备份、真实应用正常启动与最终独审仍待完成。
+
+## 2026-10-19T06:45Z 前轮完整通过，8条精确追踪登记已修正并启动最终冻结链
+
+根session73871实际exit0，候选 `development-candidate-20261019T062810Z` 完整621文件6786/6786、L2四类4/4和L3业务28文件192/192全部通过，零failed/pending/todo，六步骤及最终source/full保护通过。internal-run SHA `739db4329a6a7e06db5c10c87b1d91506f61e93008778a91a2786500ab3a8365`，L1 raw SHA `121cfb8130d35214539a5a0826c409fef0c6b1a4dad49bf56bc43dac76f5fc5a`，L3 raw SHA `4295c40648c61269c1196e66a0433b7dae02bb788b2444bccccff992f1d71b01`。
+
+根先严格重验该身份三层证据，再按各自选定L1/L3集合确认仅8条名称登记失配；独立当前raw复核SHA `533c27daa5452b5fc07145ae2cfbb82beeab8537ca2c86b99728c4b1c879c07c`一致。仅精确修正 `docs/v16_requirements_index.json` 的8个caseId，备份/逆操作逐字节还原，所有测试/断言/严格匹配器保持；737条L1及205条L3引用对照本轮实际名称集合无剩余差异。78条非文件检查仅核声明结构，不授L4–L7实际信用；172项仍全部UNVERIFIED。实际合入原件 `root/r16-trace-correction-2026-10-19T06-43-29-657Z/report.json` SHA `58ab8b113bd42c1945a6449353a238ed93d519e808cd10f89bc89ac84268fcfb`。
+
+MAINT新增1847字节前缀，原57445字节及六退出条件精确保留；原件SHA `965c2d1d3a4f7decf2c653ea3f7d6af067fd2da6ba58f7bcf4be8700e34ba16b`。当前最终冻结source `d0320b699652b28d8fe99e0ead8ccff30466a56453a798dbf555c95f4b6f1e83` / full `3cb6e16bc548d9a1c878617303fc213783e8405c34a622d6aa462fcafaa0d93d`，库存621。新候选 `output/v16-evidence/development-candidate-20261019T064440Z` 根session26356已启动顺序完整内部回归→hook对账→新构建→依赖→四形态实际运行，任一失败停止。当前尚无该身份全量或新包信用；其余界面/性能/安全恢复/备份/正常启动和最终独审待完成，旧失败全部保留。
+
+## 2026-10-19T06:28Z 日志关联修正及普通76通过，维护对齐后新完整候选已启动
+
+独立追踪复核新增待办：在全部172项定位/字段完整且UNVERIFIED的基础上，发现4项需求的8条参数化caseId登记与实际显示全名不精确（引号、+0及长文本截断）。相应3个测试源码与上一完整候选逐字节相同，测试本身存在；该名称参照不授当前通过信用。当前冻结/全量继续，待本轮实际raw确认后最小修正登记并重冻，不以格式归一化放宽精确匹配，也不把该软件欠项归为真实环境依赖。
+
+仅合入既有receipt读取器及其测试两文件，生产日志/隐私、Main/Worker保持；原21案例及全部旧断言保留，真实格式器与JSON往返覆盖规范别名及错误UUID/类型/导出/缺失顶层/重复不足/非目标补数拒绝。两文件独立静审SHA `356aebb4e9ed14ed9aa5f291e30de90e4dbbb9414971688afc516eef5c33ab15`无阻塞。普通相关9文件76/76实际通过、零failed/pending，原件 `root/r15-targeted-confirmation-2026-10-19T06-26-00-543Z/report.json` SHA `5bb669424f5c7be5c2b01b5bd6ed13b75967872093c81b0d3cb4bb1b2deacb2c`，全部前后保护相同。此前普通75/76的解析型pwsh CLR异常原件保留，底层原因UNKNOWN，未加重试或降门。
+
+MAINT只增2306字节事实前缀，原55139字节/六退出条件完整保留；原件 `root/r15-maint-2026-10-19T06-27-53-839Z/report.json` SHA `09d54e8a087e7562bdbaa23cd68960ad1b297e51bdfb6016f8ffd1de05f57123`。当前source `506391065e8bc30f09fd452264c9027af2810e436d3320a864c8134f6d0a4aa8` / full `e4a20b9b2c4eba9222743f570c18993fca30d89e2bdccc1740b69aee7482a25c`，库存621不变。新完整候选 `output/v16-evidence/development-candidate-20261019T062810Z` 根session73871实际运行中；源码/测试/MAINT停写，尚无本身份全量或新包通过信用。后续四形态/软件样本/界面无障碍/工程性能/安全恢复/正式字节备份/正常真实应用及最终独审仍待闭合。
+
+## 2026-10-19T06:21Z 当前完整内部回归及四包构建通过，目录实跑发现日志关联适配缺口
+
+候选 `output/v16-evidence/development-candidate-20261019T055120Z` 的完整621文件6786项、L2四类与L3业务192项均通过，独立复核原件SHA `cf05c3c7d3395d4dffe0df9866ad8b65bf0082b66fe7a39d57cb3c9893cb5a8b`。Windows构建根session33043实际exit0，5条命令加2次发布复制完成，freshCurrentRun及source/full前后保护通过；构建原件SHA `5b9d8798ebd5e0ff5646e21b073a422f700059e5b97e2e1dd3d72c4a08fd8e25`，appContent `89457E6C7693D8B38EAC1C4CE37F08E8D863EE142ECFF4BD20E436DF838E22EC`。包内依赖审计实际命令exit0，保存原件列4个版本路径/3个包名/零问题。
+
+四形态运行根session93707实际exit1，止于首个目录版；安装版、便携版、ZIP尚未执行。目录原件 `output/playwright/isolated-desktop-runtime/2026-10-19T06-11-32-023Z/report.json` SHA `73d7271b7ff47f3e91d99a3a952b46af75dc75779893a0aa8b4aa156090e3108`，整体false；11个业务检查字段true不覆盖整体失败。独立因果原件SHA `5498a7541abd2f41a625a04b703452c225acfeb2525a8677472b2ae6d73e350e`确证生产日志合法稳定nonce别名与验收读取器要求原始UUID不匹配，导出原UUID经共享格式器精确映射实际日志，需最小修正读取器及其真实格式器回归。生产隐私日志规则保持，旧FAILED原件保留。
+
+失败流程尚未到正式数据后态检查。根补快照的严格deepEqual亦失败（原件SHA `a2ffe7b0295f8ed8075e8e226072d96842510d2732f5829f00d12eada3aee719`）。逐字段独审SHA `6d506d62b060d0781e33d12e07b49ef74f38a27431ce97a49f67bcc88a29dc9e`确认正式四文件存在/大小/摘要相同，SHM的mtime不同且发生在本次目录启动之前，不作因果归属或无损inode证明；严格元数据比较继续失败。补快照source/full、完整app及四容器摘要/大小与当前构建一致，不覆盖运行FAILED。待修正/定向回归/维护对齐后重新冻结完整整链，仍未开发完成。
+
+## 2026-10-19T06:06Z 当前完整L1–L3全部通过，新四包构建已启动
+
+根session57918实际exit0。候选 `output/v16-evidence/development-candidate-20261019T055120Z` 当前sourcef939…c0953/full6fc0…fe9e5，完整621文件6786/6786、L2四类4/4、L3业务28文件192/192均通过，零failed/pending/todo；原生准备、2109模块边界及原诊断对账也通过，六步骤源/完整输入前后相同，三层证据原件重验成功。internal-run原件SHA `f8c5bcca9546ecab9f53733134dce37500636a600dd7ec548301e9af99d36616`；L1 raw SHA `02f45d62a7dae3804a744c4cbb3b1f5ebf6095dd9bfc31e10ff2af30b0166cec`；L3 raw SHA `a6858f70981776b7c84d9dccd5f1a2b35411b0f497af39da7d793a36228e96c6`。旧完整620三失败与621一失败原件仍保留原FAILED，不被改写。
+
+根另实际对账近期hook故障21项并通过，原件SHA `5d1d2d7dbd5b1cb27dbe4fe41a572ce6b327cae7b1a9a88751920431d609be1c`。当前同源Windows七步四包构建根session33043已启动；尚无当前新包实际运行、界面/读屏/性能、安全/恢复或正常启动信用。下一步新包实际四形态运行、双档软件样本、22入口及无障碍、36本地工程性能比较、安全、WAL与正式字节备份、正常真实应用启动和独立最终复核。
+
+## 2026-10-19T05:52Z 普通66全部通过并更新维护基线，新完整候选运行中
+
+单文件/备份、普通66及MAINT的合并独立实际审查已闭合：`independent/r14-single-test-root66-maint-review-2026-10-19T05-53-34-951Z-0c3c4019-31c7-4cae-9c9f-3c6a6b16f3df.json` SHA `b1ffbd68e86d48b4c05761102f46929ce08c50a7394bf745add685a3b8ec168e`。精确2572字节MAINT前缀删回原52567字节，六条件及172项UNVERIFIED保持；独审不授予运行中新完整候选通过信用。
+
+根session96201实际exit0，普通7文件66/66通过、零failed/pending/todo，CLI46292 spawn/exit/close0/null。原件 `root/r14-root66-2026-10-19T05-48-19-109Z-0a78d781-2edd-47e3-91bf-6142fb28c105/report.json` SHA `ce402ad4aa12d894ad5783fd17a701e886a391ceddf2c1a27e678e7d26eef2e2`，raw SHA `201b511cd20e5294eb68c40b00d0aecd679d0434dc7c2df3706a3484e6a966a7`。原生自检确实观察3次共享冲突HResult -2147024864，100ms持锁预算、实际127ms后有界失败，关句柄后成功，畸形JSON一次拒绝；该次handoffConflicts0，不推断原故障确切HRESULT。两完整snapshot同SHA `edbce745cb4ef06a0ae64991058486602eef25b1b8540306bc8944ab6849c2c0`，所有前后保护通过。
+
+MAINT只增一次当前事实前缀并保留原52567字节/六退出条件/历史，实际原件 `root/r14-maint-applied-2026-10-19T05-50-55-624Z-ebc3cb69-142c-4817-95bc-8d4bea75f6c7/report.json` SHA `8e96f421ce2893a9739eb032b85beb426684c70a0bbd1953eeb32493294bfddf`，完整expected仅该implementation成员变化。当前source `f93904c35f3f04870c13579c2c79e6571e5f4f94b536c90db0acc9c19d4c0953` / full `6fc0fe216e4ba40523168bea10c4f5ae8515c13d27d1b3a791bb1a20bebfe9e5`，库存621。新完整候选 `output/v16-evidence/development-candidate-20261019T055120Z` 根session57918已启动；尚无本次完整通过信用，旧621/6786 FAILED保留，后续新包/界面/性能/安全/备份/正常启动待完成。
+
+## 2026-10-19T05:49Z 单个原生夹具修正已合入，普通66运行中
+
+已按独立静审SHA `434de38a6d2d20a35ef5f79945cc4067e91a57f2fa5895d9291dd9d21bafdcce`，备份并仅合入 `scripts/operate-s7-launch-native-protocol.test.mjs`。目标SHA `17901fd3e8bd3b307a7bb7b93f6a7cb31c66c3afc0b3d83f1d007cce7292de69`，原it/runIf、26旧expect和60000ms均精确保留。新增共享冲突有限等待、同一读取函数的原生自检与双阶段异常/诊断保留；原未处理IOException的具体HRESULT仍UNKNOWN，不作倒填。
+
+实际apply原件 `root/r14-fixture-applied-2026-10-19T05-47-16-658Z-8e592dc1-9052-40f2-86ac-70ab598302f0/report.json` SHA `7753b3bde8438723fdd6dbdaefd403a9a4e6b32cb98eabf94615fa95a0a204d9`。实际source `f93904c35f3f04870c13579c2c79e6571e5f4f94b536c90db0acc9c19d4c0953` / full `0a583d369df7feb19ec628f0b1aecaef9bb2c2f7bdd28f4ffce19e56d3fa55d1`；完整expected仅同一test源码/impl及identity.sourceSha变化，库存仍621，manifest/MAINT保持。2109模块/零超限及diff --check实际通过，原件SHA `f68f3fe1e87a77f54b9fb5688e6007fb6e7f7713534c0e59050ba9184f3aa7bc`。普通S7相关7文件66项根session96201正在运行，暂无通过信用；原完整6786的一项FAILED保留，仍待定向/维护基线及新完整整链。
+
+## 2026-10-19T05:35Z 本冻结候选补充L2与L3通过，完整L1仍FAILED
+
+根session42341实际exit0，独立子目录 `development-candidate-20261019T051750Z/supplemental-L2-L3/` 的补充L2为4/4、L3为28文件192/192，零failed/pending/todo；两步骤均exit0/null且source/fullc137前后相同。原件 `supplemental-run.json` SHA `55528f4b095faf16e8b3f4a3d27aca82e3586fe427a4d900298ad12cccf92521`。这不改写完整L1的一项FAILED。原生夹具确因及两条原始Windows事件另存 `independent/s7-native-child-io-20261019T053239682Z-98ddcea3-56d1-4fe8-ba98-aff1b023195a/`，causal原件SHA `b9d4bad4a1ac1fcca1df96a92181b5e3cc37fe6660462aec519cc5f9a81cc6c8`，原具体Win32码UNKNOWN。真实源码/MAINT仍冻结，测试夹具最小提案准备中。
+
+## 2026-10-19T05:33Z 完整621结果为6785/6786，旧原生协议夹具一项失败
+
+根session43342实际exit1；完整621文件6786项为6785通过/1失败/零pending或todo。raw SHA `21f2d13be078d45b59923e458f038f562ceb1993fc726a134c19227ab6fde67c`，原编排止于L1；native-node和2109模块边界通过，source47acc…510868/fullc137…a3e2d前后保护标志为true，未运行新构建。独立原始对账SHA `dcdc517df9597683a738873b5fe34c4642cadfdb7cd255b89467eb6340e38400`确认旧6762项全部保留、新增24项全部通过；旧三项capture及本轮定向253均通过。当前FAILED不由定向结果覆盖。
+
+唯一失败为既有 `operate-s7-launch-native-protocol.test.mjs` 的synthetic CREATE_SUSPENDED→SPAWNED→RESUMED→CLOSED链。raw只含helperERROR：PID61088/child62304、child-exit-failed-before-closed-receipt、exitCode3762504530。另只读Windows事件.NET Runtime1026/RecordId28828与Application Error1000/RecordId28829精确对应child62304，证实synthetic target第二次ReadAllText读取HANDOFF_RELEASED时未处理IOException，随后CLR退出0xe0434352。helper已验证先前READY并发出RESUMED，故可排除首读ACTIVE；CreateNew/FileShare.None发布与Exists→ReadAllText之间的共享窗口为代码/时序支持的推断，原事件未保存具体Win32 HRESULT。旧finally已删除该临时目录，不能倒填原文件或异常码。最小提案限定测试夹具接收侧，保留真实helper、原协议/所有断言与截止时间；尚未合入。根另启动独立子目录补充L2/L3，不改原完整FAILED。
+
+## 2026-10-19T05:18Z 维护基线已对齐并冻结，完整621候选已启动
+
+MAINT仅插入一次2802字节事实前缀，旧原文及六退出条件完整保留；实际原件 `root/r13-maint-applied-2026-10-19T05-17-32-106Z-b0d74318-e23e-444a-bdbb-f001216c18b2/report.json` SHA `42742815808929f32fbb6eedcbaa97885512ccd00fe6237214a8eee2bde2c8ad`，实际完整投影仅MAINT一个implementation项变化。当前source `47acc2ba13f82a2d601f9cf93915f7687dc348a6e4c5fed27e9b3d67dd510868` / full `c13736ec536b76514be5bdce96baba4e69a3dfd601f8faede9117dc64f7a3e2d`，测试库存621。普通根253及精确落盘合并独审SHA `9786394098f88dc90660adb49f272068bf1e01aa4e2bd05395adab3e413e90bf`已闭合。
+
+完整候选 `output/v16-evidence/development-candidate-20261019T051750Z` 根session43342已实际启动，待取得本冻结身份完整L1–L3，再新构建与四包/界面/36目标工程性能比较/安全/恢复/正常启动。运行中无当前全量通过信用；旧完整6762 FAILED保留。
+
+## 2026-10-19T05:15Z 普通根253实际全部通过，待维护基线对齐后新完整回归
+
+根session70439实际exit0，普通根12文件253/253通过，零failed/pending/todo；实际CLI PID38528的spawn、exit和close均已观察，exit/close0。原件 `root/nfr-root253-c72a1e96/runs/actual-2026-10-19T05-12-27-501Z-6628ec46-983a-44fe-b061-6f5b3651dc9e/report.json` SHA `73c6a92821f44f7ed589bdcb589dc81d8276ff2f4bb1b9ab16ffda166bc723a8`，raw SHA `e8a0472fe215336e09c1d10d6ad1ba51f0debfda8eb71670406bc531dad62ef7`。源47acc…510868/full812fe…9c98f、原生文件、包文件及正式数据字节前后保护通过，onDiskTargetedCredit为true。此为定向软件结果；原完整620/6762三项失败仍保留，不授予新完整621或当前EXE信用。独立复核与MAINT事实性前缀正在收口。
+
+## 2026-10-19T05:13Z 无损文件身份修复已实际合入，普通根253运行中
+
+R13六目标及manifest单条新增已按精确计划备份落盘，实际完整冻结投影与预期深等。当前source `47acc2ba13f82a2d601f9cf93915f7687dc348a6e4c5fed27e9b3d67dd510868` / full `812fe5585f86a70102a59a707275f51bcdf4523d17d3a138c369ea947239c98f`；实际测试库存621，无删除。合入原件 `root/r13-applied-2026-10-19T05-12-15-670Z-2259c480-dce9-4d4b-9c26-001a8dcc3444/report.json` SHA `61dae05643f844abae5130abb9389d223ceb23d15865a459fef3a619dd694770`。暂存253独审SHA `80f615b199da076a43b12375c114136447a5ed2d9987adbe54bf6cb8aef0ac8a`，落盘计划独审SHA `1f1145f39964e64947ab6cba8d668dffa0991e7d6e86ebd116652ba5ed8a32ea`。
+
+普通源码环境253已启动，运行中尚无通过信用。根另实际检查2109模块、零超限，git diff --check通过，原件SHA `9fd06d53d151a1dd77540cd4ba2f2229c2bfb47d7fba119c0f84252dffde1ce7`。MAINT尚未修改；仍待普通253及独审、维护基线一次对齐后重新冻结完整621及后续四包/界面/性能/恢复整链。原620/6762 FAILED保留。
+
+## 2026-10-19T05:08Z 无损身份暂存253与全部后置保护实际通过，等待精确合入
+
+根session49203实际exit0。R13内层原件SHA`982bf0392446fe1da47e1f877116b76054c23525e23ac50c9692b1dcd2478e92`为PASSED：12文件253逐项通过，旧229及新24名称顺序完整，零failed/pending/todo，实际CLI PID60260 spawn/exit/close0。外层原件SHA`b932751a6c411f2d8f94cb8526477f30e633ee21f98f3156b958320981bd49ec`为PASSED、guardErrors为空，所有源码/full58fc…c0d98、原生文件、四包及完整app保护未漂移。15个实际CJS加载和3浏览器生命周期门已闭合；测试仍包含真实headless与隔离SQLite软件边界，不是实包性能验收。
+
+此前根已实际执行新自有目录的无mock原生诊断，SHA`61ba0cd9b8782f9dfaa719c04ddeb99caf14a904c35499d4349e9e6eaa0d3eed`同时观察到合法unsafe身份及默认Number精度损失。该观测不恢复旧三次已清理目录。原R13工具草稿额外拒绝一个既有dormant依赖分支的准备阻塞已在新版本精确修复，未新增全局别名或根实现回退；该分支未执行不等于SQLite未使用。
+
+真实源码、库存620与MAINT仍为a34d…d9aa3/full58fc…c0d98。六文件及L1库存仅新增一条的精确计划`r13-exact-plan-2026-10-19T05-07-18-413Z-39a9fa3b-01ce-4044-97fd-9628c8e91b8c/PLAN.json` SHA`e654dca5d4486fc5ec614274bc64dbaba286218aa05e5740c0b246152188c809`待实际与落盘独立审查；621及新源码身份当前仅预测，尚未合入。仍须普通根253、维护基线同步、同源完整回归与新四包整链；原620/6762 FAILED保留，不由暂存253覆盖。
+
+## 2026-10-19T04:46Z 完整620失败三项目录身份校验，补充静态通过
+
+根session58033实际exit1，新候选`development-candidate-20261019T042720Z`完整L1为620文件6762项、6759通过/3失败/零pending或todo。三项均来自新增`v16-evidence-growth-capture.test.mjs`，执行期抛`EVIDENCE_WINDOW_ROOT_IDENTITY_INVALID`；旧6616项全部保留并通过。独立原始审查SHA`b6e8e5b7edba09296d1bf38c0dc3b11baa2f3fca4fc37dd54ee2aed73615cdce`已逐项对账。源及完整58fc…c0d98前后相同，原编排止于L1，未进入L2/L3或新构建。普通247不能覆盖本次整组FAILED。
+
+只读实证发现现存合法NTFS目录的原生64位编号可超过安全整数，默认Number读取亦可将真实`20547673300508702`取整为`20547673300508704`；当前schema的safeInteger门会拒绝该合法范围。原三次测试目录在afterEach已清理，raw没有保存其dev/ino，不能声称已恢复三目录原始编号或直接证明各自成因。正在仅ignored准备局部原生BigInt身份读取/规范十进制表示、旧安全数兼容与严格统一比较，保留fd、目录、根、跨档去重及原件摘要边界；真实源码/库存/文档仍冻结，暂未合入。
+
+根session66523另实际运行补充L2，exit0、四类静态检查通过且完整冻结前后相同；原件在候选`supplemental-L2/`。根session17630随后补充L3实际exit0，28文件192/192通过、零pending/todo，完整冻结前后相同，原件在`supplemental-L3/`。两项补充信用均不改变完整L1 FAILED。当前未开发完成，也无当前新包或性能预算信用。
+
+## 2026-10-19T04:27Z 文档已对齐并冻结，新完整候选已启动
+
+五份文档九处精确同步经独立审查SHA`cb15800836d15c7ab62712beca8203c930f02206ba38db9ee82b8455a6f78a54`后实际写入，五份原字节已备份。实际报告SHA`7f699771cb03c2a36656cb797e91c083c0e2cdeee802a66f9415f2fdf1b877a0`确认仅两份源码身份文档、四份完整实现库存文档和单份UI治理文档摘要/内容随已审文本变化；其余整个冻结对象深等。六项开发退出条件原文、需求/验收及安全源均保持，README过时落盘时态已纠正，MAINT不自引自身完整摘要。
+
+当前最终source为`a34d35060576ab31f3c817bbf0ef99d3bac03baba9bd947473f8647f4d7d9aa3`，full为`58fc15fad2343d1091f0245b75195e1a5cf9483caa22630d72f53fba8b6c0d98`。源码、测试及维护/操作文档全部停写；根session58033已启动新候选`output/v16-evidence/development-candidate-20261019T042720Z/`的完整L1–L3。当前为RUNNING，不能从旧候选或普通247授本次完整通过信用。后续新构建、四包/界面/无障碍/性能阈值/安全/恢复与正常启动均绑定该候选实际结果。
+
+## 2026-10-19T04:22Z 25目标已合入，普通根247通过，等待最终文档冻结与整链
+
+计划生成session87182与实际落盘session9502均exit0；独立计划审查SHA`d1d0e5d1e1ab7b1f26569fdc978e6d5b91bdb8a0869de985bbe8dcae21657f7a`后才执行。25目标由8现有及17新文件组成，8份原字节、manifest和MAINT均先备份；不回滚旧现场。独立落盘字节审查SHA`26864a10ce68d6fefdde28a720a449211fc955be595a33ec4389760fc158176e`确认当前源码与已审暂存完全一致，真实Git库存614→620仅6新增无删除，安全源及其余冻结定义完整保持。
+
+合入阶段source为`eae91cff2c1ebfeb64faad44f462640a47b79382a6ee4319e4630946cf0f13fc`，full为`67eccd3209539d498d9bab7f0cc2faed237dccbac52952f351dcb0ee18e4b82e`，MAINT尚未修改。根实际全仓尺寸检查2107模块、零超999行，空白检查exit0。
+
+根session95353实际exit0，无暂存alias、工作区复制或preload的普通根12文件247项全部passed、零failed/pending/todo；真实Vitest PID59768 spawn/exit/close0。报告SHA`e8c276d577bf3f98d13c86d6f066360af489a1471a1d749ec50390ebc417dca6`、raw SHA`1f176a8f77ad22ef659e6680d5da571a2727ea34ef0708fc0a8c9bf481e96892`，source/full及保护前后相同。10标签原有输出在运行前后分别保存独立副本，不覆盖其历史原件。独立实际审查SHA`f0d59564fdfd3a4483f5e5cd47989c20da5c351bd17eb45caad81c86138cfb3f`已核逐案例与生命周期；未重读正式DB，不将包保护收据冒充重新运行包。下一步同步文档并重新冻结完整候选，当前仍无完整620文件L1或新四包整链信用。
+
+## 2026-10-19T04:05Z 固定229组合及全部后置门实际通过，等待精确合入
+
+根session47198实际exit0；内层R4报告SHA`9de55796b99ebe6dc665a2d1fc496f63e42525a6f6714288a9b58d134e73a80e`为PASSED：11文件229项逐条通过、零failed/pending/todo，实际Vitest PID51248 exit/close0。14个要求的CJS模块均获得真实加载记录，三次headless浏览器的实际退出/关闭已闭合，其中一次为预期负向强制退出，不宣称浏览器全部exit0。
+
+外层SHA`e09899d43815c9339a9c62d902a62d9645ad663fb1ab569140853ff959f62776`为PASSED、guardErrors为空，源码/完整冻结caf47…9296、原生文件、四包、完整app和正式四文件字节均未漂移。独立实际审查`r12-combined-nfr-actual-independent-review-2026-10-19T04-04-15-413Z-dc392104-540a-49ab-aed8-db042694e71e.json` SHA`23e873dead52e436fe3310114990ecdb4a62bebc4cff2570c6d036c0986a2b57`确认全部229、14模块、402份输入/副本摘要及生命周期保护。
+
+最终24项组合SHA`e22dbbb365a1aa74a6862c6137f0de861e55b2e5d5f01d8434a7c0c8ea6b10d3`仍仅暂存。下一步经独立精确计划审查后合入该24项及旧交互夹具support共25目标，再执行普通根247项、库存/维护基线同步和新的完整交付链。此结果仅覆盖隔离软件组合、headless及隔离SQLite，不授当前实包峰值/工程预算/真实环境验收或开发完成信用；所有旧失败原件保留。
+
+## 2026-10-19T03:56Z 原始229全部通过，组合后置加载原件仍缺一项
+
+根session80449实际exit1；本轮Vitest真实子进程22276 exit/close0，11文件229/229逐条passed、零pending/todo，前两轮未加载的38项也已实际通过。独立原始审查SHA`f3554ca4dc1f4708e43c687ad770a9db74235d115f13094266eb4fc9190ff751`明确状态`VERIFIED_229_RAW_CASES_CHAIN_FAILED`，不授完整链通过。
+
+内层报告SHA`c1ccfa26c32485d7377c3e86e520f0418a58cf70563f91ad8022ee00d0c5159a`仍FAILED，唯一issue为缺`v16-performance-sampler.js`自身的实际CJS加载收据。其他13个要求的模块已按路径/摘要匹配；采样器当前由旧测试以Vite SSR求值，不能从其依赖模块的真实CJS记录反推采样器自身的CJS加载。当前最小提案仅把一个旧合同测试的采样器入口改为真实CJS，并继续执行其原有功能断言；不补空加载、不删除后置门，也不改变生产采样器。
+
+外层SHA`bb2215190913381b2eb706aed6c05e7e1466d148b2b8cb6269f3fad8d505d5f4`确认source/full caf47…9296、原生文件、四包和完整app均相同，唯一guardErrors仍为明确拒绝FAILED内层。真实源码、测试库存及MAINT继续冻结，原始229通过不等于已落盘或软件开发完成。
+
+## 2026-10-19T03:46Z 短目录复跑190通过，旧批准夹具一例与38未加载仍阻止整组通过
+
+根session10928实际exit1；内层`nfr-runner-r2-351fa94d/runs/actual-2026-10-19T03-42-18-836Z-cd7e490f-3ce4-4423-ac81-43efb916f82d/report.json` SHA`5371da351319e385dfabdd5817b7e8601a288fddd8ef4718ec7a9b0997e12d86`，逐assertion为190 passed/1 failed/零pending，另native-scenarios的38项未加载。已加载的新增5文件106项、峰值40项和capture18项均原始通过；capture18包含在106内，不能叠加计数。新增测试仅提供纯合同/合成原件、真实headless浏览器与隔离SQLite的软件边界，不提供生产EXE或真实环境性能信用。
+
+已观察的短目录、文件描述符注入及共享CJS账本测试修正有效，原FAILED保留。剩余唯一已执行失败是旧批准夹具的合法baseline正例：SSR导入的原件账本与生产Node CJS私有账本不同，外部F临时原件被生产边界正确拒绝；最小提案仅对齐该测试的模块入口，不放宽原件根。38未加载精确缺workspace中的`apps/desktop/package.json`，系模块初始化时读取元数据，正准备逐摘要复制该单一元数据文件，不回退根实现。
+
+外层SHA`0adcf1c95b6ad16fd12a2370350e055f71e66d15c6d5b0e056e71d9dba604ef8`及独立FAILED审查SHA`207e1f09840ffe8db725ec7d043d2f9068c2362f35b8ec2e24638f116633f91c`确认两层CLI真实exit/close1；source/full、两原生文件、四包、完整app、owned runtime与保存的正式四文件字节均未漂移。整组229最终门尚未通过，不能从190局部通过生成落盘或开发完成信用。
+
+## 2026-10-19T03:34Z 固定229组合实际失败，源与现有包未变
+
+根session38252实际exit1；外层`development-candidate-20261019T020510Z/nfr-combined-stage-guarded-2026-10-19T03-31-16-197Z-50acde3e-3930-45b1-b585-02afcd7e9b87/report.json` SHA`ef17a0407a82e11c2451acb0544b491a81533805cc4a2e931454659365298d75`。内层actual-03:31:38原件SHA`b61e02a8e95bfc89f0a9332f8614550175895875eae0e0ec71f1638214cdc2dc`，实际Vitest PID55968 spawn/exit/close1、signal null，失败及日志保留。原始191个已注册assertion逐项为92 passed、40 failed、59 pending；另38项因native-scenarios缺依赖未加载。Vitest汇总的151 passed/0 pending包含上述59 pending，不能据其授予151断言通过信用。
+
+观察/报表/搜索的beforeAll及多条内存/搜索案例被Windows过长TEMP路径阻断；native-scenarios缺`package-ui-arguments.js`。另两条新增capture断言真实失败，分别是打开描述符期间变更检测与外部owner账本登记，正独立核因，不预先认定为产品或夹具。当前只准备短owned临时目录、精确依赖补全和已观察断言的最小修订，未落源码。
+
+外层源码/完整caf47…9296、两原生文件、四交付容器与完整app内容前后相同；guardErrors仅actual-report明确拒绝FAILED原件，未发生保护输入漂移。R2.2的24文件/14生产及12夹具操作已先经独立静态审查，CLI单参数包装保持187个CRLF且仅+12字节，旧R2.1换行归一化的错误声明与失败审计均保留。上述静态信用不覆盖本次实际FAILED。
+
+内部工程预算V3b的runtime三哈希与完整构建五哈希边界已修正，独立报告SHA`4c3cedd8d7b05e498713a98f5caed31b026968cf70210f6af5d5b2d2ee4cf3fc`核14输入及合成24项自检。该自检未启动EXE或比较真实性能；36阈值仅获内部定义认可，真实实包达标、用户批准预算和日窗口仍未取得信用。
+
+## 2026-10-19T03:14Z 搜索与日窗口静态缺口修订，内部工程阈值定义已独立复核
+
+搜索/日窗口R1独立审查原件`nfr-supplements-r1-static-review-2026-10-19T03-02-09-515Z-09e543e5-cd0a-44eb-b447-57b008700e86.json` SHA`8ef8e652ac4be517243e83129bf7b86151033be878d634674a58c1dc481af484`保留四个实际缺口：默认关闭的详情读取、搜索原始单调时钟重算、日窗口与实际档位/Profile/owner绑定，以及跨档物理目录窗口去重。R2仅在新ignored目录修订，未落真实源码、测试或维护基线。根已机械组合R1的20目标/14接线并完成语法检查；这是组合和语法信用，没有执行其测试，也不覆盖R1阻塞。
+
+V3最终审查/当前包安全工具的独立静态报告SHA`231b03feb4a86c4ad2645890da8796cd3098c28b1c5f284cd9273a7289b81908`核30输入与15必填报告槽；安全工具无已发现静态阻塞，尚未真实执行。该审查仍指出36本地性能目标缺工程阈值比较门，不能只凭采样齐全声明软件完成。
+
+根另存内部工程阈值提案SHA`58c27d102f0a517b974e0fc5dc87ff4ad27c37dfe3a21eac0f878ea5d0e698f3`；独立定义审查SHA`701aeb316789b86454a0df03cb006256d69a52860a61f181f57f64666ff16c5f`认可36目标的键、单位、窗口、样本数与工程理由，仅供内部首版目标。阈值未由当前采样值自动生成，未获真实用户预算批准。新增V3a原件重算比较门仍在静态复核，尚无当前EXE采样、预算达标或开发完成信用。
+
+## 2026-10-19T02:43Z 峰值内存暂存R3固定四十项实际通过
+
+根session67180实际exit0，外层`development-candidate-20261019T020510Z/memory-stage-guarded-2026-10-19T02-41-37-070Z-4db52990-0a0a-462f-a5be-8744bbbfaad6/report.json` SHA`c16a95b6a262715fbf2b5c804f4f6cc813635e5075fb9e7e476fa04738e63a95`。内层actual原件`memory-peak-stage-2026-10-19T02-12-57-408Z-7a261c4b-dab8-4b65-acef-d593abc5effd/runs/actual-2026-10-19T02-41-50-143Z-1fe1e0e0-4eed-41c8-afa0-7b7184f04924/report.json` SHA`d01db61e681f83b03411e062a238212c64c0f314413572fc3d8cdf259831c93c`：固定40项旧33通过/7精确断言失败，暂存40/40；零pending/todo，完整名称顺序相同。PID58064/18264均真实spawn/exit/close，返回1/0、signal null，实际CJS加载记录及原始JSON均保留。
+
+独立静态审查已先闭合全部冷/暖进程跨轮去重、精确旧失败集合和失败事件持久收据；R2原件未覆盖，R3仅新版本修订。外层完整caf47…9296、原生文件、四个交付容器及完整app内容前后相同，guardErrors为空。独立实际报告`memory-peak-r3-actual-review-2026-10-19T02-45-02-089Z-771326a0-5735-4362-984d-0864478e2523.json` SHA`39d0f540d6256d68998572450550db600fc39ae4ea2ea6f580d7da21dea34d2d`已核129输入、两轮CJS加载和生命周期闭合。此为合成单元原件及运行回调验证，actualNativeMemoryMeasurement:false，不授实际Windows峰值、P95、已批准预算或生产信用。旧“低截面样本”案例曾被另一超预算门拒绝，不能描述成旧实现整体不抛错；其失败仅证明未按目标原件重算路径拒绝。
+
+真实源码、测试及维护基线继续冻结；旧交互夹具18/18及峰值40/40均仍仅暂存验证。正式memory-search计时及>=24h端点净字节日窗口/批准预算校验仍在暂存收尾，旧after-sample仅保留单轮诊断。后续统一整合、验证、落盘、同步库存/基线并重新完整交付链，当前尚非开发完成。
+
+## 2026-10-19T02:32Z 十项旧交互失败已用固定十八案例实跑确认夹具原因
+
+根session28426实际exit0；`development-candidate-20261019T020510Z/feedback-fixed-comparison-2026-10-19T02-29-31-688Z-5c00fc27-ce8a-4cef-b24e-289d16dac5be/report.json` SHA`5773bd504d3bea11ed1040647b123baed84c42a13bcd97d73237256234f6c2ab`：原夹具18项8通过/10失败，与完整L1失败名称精确相同；仅选择补充配置端口的暂存support后18/18，零跳过。两实际子进程PID52668/58936均spawn/exit/close，code分别1/0、signal null。原测试、18案例名称、95断言、选择器、顺序和超时保持；两次只改变明确support选择及独立报告目的路径，不声称argv逐字相同。
+
+原失败原因是旧configured组件夹具缺真实preload已存在的`getStoreRuntimeConfig`端口。补充只返回随capturedContext绑定的明确软件配置，未改产品逻辑。独立静态审查先发现暂存support的相对依赖定位缺口，根已精确绑定原fixture依赖后才执行；所有真实源码/测试/维护基线及完整caf47…9296前后相同。此仅为暂存对比通过，尚未落盘，也不改变原完整L1的FAILED。性能峰值、正式搜索计时及日窗口能力仍在暂存与独立复核，须统一落盘后重新冻结完整交付链。
+
+## 2026-10-19T02:17Z 完整L1发现单一旧交互夹具失败，性能采集缺项暂存修补中
+
+根session41514实际exit1；候选`output/v16-evidence/development-candidate-20261019T020510Z/`先通过原生准备及2090模块尺寸门，L1真实614文件6616项、6606通过/10失败/零pending。十个失败均在`production-page-action-feedback.test.tsx`，原始报告与日志保留；表现为旧页面动作不可见/disabled，正独立核因，不先认定为夹具或产品缺陷，也不放宽断言/等待时间。编排止于L1，L2/L3及新构建未执行，无当前完整通过信用。
+
+随后根session13079独立执行`supplemental-L2/`，实际exit0，四类静态检查全部通过：全仓typecheck、Renderer构建、Main/Preload构建、包脚本合同；零跳过。该补充检查不覆盖L1失败，也不授整个internal-run或L3通过信用。执行后源码及完整冻结仍为c2b3…a2fa3 / caf47…9296。
+
+根session94154再实际执行`supplemental-L3/`，exit0，业务检查192/192通过、零跳过；此为补充业务层证据，不覆盖L1十项失败或授当前候选完整通过信用。检查后源码/完整冻结仍相同。
+
+落盘独立报告`r11-applied-closure-independent-review-2026-10-19T02-09-53-418Z-4205f7ad-7a57-4c0f-9fde-f158bc37b1ce.json` SHA`977db48888c3350ebedbb159656c63fcf3e7e65f948ad2fd035149af80d40ea2`核8检查/136原件，无实质scope blocker，明确仅887定向及冻结/增量信用。另按六退出条件发现性能能力缺口：内存指标目前取操作结束working set，不能代表峰值；记忆搜索缺独立计时observer，证据增长只有单轮delta、尚无正式日窗口捕获/验证能力。本地数值预算及当前包安全原件也需补足，不能把采样成功当预算达标。最小实现目前仅在ignored暂存；真实源码/测试/维护基线仍冻结，待独立核准后统一落盘、重新冻结整链。
+
+## 2026-10-19T02:03Z 最终落盘定向通过，进入同源完整交付验证
+
+已核对10月17日的实际原件：原26目标落盘与额外两个旧测试适配分别记录在`output/development-completion-2026-10-16/root/r11-transition-aligned-2026-10-17T10-16-28-555Z-51e3cf29-f681-464c-9e36-b4f45c45adb1/`，未覆盖旧失败。普通根定向实际52文件887/887通过，含原49文件808项与新增3文件79项，零pending/todo；模块检查2090个、零超999行，空白检查通过。真实测试库存614，仅新增3文件，无删除。
+
+维护基线已于10月17日10:20Z同步，最终源码为`c2b3e4d2f5299e7d3b41690c95c0d5f3cfeddab0c80d09a83e413fdf4f3a2fa3`、完整冻结摘要为`caf47d42111ba7f80bee098e22f1e32ba43bfcbf2cf1dcdb29d5831394aa9296`。实际增量收据为29项源码输入、30项完整输入，安全源零变化；28目标血缘明确区分继承原26项与本次实际复制2项。当前继续独立复核并执行完整L1–L3、新四包构建/实际运行、界面/读屏/恢复、实包性能及备份恢复；尚无本冻结版本的软件开发完成或生产放行结论。源码、测试与维护基线停写，后续结果记录于本文件及BLOCKED。
+
+冻结维护基线第13行的“原失败采集action四例已通过”作如下精度澄清：失败原件保留；collection-action-feedback原四例在旧定向中已全部通过，因此未纳入其optional getter。不能把这四例描述为本次修复的旧失败。独立复核还将明确模块日志/增量JSON的证据层级，不从这些文件补造子进程PID或close记录。
+
+## 2026-10-17T10:10Z 二十六目标已落盘，旧定向882/887及两项对齐待收口
+
+末次独立报告`r11-final-staged-evidence-plan-independent-review-2026-10-17T09-57-59-347Z-b4fdfb09-79ec-4552-a2d1-c7f64813fe52.json` SHA`d61b4705b3f0e9d6092dc99bc97da3d678b0c0e3e33b2d9fa0f306cbaccbbcc9`核9检查/114原件无精确计划scope blocker。根实际apply exit0，26目标逐字落盘，真实测试库存611→614仅新3无删。源码为`5c30056a3b1b3df2e1627ef2cc96dac08e6921dcef565db59355e6d78547fbd4`，当前维护基线尚未更新的完整输入为`900fa33c2426987065c56bdb149414a849f69a41de5e3e2fa32d882f6212d5f6`。过渡原件在`r11-transition-2026-10-17T09-58-17-487Z-69c5599b-4e68-4b63-bfd2-dc9efbea0f45/`，全量尺寸实际2090模块、零超999行，空白检查通过。
+
+根4298普通根Vitest实际exit/close1，52文件887项、882通过/5失败/零pending，原始`actual-targeted-2026-10-17T09-58-41-068Z-fa87dd32-dc6f-42ef-8a87-135ced486a88/vitest.json`保留。52文件均加载；generic文件状态guard拒绝失败不是beforeAll/加载失败的实证。失败仅在两个旧文件：collection-presentation一例内两精确静态字符串仍期待无条件title/detail，须保留原taskState分支并扩为真实条件表达式；import-listing四例因configured夹具缺新canonical getter及旧文案重命名后的对象漂移。采集action四例已通过，不纳可选getter。
+
+当前只准备这两个旧测试文件的最小对齐：案例名、matcher/expected和操作顺序保留，导入动作精确定位原概览region、TaskBanner peer仍核空aria-busy，同步React双调用保持。真实生产源不再增加修改。旧26过渡/计划/失败原件保持，新整合收据将明确原26真实落盘加本次额外2测试复制，不伪称28同时执行。对齐审查/落盘后重跑同52文件，再同步维护基线并最终冻结；当前尚无新全量、包或软件交付完成信用。
+

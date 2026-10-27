@@ -32,6 +32,29 @@ const previewCapabilities = [
   capability('memory.timeline.rebuild-index'),
 ];
 
+describe('memory feedback privacy', () => {
+  it('redacts private paths and credentials while retaining business stage wording', () => {
+    const copy = memoryOperatorCopy('READBACK失败 C:\\Users\\Private Operator\\memory.db\npassword=private-password');
+    expect(copy).toContain('结果核验');
+    for (const secret of ['Private Operator', 'memory.db', 'private-password']) expect(copy).not.toContain(secret);
+    expect(memoryOperatorCopy(null, '请重试 /private/data.db')).not.toContain('/private');
+  });
+
+  it('explains unavailable memory actions and exposes busy append feedback in the real editor', () => {
+    const unavailable = renderToStaticMarkup(<MemoryWorkspace apiOverride={createPreviewExperimentMemoryDomainSuite().memory}
+      blockedReason="未开放" capabilities={[]} previewMode={false} storeContext={context} />);
+    expect(unavailable).toContain('当前店铺未开放时间线导出');
+    expect(unavailable).toContain('当前店铺未开放搜索索引重建');
+    expect(unavailable).toContain('已经是第一页');
+    expect(unavailable).toContain('aria-describedby=');
+    const busyEditor = renderToStaticMarkup(<MemoryEditor busy draft={memoryDraftFor()} onCancel={() => undefined}
+      onChange={() => undefined} onSave={() => undefined} />);
+    expect(busyEditor).toContain('aria-busy="true"');
+    expect(busyEditor).toContain('追加中…');
+    expect(busyEditor).toContain('请等待完成后再关闭编辑器');
+  });
+});
+
 function ordinaryVisibleCopy(markup: string): string {
   return markup
     .replace(/<details\b[\s\S]*?<\/details>/gi, ' ')
@@ -148,6 +171,7 @@ describe('MemoryWorkspace', () => {
     expect(markup).toContain('data-scroll-owner="memory-event-detail"');
     expect(markup).toContain('aria-label="因果记忆事件详情"');
     expect(markup).not.toContain('删除事件');
+    expect(markup.match(/workspace-button--primary/g)).toHaveLength(1);
   });
 
   it('fails closed when Main causal authority is unavailable', () => {

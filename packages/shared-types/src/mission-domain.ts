@@ -1,3 +1,6 @@
+import { normalizeVerifiedDomainTimestamp } from './domain-time';
+import { normalizeLogicalDomainIdentifier as normalizeIdentifier } from './domain-identifiers';
+import type { CausalLedgerStage } from './causal-ledger-contracts';
 import {
   normalizeStoreContextEnvelope,
   normalizeStoreId,
@@ -649,95 +652,8 @@ export interface ExperimentMetricSnapshotRecord {
   createdAt: string;
 }
 
-export const CAUSAL_LEDGER_STAGES = [
-  'FACT',
-  'ANALYSIS',
-  'DECISION',
-  'ACTION',
-  'READBACK',
-  'EFFECT',
-] as const;
-
-export type CausalLedgerStage = (typeof CAUSAL_LEDGER_STAGES)[number];
-
-export interface CausalEventRecord {
-  id: string;
-  storeId: StoreId;
-  stage: CausalLedgerStage;
-  eventType: string;
-  entityType: string;
-  entityId: string;
-  missionId?: string;
-  title: string;
-  signal?: string;
-  intervention?: string;
-  expectedEffect?: string;
-  observedEffect?: string;
-  confidence?: number;
-  status: string;
-  source: string;
-  actorId: string;
-  businessDate: string;
-  sessionGeneration: number;
-  correctsEventId?: string;
-  sequence: number;
-  createdAt: string;
-}
-
-export interface AppendCausalEventInput {
-  id: string;
-  stage: CausalLedgerStage;
-  eventType: string;
-  entityType: string;
-  entityId: string;
-  missionId?: string;
-  title: string;
-  signal?: string;
-  intervention?: string;
-  expectedEffect?: string;
-  observedEffect?: string;
-  confidence?: number;
-  status: string;
-  source: string;
-  actorId: string;
-  correctsEventId?: string;
-}
-
-export interface CausalLinkRecord {
-  id: string;
-  storeId: StoreId;
-  sourceEventId: string;
-  targetType: string;
-  targetId: string;
-  relation: string;
-  createdAt: string;
-}
-
-export interface CausalEvidenceRefRecord {
-  id: string;
-  storeId: StoreId;
-  eventId: string;
-  evidenceType: string;
-  evidenceRef: string;
-  sha256?: string;
-  createdAt: string;
-}
-
-export function normalizeOpaqueEvidenceRef(value: unknown): string {
-  let normalized: string;
-  try {
-    normalized = normalizeIdentifier(value, 'evidenceRef');
-  } catch {
-    throw new TypeError('evidenceRef must be an opaque logical id, not a filesystem path or file URI');
-  }
-  if (/^[a-zA-Z]:/.test(normalized)
-    || normalized.startsWith('\\\\')
-    || /[\\/]/.test(normalized)
-    || /^file:/i.test(normalized)) {
-    throw new TypeError('evidenceRef must be an opaque logical id, not a filesystem path or file URI');
-  }
-  return normalized;
-}
+export { CAUSAL_LEDGER_STAGES, normalizeOpaqueEvidenceRef } from './causal-ledger-contracts';
+export type { CausalLedgerStage, CausalEventRecord, AppendCausalEventInput, CausalLinkRecord, CausalEvidenceRefRecord } from './causal-ledger-contracts';
 
 export function authorizeMissionGrant(
   input: MissionGrantAuthorizationRequest,
@@ -940,8 +856,7 @@ export function normalizeDomainText(value: unknown, label: string, maxLength = 2
 }
 
 export function normalizeDomainTimestamp(value: unknown, label: string): string {
-  parseTimestamp(value, label);
-  return String(value).trim();
+  return normalizeVerifiedDomainTimestamp(value, label);
 }
 
 export function normalizeDomainStringList(
@@ -968,15 +883,6 @@ function denied(code: MissionGrantDenialCode, detail: string): MissionGrantAutho
   return { authorized: false, code, detail };
 }
 
-function normalizeIdentifier(value: unknown, label: string): string {
-  if (typeof value !== 'string') throw new TypeError(`${label} must be a string identifier`);
-  const normalized = value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(normalized)) {
-    throw new TypeError(`${label} must be a logical identifier and must not be a path`);
-  }
-  return normalized;
-}
-
 function normalizeRevision(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
     throw new TypeError(`${label} must be a positive safe integer`);
@@ -1001,8 +907,5 @@ function normalizeNonEmptyUniqueList(values: readonly unknown[], label: string):
 }
 
 function parseTimestamp(value: unknown, label: string): number {
-  if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${label} must be an ISO timestamp`);
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new TypeError(`${label} must be an ISO timestamp`);
-  return parsed;
+  return Date.parse(normalizeVerifiedDomainTimestamp(value, label));
 }

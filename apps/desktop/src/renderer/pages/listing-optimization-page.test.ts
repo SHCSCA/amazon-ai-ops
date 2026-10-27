@@ -1,3 +1,5 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
+import { listingCompositionSource } from './listing-composition.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,10 +22,10 @@ import {
 
 describe('ListingOptimizationPage dialog focus contracts', () => {
   it('uses shared focus scopes for local Listing and keyword editors', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
 
     expect(source).toContain('const listingEditorDialogFocus = useOverlayFocusScope');
-    expect(source).toContain("dismissDisabled: loading === 'save-manual'");
+    expect(source).toContain('dismissDisabled: Boolean(loading || operation.busy)');
     expect(source).toContain('open: listingEditorOpen');
     expect(source).toContain('const listingKeywordDialogFocus = useOverlayFocusScope');
     expect(source).toContain('open: keywordEditorOpen');
@@ -324,7 +326,7 @@ describe('highlightListingTextSegments', () => {
 
 describe('Listing Phase 5 local draft surface', () => {
   it('keeps Listing copy focused on local drafts and publish boundaries', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
 
     expect(source).toContain('关键词与本地草案工作台');
     expect(source).toContain('本地草案工作流');
@@ -337,7 +339,7 @@ describe('Listing Phase 5 local draft surface', () => {
   });
 
   it('keeps current Listing details folded out of the default first screen', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
     const detailsStart = source.indexOf('<ProgressiveDetails title="当前 Listing 内容与版本历史">');
     const currentPanelStart = source.indexOf('<Panel className="listing-current-panel" title="当前 Listing 内容">');
     const draftWorkspaceStart = source.indexOf('<ProgressiveDetails title="关键词、草案生成和导出">');
@@ -348,8 +350,8 @@ describe('Listing Phase 5 local draft surface', () => {
   });
 
   it('moves manual Listing maintenance into a modal and leaves a compact page summary', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('listing-editor-entry-panel');
     expect(source).toContain('listing-editor-summary-grid');
@@ -362,7 +364,7 @@ describe('Listing Phase 5 local draft surface', () => {
   });
 
   it('lets the keyword editor modal close through Escape and backdrop clicks', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
 
     expect(source).toContain('function closeKeywordEditor()');
     expect(source).toContain('const listingKeywordDialogFocus = useOverlayFocusScope');
@@ -374,7 +376,7 @@ describe('Listing Phase 5 local draft surface', () => {
   });
 
   it('uses one TaskBanner and keeps the technical boundary disclosure unnested', () => {
-    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const source = listingCompositionSource();
     const technicalStart = source.indexOf('<ProgressiveDetails title="关键词交接与发布边界"');
     const technicalEnd = source.indexOf('</ProgressiveDetails>', technicalStart);
 
@@ -410,7 +412,7 @@ describe('Listing draft diff and feedback contract', () => {
   });
 
   it('keeps the high-fidelity CSS for diff chips, skeleton wave, and flashing count', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.listing-heatmap-diff-added');
     expect(css).toContain('.listing-heatmap-diff-removed');
@@ -424,7 +426,7 @@ describe('Listing draft diff and feedback contract', () => {
   });
 
   it('isolates high-density heatmap cells with strict containment', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(cssRule(css, '.listing-heatmap-keyword')).toMatch(/contain:\s*strict/);
     expect(cssRule(css, '.listing-heatmap-text-grid > div')).toMatch(/contain:\s*strict/);

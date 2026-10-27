@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
@@ -307,15 +308,9 @@ describe('recommendation approval policy', () => {
   });
 
   it('wires both Main decision handlers through a guarded CAS and surfaces stale-state conflicts', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const approveHandler = source.slice(
-      source.indexOf('async function handleApproveRecommendation'),
-      source.indexOf('async function handleRejectRecommendation'),
-    );
-    const rejectHandler = source.slice(
-      source.indexOf('async function handleRejectRecommendation'),
-      source.indexOf('function handleGetRecommendations'),
-    );
+    const source = mainRuntimeModuleContract('main-recommendation-review-runtime.ts');
+    const approveHandler = mainRuntimeSectionContract('async function handleApproveRecommendation', 'async function handleRejectRecommendation');
+    const rejectHandler = mainRuntimeSectionContract('async function handleRejectRecommendation', 'function handleGetRecommendations');
 
     for (const handler of [approveHandler, rejectHandler]) {
       expect(handler).toContain('applyRecommendationDecision({');

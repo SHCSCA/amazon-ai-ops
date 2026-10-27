@@ -1,6 +1,7 @@
 !include "common.nsh"
 !include "extractAppPackage.nsh"
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
 
 # Keep the portable launcher visible while the embedded application package is
 # extracted. The upstream electron-builder template deliberately calls
@@ -107,5 +108,53 @@ Section "正在解压运行文件"
   SetErrorLevel $0
 
   SetOutPath $EXEDIR
-  RMDir /r $INSTDIR
+  # 主进程结束后，辅助进程或扫描器仍可能短暂占用程序文件。
+  StrCpy $R5 $0
+  StrCpy $1 0
+portable_cleanup_retry:
+  IntOp $1 $1 + 1
+  ClearErrors
+  RMDir /r "$INSTDIR"
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR") i .r2 ?e'
+  Pop $3
+  ${If} $2 = -1
+    ${If} $3 = 2
+    ${OrIf} $3 = 3
+      Goto portable_cleanup_done
+    ${EndIf}
+  ${EndIf}
+  ${If} $1 < 40
+    Sleep 500
+    Goto portable_cleanup_retry
+  ${EndIf}
+
+  # 清理耗尽必须保留失败状态，日志写在解压目录之外。
+  DetailPrint "临时运行目录清理失败：$INSTDIR；尝试 $1 次；应用退出码 $R5；系统错误 $3。"
+  System::Call 'kernel32::GetCurrentProcessId() i .r6'
+  # LS 使用 GetSystemTime 获取 UTC，输出寄存器避开退出码和清理诊断。
+  ${GetTime} "" "LS" $4 $5 $7 $8 $9 $R0 $R1
+  ${If} ${Errors}
+    DetailPrint "无法读取 UTC 时间，保留清理失败状态。"
+    Goto portable_cleanup_log_done
+  ${EndIf}
+  IntFmt $9 "%02d" $9
+  StrCpy $R2 "$7-$5-$4T$9:$R0:$R1Z"
+  ClearErrors
+  FileOpen $R7 "$TEMP\amazon-ai-ops-portable-cleanup.jsonl" a
+  ${IfNot} ${Errors}
+    FileWrite $R7 '{"timestamp":"$R2","level":"error","event":"portable.cleanup_failed","context":{"launcherPid":$6,"attempts":$1,"childExitCode":$R5,"win32Error":$3}}$\r$\n'
+    FileClose $R7
+  ${Else}
+    DetailPrint "便携清理诊断日志写入失败。"
+  ${EndIf}
+portable_cleanup_log_done:
+  ${If} $R5 = 0
+    SetErrorLevel 79
+  ${Else}
+    SetErrorLevel $R5
+  ${EndIf}
+  Goto portable_cleanup_end
+portable_cleanup_done:
+  SetErrorLevel $R5
+portable_cleanup_end:
 SectionEnd

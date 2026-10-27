@@ -597,6 +597,10 @@ export function MissionControlStoreContextProvider({
   );
 }
 
+export function useOptionalMissionControlStoreContext(): MissionControlStoreContextValue | null {
+  return useContext(MissionControlStoreContext);
+}
+
 export function useMissionControlStoreContext(): MissionControlStoreContextValue {
   const value = useContext(MissionControlStoreContext);
   if (!value) throw new Error('MissionControlStoreContextProvider is required');

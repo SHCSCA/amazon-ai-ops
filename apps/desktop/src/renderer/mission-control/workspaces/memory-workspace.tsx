@@ -20,6 +20,9 @@ import {
 import {
   CAUSAL_LEDGER_STAGES,
   missionControlContextKey,
+  createCausalTimelineExport,
+  sanitizeCausalExportText,
+  type CausalTimelineExport,
   type AppendCausalEventInput,
   type CausalEventRecord,
   type CausalLedgerStage,
@@ -35,6 +38,9 @@ import {
 } from './mission-domain-window-api';
 import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './memory-workspace.css';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { WorkspaceActionButton } from '../../components/workspace/action-feedback';
+import { useCanonicalWorkspaceOperation } from './use-canonical-workspace-operation';
 
 const PAGE_SIZE = 10;
 const OPERATOR = 'desktop-operator';
@@ -83,13 +89,13 @@ export type MemoryWorkspaceProps = {
 };
 
 function diagnosticMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message.trim() : String(error ?? '').trim();
+  return sanitizeCausalExportText(error instanceof Error && error.message.trim() ? error.message.trim() : String(error ?? '').trim());
 }
 
 export function memoryOperatorCopy(value: string | null | undefined, fallback = '—'): string {
   const copy = String(value ?? '').trim();
-  if (!copy) return fallback;
-  return copy
+  if (!copy) return sanitizeCausalExportText(fallback);
+  const localized = copy
     .replace(/\bPolicy runtime authority\s+(manual_approval|policy_auto):(closed|open|half_open)\b/gi, (_match, mode: string, state: string) => {
       const modeLabel = mode.toLowerCase() === 'policy_auto' ? '策略内自动' : '人工审批';
       const stateLabel = state.toLowerCase() === 'closed' ? '安全门正常' : state.toLowerCase() === 'open' ? '安全门已阻断' : '安全门待复核';
@@ -124,6 +130,7 @@ export function memoryOperatorCopy(value: string | null | undefined, fallback = 
     .replace(/\bUNKNOWN\b/gi, '结果不确定')
     .replace(/\brevision\b/gi, '版本')
     .replace(/\bdraft\b/gi, '草稿');
+  return sanitizeCausalExportText(localized);
 }
 
 export function memoryOperatorMessage(error: unknown): string {
@@ -202,22 +209,34 @@ export function exportCausalTimeline(
   events: readonly CausalEventRecord[],
   port: CausalTimelineDownloadPort = browserCausalTimelineDownload,
 ): { fileName: string; recordCount: number } {
-  const searchIndex = buildMemorySearchIndex(context, events);
-  const records = [...events].sort((left, right) => left.sequence - right.sequence);
+  return downloadCausalTimelineSnapshot(context, createCausalTimelineExport(context, events, []), port);
+}
+
+export function downloadCausalTimelineSnapshot(
+  context: StoreContextEnvelope,
+  snapshot: CausalTimelineExport,
+  port: CausalTimelineDownloadPort = browserCausalTimelineDownload,
+): { fileName: string; recordCount: number } {
+  if (snapshot.formatVersion !== 'amazon-ai-ops-causal-memory-v2'
+    || missionControlContextKey(context) !== missionControlContextKey(snapshot.scope)) throw new Error('时间线导出上下文已过期。');
+  const verified = createCausalTimelineExport(context, snapshot.records, snapshot.evidenceRefs);
+  if (verified.recordCount !== snapshot.recordCount || verified.evidenceCount !== snapshot.evidenceCount) throw new Error('时间线导出记录数量不一致。');
   const fileName = `amazon-ai-ops-memory-${context.businessDate}.json`;
-  const content = `${JSON.stringify({
-    formatVersion: 'amazon-ai-ops-causal-memory-v1',
-    scope: {
-      marketplace: 'US',
-      currency: 'USD',
-      businessDate: context.businessDate,
-    },
-    recordCount: records.length,
-    records,
-    searchTermsByRecord: Object.fromEntries(searchIndex),
-  }, null, 2)}\n`;
+  const content = `${JSON.stringify(verified, null, 2)}\n`;
   port.download({ fileName, mimeType: 'application/json;charset=utf-8', content });
-  return { fileName, recordCount: records.length };
+  return { fileName, recordCount: verified.recordCount };
+}
+
+export async function exportFreshCausalTimeline(
+  context: StoreContextEnvelope,
+  api: Pick<MemoryDomainRendererApi, 'exportCausalTimeline'>,
+  isCurrent: () => boolean,
+  port: CausalTimelineDownloadPort = browserCausalTimelineDownload,
+): Promise<{ fileName: string; recordCount: number } | null> {
+  if (!isCurrent()) return null;
+  const snapshot = await api.exportCausalTimeline(context);
+  if (!isCurrent()) return null;
+  return downloadCausalTimelineSnapshot(context, snapshot, port);
 }
 
 function capabilityReady(
@@ -316,9 +335,11 @@ export function MemoryEditor({
   return (
     <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
       <section aria-labelledby="memory-editor-title" aria-modal="true" className="mission-control-dialog memory-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
-        <header><div><span>{correction ? '补充更正记录' : '补充经营记忆'}</span><h2 id="memory-editor-title">{correction ? '追加修正事件' : '记录事实或分析'}</h2><p>{correction ? '原记录保持不变，本次内容将作为新的修正记录保存。' : '运营者可补充事实或分析；决策、执行、结果核验和经营效果由系统按业务过程记录。'}</p></div><button aria-label="关闭因果记忆编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button"><X size={18} /></button></header>
-        <div className="memory-form">
-          <label><span>阶段 *</span><select disabled={correction} onChange={(event) => change('stage', event.target.value as MemoryDraft['stage'])} value={draft.stage}><option value="FACT">事实</option><option value="ANALYSIS">分析</option></select></label>
+        <header><div><span>{correction ? '补充更正记录' : '补充经营记忆'}</span><h2 id="memory-editor-title">{correction ? '追加修正事件' : '记录事实或分析'}</h2><p>{correction ? '原记录保持不变，本次内容将作为新的修正记录保存。' : '运营者可补充事实或分析；决策、执行、结果核验和经营效果由系统按业务过程记录。'}</p></div><WorkspaceActionButton aria-label="关闭因果记忆编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onCancel} type="button" disabledReason={'正在追加记录，请等待完成后再关闭编辑器。'}><X size={18} /></WorkspaceActionButton></header>
+        {busy && <p id="memory-editor-busy-reason">正在追加记录，请等待完成后再修改字段。</p>}
+        <fieldset aria-describedby={busy ? "memory-editor-busy-reason" : undefined} disabled={busy} className="memory-form" style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
+          {correction && <p id="memory-frozen-relations" className="memory-form__wide">修正记录沿用原阶段、运营任务和对象，关联字段只读；可修改本次补充内容后追加。</p>}
+          <label><span>阶段 *</span><select disabled={correction} aria-describedby={correction ? "memory-frozen-relations" : undefined} onChange={(event) => change('stage', event.target.value as MemoryDraft['stage'])} value={draft.stage}><option value="FACT">事实</option><option value="ANALYSIS">分析</option></select></label>
           <label className="memory-form__wide"><span>标题 *</span><input data-overlay-initial-focus onChange={(event) => change('title', event.target.value)} value={draft.title} /></label>
           <label className="memory-form__wide"><span>信号 / 依据</span><textarea onChange={(event) => change('signal', event.target.value)} rows={4} value={draft.signal} /></label>
           <label className="memory-form__wide"><span>预期效果</span><textarea onChange={(event) => change('expectedEffect', event.target.value)} rows={3} value={draft.expectedEffect} /></label>
@@ -326,13 +347,13 @@ export function MemoryEditor({
           <details className="memory-form__wide"><summary>诊断详情</summary><div className="memory-form">
             <label><span>状态 *</span><input onChange={(event) => change('status', event.target.value)} value={draft.status} /></label>
             <label><span>事件类型 *</span><input onChange={(event) => change('eventType', event.target.value)} placeholder="operator_fact" value={draft.eventType} /></label>
-            <label><span>Mission ID</span><input disabled={correction} onChange={(event) => change('missionId', event.target.value)} placeholder="MISSION-..." value={draft.missionId} /></label>
-            <label><span>对象类型 *</span><input disabled={correction} onChange={(event) => change('entityType', event.target.value)} placeholder="data_batch / experiment" value={draft.entityType} /></label>
-            <label><span>对象 ID *</span><input disabled={correction} onChange={(event) => change('entityId', event.target.value)} value={draft.entityId} /></label>
-            {correction && <label><span>修正原事件</span><input disabled value={draft.correctsEventId} /></label>}
+            <label><span>Mission ID</span><input disabled={correction} aria-describedby={correction ? "memory-frozen-relations" : undefined} onChange={(event) => change('missionId', event.target.value)} placeholder="MISSION-..." value={draft.missionId} /></label>
+            <label><span>对象类型 *</span><input disabled={correction} aria-describedby={correction ? "memory-frozen-relations" : undefined} onChange={(event) => change('entityType', event.target.value)} placeholder="data_batch / experiment" value={draft.entityType} /></label>
+            <label><span>对象 ID *</span><input disabled={correction} aria-describedby={correction ? "memory-frozen-relations" : undefined} onChange={(event) => change('entityId', event.target.value)} value={draft.entityId} /></label>
+            {correction && <label><span>修正原事件</span><input aria-describedby="memory-frozen-relations" disabled value={draft.correctsEventId} /></label>}
           </div></details>
-        </div>
-        <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '追加中...' : correction ? '追加修正' : '追加事件'}</button></footer>
+        </fieldset>
+        <footer><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={busy} onClick={onCancel} type="button" disabledReason={'正在追加记录，请等待完成后再关闭编辑器。'}>取消</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button" disabledReason={'正在追加记录，请等待完成后再关闭编辑器。'} busy={busy} busyLabel="追加中…">{busy ? '追加中...' : correction ? '追加修正' : '追加事件'}</WorkspaceActionButton></footer>
       </section>
     </div>
   );
@@ -348,13 +369,15 @@ export function MemoryWorkspace({
 }: MemoryWorkspaceProps) {
   const api = useMemo(() => apiOverride ?? readMemoryDomainWindowApi(), [apiOverride]);
   const expectedCapability = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
-  const viewReady = capabilityReady(capabilities, 'memory.timeline.view', previewMode);
-  const authorityKey = storeContext ? missionControlContextKey(storeContext) : 'missing';
+  const authority = useCanonicalWorkspaceOperation(storeContext, capabilities, 'memory/timeline');
+  const viewReady = authority.ready && capabilityReady(capabilities, 'memory.timeline.view', previewMode);
+  const authorityKey = authority.key;
+  const operation = authority.operation;
   const currentAuthorityKey = useRef(authorityKey);
   const requestSequence = useRef(0);
   const mutationSequence = useRef(0);
   const idSequence = useRef(0);
-  const [events, setEvents] = useState<CausalEventRecord[]>([]);
+  const [eventRows, setEvents] = useState<CausalEventRecord[]>([]);
   const [searchIndex, setSearchIndex] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [selectedId, setSelectedId] = useState('');
   const [phase, setPhase] = useState<'loading' | 'ready' | 'blocked' | 'error'>('loading');
@@ -367,13 +390,20 @@ export function MemoryWorkspace({
   const [page, setPage] = useState(1);
   const [editor, setEditor] = useState<MemoryDraft | null>(null);
 
-  currentAuthorityKey.current = authorityKey;
+  if (currentAuthorityKey.current !== authorityKey) {
+    currentAuthorityKey.current = authorityKey;
+    requestSequence.current++;
+    mutationSequence.current++;
+  }
+  const [publishedKey, setPublishedKey] = useState('');
+  const events = publishedKey === authority.projectionKey ? eventRows : [];
   const selected = events.find((event) => event.id === selectedId) ?? null;
-  const busy = pending !== null;
+  const busy = operation.busy;
   const blocked = phase === 'blocked' || phase === 'error';
-  const actionReady = (capabilityId: string) => capabilityReady(capabilities, capabilityId, previewMode);
+  const actionReady = (capabilityId: string) => authority.ready && capabilityReady(capabilities, capabilityId, previewMode);
 
   const load = async () => {
+    const isCurrent = operation.capture();
     const sequence = ++requestSequence.current;
     const capturedKey = authorityKey;
     if (!storeContext || !viewReady) {
@@ -403,14 +433,17 @@ export function MemoryWorkspace({
     try {
       assertMissionAuthorityContext(storeContext);
       const rows = await api.listCausalEvents(storeContext);
-      if (currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
+      if (!isCurrent() || currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
       rows.forEach((event) => assertCausalEventBelongsToContext(event, storeContext));
+      setPublishedKey(authority.projectionKey);
       setEvents(rows);
       setSearchIndex(buildMemorySearchIndex(storeContext, rows));
       setSelectedId((current) => rows.some((event) => event.id === current) ? current : rows[0]?.id ?? '');
       setPhase('ready');
+      return true;
     } catch (loadError) {
-      if (currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
+      rendererRuntimeLog.error('renderer.memory_load_failed', { error: loadError });
+      if (!isCurrent() || currentAuthorityKey.current !== capturedKey || requestSequence.current !== sequence) return;
       setEvents([]);
       setSearchIndex(new Map());
       setSelectedId('');
@@ -424,10 +457,19 @@ export function MemoryWorkspace({
     setEditor(null);
     setPage(1);
     setStageFilter('ALL');
+    setPending(null);
     void load();
-    // Authority changes intentionally reset local selection and forms.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { requestSequence.current++; mutationSequence.current++; };
   }, [api, authorityKey, viewReady]);
+
+  const refresh = async () => {
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setPending('refresh');
+    setFeedback('');
+    try { if (await load() && ticket.isCurrent()) setFeedback('当前店铺因果记忆已刷新。'); }
+    finally { if (ticket.isCurrent()) setPending(null); ticket.finish(); }
+  };
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -451,11 +493,14 @@ export function MemoryWorkspace({
     try {
       input = buildManualCausalEventInput(editor, `CAUSAL-${String(storeContext.storeId)}-${Date.now()}-${++idSequence.current}`);
     } catch (validationError) {
+      rendererRuntimeLog.warn('renderer.memory_input_rejected', { error: validationError });
       setError(memoryOperatorMessage(validationError));
       setDiagnosticError(diagnosticMessage(validationError));
       return;
     }
-    const capturedKey = missionControlContextKey(storeContext);
+    const capturedKey = authorityKey;
+    const ticket = operation.begin();
+    if (!ticket) return;
     const sequence = ++mutationSequence.current;
     setPending(correction ? 'correct' : 'create');
     setError(null);
@@ -463,7 +508,7 @@ export function MemoryWorkspace({
     setFeedback('');
     try {
       const saved = await api.appendManualCausalEvent(storeContext, input);
-      if (currentAuthorityKey.current !== capturedKey || mutationSequence.current !== sequence) return;
+      if (!ticket.isCurrent() || currentAuthorityKey.current !== capturedKey || mutationSequence.current !== sequence) return;
       assertCausalEventBelongsToContext(saved, storeContext);
       setEvents((current) => {
         const next = [saved, ...current];
@@ -474,12 +519,14 @@ export function MemoryWorkspace({
       setEditor(null);
       setFeedback(correction ? '修正记录已追加，原记录保持不变。' : `${STAGE_COPY[saved.stage].label}记录已追加到当前店铺因果链。`);
     } catch (appendError) {
-      if (currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) {
+      rendererRuntimeLog.error('renderer.memory_append_failed', { error: appendError });
+      if (ticket.isCurrent() && currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) {
         setError(memoryOperatorMessage(appendError));
         setDiagnosticError(diagnosticMessage(appendError));
       }
     } finally {
-      if (currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) setPending(null);
+      if (ticket.isCurrent() && currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) setPending(null);
+      ticket.finish();
     }
   };
 
@@ -487,33 +534,57 @@ export function MemoryWorkspace({
   const canCorrectSelected = Boolean(selected && RENDERER_WRITABLE_STAGES.includes(selected.stage));
   const deletePolicy = selectEntityDeletePolicy('causal-event');
 
-  const rebuildSearchIndex = () => {
+  const rebuildSearchIndex = async () => {
     if (!storeContext || !actionReady('memory.timeline.rebuild-index')) {
       setError('当前店铺尚未获准重建因果记忆索引。请刷新后重试。');
       return;
     }
+    const ticket = operation.begin();
+    if (!ticket) return;
+    const capturedKey = authorityKey;
+    const sequence = ++mutationSequence.current;
+    setPending('rebuild');
     try {
+      await Promise.resolve();
+      if (!ticket.isCurrent() || currentAuthorityKey.current !== capturedKey || mutationSequence.current !== sequence) return;
       setSearchIndex(buildMemorySearchIndex(storeContext, events));
       setError(null);
       setFeedback(`搜索索引已从当前店铺 ${events.length} 条真实记录重建。`);
     } catch (indexError) {
+      rendererRuntimeLog.error('renderer.memory_index_failed', { error: indexError });
+      if (!ticket.isCurrent()) return;
       setError(memoryOperatorMessage(indexError));
       setDiagnosticError(diagnosticMessage(indexError));
+    } finally {
+      if (ticket.isCurrent() && currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) setPending(null);
+      ticket.finish();
     }
   };
 
-  const exportTimeline = () => {
-    if (!storeContext || !actionReady('memory.timeline.export')) {
+  const exportTimeline = async () => {
+    if (!api || !storeContext || pending || !actionReady('memory.timeline.export')) {
       setError('当前店铺尚未获准导出因果时间线。请刷新后重试。');
       return;
     }
+    const capturedKey = authorityKey;
+    const ticket = operation.begin();
+    if (!ticket) return;
+    const sequence = ++mutationSequence.current;
+    setPending('export');
     try {
-      const result = exportCausalTimeline(storeContext, events);
+      const result = await exportFreshCausalTimeline(storeContext, api,
+        () => ticket.isCurrent() && currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence);
+      if (!result || !ticket.isCurrent()) return;
       setError(null);
       setFeedback(`已导出当前店铺 ${result.recordCount} 条因果记录。`);
     } catch (exportError) {
+      rendererRuntimeLog.error('renderer.memory_export_failed', { error: exportError });
+      if (!ticket.isCurrent() || currentAuthorityKey.current !== capturedKey || mutationSequence.current !== sequence) return;
       setError(memoryOperatorMessage(exportError));
       setDiagnosticError(diagnosticMessage(exportError));
+    } finally {
+      if (ticket.isCurrent() && currentAuthorityKey.current === capturedKey && mutationSequence.current === sequence) setPending(null);
+      ticket.finish();
     }
   };
 
@@ -524,7 +595,7 @@ export function MemoryWorkspace({
         description="按店铺追溯事实、分析、决策、执行、结果核验与经营效果，并以追加修正保护历史。"
         pageId="memory-timeline"
         title="因果记忆"
-        task={<TaskBanner compact description="保留事实、干预、结果核验与经营效果之间的关系；运营者可补充事实或分析。" eyebrow="经营记忆" primaryAction={{ actionId: 'memory.timeline.create', disabled: !actionReady('memory.timeline.create') || busy || !storeContext, disabledReason: memoryOperatorMessage(blockedReason), label: '记录事实 / 分析', onClick: () => setEditor(memoryDraftFor()) }} secondaryActions={onInspectBoundary ? [{ actionId: 'memory-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="memory-authority" data-state={viewReady ? expectedCapability : 'BLOCKED'}>{viewReady ? previewMode ? '开发预览 · US / USD' : '本机数据 · US / USD' : '已阻断'}</span>} title="因果记忆" tone={blocked ? 'blocked' : 'neutral'}>{previewMode && <p className="memory-preview-note">预览数据 · 店铺切换即隔离</p>}</TaskBanner>}
+        task={<TaskBanner compact description="保留事实、干预、结果核验与经营效果之间的关系；运营者可补充事实或分析。" eyebrow="经营记忆" primaryAction={{ actionId: 'memory.timeline.create', disabled: !actionReady('memory.timeline.create') || busy || !storeContext, disabledReason: busy ? '正在完成当前记忆操作，请等待完成后再追加。' : !storeContext ? '请先在顶部选择店铺并重新连接。' : memoryOperatorMessage(blockedReason), label: '记录事实 / 分析', onClick: () => setEditor(memoryDraftFor()) }} secondaryActions={onInspectBoundary ? [{ actionId: 'memory-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="memory-authority" data-state={viewReady ? expectedCapability : 'BLOCKED'}>{viewReady ? previewMode ? '开发预览 · US / USD' : '本机数据 · US / USD' : '已阻断'}</span>} title="因果记忆" tone={blocked ? 'blocked' : 'neutral'}>{previewMode && <p className="memory-preview-note">预览数据 · 店铺切换即隔离</p>}</TaskBanner>}
         summary={<SummaryStrip ariaLabel="因果记忆当前店铺范围" items={[
           { id: 'events', label: '记忆记录', value: `${events.length}` },
           { id: 'readback', label: '已回读验证', value: `${stageCounts.READBACK}` },
@@ -535,14 +606,14 @@ export function MemoryWorkspace({
         <section aria-label="因果阶段权限" className="memory-stage-rail">{CAUSAL_LEDGER_STAGES.map((stage, index) => <React.Fragment key={stage}><button aria-label={`${STAGE_COPY[stage].label}，${stageCounts[stage]} 条，${STAGE_COPY[stage].authority}`} aria-pressed={stageFilter === stage} data-active={stageFilter === stage || undefined} data-stage={stage} onClick={() => { setStageFilter(stage); setPage(1); }} title={`${STAGE_COPY[stage].description} ${STAGE_COPY[stage].authority}`} type="button"><StageTag stage={stage} /><strong>{STAGE_COPY[stage].label}</strong><small>{stageCounts[stage]} 条</small><span>{STAGE_COPY[stage].authority}{!RENDERER_WRITABLE_STAGES.includes(stage) && <LockKey size={11} />}</span></button>{index < CAUSAL_LEDGER_STAGES.length - 1 && <ArrowBendDownRight aria-hidden="true" className="memory-stage-arrow" size={16} />}</React.Fragment>)}</section>
         <details className="memory-diagnostic-details"><summary>诊断详情</summary><p>Stages: FACT / ANALYSIS / DECISION / ACTION / READBACK / EFFECT. Renderer may append FACT / ANALYSIS; DECISION / ACTION / READBACK / EFFECT are Main-only 只读. Source is an append-only ledger ordered by sequence. Crux Decision values and internal IDs remain diagnostic-only.</p></details>
         <div className="memory-layout">
-          <WorkbenchPanel className="memory-timeline" description="按记录时间读取当前店铺的因果记忆。" footer={filtered.length ? `第 ${safePage}/${pageCount} 页 · ${filtered.length} 条匹配记录` : '当前筛选没有记录。'} title="因果时间线" toolbar={<><button className="workspace-button workspace-button--secondary" onClick={() => { setStageFilter('ALL'); setSearch(''); setPage(1); }} type="button"><Funnel size={15} />全部阶段</button><button className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.rebuild-index') || busy} onClick={rebuildSearchIndex} type="button"><ArrowClockwise size={15} />重建搜索索引</button><button className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.export') || busy} onClick={exportTimeline} type="button"><DownloadSimple size={15} />导出时间线</button></>}>
-            <div className="memory-search"><input aria-label="搜索因果记忆" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索标题、运营任务、对象或信号" value={search} /><button className="workspace-button workspace-button--primary" disabled={!actionReady('memory.timeline.create') || busy} onClick={() => setEditor(memoryDraftFor())} type="button"><Plus size={15} />追加</button></div>
+          <WorkbenchPanel className="memory-timeline" description="按记录时间读取当前店铺的因果记忆。" footer={filtered.length ? `第 ${safePage}/${pageCount} 页 · ${filtered.length} 条匹配记录` : '当前筛选没有记录。'} title="因果时间线" toolbar={<><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!api || !storeContext || !viewReady || busy} disabledReason={busy ? '正在完成当前记忆操作，请等待完成后刷新。' : '请先选择店铺并确认连接及读取权限后刷新。'} busy={pending === 'refresh' && busy} busyLabel="刷新中…" onClick={() => void refresh()} type="button">刷新因果记忆</WorkspaceActionButton><button className="workspace-button workspace-button--secondary" onClick={() => { setStageFilter('ALL'); setSearch(''); setPage(1); }} type="button"><Funnel size={15} />全部阶段</button><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.rebuild-index') || busy} onClick={rebuildSearchIndex} type="button" disabledReason={busy ? '正在完成当前记忆操作，请稍候。' : '当前店铺未开放搜索索引重建，请选择店铺并刷新后重试。'} busy={pending === 'rebuild'} busyLabel="重建中…"><ArrowClockwise size={15} />重建搜索索引</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.export') || busy} onClick={exportTimeline} type="button" disabledReason={busy ? '正在完成当前记忆操作，请稍候。' : '当前店铺未开放时间线导出，请选择店铺并刷新后重试。'} busy={pending === 'export'} busyLabel="导出中…"><DownloadSimple size={15} />导出时间线</WorkspaceActionButton></>}>
+            <div className="memory-search"><input aria-label="搜索因果记忆" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索标题、运营任务、对象或信号" value={search} /><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!actionReady('memory.timeline.create') || busy} onClick={() => setEditor(memoryDraftFor())} type="button" disabledReason={busy ? '当前记忆操作进行中，请稍候。' : '当前店铺未开放事实或分析追加，请选择店铺并刷新后重试。'}><Plus size={15} />追加</WorkspaceActionButton></div>
             {phase === 'loading' && <WorkspaceState description="正在读取当前店铺的因果记录，请稍候。" kind="loading" title="读取因果记忆" />}
             {blocked && <WorkspaceState description="不会加载未经核验的临时数据。" details={error ?? '请确认当前店铺后刷新重试。'} kind="blocked" title="因果记忆已失败关闭" />}
             {blocked && <p>请先确认当前店铺，再刷新重试；若仍失败，请展开下方诊断详情。</p>}
             {phase === 'ready' && !pageRows.length && <WorkspaceState description="可追加第一条事实或分析；其余阶段由系统记录并保持只读。" kind="empty" title="当前筛选没有因果记录" />}
             {phase === 'ready' && Boolean(pageRows.length) && <><div aria-hidden="true" className="memory-list-columns"><span>阶段</span><span>因果记录</span><span>记录时间</span></div><ul aria-label="因果记忆记录" className="memory-event-list">{pageRows.map((event) => <li key={event.id}><button aria-pressed={event.id === selected?.id} data-selected={event.id === selected?.id || undefined} data-stage={event.stage} onClick={() => setSelectedId(event.id)} type="button"><span className="memory-event-sequence">{STAGE_COPY[event.stage].label}</span><span className="memory-event-node" /><div><span><StageTag stage={event.stage} /></span><strong>{memoryOperatorCopy(event.title, '未命名记录')}</strong><p>{memoryOperatorCopy(event.signal || event.intervention || event.observedEffect || event.expectedEffect, '结构化记录已保存')}</p></div><small className="memory-event-meta">{event.createdAt.slice(0, 16).replace('T', ' ')}</small></button></li>)}</ul></>}
-            <nav aria-label="因果事件分页" className="memory-pagination"><button aria-label="上一页因果事件" className="workspace-button workspace-button--secondary" disabled={safePage <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button"><CaretLeft size={15} /></button><span>{safePage} / {pageCount}</span><button aria-label="下一页因果事件" className="workspace-button workspace-button--secondary" disabled={safePage >= pageCount || busy} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button"><CaretRight size={15} /></button></nav>
+            <nav aria-label="因果事件分页" className="memory-pagination"><WorkspaceActionButton aria-label="上一页因果事件" className="workspace-button workspace-button--secondary" disabled={safePage <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button" disabledReason={busy ? '当前记忆操作进行中，请稍候。' : '已经是第一页。'}><CaretLeft size={15} /></WorkspaceActionButton><span>{safePage} / {pageCount}</span><WorkspaceActionButton aria-label="下一页因果事件" className="workspace-button workspace-button--secondary" disabled={safePage >= pageCount || busy} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button" disabledReason={busy ? '当前记忆操作进行中，请稍候。' : '已经是最后一页。'}><CaretRight size={15} /></WorkspaceActionButton></nav>
           </WorkbenchPanel>
 
           <aside aria-label="因果记忆事件详情" className="memory-inspector" data-scroll-owner="memory-event-detail">
@@ -554,13 +625,13 @@ export function MemoryWorkspace({
               {selected.correctsEventId && <p className="memory-correction-link"><ClockCounterClockwise size={15} />这是一条修正记录，原记录保持不变。</p>}
               <section className="memory-authority-card" data-writable={canCorrectSelected || undefined}>{canCorrectSelected ? <NotePencil size={19} /> : <LockKey size={19} />}<div><strong>{canCorrectSelected ? '可追加修正' : '系统历史记录'}</strong><p>{canCorrectSelected ? deletePolicy.reason : `${STAGE_COPY[selected.stage].label}由系统业务过程记录，当前仅可查看。`}</p></div></section>
               <details className="memory-diagnostic-details"><summary>诊断详情</summary><dl><div><dt>sequence</dt><dd>{selected.sequence}</dd></div><div><dt>stage</dt><dd>{selected.stage}</dd></div><div><dt>eventType</dt><dd>{selected.eventType}</dd></div><div><dt>entityType / entityId</dt><dd>{selected.entityType} / {selected.entityId}</dd></div><div><dt>Mission ID</dt><dd>{selected.missionId || 'unbound'}</dd></div><div><dt>sessionGeneration</dt><dd>{selected.sessionGeneration}</dd></div><div><dt>source / actorId</dt><dd>{selected.source} / {selected.actorId}</dd></div>{selected.correctsEventId && <div><dt>correctsEventId / correction</dt><dd>{selected.correctsEventId}</dd></div>}</dl></details>
-              <div className="memory-actions"><button className="workspace-button workspace-button--primary" disabled={!canCorrectSelected || !actionReady('memory.timeline.correct') || busy} onClick={() => selected && setEditor(memoryDraftFor(selected))} type="button"><ClockCounterClockwise size={15} />追加修正</button></div>
+              <div className="memory-actions"><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!canCorrectSelected || !actionReady('memory.timeline.correct') || busy} onClick={() => selected && setEditor(memoryDraftFor(selected))} type="button" disabledReason={busy ? '当前记忆操作进行中，请稍候。' : !canCorrectSelected ? '系统历史记录只读，请选择事实或分析记录后追加修正。' : '当前店铺未开放追加修正，请刷新后重试。'}><ClockCounterClockwise size={15} />追加修正</WorkspaceActionButton></div>
             </> : phase === 'ready' ? <WorkspaceState description="从左侧选择一条因果记录，查看依据、干预与效果。" kind="empty" title="等待选择记录" /> : null}
           </aside>
         </div>
         <section className="memory-boundary-note"><TreeStructure size={19} /><div><strong>因果记忆保留完整历史</strong><p>历史记录不能编辑或删除。事实有误时追加修正；决策、执行、结果核验与经营效果由对应业务过程写入。</p></div><CheckCircle size={18} /></section>
         {diagnosticError && <details className="memory-diagnostic-details"><summary>诊断详情</summary><pre>{diagnosticError}</pre></details>}
-        {(error || feedback) && <p aria-live="polite" className="memory-feedback" data-tone={error ? 'error' : 'success'}>{error || feedback}</p>}
+        {(error || feedback) && <p aria-live="polite" role={error ? 'alert' : 'status'} className="memory-feedback" data-tone={error ? 'error' : 'success'}>{error || feedback}</p>}
       </PageFrame>
       {editor && <MemoryEditor busy={Boolean(pending)} draft={editor} onCancel={() => setEditor(null)} onChange={setEditor} onSave={() => void append()} />}
     </div>

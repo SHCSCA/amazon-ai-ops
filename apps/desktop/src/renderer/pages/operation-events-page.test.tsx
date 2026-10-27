@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -19,7 +20,7 @@ import type { OperationEventView, OperationScope } from '../types';
 
 describe('OperationEventsPage dialog focus contract', () => {
   it('delegates modal focus, dismissal, and background isolation to the shared scope', () => {
-    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+    const source = ['operation-events-page.tsx', 'operation-events-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toContain('const operationEventDialogFocus = useOverlayFocusScope');
     expect(source).toContain('open: eventEditorOpen');
@@ -118,11 +119,11 @@ describe('operation events page product/global views', () => {
   });
 
   it('renders the event task model through one task-first banner', () => {
-    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+    const source = ['operation-events-page.tsx', 'operation-events-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toContain("import { TaskBanner } from '../components/workspace';");
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);
-    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(source).toContain("label: saving ? '记录事件' : taskState.primaryActionLabel");
     expect(source).toContain('onClick: openEventEditor');
   });
 
@@ -167,8 +168,8 @@ describe('operation events page product/global views', () => {
   });
 
   it('moves the new event form into a modal instead of expanding a long form in the page', () => {
-    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = ['operation-events-page.tsx', 'operation-events-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
     const detailsStart = source.indexOf('<ProgressiveDetails title="新增/维护事件、AI 使用说明和覆盖统计">');
     const detailsEnd = source.indexOf('</ProgressiveDetails>', detailsStart);
     const detailsMarkup = source.slice(detailsStart, detailsEnd);
@@ -245,7 +246,7 @@ describe('operation events page product/global views', () => {
   });
 
   it('clears the draft immediately before the save IPC and restores it on failure', () => {
-    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+    const source = ['operation-events-page.tsx', 'operation-events-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const clearIndex = source.indexOf('setDraft(resetDraft);');
     const ipcIndex = source.indexOf('electronAPI.createOperationEvent');
 
@@ -258,7 +259,7 @@ describe('operation events page product/global views', () => {
   });
 
   it('keeps the cleared form rebound animation scoped and non-layout shifting', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.operation-event-form');
     expect(css).toContain('contain: layout style');
@@ -267,7 +268,7 @@ describe('operation events page product/global views', () => {
   });
 
   it('visually isolates timeline cards on hover and keyboard focus', () => {
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.event-card:hover');
     expect(css).toContain('.event-card:focus-visible');

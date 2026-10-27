@@ -17,6 +17,7 @@ import type {
   StoreSessionMetadata,
 } from '@amazon-ai-ops/shared-types';
 import { describe, expect, it, vi } from 'vitest';
+import { readStoreCollectionAutomation } from '@amazon-ai-ops/shared-types';
 import {
   StoreCollectionMainRuntimeError,
 } from './store-collection-main-runtime';
@@ -315,6 +316,10 @@ function fixture(input: {
     policySuppression,
     storeCoordinator,
     runtimeConfig,
+    automationControl: {
+      get: (context: StoreContextEnvelope) => readStoreCollectionAutomation(null, context),
+      getForStoreRecord: (store: StoreRecord) => readStoreCollectionAutomation(null, store),
+    },
     lingxingCoordinator: { start: lingxingStart, resumeInPlace: lingxingResumeInPlace },
     importRepository,
     settings,

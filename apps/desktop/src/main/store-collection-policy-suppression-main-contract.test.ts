@@ -1,8 +1,9 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const source = mainRuntimeModuleContract('main-runtime-context.ts');
 const startupRecoveryMethodNames = [
   'issueStartupRecoveryConfirmationCapability',
   'confirmStartupRecoverySafe',
@@ -36,21 +37,25 @@ describe('Main policy-dispatch suppression composition root', () => {
     const constructor = 'const storeCollectionPolicySuppression = new StoreCollectionPolicySuppressionController();';
     const authority = 'const executionAuthorityService = new ExecutionAuthorityService({';
 
-    expect(source).toContain(
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain(
       "import { StoreCollectionPolicySuppressionController } from './store-collection-policy-suppression';",
     );
     expect(source.match(/new StoreCollectionPolicySuppressionController\(\)/g)).toHaveLength(1);
     expect(source.indexOf(constructor)).toBeGreaterThan(0);
-    expect(source.indexOf(constructor)).toBeLessThan(source.indexOf(authority));
-    expect(source).toContain('const executionPolicyDispatchSuppression = Object.freeze({');
-    expect(source).toContain('state.storeCollectionMainRuntime?.isPolicyDispatchSuppressed()');
-    expect(source).toContain('?? storeCollectionPolicySuppression.isPolicyDispatchSuppressed()');
-    expect(source).toContain('policyDispatchSuppression: executionPolicyDispatchSuppression,');
-    expect(source).toContain('policySuppression: storeCollectionPolicySuppression,');
-    expect(source).toContain('await state.storeCollectionMainRuntime!.recoverStartupThenConfirm()');
-    expect(findStartupRecoveryConfirmationReferences(source)).toEqual([]);
-    expect(source).not.toContain('storeCollectionPolicySuppression.resume');
-    expect(source).not.toContain('storeCollectionPolicySuppression.pump');
+    const initialization = mainRuntimeFunctionContract('initApp');
+    const collection = mainRuntimeFunctionContract('initializeStoreCollectionProductionRuntime');
+    const entry = mainRuntimeModuleContract('index.ts');
+    expect(initialization.indexOf(authority)).toBeGreaterThan(0);
+    expect(entry.indexOf('installMainRuntimeContext(createMainRuntimeContext(__filename))')).toBeLessThan(entry.indexOf('void startDesktopApplication({'));
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('const executionPolicyDispatchSuppression = Object.freeze({');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('state.storeCollectionMainRuntime?.isPolicyDispatchSuppressed()');
+    expect(mainRuntimeModuleContract('main-runtime-context.ts')).toContain('?? storeCollectionPolicySuppression.isPolicyDispatchSuppressed()');
+    expect(mainRuntimeModuleContract('main-application-initialization-runtime.ts')).toContain('policyDispatchSuppression: executionPolicyDispatchSuppression,');
+    expect(mainRuntimeModuleContract('main-collection-initialization-runtime.ts')).toContain('policySuppression: storeCollectionPolicySuppression,');
+    expect(mainRuntimeModuleContract('main-application-initialization-runtime.ts')).toContain('await state.storeCollectionMainRuntime!.recoverStartupThenConfirm()');
+    expect(mainRuntimeModuleContracts().flatMap((module) => findStartupRecoveryConfirmationReferences(module.source))).toEqual([]);
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('storeCollectionPolicySuppression.resume'); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('storeCollectionPolicySuppression.pump'); }
   });
 
   it('detects startup recovery confirmation calls made through an alias', () => {

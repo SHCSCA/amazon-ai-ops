@@ -1,0 +1,125 @@
+{
+  "archivedAt": "2026-10-27",
+  "reason": "当前状态归并；全部历史原字节可由parts顺序重建",
+  "entries": [
+    {
+      "originalPath": "README.md",
+      "originalSha256": "e985510127b5137404377137c71a7a65ed3c982dd159e186788fd354b14c96cb",
+      "originalSizeBytes": 32169,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/README/original.md",
+          "sha256": "e985510127b5137404377137c71a7a65ed3c982dd159e186788fd354b14c96cb",
+          "sizeBytes": 32169
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "PROGRESS.md",
+      "originalSha256": "b11aefa7239f13a2a22238fa9d322ed14d43660e2f472094fb012a6c02f465b6",
+      "originalSizeBytes": 523586,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/PROGRESS/checkpoint-01.md",
+          "sha256": "1b1764547425fa64eec77727a0d3266a95d9adfb8245d2851204441ad53e90f6",
+          "sizeBytes": 205567
+        },
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/PROGRESS/checkpoint-02.md",
+          "sha256": "e033bbcb999cd92ee2df7f692e45adbdb45e971f3e739778769562846274e34e",
+          "sizeBytes": 181493
+        },
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/PROGRESS/checkpoint-03.md",
+          "sha256": "dcf32627e01ce282779fa518176370bfb3d1cbc7f01ffcbc63fbaf95e009b9b9",
+          "sizeBytes": 136526
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "BLOCKED.md",
+      "originalSha256": "222e6dae46c59f6bb7118a93c1d06b2bc35877415c497a623f0046891373ddb8",
+      "originalSizeBytes": 279276,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/BLOCKED/checkpoint-01.md",
+          "sha256": "cedaaddba96e9e1ff5d51c3f9e879c970a90e93a2923abf687771d48f6620813",
+          "sizeBytes": 153472
+        },
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/BLOCKED/checkpoint-02.md",
+          "sha256": "b45ab3121d9cb9a4185393b6ae1de4ca194431afe57859e303cdc7fbc8fa94cd",
+          "sizeBytes": 125804
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "AGENTS.md",
+      "originalSha256": "ae1d53a99fcc1f743fb04b5a92611af079c67cd7aa0e478d467733606efec0f6",
+      "originalSizeBytes": 69777,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/AGENTS/original.md",
+          "sha256": "ae1d53a99fcc1f743fb04b5a92611af079c67cd7aa0e478d467733606efec0f6",
+          "sizeBytes": 69777
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "CLAUDE.md",
+      "originalSha256": "5346edbbd3cc69e0f7496160500fd07e7e372a847988a01a8ea06f3a9bc2a69a",
+      "originalSizeBytes": 11213,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/CLAUDE/original.md",
+          "sha256": "5346edbbd3cc69e0f7496160500fd07e7e372a847988a01a8ea06f3a9bc2a69a",
+          "sizeBytes": 11213
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "docs/V1_6_VERIFICATION_STATUS.md",
+      "originalSha256": "d8fd7cc3f5d492429ee1b73613a56b185b18449bc225cf27a8ebeba391a5335c",
+      "originalSizeBytes": 4742,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/docs/V1_6_VERIFICATION_STATUS/original.md",
+          "sha256": "d8fd7cc3f5d492429ee1b73613a56b185b18449bc225cf27a8ebeba391a5335c",
+          "sizeBytes": 4742
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "docs/V1_6_QUICK_REFERENCE.md",
+      "originalSha256": "a9ba3d8ab0da3d8772c38bdc76f392e0cfc958d9a179f1933a6d76ff638885d8",
+      "originalSizeBytes": 5357,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/docs/V1_6_QUICK_REFERENCE/original.md",
+          "sha256": "a9ba3d8ab0da3d8772c38bdc76f392e0cfc958d9a179f1933a6d76ff638885d8",
+          "sizeBytes": 5357
+        }
+      ],
+      "byteExactConcatenation": true
+    },
+    {
+      "originalPath": "docs/USER_GUIDE_v1_5.md",
+      "originalSha256": "87a770bcb2eb81042547254e5e6195648decad5c2d51d4759cb4a526ac617ff6",
+      "originalSizeBytes": 82918,
+      "parts": [
+        {
+          "path": "docs/history/2026-10-27-documentation-sync/docs/USER_GUIDE_v1_5/original.md",
+          "sha256": "87a770bcb2eb81042547254e5e6195648decad5c2d51d4759cb4a526ac617ff6",
+          "sizeBytes": 82918
+        }
+      ],
+      "byteExactConcatenation": true
+    }
+  ]
+}

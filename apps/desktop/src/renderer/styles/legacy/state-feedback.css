@@ -1,0 +1,293 @@
+.evidence-disclosure {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.evidence-disclosure summary {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.dashboard-details summary,
+.details-panel summary,
+.evidence-disclosure summary {
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.dashboard-details summary:hover,
+.details-panel summary:hover,
+.evidence-disclosure summary:hover {
+  border-color: var(--line-strong);
+  background: #f8fafc;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.dashboard-details summary:focus-visible,
+.details-panel summary:focus-visible,
+.evidence-disclosure summary:focus-visible {
+  border-color: rgba(37, 99, 235, 0.34);
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+  background: #f8fafc;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.dashboard-details summary:active,
+.details-panel summary:active,
+.evidence-disclosure summary:active {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-details summary,
+  .details-panel summary,
+  .evidence-disclosure summary {
+    transition: none;
+  }
+
+  .dashboard-details summary:active,
+  .details-panel summary:active,
+  .evidence-disclosure summary:active {
+    transform: none;
+  }
+
+  .product-management-option {
+    transition: none;
+  }
+
+  .product-management-option:active {
+    transform: none;
+  }
+
+  .product-management-option-locked {
+    animation: none;
+  }
+
+  .state-light-grid-refreshing .state-light-card,
+  .state-light-grid-refreshing .state-light-card::after {
+    animation: none;
+  }
+
+  .state-light-grid-refreshing .state-light-card::after {
+    opacity: 0;
+  }
+}
+
+.state-light-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.state-light-card {
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 10px 12px;
+  contain: layout style paint;
+  outline: 0;
+  transition: box-shadow 120ms var(--motion-standard), border-color 120ms var(--motion-standard), background 120ms var(--motion-standard);
+}
+
+.state-light-card:hover {
+  border-color: rgba(37, 99, 235, 0.24);
+  box-shadow: inset 3px 0 0 rgba(37, 99, 235, 0.18), 0 0 0 2px rgb(37 99 235 / 0.06);
+}
+
+.state-light-grid-refreshing .state-light-card {
+  animation: state-light-refresh-pulse 180ms ease-out;
+  border-color: rgba(37, 99, 235, 0.45);
+}
+
+.state-light-grid-refreshing .state-light-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.14), transparent);
+  pointer-events: none;
+  transform: translateX(-100%);
+  animation: state-light-refresh-sweep 180ms ease-out;
+}
+
+@keyframes state-light-refresh-pulse {
+  0% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+  40% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+
+@keyframes state-light-refresh-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.state-light-card span,
+.micro-step span,
+.form-table-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.state-light-card strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-main);
+  font-size: 16px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.state-light-card p {
+  margin: 5px 0 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.state-light-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+}
+
+.state-light-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+}
+
+.state-light-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+}
+
+.state-light-pending {
+  border-color: var(--tone-pending-border);
+  background: var(--tone-pending-bg);
+}
+
+.micro-stepper {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 8px;
+}
+
+.micro-step {
+  display: grid;
+  grid-template-columns: 18px minmax(150px, 0.3fr) minmax(90px, 0.18fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 6px 8px;
+  contain: layout style paint;
+  outline: 0;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.micro-step-indicator {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  color: #94a3b8;
+  justify-self: center;
+}
+
+.micro-step strong {
+  color: var(--text-main);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.micro-step p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.micro-step-ready {
+  border-color: var(--tone-ready-border);
+}
+
+.micro-step-ready .micro-step-indicator {
+  border-color: #15803d;
+  background: #15803d;
+  box-shadow: 0 0 0 3px rgb(21 128 61 / 0.1);
+}
+
+.micro-step-warning {
+  border-color: var(--tone-warning-border);
+}
+
+.micro-step-warning .micro-step-indicator {
+  color: #b45309;
+  border-color: #b45309;
+  box-shadow: 0 0 0 3px rgb(180 83 9 / 0.1);
+}
+
+.micro-step-blocked {
+  border-color: var(--tone-blocked-border);
+}
+
+.micro-step-blocked .micro-step-indicator {
+  color: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 3px rgb(185 28 28 / 0.1);
+}
+
+.micro-step-pending {
+  border-color: var(--tone-pending-border);
+  background: var(--tone-pending-bg);
+}
+
+.micro-step-pending .micro-step-indicator {
+  border-color: #94a3b8;
+  border-right-color: transparent;
+  animation: micro-step-spin 900ms linear infinite;
+}
+
+@keyframes micro-step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .micro-step {
+    transition: none;
+  }
+}
+

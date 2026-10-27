@@ -18,7 +18,7 @@ export interface MissionDomainPreloadApi {
     | 'listObservations' | 'listMetricSnapshots' | 'appendObservation',
     ScopedCall
   >>;
-  readonly causal: Readonly<Record<'listEvents' | 'appendEvent', ScopedCall>>;
+  readonly causal: Readonly<Record<'listEvents' | 'appendEvent' | 'exportTimeline', ScopedCall>>;
 }
 
 /** A closed, deeply frozen bridge. Renderer callers cannot select channels. */
@@ -90,6 +90,7 @@ export function createMissionDomainPreloadApi(ipc: MissionDomainIpcInvoker): Mis
     causal: Object.freeze({
       listEvents: call('mission-domain:causal:list-events'),
       appendEvent: call('mission-domain:causal:append-event'),
+      exportTimeline: call('mission-domain:causal:export-timeline'),
     }),
   });
 }

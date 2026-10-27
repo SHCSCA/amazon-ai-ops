@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
@@ -209,7 +210,7 @@ describe('buildStrategyRunFeedback', () => {
     });
     expect(feedback.className).toContain('ad-quant-strategy-feedback-running');
 
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
     expect(css).toContain('.ad-quant-strategy-radar');
     expect(css).toContain('@keyframes ad-quant-radar-sweep');
     expect(css).toContain('@keyframes ad-quant-radar-pulse');
@@ -653,7 +654,7 @@ describe('buildAdQuantDecisionStatus', () => {
 
 describe('ad quant task-first surface', () => {
   it('uses the shared task banner as the only first-screen primary action', () => {
-    const source = readFileSync(new URL('./ad-quant-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./ad-quant-workspace.tsx', import.meta.url), 'utf8');
     const blockedStateSource = source.match(/\) : !canDiagnose \? \([\s\S]*?\) : diagnosticCount <= 0 \? \(/)?.[0] || '';
 
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);
@@ -663,7 +664,7 @@ describe('ad quant task-first surface', () => {
   });
 
   it('marks timeline and product evidence as diagnosis-specific compact summaries', () => {
-    const source = readFileSync(new URL('./ad-quant-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./ad-quant-workspace.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('diagnosis-inspector-summary--timeline');
     expect(source).toContain('diagnosis-inspector-summary--product');

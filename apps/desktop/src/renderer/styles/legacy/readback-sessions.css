@@ -1,0 +1,114 @@
+.readback-session-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.readback-session-list li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 74px;
+  border: 1px solid #cfe0f4;
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+}
+
+.readback-session-list span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #b8cce4;
+  border-radius: 50%;
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.readback-session-list p {
+  margin: 0;
+  color: #41536a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.readback-session-result {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid #cfe0f4;
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+}
+
+.readback-session-result div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.readback-session-result span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.readback-session-result code {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.readback-session-result-embedded {
+  margin-top: 4px;
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.readback-session-check {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+}
+
+.readback-session-check strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.readback-session-check span,
+.readback-session-check li {
+  color: #41536a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.readback-session-check ul {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.readback-session-check-ready {
+  border-color: #b9d8c5;
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.readback-session-check-blocked {
+  border-color: #e9c0a0;
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+

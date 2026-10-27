@@ -47,6 +47,14 @@ function ordinaryText(markup: string): string {
 }
 
 describe('PolicyWorkspace', () => {
+  it('keeps enabled policy metadata immutable versions and draft preparation neutral rather than verified-success green', () => {
+    const css = readFileSync(new URL('./policy-workspace.css', import.meta.url), 'utf8');
+    expect(css).toContain('.policy-domain-list em[data-status="active"]');
+    expect(css).toContain('.policy-domain-version-list article[data-status="enabled"]');
+    expect(css).toContain('.policy-domain-enable-path li[data-complete="true"]');
+    expect(css).not.toMatch(/#087956|#ebf8f3|#f2fbf7|#dff5eb/);
+    expect(css).toContain('#1f5bc9');
+  });
   it('states exact priority semantics in the operator four-step dialog', () => {
     const markup = renderToStaticMarkup(<StrategyWizardDialog
       busy={false}
@@ -173,7 +181,7 @@ describe('PolicyWorkspace', () => {
       },
     }, context)).rejects.toThrow(/target authority unavailable/);
 
-    const source = readFileSync(new URL('./policy-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['policy-workspace.tsx','policy-workspace-contracts.tsx','policy-workspace-model.tsx','policy-workspace-inputs.tsx','policy-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain("setScopeOptionsPhase('error')");
     expect(source).toContain('策略对象读取失败');
     expect(source).toContain('重新读取对象');
@@ -182,7 +190,7 @@ describe('PolicyWorkspace', () => {
   });
 
   it('presents the operator strategy flow as four Chinese steps with a visible enable path', () => {
-    const source = readFileSync(new URL('./policy-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['policy-workspace.tsx','policy-workspace-contracts.tsx','policy-workspace-model.tsx','policy-workspace-inputs.tsx','policy-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('对象范围');
     expect(source).toContain('允许动作');
     expect(source).toContain('变更、预算、次数、冷却与时段限制');
@@ -332,7 +340,7 @@ describe('PolicyWorkspace', () => {
     expect(markup).toContain('<select disabled=""');
     expect(ordinaryText(markup)).toContain('已有版本，对象范围已冻结');
     expect(ordinaryText(markup)).toContain('请新建策略');
-    const source = readFileSync(new URL('./policy-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['policy-workspace.tsx','policy-workspace-contracts.tsx','policy-workspace-model.tsx','policy-workspace-inputs.tsx','policy-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toContain('scopeFrozen={selectedVersions.length > 0}');
   });
 
@@ -440,7 +448,7 @@ describe('PolicyWorkspace', () => {
       versionEditor: null,
     });
 
-    const source = readFileSync(new URL('./policy-workspace.tsx', import.meta.url), 'utf8');
+    const source = ['policy-workspace.tsx','policy-workspace-contracts.tsx','policy-workspace-model.tsx','policy-workspace-inputs.tsx','policy-workspace-editors.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).toMatch(/setVersions\(\[\]\);\s*setVersionEditor\(null\);\s*setSelectedId\(policyId\);/);
     expect(source).toContain('selectedVersionEditor && <VersionDialog');
     expect(source).toContain('if (!selectedVersionEditor)');

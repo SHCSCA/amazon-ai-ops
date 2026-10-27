@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
@@ -329,11 +330,8 @@ describe('ad readback export authority', () => {
   });
 
   it('wires Main export through the authority binder before the evidence builder', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const handler = source.slice(
-      source.indexOf('function handleExportAdReadbackEvidence'),
-      source.indexOf('function handlePrepareAdReadbackSession'),
-    );
+    const source = mainRuntimeModuleContract('main-ad-execution-runtime.ts');
+    const handler = mainRuntimeSectionContract('function handleExportAdReadbackEvidence', 'function handlePrepareAdReadbackSession');
 
     expect(handler).toContain('buildAuthorizedAdReadbackEvidenceInput({');
     expect(handler).toContain('assertRecommendationWritableTargetCurrent(');
@@ -344,11 +342,8 @@ describe('ad readback export authority', () => {
   });
 
   it('keeps raw gate failures in local logs and returns a stable operator-facing export error', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const handler = source.slice(
-      source.indexOf('function handleExportAdReadbackEvidence'),
-      source.indexOf('function handlePrepareAdReadbackSession'),
-    );
+    const source = mainRuntimeModuleContract('main-ad-execution-runtime.ts');
+    const handler = mainRuntimeSectionContract('function handleExportAdReadbackEvidence', 'function handlePrepareAdReadbackSession');
 
     expect(handler).toContain("stage: 'export-gate'");
     expect(handler).toContain(
@@ -358,21 +353,22 @@ describe('ad readback export authority', () => {
   });
 
   it('revalidates database authority before final readiness can accept readback evidence', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const helper = source.slice(
-      source.indexOf('function validateCurrentAdReadbackEvidenceAuthority'),
-      source.indexOf('function handleRefreshFinalReadiness'),
-    );
-    const handler = source.slice(
-      source.indexOf('function handleRefreshFinalReadiness'),
-      source.indexOf('function recordAdActionReasonAiCallLog'),
-    );
+    const source = mainRuntimeModuleContract('main-ad-execution-runtime.ts');
+    const deliverySource = readFileSync(new URL('./delivery-legacy-runtime.ts', import.meta.url), 'utf8');
+    const helper = mainRuntimeSectionContract('function validateCurrentAdReadbackEvidenceAuthority', 'function handleRefreshFinalReadiness');
+    const handler = mainRuntimeSectionContract('function handleRefreshFinalReadiness', 'function recordAdActionReasonAiCallLog');
+    const deliveryOptions = mainRuntimeSectionContract('const deliveryRuntime = createDeliveryRuntime(', 'const exportCurrentDeliveryBundle = createDeliveryBundleExporter(');
 
     expect(helper).toContain('assertCurrentAdReadbackEvidenceAuthority({');
     expect(helper).toContain('assertRecommendationWritableTargetCurrent(');
     expect(helper).toContain("stage: 'verify' | 'final-readiness'");
-    expect(handler).toContain('validateAdReadbackAuthority:');
-    expect(handler).toContain("validateCurrentAdReadbackEvidenceAuthority(evidencePath, 'final-readiness')");
+    expect(handler).toContain('return deliveryRuntime.refreshFinalReadiness(input);');
+    expect(deliveryOptions).toContain(
+      'validateAdReadbackAuthority: (evidencePath, stage) => validateCurrentAdReadbackEvidenceAuthority(evidencePath, stage)',
+    );
+    expect(deliverySource).toContain(
+      "validateAdReadbackAuthority: (evidencePath) => options.validateAdReadbackAuthority(evidencePath, 'final-readiness')",
+    );
   });
 
   it('revalidates a structurally valid evidence file against the current approved row', () => {

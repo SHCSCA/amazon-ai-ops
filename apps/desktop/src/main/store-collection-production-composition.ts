@@ -95,6 +95,8 @@ export interface StoreCollectionProductionCompositionOptions {
   policySuppression: StoreCollectionPolicySuppressionController;
   storeCoordinator: ProductionStoreCoordinator;
   runtimeConfig: ProductionRuntimeConfig;
+  automationControl: StoreCollectionOrchestratorDomainAdapterOptions['automationControl']
+    & StoreCollectionSchedulerReadModelOptions['automationControl'];
   lingxingCoordinator: ProductionLingxingCoordinator;
   importRepository: ProductionImportRepository;
   settings: Readonly<{
@@ -156,6 +158,7 @@ export function createStoreCollectionProductionComposition(
   const domain = new StoreCollectionOrchestratorDomainAdapter({
     coordinator: options.storeCoordinator,
     config: options.runtimeConfig,
+    automationControl: options.automationControl,
     repository: options.importRepository,
     ...(options.now ? { now: options.now } : {}),
   });
@@ -261,6 +264,7 @@ export function createStoreCollectionProductionComposition(
   const schedulerReadModel = new StoreCollectionSchedulerReadModel({
     authority: options.storeCoordinator,
     runtimeConfig: options.runtimeConfig,
+    automationControl: options.automationControl,
     importRepository: options.importRepository,
     orchestrator,
     manualRun: (context) => runtime.runNow(context),

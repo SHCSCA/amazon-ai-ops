@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { appCompositionSource } from './app-composition.test-support';
 
 function rendererSource(relativePath: string): string {
+  if (relativePath === './App.tsx') return appCompositionSource();
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 }
 
@@ -46,7 +48,7 @@ describe('Task 5A Today workspace integration', () => {
   });
 
   it('makes Today a task banner, summary strip, object workbench, and compact context', () => {
-    const dashboard = rendererSource('./pages/dashboard-page.tsx');
+    const dashboard = rendererSource('./pages/dashboard-workspace.tsx');
 
     expect(dashboard).toContain('<PageFrame');
     expect(dashboard).toContain('<TaskBanner');
@@ -58,7 +60,7 @@ describe('Task 5A Today workspace integration', () => {
   });
 
   it('uses a single non-nested technical disclosure on Today', () => {
-    const dashboard = rendererSource('./pages/dashboard-page.tsx');
+    const dashboard = rendererSource('./pages/dashboard-workspace.tsx');
     const disclosureCount = dashboard.match(/<ProgressiveDetails\b/g)?.length || 0;
 
     expect(disclosureCount).toBe(1);
@@ -66,9 +68,9 @@ describe('Task 5A Today workspace integration', () => {
   });
 
   it('offers an in-place reload action when Today cannot load the current scope', () => {
-    const dashboard = rendererSource('./pages/dashboard-page.tsx');
+    const dashboard = rendererSource('./pages/dashboard-workspace.tsx');
 
-    expect(dashboard).toContain('const { data, error, loading, reload, scope } = useBusinessDataPipeline();');
+    expect(dashboard).toContain('const { data, error, loading, reload, scope, configurationRequired } = useBusinessDataPipeline();');
     expect(dashboard).toContain('label: \'重试读取\'');
     expect(dashboard).toContain('onClick: reload');
   });

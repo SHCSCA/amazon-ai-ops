@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -182,15 +183,9 @@ describe('writable Ads target authority', () => {
   });
 
   it('revalidates the writable target authority immediately before an approval CAS', () => {
-    const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const currentGate = source.slice(
-      source.indexOf('function assertRecommendationCurrentDataGate'),
-      source.indexOf('function handleResolveRecommendationReview'),
-    );
-    const currentTargetAuthority = source.slice(
-      source.indexOf('function assertRecommendationWritableTargetCurrent'),
-      source.indexOf('function validateCurrentAdReadbackEvidenceAuthority'),
-    );
+    const source = mainRuntimeModuleContract('main-operator-browser-runtime.ts');
+    const currentGate = mainRuntimeSectionContract('function assertRecommendationCurrentDataGate', 'function handleResolveRecommendationReview');
+    const currentTargetAuthority = mainRuntimeSectionContract('function assertRecommendationWritableTargetCurrent', 'function validateCurrentAdReadbackEvidenceAuthority');
 
     expect(currentGate).toContain('assertRecommendationWritableTargetCurrent(');
     expect(currentTargetAuthority).toContain('const canonicalTarget = assertCurrentWritableAdTargetAuthority(');

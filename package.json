@@ -10,6 +10,9 @@
     "pretest": "pnpm run prepare:native:node",
     "test": "vitest run",
     "typecheck": "pnpm -r run typecheck",
+    "check:module-boundaries": "node scripts/check-module-boundaries.mjs",
+    "check:module-boundaries:all": "node scripts/check-module-boundaries.mjs --all",
+    "verify:desktop-isolated": "node scripts/verify-isolated-desktop-runtime.mjs",
     "verify:v15-diagnostic": "node scripts/verify-v15-diagnostic-evidence.js",
     "verify:v15-canary": "node scripts/verify-v15-canary-evidence.js",
     "verify:v15-enablement": "node scripts/verify-v15-enablement-evidence.js",
@@ -67,9 +70,13 @@
     "verify:v16-required-tests": "node scripts/verify-v16-required-test-manifest.js --manifest output/v16-evidence/current/manifest.json",
     "verify:v16-trace-closure": "node scripts/verify-v16-trace-closure.js --requirements docs/v16_requirements_index.json --manifest output/v16-evidence/current/manifest.json",
     "verify:v16-readiness": "node scripts/verify-v16-readiness-aggregation.js --manifest output/v16-evidence/current/manifest.json --out output/v16-evidence/v16_l8_readiness.json",
+    "publish:v16-release": "node scripts/publish-v16-release.js --manifest output/v16-evidence/current/manifest.json --publication output/v16-evidence/current/publication-closure.json",
     "verify:v16-services-contract": "node scripts/verify-v16-services-contract.mjs",
     "verify:v16-full": "pnpm run verify:v16-required-tests && pnpm run verify:v16-trace-closure && pnpm run verify:v16-readiness && pnpm run verify:v16-services-contract",
     "test:v16:evidence": "node scripts/generate-v16-l1-evidence.mjs --out-dir output/v16-evidence/current"
+  },
+  "dependencies": {
+    "acorn": "8.16.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

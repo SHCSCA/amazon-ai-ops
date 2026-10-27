@@ -108,7 +108,7 @@ describe('store automation plan', () => {
   });
 
   it('sanitizes capability details before using them as scheduler button guidance', () => {
-    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+    const source = ['scheduler-page.tsx', 'scheduler-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
     expect(source).toMatch(
       /const runNowDisabledReason = !access\.runNow\.allowed\s*\? schedulerOperatorMessage\(\s*access\.runNow\.capability\?\.detail,\s*'立即采集暂不可用，请刷新或检查运行设置。',\s*\)\s*: runPolicy\.reason/,
@@ -227,7 +227,7 @@ describe('store automation Renderer API', () => {
   });
 
   it('removes the old global cron CRUD and exposes no retention mutation method', () => {
-    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+    const source = ['scheduler-page.tsx', 'scheduler-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     expect(source).not.toMatch(/getScheduledTasks|setTaskEnabled|runTaskNow/);
     expect(source).not.toMatch(/deleteStoreEvidence|applyStoreEvidence|retention:delete|retention:apply/);
     expect(source).toContain('runStoreCollectionScheduleNow');
@@ -257,7 +257,7 @@ describe('store automation Renderer API', () => {
   });
 
   it('keeps retention implementation terms and blocker codes out of ordinary copy', () => {
-    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+    const source = ['scheduler-page.tsx', 'scheduler-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     for (const exposedCopy of [
       '正在生成 dry-run',
       '证据保留 dry-run 摘要',
@@ -270,7 +270,7 @@ describe('store automation Renderer API', () => {
   });
 
   it('resets retention busy state on every context sequence and ignores stale store responses', () => {
-    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+    const source = ['scheduler-page.tsx', 'scheduler-model.tsx'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const loadCurrentStore = source.match(
       /async function loadCurrentStore[\s\S]*?\n  }\n\n  useEffect/,
     )?.[0] ?? '';

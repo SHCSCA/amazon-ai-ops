@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7fa">
+    <title>Amazon AI Ops · 全量界面设计稿</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#today/overview" aria-label="Amazon AI Ops 首页">
+          <span class="brand-mark">A</span>
+          <span><strong>Amazon AI Ops</strong><small>运营工作台</small></span>
+        </a>
+        <div class="scope-chip"><span class="status-dot"></span><span>当前范围</span><strong>美国站 · 预览店铺</strong><span class="scope-caret">⌄</span></div>
+        <div class="topbar-right">
+          <span class="preview-pill">设计预览 · 样例内容</span>
+          <button class="avatar" type="button" aria-label="账户菜单">OP</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <aside class="sidebar">
+          <div class="sidebar-label">运营工作区</div>
+          <nav id="workspace-nav" aria-label="主业务导航"></nav>
+          <div class="sidebar-footer"><span class="connection-dot"></span><span>本地服务</span><strong>设计示意</strong></div>
+        </aside>
+        <main class="main-content">
+          <div class="workspace-toolbar">
+            <div class="breadcrumb"><span>工作台</span><span class="crumb-separator">/</span><strong id="breadcrumb-current">今日任务</strong></div>
+            <button class="quiet-button" type="button" data-action="scope">编辑范围</button>
+          </div>
+          <div id="page-content" aria-live="polite"></div>
+        </main>
+      </div>
+    </div>
+    <dialog id="scope-dialog" class="scope-dialog">
+      <form method="dialog">
+        <div class="dialog-head"><div><span class="eyebrow">当前范围</span><h2>编辑运营范围</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+        <p>范围切换后，所有页面只读取所选店铺的事实和证据。</p>
+        <label>站点<select><option>Amazon US · USD</option></select></label>
+        <label>店铺<select><option>预览店铺（设计示意）</option></select></label>
+        <label>业务日期<input type="text" value="最近已完成业务日" readonly></label>
+        <div class="dialog-actions"><button class="quiet-button" value="cancel">取消</button><button class="primary-button" value="cancel">保存范围</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

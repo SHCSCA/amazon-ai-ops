@@ -4,6 +4,42 @@
   min-width: 0;
 }
 
+.mission-control-workspace-root .store-fact-internal-identity {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mission-control-workspace-root .store-fact-primary .store-fact-object-path {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.mission-control-workspace-root .store-fact-internal-identity summary {
+  width: fit-content;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.mission-control-workspace-root .store-fact-internal-identity summary:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.mission-control-workspace-root .store-fact-internal-identity dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  margin: 5px 0 0;
+}
+
+.mission-control-workspace-root .store-fact-internal-identity dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .mission-control-workspace-root .store-fact-authority {
   display: flex;
   gap: 7px;

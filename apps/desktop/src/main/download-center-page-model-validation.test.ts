@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -50,95 +51,71 @@ function verifiedSelectors(): DownloadCenterActionSelectors {
 
 describe('validateDownloadCenterPageModel', () => {
   it('supports both verified Lingxing report-name search controls behind the unique-visible selector gate', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const defaults = mainSource.slice(
-      mainSource.indexOf('const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS'),
-      mainSource.indexOf('const DOWNLOAD_CENTER_LIST_RECOVERY_INTERVAL_MS'),
-    );
+    const mainSource = mainRuntimeFunctionContract('assertUsableDownloadCenterActionSelector');
+    const defaults = mainRuntimeSectionContract('const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS', 'const DOWNLOAD_CENTER_LIST_RECOVERY_INTERVAL_MS');
 
     expect(defaults).toContain([
       'input[placeholder="报告名称"].el-input__inner',
       'input#report_name[name="keyword"][placeholder="报告名称"].form-control',
     ].join(', '));
     expect(mainSource).toContain('matchCount = await countVisibleLocatorMatches(page, renderedSelector);');
-    expect(mainSource).toContain('if (matchCount > 1)');
+    expect(mainRuntimeModuleContract('main-download-selectors-runtime.ts')).toContain('if (matchCount > 1)');
 
-    const reader = mainSource.slice(
-      mainSource.indexOf('function readDownloadCenterPageModel()'),
-      mainSource.indexOf('function getBundledDownloadCenterPageModelPath()'),
-    );
-    expect(mainSource).toContain('function withTrustedDownloadCenterReportSearchSelector(');
+    const reader = mainRuntimeSectionContract('function readDownloadCenterPageModel()', 'function getBundledDownloadCenterPageModelPath()');
+    expect(mainRuntimeFunctionContract('withTrustedDownloadCenterReportSearchSelector')).toContain('function withTrustedDownloadCenterReportSearchSelector');
     expect(reader).toContain('withTrustedDownloadCenterReportSearchSelector(');
-    const rendererModelRead = mainSource.slice(
-      mainSource.indexOf('function handleGetDownloadCenterPageModel()'),
-      mainSource.indexOf('function handleSaveDownloadCenterPageModel('),
-    );
+    const rendererModelRead = mainRuntimeSectionContract('function handleGetDownloadCenterPageModel()', 'function handleSaveDownloadCenterPageModel(');
     expect(rendererModelRead).toContain('withTrustedDownloadCenterReportSearchSelector(');
   });
 
   it('binds post-create verification to the exact generated name instead of the current list page', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const createReportSource = mainSource.slice(
-      mainSource.indexOf('async createReport(report, dateRange)'),
-      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
-    );
+    const mainSource = mainRuntimeFunctionContract('waitForCreatedReportRowByExactSearch');
+    const createReportSource = mainRuntimeSectionContract('async createReport(report, dateRange)', 'async waitForReportReady(report, dateRange, createdReportIdentity)');
 
-    expect(mainSource).toContain('async function waitForCreatedReportRowByExactSearch(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function waitForCreatedReportRowByExactSearch(');
     expect(createReportSource).toContain('waitForCreatedReportRowByExactSearch(');
-    expect(mainSource).toContain("await searchInput.fill(expectedReportName);");
-    expect(mainSource).toContain("if ((await searchInput.inputValue()).trim() !== expectedReportName)");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("await searchInput.fill(expectedReportName);");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("if ((await searchInput.inputValue()).trim() !== expectedReportName)");
   });
 
   it('explicitly submits the exact report-name query after filling the download-center search input', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const mainSource = mainRuntimeFunctionContract('submitExactDownloadCenterReportSearch');
 
-    expect(mainSource).toContain('async function submitExactDownloadCenterReportSearch(');
-    expect(mainSource).toContain("await searchInput.fill(expectedReportName);");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function submitExactDownloadCenterReportSearch(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("await searchInput.fill(expectedReportName);");
     expect(mainSource).toContain('button:has-text("查询")');
-    expect(mainSource).toContain('await submitExactDownloadCenterReportSearch(');
-    expect(mainSource).not.toContain("await searchInput.press('Enter').catch(() => undefined);");
+    expect(mainRuntimeFunctionContract('waitForCreatedReportRowByExactSearch')).toContain('await submitExactDownloadCenterReportSearch(');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("await searchInput.press('Enter').catch(() => undefined);"); }
   });
 
   it('clicks the unique visible create confirmation instead of the first stale hidden dialog button', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const createReportSource = mainSource.slice(
-      mainSource.indexOf('async createReport(report, dateRange)'),
-      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
-    );
+    const mainSource = mainRuntimeFunctionContract('clickUniqueVisibleLingxingCreateConfirmation');
+    const createReportSource = mainRuntimeSectionContract('async createReport(report, dateRange)', 'async waitForReportReady(report, dateRange, createdReportIdentity)');
 
-    expect(mainSource).toContain('async function clickUniqueVisibleLingxingCreateConfirmation(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function clickUniqueVisibleLingxingCreateConfirmation(');
     expect(createReportSource).toContain('clickUniqueVisibleLingxingCreateConfirmation(page)');
     expect(createReportSource).not.toContain("page.locator('.layui-layer-btn0, button:has-text(\"确定\"), a:has-text(\"确定\")').first()");
-    const confirmationHelper = mainSource.slice(
-      mainSource.indexOf('async function clickUniqueVisibleLingxingCreateConfirmation('),
-      mainSource.indexOf('async function readLingxingCreateSubmissionFeedback('),
-    );
+    const confirmationHelper = mainRuntimeSectionContract('async function clickUniqueVisibleLingxingCreateConfirmation(', 'async function readLingxingCreateSubmissionFeedback(');
     expect(confirmationHelper).toContain('button:has-text("确定")');
     expect(confirmationHelper).toContain('button:has-text("确认")');
     expect(confirmationHelper).toContain('[role="dialog"]:visible');
   });
 
   it('preserves visible create-form rejection evidence before returning to the list', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const createReportSource = mainSource.slice(
-      mainSource.indexOf('async createReport(report, dateRange)'),
-      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
-    );
+    const mainSource = mainRuntimeFunctionContract('readLingxingCreateSubmissionFeedback');
+    const createReportSource = mainRuntimeSectionContract('async createReport(report, dateRange)', 'async waitForReportReady(report, dateRange, createdReportIdentity)');
 
-    expect(mainSource).toContain('async function readLingxingCreateSubmissionFeedback(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function readLingxingCreateSubmissionFeedback(');
     expect(createReportSource).toContain('readLingxingCreateSubmissionFeedback(page, confirmationClicked)');
     expect(createReportSource).toContain('领星创建表单未提交：');
     expect(createReportSource).toContain('提交确认：');
   });
 
   it('reads back the selected report type and captures sanitized create responses', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const createReportSource = mainSource.slice(
-      mainSource.indexOf('async createReport(report, dateRange)'),
-      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
-    );
+    const mainSource = mainRuntimeFunctionContract('captureLingxingCreateSubmissionResponses');
+    const createReportSource = mainRuntimeSectionContract('async createReport(report, dateRange)', 'async waitForReportReady(report, dateRange, createdReportIdentity)');
 
-    expect(mainSource).toContain('async function captureLingxingCreateSubmissionResponses(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function captureLingxingCreateSubmissionResponses(');
     expect(createReportSource).toContain("const selectedReportType = (await page.locator(reportTypeSelect).inputValue()).trim();");
     expect(createReportSource).toContain('selectedReportType !== report.displayName');
     expect(createReportSource).toContain('captureLingxingCreateSubmissionResponses(page, async () =>');
@@ -146,23 +123,20 @@ describe('validateDownloadCenterPageModel', () => {
   });
 
   it('verifies the configured store reached the selected transfer panel before creating', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const createReportSource = mainSource.slice(
-      mainSource.indexOf('async createReport(report, dateRange)'),
-      mainSource.indexOf('async waitForReportReady(report, dateRange, createdReportIdentity)'),
-    );
+    const mainSource = mainRuntimeFunctionContract('assertLingxingCreateStoreSelected');
+    const createReportSource = mainRuntimeSectionContract('async createReport(report, dateRange)', 'async waitForReportReady(report, dateRange, createdReportIdentity)');
 
-    expect(mainSource).toContain('async function assertLingxingCreateStoreSelected(');
-    expect(mainSource).toContain("const normalizedStoreName = normalizeLingxingCollectionStoreName(storeName);");
-    expect(mainSource).toContain("const normalizedMarketplaceCode = normalizeLingxingCollectionStoreName(marketplaceCode);");
-    expect(mainSource).toContain('`${normalizedStoreName}-${normalizedMarketplaceCode}`');
-    expect(mainSource).toContain('expectedStoreNames.has(normalizedItemText)');
-    expect(mainSource).not.toContain('jf-us-us');
-    expect(mainSource).toContain("'.el-transfer-panel:visible'");
-    expect(mainSource).toContain("items.nth(index).locator('.el-checkbox__label').first()");
-    expect(mainSource).toContain('normalizedItemText === normalizedStoreName');
-    expect(mainSource).toContain('const selectionDeadline = Date.now() + 5_000;');
-    expect(mainSource).toContain('await page.waitForTimeout(200);');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('async function assertLingxingCreateStoreSelected(');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("const normalizedStoreName = normalizeLingxingCollectionStoreName(storeName);");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("const normalizedMarketplaceCode = normalizeLingxingCollectionStoreName(marketplaceCode);");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('`${normalizedStoreName}-${normalizedMarketplaceCode}`');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('expectedStoreNames.has(normalizedItemText)');
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain('jf-us-us'); }
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("'.el-transfer-panel:visible'");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain("items.nth(index).locator('.el-checkbox__label').first()");
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('normalizedItemText === normalizedStoreName');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('const selectionDeadline = Date.now() + 5_000;');
+    expect(mainRuntimeModuleContract('main-download-navigation-runtime.ts')).toContain('await page.waitForTimeout(200);');
     expect(createReportSource).toContain('await assertLingxingCreateStoreSelected(page, context.storeName, context.marketplaceCode);');
     expect(createReportSource.indexOf('await assertLingxingCreateStoreSelected(page, context.storeName, context.marketplaceCode);')).toBeLessThan(
       createReportSource.indexOf('captureLingxingCreateSubmissionResponses(page, async () =>'),
@@ -172,11 +146,8 @@ describe('validateDownloadCenterPageModel', () => {
   });
 
   it('repairs only the trusted historical pre-submit store-selection failure without external reconciliation', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const reconcileSource = mainSource.slice(
-      mainSource.indexOf('async function reconcileLingxingCreateUnknownCheckpoint('),
-      mainSource.indexOf('async function handleResumeLingxingCollection(input: unknown)'),
-    );
+    const mainSource = mainRuntimeModuleContract('main-download-automation-runtime.ts');
+    const reconcileSource = mainRuntimeSectionContract('async function reconcileLingxingCreateUnknownCheckpoint(', 'async function handleResumeLingxingCollection(input: unknown)');
 
     expect(reconcileSource).toContain('const confirmedNeverSubmitted = Boolean(');
     expect(reconcileSource).toContain("checkpoint.errorCode === 'LINGXING_CREATE_CALL_INTERRUPTED'");
@@ -186,11 +157,8 @@ describe('validateDownloadCenterPageModel', () => {
   });
 
   it('keeps create-unknown reconciliation read-only until a separate continue action', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
-    const resumeHandler = mainSource.slice(
-      mainSource.indexOf('async function handleResumeLingxingCollection(input: unknown)'),
-      mainSource.indexOf('const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS'),
-    );
+    const mainSource = mainRuntimeModuleContract('main-download-automation-runtime.ts');
+    const resumeHandler = mainRuntimeSectionContract('async function handleResumeLingxingCollection(input: unknown)', 'const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS');
 
     expect(resumeHandler).toContain('if (value.reconcileOnly === true)');
     expect(resumeHandler).toContain('alreadyComplete: false');

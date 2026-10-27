@@ -1,4 +1,6 @@
 import type { MissionGrantRecord, MissionWriteAuthoritySnapshot } from './mission-domain';
+import { normalizeBusinessDate } from './store';
+import { normalizeVerifiedDomainTimestamp } from './domain-time';
 import type {
   StoreContextEnvelope,
   StoreId,
@@ -127,50 +129,54 @@ export interface RegisterVerifiedAdEntityAuthorityInput {
 
 export type AnalysisProposalSource = 'rule' | 'rule_ai' | 'ai' | 'rule_fallback';
 
-export type AnalysisProposalBlockerCode =
-  | 'UNSUPPORTED_ACTION'
-  | 'MISSING_STABLE_AD_ENTITY'
-  | 'STALE_AD_ENTITY_REVISION'
-  | 'EVIDENCE_STALE'
-  | 'EVIDENCE_BATCH_MISMATCH'
-  | 'RULE_REVISION_MISMATCH'
-  | 'POLICY_REVISION_MISMATCH'
-  | 'AI_RULE_CONFLICT'
-  | 'REVIEW_REQUIRED'
-  | 'RULE_FALLBACK_NOT_AUTHORIZABLE'
-  | 'AI_ONLY_NOT_POLICY_AUTHORIZABLE'
-  | 'POLICY_REQUIRES_RULE_AI_ALIGNMENT'
-  | 'CHANGE_LIMIT_EXCEEDED'
-  | 'POLICY_ENTITY_NOT_ALLOWED'
-  | 'POLICY_ACTION_NOT_ALLOWED'
-  | 'POLICY_PRIORITY_MISMATCH'
-  | 'POLICY_RUNTIME_BLOCKED';
+export const ANALYSIS_PROPOSAL_BLOCKER_CODES = [
+  'UNSUPPORTED_ACTION',
+  'MISSING_STABLE_AD_ENTITY',
+  'STALE_AD_ENTITY_REVISION',
+  'EVIDENCE_STALE',
+  'EVIDENCE_BATCH_MISMATCH',
+  'RULE_REVISION_MISMATCH',
+  'POLICY_REVISION_MISMATCH',
+  'AI_RULE_CONFLICT',
+  'REVIEW_REQUIRED',
+  'RULE_FALLBACK_NOT_AUTHORIZABLE',
+  'AI_ONLY_NOT_POLICY_AUTHORIZABLE',
+  'POLICY_REQUIRES_RULE_AI_ALIGNMENT',
+  'CHANGE_LIMIT_EXCEEDED',
+  'POLICY_ENTITY_NOT_ALLOWED',
+  'POLICY_ACTION_NOT_ALLOWED',
+  'POLICY_PRIORITY_MISMATCH',
+  'POLICY_RUNTIME_BLOCKED',
+] as const;
+export type AnalysisProposalBlockerCode = (typeof ANALYSIS_PROPOSAL_BLOCKER_CODES)[number];
 
-/** Authorization-time codes. Proposal eligibility codes are reused; extras are grant/batch gates. */
-export type AnalysisAuthorizationBlockerCode =
-  | AnalysisProposalBlockerCode
-  | 'AUTONOMY_MODE_CHANGED'
-  | 'MISSION_NOT_FOUND'
-  | 'MISSION_NOT_ACTIVE'
-  | 'PROPOSAL_NOT_FOUND'
-  | 'BATCH_MISMATCH'
-  | 'STALE_ACTION_BATCH'
-  | 'STALE_MISSION_REVISION'
-  | 'MODEL_REVISION_MISMATCH'
-  | 'INCOMPLETE_BATCH'
-  | 'MISSING_DECISION_LINK'
-  | 'PROPOSAL_EXPIRED'
-  | 'DUPLICATE_AD_ENTITY'
-  | 'DECISION_NOT_FOUND'
-  | 'DECISION_NOT_AUTHORIZABLE'
-  | 'GRANT_TERMINAL'
-  | 'GRANT_EXPIRED'
-  | 'POLICY_RATE_LIMITS_INVALID'
-  | 'POLICY_TIMEZONE_MISMATCH'
-  | 'OUTSIDE_EXECUTION_WINDOW'
-  | 'DAILY_ACTION_LIMIT_EXCEEDED'
-  | 'COOLDOWN_ACTIVE'
-  | 'ANALYSIS_INTERRUPTED';
+// 授权错误复用建议资格码；外部服务错误不能冒充这些领域门禁。
+export const ANALYSIS_AUTHORIZATION_BLOCKER_CODES = [
+  ...ANALYSIS_PROPOSAL_BLOCKER_CODES,
+  'AUTONOMY_MODE_CHANGED',
+  'MISSION_NOT_FOUND',
+  'MISSION_NOT_ACTIVE',
+  'PROPOSAL_NOT_FOUND',
+  'BATCH_MISMATCH',
+  'STALE_ACTION_BATCH',
+  'STALE_MISSION_REVISION',
+  'MODEL_REVISION_MISMATCH',
+  'INCOMPLETE_BATCH',
+  'MISSING_DECISION_LINK',
+  'PROPOSAL_EXPIRED',
+  'DUPLICATE_AD_ENTITY',
+  'DECISION_NOT_FOUND',
+  'DECISION_NOT_AUTHORIZABLE',
+  'GRANT_TERMINAL',
+  'GRANT_EXPIRED',
+  'POLICY_RATE_LIMITS_INVALID',
+  'POLICY_TIMEZONE_MISMATCH',
+  'OUTSIDE_EXECUTION_WINDOW',
+  'DAILY_ACTION_LIMIT_EXCEEDED',
+  'COOLDOWN_ACTIVE',
+  'ANALYSIS_INTERRUPTED',
+] as const;
+export type AnalysisAuthorizationBlockerCode = (typeof ANALYSIS_AUTHORIZATION_BLOCKER_CODES)[number];
 
 export interface AnalysisAuthorizationBlocker {
   code: AnalysisAuthorizationBlockerCode;
@@ -348,6 +354,9 @@ export function validateAnalysisEvidencePackage(
   requiredTimestamp(value.importedAt, 'evidencePackage.importedAt');
   requiredTimestamp(value.freshUntil, 'evidencePackage.freshUntil');
   requiredTimestamp(value.sealedAt, 'evidencePackage.sealedAt');
+  if (Date.parse(value.importedAt) > Date.parse(value.sealedAt)) {
+    throw new TypeError('Evidence import completion cannot be later than sealing.');
+  }
   if (Date.parse(value.freshUntil) <= Date.parse(value.importedAt)) {
     throw new TypeError('Evidence package freshness window must end after import completion.');
   }
@@ -380,6 +389,9 @@ export function validateVerifiedAdEntityAuthority(
   requiredText(value.verifiedBy, 'adEntityAuthority.verifiedBy');
   requiredTimestamp(value.verifiedAt, 'adEntityAuthority.verifiedAt');
   requiredTimestamp(value.createdAt, 'adEntityAuthority.createdAt');
+  if (Date.parse(value.verifiedAt) > Date.parse(value.createdAt)) {
+    throw new TypeError('Ads identity verification cannot be later than its recorded creation.');
+  }
 }
 
 export function validateAnalysisProposalSnapshot(
@@ -478,14 +490,16 @@ function requiredText(value: unknown, field: string): string {
 
 function requiredDate(value: unknown, field: string): void {
   const normalized = requiredText(value, field);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00.000Z`))) {
+  try {
+    normalizeBusinessDate(normalized);
+  } catch {
     throw new TypeError(`${field} must be YYYY-MM-DD.`);
   }
 }
 
 function requiredTimestamp(value: unknown, field: string): void {
-  const normalized = requiredText(value, field);
-  if (Number.isNaN(Date.parse(normalized))) throw new TypeError(`${field} must be an ISO timestamp.`);
+  try { normalizeVerifiedDomainTimestamp(value, field); }
+  catch { throw new TypeError(`${field} must be an ISO timestamp.`); }
 }
 
 function sha256(value: unknown, field: string): void {

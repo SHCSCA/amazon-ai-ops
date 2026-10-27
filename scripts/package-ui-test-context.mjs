@@ -1,0 +1,301 @@
+import { validPackageUiWorkspaceCheck, validPackageUiMinimumWindow, packageUiBindingFixture } from './package-ui-evidence.test-fixture.mjs';
+
+import { V16_MODULE_INTENT_MAP } from '../apps/desktop/src/renderer/mission-control/workspaces/v16-module-router';
+
+import {
+  copyFileSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+
+import { spawn, spawnSync } from 'node:child_process';
+
+import { EventEmitter, once } from 'node:events';
+
+import { createRequire } from 'node:module';
+
+import { tmpdir } from 'node:os';
+
+import path from 'node:path';
+
+import { pathToFileURL } from 'node:url';
+
+import { afterAll, describe, expect, it } from 'vitest';
+
+import missionControlEvidenceContract from './mission-control-ui-evidence-contract.js';
+
+import evidenceModule from './package-ui-evidence.js';
+
+import runnerModule from './run-package-ui-evidence.js';
+
+const HASH_A = 'A'.repeat(64);
+
+const HASH_B = 'B'.repeat(64);
+
+const USER_DATA_DIR = 'D:\\Temp\\amazon-ai-ops-package-ui\\profile-copy';
+
+const PROTECTED_DB_PATH = 'C:\\Users\\wz\\AppData\\Roaming\\@amazon-ai-ops\\desktop\\amazon-ai-ops.db';
+
+const AUTHORITY_SELECTION_PATH = 'C:\\Temp\\current-production-authority-selection.json';
+
+const CURRENT_ARTIFACT_ROOT = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-current-'));
+
+const { validProfileLockIsolation, validRunEvidenceBinding, validAuthorityBinding, bindRunAttemptArtifacts, validLogicalArtifact, validProfileLineageState, canonicalJsonForTest, validCheckpointComposition } = packageUiBindingFixture(CURRENT_ARTIFACT_ROOT, USER_DATA_DIR);
+
+const requireFromLocalDb = createRequire(
+  path.resolve('packages', 'local-db', 'package.json'),
+);
+
+const Database = requireFromLocalDb('better-sqlite3');
+
+const { MISSION_CONTROL_WORKSPACE_CONTRACT } = missionControlEvidenceContract;
+
+afterAll(() => {
+  rmSync(CURRENT_ARTIFACT_ROOT, { force: true, recursive: true });
+});
+
+const {
+  EXPECTED_OVERLAY_CHECK_IDS,
+  EXPECTED_PACKAGE_UI_SCALES,
+  EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
+  EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
+  EXPECTED_PACKAGE_UI_MODULES,
+  INTERACTIVE_LOGIN_CONTRACT,
+  ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+  PACKAGE_UI_WIDE_PROFILE,
+  PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
+  PACKAGE_UI_PROFILE_SEQUENCE,
+  READ_ONLY_INTERACTION_PLAN,
+  acquirePackageUiRunGroupLease,
+  buildAppContentManifest,
+  buildPackageUiAttemptArtifactManifest,
+  buildPackageUiAttemptArtifactReferences,
+  buildPackageUiRunnerContract,
+  assertPackageUiRuntimeLoginBoundary,
+  buildProcessIsolationEvidence,
+  buildProtectedFileEvidence,
+  buildProductionBuildContentManifest,
+  appendRendererDiagnostic,
+  attachElectronLifecycleDiagnostics,
+  captureViewportScreenshot,
+  captureSqliteLogicalArtifact,
+  chromiumLineageEvidencePassed,
+  collectActiveBundledChromiumLineage,
+  collectElectronIdentity,
+  collectMatchingPackageProcesses,
+  collectMatchingProfileBrowserProcesses,
+  collectPackageUiProfileLockEvidence,
+  composePackageUiRunGroup,
+  consumePackageUiResumeInspectionReceipt,
+  createRunDiagnostics,
+  createPackageUiProfileAttemptContext,
+  initializePackageUiRunGroup,
+  inspectPackageUiRunGroupLease,
+  decisionsTabAccessibleNamePattern,
+  evaluatePackageViewportContract,
+  evaluatePackageUiEvidenceCompleteness,
+  evaluatePackageUiProfileEvidence,
+  evaluateProfileDatabaseFileIsolation,
+  evaluateProfileDatabaseProvenance,
+  executeEvidenceRunWithIsolation,
+  extractProfileUserDataDirectories,
+  hasAuthenticatedWorkspace,
+  isWorkspaceProbeAbsenceError,
+  isRetryableLoginNavigationError,
+  latestProductionSourceWatermark,
+  parsePackageUiEvidenceArgs,
+  packageUiAttemptArtifactManifestMatches,
+  packageUiAttemptCleanupPassed,
+  packageUiAttemptDiagnosticsSnapshotMatches,
+  profileLineageStateMatches,
+  markRunnerElectronCloseRequested,
+  openStoreScopedConnectionWorkbench,
+  restoreWorkspaceScrollTop,
+  waitForActiveBundledChromiumLineage,
+  recordPackageUiProfileAttempt,
+  releasePackageUiRunGroupLease,
+  resolvePackageUiProfileCursor,
+  sanitizeDiagnosticText,
+  setElectronViewport,
+  selectDeterministicEvidenceStoreCandidate,
+  validateOverlayKeyboardEvidence,
+  validateWorkspaceTabKeyboardEvidence,
+  validateOverlayTriggerContract,
+  validatePackageIdentity,
+  validatePackageUiDatabaseCheckpointReceipts,
+  validatePackageUiDatabaseMutationAudit,
+  validatePackageUiAttemptArtifactMembership,
+  validatePackageUiReadOnlyRuntimeEvidence,
+  validatePackageUiResumeInspectionReceipt,
+  validatePackageFreshness,
+  validateReadOnlyInteractionPlan,
+  validateIsolatedProfileBootstrapEvidence,
+  validateLoginSessionAttestation,
+  validateSchedulerSubviewEvidence,
+  validateSchedulerSubviewRuntimeBinding,
+  validateObjectWorkspaceExperienceEvidence,
+  validateObjectInspectorEvidence,
+  validateWorkspaceRuntimeMetrics,
+  validatePackageMinimumWindow,
+  validRunDiagnostics,
+  waitForPackageProcessCleanup,
+  waitForBoundedElectronClose,
+  waitForProfileBrowserProcessCleanup,
+  waitForInteractiveAuthenticatedWorkspace,
+  waitForRendererComposite,
+  waitForWorkspaceSettled,
+  writeImmutableEnvelope,
+  writePackageUiProfileCheckpoint,
+} = evidenceModule;
+
+const { main: runPackageUiEvidenceCli } = runnerModule;
+
+export {
+  validPackageUiWorkspaceCheck,
+  validPackageUiMinimumWindow,
+  packageUiBindingFixture,
+  V16_MODULE_INTENT_MAP,
+  copyFileSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+  spawn,
+  spawnSync,
+  EventEmitter,
+  once,
+  createRequire,
+  tmpdir,
+  path,
+  pathToFileURL,
+  afterAll,
+  describe,
+  expect,
+  it,
+  missionControlEvidenceContract,
+  evidenceModule,
+  runnerModule,
+  HASH_A,
+  HASH_B,
+  USER_DATA_DIR,
+  PROTECTED_DB_PATH,
+  AUTHORITY_SELECTION_PATH,
+  CURRENT_ARTIFACT_ROOT,
+  validProfileLockIsolation,
+  validRunEvidenceBinding,
+  validAuthorityBinding,
+  bindRunAttemptArtifacts,
+  validLogicalArtifact,
+  validProfileLineageState,
+  canonicalJsonForTest,
+  validCheckpointComposition,
+  requireFromLocalDb,
+  Database,
+  MISSION_CONTROL_WORKSPACE_CONTRACT,
+  EXPECTED_OVERLAY_CHECK_IDS,
+  EXPECTED_PACKAGE_UI_SCALES,
+  EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
+  EXPECTED_PACKAGE_UI_WORKSPACES,
+  EXPECTED_PACKAGE_UI_ENTRIES,
+  EXPECTED_PACKAGE_UI_MODULES,
+  INTERACTIVE_LOGIN_CONTRACT,
+  ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+  PACKAGE_UI_WIDE_PROFILE,
+  PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
+  PACKAGE_UI_PROFILE_SEQUENCE,
+  READ_ONLY_INTERACTION_PLAN,
+  acquirePackageUiRunGroupLease,
+  buildAppContentManifest,
+  buildPackageUiAttemptArtifactManifest,
+  buildPackageUiAttemptArtifactReferences,
+  buildPackageUiRunnerContract,
+  assertPackageUiRuntimeLoginBoundary,
+  buildProcessIsolationEvidence,
+  buildProtectedFileEvidence,
+  buildProductionBuildContentManifest,
+  appendRendererDiagnostic,
+  attachElectronLifecycleDiagnostics,
+  captureViewportScreenshot,
+  captureSqliteLogicalArtifact,
+  chromiumLineageEvidencePassed,
+  collectActiveBundledChromiumLineage,
+  collectElectronIdentity,
+  collectMatchingPackageProcesses,
+  collectMatchingProfileBrowserProcesses,
+  collectPackageUiProfileLockEvidence,
+  composePackageUiRunGroup,
+  consumePackageUiResumeInspectionReceipt,
+  createRunDiagnostics,
+  createPackageUiProfileAttemptContext,
+  initializePackageUiRunGroup,
+  inspectPackageUiRunGroupLease,
+  decisionsTabAccessibleNamePattern,
+  evaluatePackageViewportContract,
+  evaluatePackageUiEvidenceCompleteness,
+  evaluatePackageUiProfileEvidence,
+  evaluateProfileDatabaseFileIsolation,
+  evaluateProfileDatabaseProvenance,
+  executeEvidenceRunWithIsolation,
+  extractProfileUserDataDirectories,
+  hasAuthenticatedWorkspace,
+  isWorkspaceProbeAbsenceError,
+  isRetryableLoginNavigationError,
+  latestProductionSourceWatermark,
+  parsePackageUiEvidenceArgs,
+  packageUiAttemptArtifactManifestMatches,
+  packageUiAttemptCleanupPassed,
+  packageUiAttemptDiagnosticsSnapshotMatches,
+  profileLineageStateMatches,
+  markRunnerElectronCloseRequested,
+  openStoreScopedConnectionWorkbench,
+  restoreWorkspaceScrollTop,
+  waitForActiveBundledChromiumLineage,
+  recordPackageUiProfileAttempt,
+  releasePackageUiRunGroupLease,
+  resolvePackageUiProfileCursor,
+  sanitizeDiagnosticText,
+  setElectronViewport,
+  selectDeterministicEvidenceStoreCandidate,
+  validateOverlayKeyboardEvidence,
+  validateWorkspaceTabKeyboardEvidence,
+  validateOverlayTriggerContract,
+  validatePackageIdentity,
+  validatePackageUiDatabaseCheckpointReceipts,
+  validatePackageUiDatabaseMutationAudit,
+  validatePackageUiAttemptArtifactMembership,
+  validatePackageUiReadOnlyRuntimeEvidence,
+  validatePackageUiResumeInspectionReceipt,
+  validatePackageFreshness,
+  validateReadOnlyInteractionPlan,
+  validateIsolatedProfileBootstrapEvidence,
+  validateLoginSessionAttestation,
+  validateSchedulerSubviewEvidence,
+  validateSchedulerSubviewRuntimeBinding,
+  validateObjectWorkspaceExperienceEvidence,
+  validateObjectInspectorEvidence,
+  validateWorkspaceRuntimeMetrics,
+  validatePackageMinimumWindow,
+  validRunDiagnostics,
+  waitForPackageProcessCleanup,
+  waitForBoundedElectronClose,
+  waitForProfileBrowserProcessCleanup,
+  waitForInteractiveAuthenticatedWorkspace,
+  waitForRendererComposite,
+  waitForWorkspaceSettled,
+  writeImmutableEnvelope,
+  writePackageUiProfileCheckpoint,
+  runPackageUiEvidenceCli,
+};

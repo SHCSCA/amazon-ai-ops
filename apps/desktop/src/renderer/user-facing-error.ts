@@ -1,6 +1,8 @@
+import { sanitizeCausalExportText } from '@amazon-ai-ops/shared-types';
+
 export function toUserFacingError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : String(error || '');
-  if (!message) return fallback;
+  if (!message) return sanitizeCausalExportText(fallback);
 
   if (/browser session is not ready/i.test(message)) {
     return '浏览器会话未就绪：请先登录领星 ERP，并从 ERP 广告入口进入 Ads 后重试。';
@@ -61,15 +63,16 @@ export function toUserFacingError(error: unknown, fallback: string): string {
     return '浏览器启动失败：请关闭残留的自动化浏览器窗口后重试；如果仍失败，请重新启动桌面应用。';
   }
 
-  return message.split(/\r?\n/)[0].slice(0, 240);
+  if (/\b(?:SQLITE_[A-Z_]+|TypeError|ReferenceError|SyntaxError|EPERM|EACCES)\b|Error invoking remote method|(?:Repository|Authority)Error/.test(message)) return sanitizeCausalExportText(fallback);
+  return sanitizeCausalExportText(message.split(/\r?\n/)[0]).slice(0, 240);
 }
 
 export function toReadbackUserFacingError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : String(error || '');
   const stableBusinessMessage = message.match(/结果核对(?:被阻断|状态冲突)：[^\r\n]*/)?.[0];
-  if (stableBusinessMessage) return stableBusinessMessage.slice(0, 240);
+  if (stableBusinessMessage) return sanitizeCausalExportText(stableBusinessMessage).slice(0, 240);
 
   const mapped = toUserFacingError(error, fallback);
-  const rawFirstLine = message.split(/\r?\n/)[0].slice(0, 240);
-  return mapped !== rawFirstLine ? mapped : fallback;
+  const rawFirstLine = sanitizeCausalExportText(message.split(/\r?\n/)[0]).slice(0, 240);
+  return mapped !== rawFirstLine ? mapped : sanitizeCausalExportText(fallback);
 }

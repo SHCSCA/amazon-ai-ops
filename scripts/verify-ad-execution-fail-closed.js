@@ -18,8 +18,12 @@ function fail(message) {
   console.error(`[FAIL] ${message}`);
 }
 
+function sourceSections(source) {
+  return Array.isArray(source) ? source : [source];
+}
+
 function mustContain(source, pattern, message) {
-  if (source.includes(pattern)) {
+  if (sourceSections(source).some(section => section.includes(pattern))) {
     pass(message);
   } else {
     fail(message);
@@ -27,7 +31,7 @@ function mustContain(source, pattern, message) {
 }
 
 function mustNotContain(source, pattern, message) {
-  if (source.includes(pattern)) {
+  if (sourceSections(source).some(section => section.includes(pattern))) {
     fail(message);
   } else {
     pass(message);
@@ -35,19 +39,25 @@ function mustNotContain(source, pattern, message) {
 }
 
 function mustMatch(source, pattern, message) {
-  if (pattern.test(source)) {
+  if (sourceSections(source).some(section => pattern.test(section))) {
     pass(message);
   } else {
     fail(message);
   }
 }
 
-const mainIndex = read('apps/desktop/src/main/index.ts');
+function familySources(directory, prefix) {
+  return fs.readdirSync(path.join(root, directory))
+    .filter(file => file.startsWith(prefix) && /\.tsx?$/.test(file) && !/\.test[.-]/.test(file))
+    .map(file => read(path.posix.join(directory, file)));
+}
+
+const mainIndex = familySources('apps/desktop/src/main', 'main-');
 const policy = read('apps/desktop/src/main/recommendation-execution-policy.ts');
-const rendererApp = read('apps/desktop/src/renderer/App.tsx');
-const recommendationsPage = read('apps/desktop/src/renderer/pages/recommendations-page.tsx');
-const readbackPage = read('apps/desktop/src/renderer/pages/readback-page.tsx');
-const renderer = [rendererApp, recommendationsPage, readbackPage].join('\n');
+const rendererApp = familySources('apps/desktop/src/renderer', 'app-');
+const recommendationsPage = familySources('apps/desktop/src/renderer/pages', 'recommendation');
+const readbackPage = familySources('apps/desktop/src/renderer/pages', 'readback-');
+const renderer = [...rendererApp, ...recommendationsPage, ...readbackPage];
 const adActions = read('packages/action-executor/src/ad-actions.ts');
 const recommendationRepo = read('packages/local-db/src/sqlite/repositories/recommendation-repo.ts');
 
@@ -103,7 +113,7 @@ mustContain(
 );
 mustContain(
   mainIndex,
-  'insertIfNoDuplicateForStore(gate.scope.storeId, rec)',
+  'insertIfNoDuplicateForStore(gate.scope.storeId, rec, Boolean(capturedRuntime))',
   'recommendation generation skips store-scoped duplicate recommendations instead of repeated inserts',
 );
 mustContain(
@@ -176,9 +186,9 @@ mustContain(readbackPage, "readbackStepPanelProps('verify-export')", 'readback p
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
 mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');
-const scopedRecommendationGeneration = recommendationsPage.match(
+const scopedRecommendationGeneration = recommendationsPage.map(section => section.match(
   /runRecommendationWorkflowMutation(?:<[^>]+>)?\(\s*'generate'\s*,\s*\(\)\s*=>\s*generateRecommendationsApi\(\{([\s\S]*?)\}\)\s*\)/,
-);
+)).find(Boolean);
 mustMatch(
   recommendationsPage,
   /runRecommendationWorkflowMutation(?:<[^>]+>)?\(\s*'generate'/,

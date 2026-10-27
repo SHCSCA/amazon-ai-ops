@@ -1,5 +1,8 @@
 import { isTerminalMissionGrantEventType } from '@amazon-ai-ops/shared-types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { WorkspaceActionButton } from '../../components/workspace/action-feedback';
+import { useCanonicalWorkspaceOperation } from './use-canonical-workspace-operation';
 import {
   ArrowRight,
   Check,
@@ -33,7 +36,6 @@ import {
   type ReviseDecisionInput,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { localizeMatchType } from '@amazon-ai-ops/business-presenters';
 import { PageFrame, ReasonRequiredDialog, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../../components/workspace';
 import {
   assertDecisionBelongsToContext,
@@ -47,712 +49,17 @@ import {
   readAnalysisAuthorityWindowApi,
   type AnalysisAuthorityRendererApi,
 } from './analysis-authority-window-api';
-import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 import './decisions-workspace.css';
-
-const OPERATOR = 'desktop-operator';
-const PAGE_SIZE = 6;
-
-export type DecisionWorkspaceView = 'decisions/recommendations' | 'decisions/approval' | 'decisions/decided';
-
-export type DecisionsWorkspaceProps = {
-  apiOverride?: DecisionDomainRendererApi;
-  analysisApiOverride?: AnalysisAuthorityRendererApi;
-  blockedReason: string;
-  capabilities?: readonly MissionControlCapabilityProjection[];
-  onInspectBoundary?: () => void;
-  previewMode: boolean;
-  storeContext: StoreContextEnvelope | null;
-  view: DecisionWorkspaceView;
-};
-
-type DiscoveredRecommendationTarget = {
-  recommendationId: number;
-  recommendationRevision: number;
-  recommendationAsin: string;
-  recommendationMatchType: string;
-  pageIdentity: {
-    adsAccountId: string;
-    campaignId: string;
-    adGroupId: string;
-    keywordId: string;
-    bidCents: number;
-  };
-  writableTarget: BindRecommendationWritableTargetRequest['binding']['writableTarget'];
-};
-
-type RecommendationTargetBindingRendererApi = {
-  getOperationScope(context: StoreContextEnvelope): Promise<Record<string, unknown>>;
-  executionAuthority: {
-    discoverRecommendationTarget(input: {
-      context: StoreContextEnvelope;
-      recommendationId: number;
-    }): Promise<DiscoveredRecommendationTarget>;
-  };
-  bindRecommendationWritableTarget(
-    input: BindRecommendationWritableTargetRequest,
-  ): Promise<BindRecommendationWritableTargetResult>;
-};
-
-function readRecommendationTargetBindingWindowApi(
-  target: unknown = typeof window === 'undefined' ? undefined : window,
-): RecommendationTargetBindingRendererApi | null {
-  const candidate = target as Partial<RecommendationTargetBindingRendererApi> | null;
-  if (!candidate
-    || typeof candidate.getOperationScope !== 'function'
-    || typeof candidate.bindRecommendationWritableTarget !== 'function'
-    || typeof candidate.executionAuthority?.discoverRecommendationTarget !== 'function') return null;
-  return candidate as RecommendationTargetBindingRendererApi;
-}
-
-export function proposalHasVerifiedAdsAuthority(proposal: AnalysisProposalSnapshotRecord): boolean {
-  return Boolean(
-    proposal.adEntityAuthorityId
-    && proposal.adEntityId
-    && Number.isInteger(proposal.adEntityRevision)
-    && Number(proposal.adEntityRevision) > 0,
-  );
-}
-
-export function proposalIsSafeTargetVerificationCandidate(
-  proposal: AnalysisProposalSnapshotRecord,
-): boolean {
-  const current = Number(proposal.currentBidCents);
-  const proposed = Number(proposal.proposedBidCents);
-  if (proposal.actionType !== 'set_keyword_bid'
-    || proposal.entityType !== 'keyword'
-    || !Number.isInteger(current)
-    || !Number.isInteger(proposed)
-    || current <= 0
-    || proposed <= 0
-    || proposed >= current) return false;
-  return ((current - proposed) / current) * 100 <= 10.000001;
-}
-
-export function findSafeTargetVerificationProposal(
-  proposals: readonly AnalysisProposalSnapshotRecord[],
-  authorityProposal: AnalysisProposalSnapshotRecord,
-): AnalysisProposalSnapshotRecord | undefined {
-  const normalized = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLowerCase();
-  return proposals.find((proposal) => (
-    proposal.legacyRecommendationId === authorityProposal.legacyRecommendationId
-    && normalized(proposal.campaignName) === normalized(authorityProposal.campaignName)
-    && normalized(proposal.adGroupName) === normalized(authorityProposal.adGroupName)
-    && normalized(proposal.entityName) === normalized(authorityProposal.entityName)
-    && proposal.currentBidCents === authorityProposal.currentBidCents
-    && proposalIsSafeTargetVerificationCandidate(proposal)
-  ));
-}
-
-export function buildProposalTargetVerificationPlan(
-  context: StoreContextEnvelope,
-  missionId: string,
-  proposal: AnalysisProposalSnapshotRecord,
-  evidencePackages: readonly AnalysisEvidencePackageRecord[],
-  operationScope: Record<string, unknown>,
-  authoritativeRecommendationAsin: string,
-): {
-  analysisRequest: RunMissionAnalysisRequest;
-  bindingScope: BindRecommendationWritableTargetRequest['scope'];
-} {
-  assertMissionAuthorityContext(context);
-  const evidencePackage = evidencePackages.find((item) => (
-    String(item.storeId) === String(context.storeId)
-    && item.missionId === missionId
-    && item.id === proposal.evidencePackageId
-    && item.packageHash === proposal.evidencePackageHash
-    && item.dataBatchId === proposal.dataBatchId
-  ));
-  if (!evidencePackage) {
-    throw new Error('当前建议缺少对应的数据证据范围；请刷新当前店铺并重新运行分析后，再核验 Ads 对象。');
-  }
-  const storeName = String(operationScope.storeName ?? '').trim();
-  if (!storeName) {
-    throw new Error('当前店铺名称尚未加载；请刷新当前店铺后，再核验 Ads 对象。');
-  }
-  let recommendationAsin: string;
-  try {
-    recommendationAsin = canonicalizeAmazonAsin(authoritativeRecommendationAsin);
-  } catch {
-    throw new Error('当前权威建议缺少 ASIN；为避免绑定到其他产品，Ads 对象核验已阻断。');
-  }
-  let evidenceAsin = '';
-  if (evidencePackage.asin) {
-    try {
-      evidenceAsin = canonicalizeAmazonAsin(evidencePackage.asin);
-    } catch {
-      throw new Error('当前证据包 ASIN 无效；请重新采集并运行分析后再核验 Ads 对象。');
-    }
-  }
-  if (evidenceAsin && evidenceAsin !== recommendationAsin) {
-    throw new Error('当前权威建议 ASIN 与证据包不一致；请重新运行分析后再核验 Ads 对象。');
-  }
-  return {
-    analysisRequest: { context, missionId },
-    bindingScope: {
-      dateFrom: evidencePackage.dateFrom,
-      dateTo: evidencePackage.dateTo,
-      storeName,
-      marketplaceCode: evidencePackage.marketplace,
-      asin: recommendationAsin,
-      batchId: evidencePackage.dataBatchId,
-    },
-  };
-}
-
-export function AnalysisProposalAuthorityStatus({
-  busy,
-  onVerify,
-  proposal,
-}: {
-  busy: boolean;
-  onVerify?: () => void;
-  proposal: AnalysisProposalSnapshotRecord;
-}) {
-  if (proposalHasVerifiedAdsAuthority(proposal)) {
-    return <small className="decision-domain-proposal-authority" data-verified>对象版本已校验</small>;
-  }
-  return <span className="decision-domain-proposal-authority" data-verified="false">
-    <small>Ads 对象待核验</small>
-    {onVerify && <button
-      className="workspace-button workspace-button--secondary"
-      disabled={busy}
-      onClick={onVerify}
-      type="button"
-    >{busy ? '核验中…' : '核验 Ads 对象'}</button>}
-  </span>;
-}
-
-type AnalysisProposalWithOptionalMatchType = AnalysisProposalSnapshotRecord & { matchType?: string };
-
-export type AnalysisProposalBusinessRow = {
-  adGroup: string;
-  action: string;
-  basis: string;
-  campaign: string;
-  change: string;
-  currentValue: string;
-  entityLevel: string;
-  matchType: string;
-  objectName: string;
-  proposedValue: string;
-  status: string;
-};
-
-/**
- * Decide-workspace match-type label. Thin adapter around
- * `@amazon-ai-ops/business-presenters` so the analysis table renders
- * the same Chinese labels as every other workspace that consumes the
- * shared presenter. Unknown tokens fall back to a non-silent "待对象核验"
- * marker so the analysis table still surfaces ad-hoc data the upstream
- * pipeline has not yet catalogued.
- */
-export function analysisProposalMatchTypeLabel(value: unknown): string {
-  const label = localizeMatchType(value);
-  if (label === '不适用' || label === '其他投放方式') return '待对象核验';
-  return label;
-}
-
-function normalizedProposalMatchType(value: unknown): string {
-  return String(value ?? '').normalize('NFKC').trim().toLowerCase().replace(/[_\s]+/g, '-');
-}
-
-export function analysisProposalBusinessRow(
-  proposal: AnalysisProposalWithOptionalMatchType,
-): AnalysisProposalBusinessRow {
-  const explicit = normalizedProposalMatchType(proposal.matchType);
-  const suffix = proposal.entityName.match(/(?:\s*[·.\/()\-]\s*|\s+)(exact|phrase|broad|auto|close[-_ ]match|loose[-_ ]match|substitutes|complements)\s*\)?$/i);
-  const inferred = normalizedProposalMatchType(suffix?.[1]);
-  const matchType = explicit || inferred;
-  const objectName = suffix
-    ? proposal.entityName.slice(0, suffix.index).trim()
-    : proposal.entityName.trim();
-  const verified = proposalHasVerifiedAdsAuthority(proposal);
-  const eligible = proposal.authorization.human.eligible || proposal.authorization.policy.eligible;
-  return {
-    campaign: proposal.campaignName,
-    adGroup: proposal.adGroupName,
-    entityLevel: proposal.entityType === 'keyword' ? '关键词' : '投放对象',
-    objectName: objectName || '未命名对象',
-    matchType: analysisProposalMatchTypeLabel(matchType),
-    action: proposal.actionType === 'set_keyword_bid' ? '调整关键词竞价' : '受控动作',
-    change: `${proposal.changePct > 0 ? '+' : ''}${proposal.changePct.toFixed(1)}%`,
-    currentValue: `$${(proposal.currentBidCents / 100).toFixed(2)}`,
-    proposedValue: `$${(proposal.proposedBidCents / 100).toFixed(2)}`,
-    basis: proposal.explanation,
-    status: !verified ? '对象待核验' : eligible ? '可审批' : '已阻断',
-  };
-}
-
-export function AnalysisProposalBusinessTable({
-  busy,
-  onSelect,
-  proposals,
-  selectedProposalId,
-}: {
-  busy: boolean;
-  onSelect?: (proposal: AnalysisProposalSnapshotRecord) => void;
-  proposals: readonly AnalysisProposalSnapshotRecord[];
-  selectedProposalId?: string;
-}): React.ReactElement {
-  const groups = new Map<string, {
-    adGroup: string;
-    campaign: string;
-    proposals: AnalysisProposalSnapshotRecord[];
-  }>();
-  for (const proposal of proposals) {
-    const key = `${proposal.campaignName}\u0000${proposal.adGroupName}`;
-    const group = groups.get(key) ?? {
-      campaign: proposal.campaignName,
-      adGroup: proposal.adGroupName,
-      proposals: [],
-    };
-    group.proposals.push(proposal);
-    groups.set(key, group);
-  }
-  return <div className="decision-domain-analysis-table-wrap">
-    <table aria-label="分析建议业务表" className="decision-domain-analysis-table">
-      <thead><tr>
-        <th>广告活动</th><th>广告组</th><th>对象层级</th><th>具体对象</th><th>匹配方式</th>
-        <th>建议动作</th><th>变更</th><th>当前值</th><th>建议值</th><th>主要依据</th><th>状态</th><th>操作</th>
-      </tr></thead>
-      {[...groups.entries()].map(([key, group]) => <tbody data-ad-group={group.adGroup} data-campaign={group.campaign} key={key}>
-        <tr className="decision-domain-analysis-group"><th colSpan={12}>广告活动：{group.campaign} · 广告组：{group.adGroup}</th></tr>
-        {group.proposals.map((proposal) => {
-          const row = analysisProposalBusinessRow(proposal);
-          return <tr aria-selected={proposal.id === selectedProposalId || undefined} key={proposal.id}>
-            <td>{row.campaign}</td><td>{row.adGroup}</td><td>{row.entityLevel}</td><td><strong>{row.objectName}</strong></td>
-            <td>{row.matchType}</td><td>{row.action}</td><td>{row.change}</td><td>{row.currentValue}</td><td>{row.proposedValue}</td>
-            <td className="decision-domain-analysis-basis">{row.basis}</td><td><span data-status={row.status}>{row.status}</span></td>
-            <td>{onSelect ? <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => onSelect(proposal)} type="button">查看详情</button> : '—'}
-              <details><summary>诊断详情</summary><code>{proposal.id}</code><code>{proposal.adEntityRevision ?? '—'}</code></details>
-            </td>
-          </tr>;
-        })}
-      </tbody>)}
-    </table>
-  </div>;
-}
-
-export type DecisionDraft = {
-  title: string;
-  missionId: string;
-  dataBatchId: string;
-  policyVersionId: string;
-  policyRevision: string;
-  actionRevision: string;
-  rationale: string;
-  recommendation: string;
-  facts: string;
-  alternatives: string;
-  expectedEffect: string;
-  validUntil: string;
-  actionType: string;
-  adEntityId: string;
-  productId: string;
-  currentValue: string;
-  recommendedValue: string;
-  confidence: string;
-  status: Extract<DecisionStatus, 'proposed' | 'needs_approval' | 'blocked'>;
-};
-
-const STATUS_LABELS: Record<DecisionStatus, string> = {
-  proposed: '待复核',
-  needs_approval: '待审批',
-  approved: '已批准',
-  rejected: '已拒绝',
-  blocked: '已阻断',
-  superseded: '已替代',
-  executed: '已执行',
-  verified: '已回读',
-};
-
-const VIEW_COPY: Record<DecisionWorkspaceView, { title: string; description: string; task: string; taskDescription: string }> = {
-  'decisions/recommendations': { title: 'AI 建议', description: '查看由事实与策略版本生成的建议；建议本身不代表已获执行授权。', task: '先把建议修订成可核验决策', taskDescription: '补齐事实、替代方案、预期效果与有效期，再送入人工审批。' },
-  'decisions/approval': { title: '人工审批', description: '逐条确认边界；批准只形成经营决策状态，不代表已写入 Amazon Ads。', task: '处理等待人工决议的经营决策', taskDescription: '批准、拒绝、阻断或替代都必须记录原因，并形成只追加的历史。' },
-  'decisions/decided': { title: '已决策', description: '回看已批准、拒绝、阻断与替代的历史决策和人工授权。', task: '复核已决策记录与授权边界', taskDescription: '已决策内容不可覆盖；如经营事实变化，应创建新的经营决策版本链。' },
-};
-
-export function decisionActionVisibility(view: DecisionWorkspaceView, status: DecisionStatus): {
-  revise: boolean;
-  resolve: boolean;
-} {
-  return {
-    revise: view === 'decisions/recommendations' && (status === 'proposed' || status === 'blocked'),
-    resolve: view === 'decisions/approval' && status === 'needs_approval',
-  };
-}
-
-function message(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message : '经营决策操作未完成，请刷新后重试。';
-}
-
-function split(value: string): string[] {
-  return value.split(/[\n；;]/).map((item) => item.trim()).filter(Boolean);
-}
-
-function plusDays(date: string, days: number): string {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
-export function decisionCapabilityReady(
-  rows: readonly MissionControlCapabilityProjection[] | undefined,
-  id: string,
-  view: DecisionWorkspaceView,
-  previewMode: boolean,
-): boolean {
-  const row = rows?.find((item) => item.capabilityId === id && item.view === view);
-  return row?.state === (previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE');
-}
-
-export function preferredDecisionId(view: DecisionWorkspaceView, rows: readonly DecisionRecord[]): string {
-  const preferredStatus = view === 'decisions/recommendations'
-    ? 'proposed'
-    : view === 'decisions/approval'
-      ? 'needs_approval'
-      : 'approved';
-  return rows.find((item) => item.status === preferredStatus)?.id ?? rows[0]?.id ?? '';
-}
-
-export function preferredDecisionIdAfterTargetVerification(
-  currentDecisionId: string,
-  verifiedProposalId: string,
-  projection: MissionAnalysisProjection,
-  decisions: readonly DecisionRecord[],
-  view: DecisionWorkspaceView,
-): string {
-  const linkedDecisionId = projection.decisionLinks.find((link) => (
-    link.proposalId === verifiedProposalId
-    && decisions.some((decision) => decision.id === link.decisionId)
-  ))?.decisionId;
-  if (linkedDecisionId) return linkedDecisionId;
-  return decisions.some((decision) => decision.id === currentDecisionId)
-    ? currentDecisionId
-    : preferredDecisionId(view, decisions);
-}
-
-const AUTHORIZATION_STATUS_PRIORITY: Partial<Record<DecisionStatus, number>> = {
-  needs_approval: 0,
-  proposed: 1,
-  approved: 2,
-};
-
-/**
- * Batch authorization is scoped by Mission, not by the Decision detail row that
- * happens to be selected. Keep policy-auto candidates ahead of already-approved
- * manual candidates while preserving repository order inside each status.
- */
-export function authorizationMissionIds(rows: readonly DecisionRecord[]): string[] {
-  const candidates = rows
-    .map((record, index) => ({ record, index, priority: AUTHORIZATION_STATUS_PRIORITY[record.status] }))
-    .filter((item): item is typeof item & { priority: number } => item.priority !== undefined)
-    .sort((left, right) => left.priority - right.priority || left.index - right.index);
-  return [...new Set(candidates.map(({ record }) => record.missionId).filter(Boolean))];
-}
-
-export type AnalysisActionBatchOption = {
-  id: string;
-  proposalCount: number;
-  latestCreatedAt: string;
-};
-
-export function analysisActionBatchOptions(
-  projection: MissionAnalysisProjection | null,
-): AnalysisActionBatchOption[] {
-  if (!projection) return [];
-  const latest = [...projection.actionBatches].sort((left, right) => (
-    right.actionRevision - left.actionRevision
-    || right.createdAt.localeCompare(left.createdAt)
-    || right.id.localeCompare(left.id)
-  ))[0];
-  if (!latest) return [];
-  return [{
-    id: latest.id,
-    proposalCount: projection.proposals.filter((proposal) => proposal.actionBatchId === latest.id).length,
-    latestCreatedAt: latest.createdAt,
-  }];
-}
-
-export function buildAnalysisBatchAuthorizationRequest(
-  context: StoreContextEnvelope,
-  missionId: string,
-  actionBatchId: string,
-  projection: MissionAnalysisProjection | null,
-): AuthorizeAnalysisProposalBatchRequest {
-  assertMissionAuthorityContext(context);
-  if (!missionId.trim() || !actionBatchId.trim() || !projection) {
-    throw new Error('请选择已加载的 Mission 与动作批次。');
-  }
-  assertAnalysisProjectionBelongsToContext(context, missionId, projection);
-  const proposals = projection.proposals.filter((proposal) => proposal.actionBatchId === actionBatchId);
-  if (proposals.length === 0) throw new Error('所选动作批次没有可授权建议。');
-  if (proposals.some((proposal) => (
-    String(proposal.storeId) !== String(context.storeId) || proposal.missionId !== missionId
-  ))) {
-    throw new Error('动作批次包含跨店铺或错误 Mission 的建议。');
-  }
-  return {
-    context,
-    missionId,
-    proposalIds: proposals.map((proposal) => proposal.id),
-  };
-}
-
-export function formatDecisionMoney(value: unknown, linkedProposalCents?: number): string {
-  if (linkedProposalCents !== undefined && Number.isFinite(linkedProposalCents)) {
-    return `$${(linkedProposalCents / 100).toFixed(2)}`;
-  }
-  return typeof value !== 'number' || !Number.isFinite(value) ? '—' : `$${value.toFixed(2)}`;
-}
-
-export function decisionRevisionDisplayLabel(revision: number): string {
-  void revision;
-  return '版本已校验';
-}
-
-export function decisionFactProjection(facts: readonly string[]): {
-  diagnosticFacts: string[];
-  operatorFacts: string[];
-} {
-  const diagnosticFacts: string[] = [];
-  const operatorFacts: string[] = [];
-  const appendOperatorFact = (fact: string) => {
-    if (!operatorFacts.includes(fact)) operatorFacts.push(fact);
-  };
-
-  for (const rawFact of facts) {
-    const fact = rawFact.trim();
-    if (!fact) continue;
-    if (/^evidence-package:/i.test(fact)) {
-      diagnosticFacts.push(fact);
-      appendOperatorFact('证据包已锁定');
-      continue;
-    }
-    if (/^(?:rule|model)-revision:/i.test(fact)) {
-      diagnosticFacts.push(fact);
-      appendOperatorFact('规则与模型版本已校验');
-      continue;
-    }
-    if (/^proposal-source:/i.test(fact)) {
-      diagnosticFacts.push(fact);
-      appendOperatorFact(/:rule_ai$/i.test(fact) ? '规则与 AI 分析一致' : '分析来源已记录，需人工复核');
-      continue;
-    }
-    appendOperatorFact(fact);
-  }
-
-  return { diagnosticFacts, operatorFacts };
-}
-
-export function DecisionEvidenceFacts({ facts }: { facts: readonly string[] }): React.ReactElement {
-  const projection = decisionFactProjection(facts);
-  return <>
-    {projection.operatorFacts.length
-      ? <ul>{projection.operatorFacts.map((fact) => <li key={fact}><CheckCircle size={15} weight="fill" />{fact}</li>)}</ul>
-      : <p>未记录可核验事实。</p>}
-    {projection.diagnosticFacts.length > 0 && <details><summary>诊断详情</summary>{projection.diagnosticFacts.map((fact) => <code key={fact}>{fact}</code>)}</details>}
-  </>;
-}
-
-export function decisionListScopeLabel(record: Pick<DecisionRecord, 'productId' | 'actionType'>): string {
-  const scope = record.productId ? '指定产品' : '店铺级';
-  const action = record.actionType === 'set_keyword_bid' ? '调整关键词竞价' : '其他受控动作';
-  return `${scope} · ${action}`;
-}
-
-const DECISION_INTERNAL_OPERATOR_COPY = /(?:^|[^A-Za-z0-9])(?:Main|StoreContext|Authority|Renderer|Profile|MissionGrant|Mission|Decision|Experiment|UNKNOWN|revision|draft|set_keyword_bid|manifest|fingerprint|dry-run|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|append-only|correction|DECISION|ACTION|READBACK|EFFECT|adapter)(?:$|[^A-Za-z0-9])/i;
-
-export function decisionOperatorCopy(value: unknown, fallback: string): string {
-  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
-  return !normalized || DECISION_INTERNAL_OPERATOR_COPY.test(normalized) ? fallback : normalized;
-}
-
-export function targetVerificationOperatorError(error: unknown): string {
-  const detail = message(error);
-  if (/Mission changed while its analysis was running|analysis date range does not match|scope must equal the Mission data-batch date range/i.test(detail)) {
-    return '核验 Ads 对象时，运营任务或数据批次已变化；请刷新当前店铺，重新运行分析后再核验。';
-  }
-  return decisionOperatorCopy(
-    detail,
-    'Ads 对象核验未完成；请刷新当前店铺，确认数据批次与 Ads 连接后再重试。',
-  );
-}
-
-function decisionHistoryEventLabel(eventType: string): string {
-  if (eventType === 'created') return '已创建';
-  if (eventType === 'revised') return '已修订';
-  if (eventType === 'resolved') return '已决议';
-  return '决策记录已更新';
-}
-
-function grantTerminalDisplayLabel(eventType?: string): string {
-  if (eventType === 'historical') return '历史授权，仅供查阅';
-  if (eventType === 'invalidated') return '剩余授权已失效';
-  if (eventType === 'revoked') return '已撤销';
-  if (eventType === 'consumed') return '已消费';
-  if (eventType === 'expired') return '已过期';
-  return '有效';
-}
-
-function proposalAuthorizationLabel(proposal: AnalysisProposalSnapshotRecord): string {
-  const blockerLabel = (value: string, subject: string) => decisionOperatorCopy(
-    value,
-    `${subject}条件未满足，请核对当前店铺证据后重试`,
-  );
-  const human = proposal.authorization.human.eligible
-    ? '人工可授权'
-    : `人工阻断：${[...new Set(proposal.authorization.human.blockers.map((item) => blockerLabel(item, '人工授权')))].join(' · ')}`;
-  const policy = proposal.authorization.policy.eligible
-    ? '策略内自动可授权'
-    : `策略阻断：${[...new Set(proposal.authorization.policy.blockers.map((item) => blockerLabel(item, '策略授权')))].join(' · ')}`;
-  return `${human} · ${policy}`;
-}
-
-export function responseMatchesDecisionDetail(
-  currentAuthorityKey: string,
-  capturedAuthorityKey: string,
-  currentSelectedId: string,
-  capturedSelectedId: string,
-  currentSequence: number,
-  capturedSequence: number,
-): boolean {
-  return currentAuthorityKey === capturedAuthorityKey
-    && currentSelectedId === capturedSelectedId
-    && currentSequence === capturedSequence;
-}
-
-function decisionDraft(context: StoreContextEnvelope, record?: DecisionRecord | null): DecisionDraft {
-  return {
-    title: record?.title ?? '',
-    missionId: record?.missionId ?? '',
-    dataBatchId: record?.dataBatchId ?? '',
-    policyVersionId: record?.policyVersionId ?? '',
-    policyRevision: String(record?.policyRevision ?? 1),
-    actionRevision: String(record?.actionRevision ?? 1),
-    rationale: record?.rationale ?? '',
-    recommendation: record?.recommendation ?? '',
-    facts: record?.facts.join('；') ?? '',
-    alternatives: record?.alternatives.join('；') ?? '',
-    expectedEffect: record?.expectedEffect ?? '',
-    validUntil: record?.validUntil?.slice(0, 10) ?? plusDays(context.businessDate, 7),
-    actionType: record?.actionType ?? 'set_keyword_bid',
-    adEntityId: record?.adEntityId ?? '',
-    productId: record?.productId ?? '',
-    currentValue: record?.currentValue === undefined ? '' : String(record.currentValue),
-    recommendedValue: record?.recommendedValue === undefined ? '' : String(record.recommendedValue),
-    confidence: String(record?.confidence ?? 0.8),
-    status: ['proposed', 'needs_approval', 'blocked'].includes(record?.status ?? '') ? record!.status as DecisionDraft['status'] : 'proposed',
-  };
-}
-
-export function buildCreateDecisionInput(draft: DecisionDraft, id: string): CreateDecisionInput {
-  const facts = split(draft.facts);
-  const alternatives = split(draft.alternatives);
-  const confidence = Number(draft.confidence);
-  const policyRevision = Number(draft.policyRevision);
-  const actionRevision = Number(draft.actionRevision);
-  if (!draft.title.trim() || !draft.missionId.trim() || !draft.dataBatchId.trim() || !draft.policyVersionId.trim()) throw new Error('请填写标题并绑定运营任务、数据批次与策略版本。');
-  if (!draft.rationale.trim() || !draft.recommendation.trim() || !facts.length) throw new Error('请填写理由、推荐动作与至少一条可核验事实。');
-  if (!Number.isSafeInteger(policyRevision) || policyRevision < 1 || !Number.isSafeInteger(actionRevision) || actionRevision < 1) throw new Error('策略与动作版本号必须是正整数。');
-  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw new Error('置信度必须在 0–1 之间。');
-  return {
-    id,
-    missionId: draft.missionId.trim(),
-    dataBatchId: draft.dataBatchId.trim(),
-    policyVersionId: draft.policyVersionId.trim(),
-    policyRevision,
-    actionRevision,
-    title: draft.title.trim(),
-    rationale: draft.rationale.trim(),
-    recommendation: draft.recommendation.trim(),
-    facts,
-    alternatives,
-    ...(draft.expectedEffect.trim() ? { expectedEffect: draft.expectedEffect.trim() } : {}),
-    ...(draft.validUntil ? { validUntil: `${draft.validUntil}T07:00:00.000Z` } : {}),
-    actionType: draft.actionType.trim() || 'set_keyword_bid',
-    ...(draft.adEntityId.trim() ? { adEntityId: draft.adEntityId.trim() } : {}),
-    ...(draft.productId.trim() ? { productId: draft.productId.trim() } : {}),
-    ...(draft.currentValue.trim() ? { currentValue: Number(draft.currentValue) } : {}),
-    ...(draft.recommendedValue.trim() ? { recommendedValue: Number(draft.recommendedValue) } : {}),
-    confidence,
-    status: draft.status,
-    actorId: OPERATOR,
-  };
-}
-
-export function buildReviseDecisionInput(record: DecisionRecord, draft: DecisionDraft): ReviseDecisionInput {
-  const create = buildCreateDecisionInput(draft, record.id);
-  return {
-    id: record.id,
-    expectedRevision: record.revision,
-    title: create.title,
-    rationale: create.rationale,
-    recommendation: create.recommendation,
-    facts: create.facts,
-    alternatives: create.alternatives,
-    expectedEffect: create.expectedEffect ?? null,
-    validUntil: create.validUntil ?? null,
-    currentValue: create.currentValue,
-    recommendedValue: create.recommendedValue,
-    confidence: create.confidence,
-    status: create.status,
-    actorId: OPERATOR,
-  };
-}
-
-export function DecisionDialog({ record, draft, busy, onChange, onClose, onSave }: { record: DecisionRecord | null; draft: DecisionDraft; busy: boolean; onChange: (draft: DecisionDraft) => void; onClose: () => void; onSave: () => void }) {
-  const dialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
-    open: true, onDismiss: onClose, dismissDisabled: busy,
-  });
-  const update = <K extends keyof DecisionDraft>(key: K, value: DecisionDraft[K]) => onChange({ ...draft, [key]: value });
-  return (
-    <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
-      <section aria-labelledby="decision-dialog-title" aria-modal="true" className="mission-control-dialog decision-domain-dialog" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
-        <header>
-          <div>
-            <span>经营决策 · US / USD</span>
-            <h2 id="decision-dialog-title">{record ? '修订经营决策' : '新建经营决策'}</h2>
-            <p>关联运营任务、数据批次和策略版本在创建后保持冻结。</p>
-          </div>
-          <button aria-label="关闭经营决策编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button>
-        </header>
-        <div className="decision-domain-form">
-          <label className="decision-domain-form__wide"><span>决策标题 *</span><input data-overlay-initial-focus value={draft.title} onChange={(event) => update('title', event.target.value)} /></label>
-          <label className="decision-domain-form__wide"><span>决策理由 *</span><textarea rows={3} value={draft.rationale} onChange={(event) => update('rationale', event.target.value)} /></label>
-          <label className="decision-domain-form__wide"><span>推荐动作 *</span><textarea rows={2} value={draft.recommendation} onChange={(event) => update('recommendation', event.target.value)} /></label>
-          <label className="decision-domain-form__wide"><span>可核验事实 *</span><textarea rows={3} value={draft.facts} onChange={(event) => update('facts', event.target.value)} /><small>用分号或换行分隔。</small></label>
-          <label className="decision-domain-form__wide"><span>备选方案</span><textarea rows={2} value={draft.alternatives} onChange={(event) => update('alternatives', event.target.value)} /></label>
-          <label><span>当前值 / 推荐值</span><div className="decision-domain-pair"><input type="number" step="0.01" value={draft.currentValue} onChange={(event) => update('currentValue', event.target.value)} /><input type="number" step="0.01" value={draft.recommendedValue} onChange={(event) => update('recommendedValue', event.target.value)} /></div></label>
-          <label><span>置信度 / 状态</span><div className="decision-domain-pair"><input min="0" max="1" step="0.01" type="number" value={draft.confidence} onChange={(event) => update('confidence', event.target.value)} /><select value={draft.status} onChange={(event) => update('status', event.target.value as DecisionDraft['status'])}><option value="proposed">待复核</option><option value="needs_approval">待审批</option><option value="blocked">已阻断</option></select></div></label>
-          <label><span>有效期</span><input type="date" value={draft.validUntil} onChange={(event) => update('validUntil', event.target.value)} /></label>
-          <label><span>预期效果</span><input value={draft.expectedEffect} onChange={(event) => update('expectedEffect', event.target.value)} /></label>
-          <details className="decision-domain-form__wide">
-            <summary>诊断详情</summary>
-            <div className="decision-domain-form">
-              <label><span>运营任务标识 *</span><input disabled={Boolean(record)} value={draft.missionId} onChange={(event) => update('missionId', event.target.value)} /></label>
-              <label><span>数据批次标识 *</span><input disabled={Boolean(record)} value={draft.dataBatchId} onChange={(event) => update('dataBatchId', event.target.value)} /></label>
-              <label><span>策略版本标识 *</span><input disabled={Boolean(record)} value={draft.policyVersionId} onChange={(event) => update('policyVersionId', event.target.value)} /></label>
-              <label><span>策略 / 动作版本号</span><div className="decision-domain-pair"><input disabled={Boolean(record)} min="1" type="number" value={draft.policyRevision} onChange={(event) => update('policyRevision', event.target.value)} /><input disabled={Boolean(record)} min="1" type="number" value={draft.actionRevision} onChange={(event) => update('actionRevision', event.target.value)} /></div></label>
-              <label><span>广告对象标识</span><input disabled={Boolean(record)} value={draft.adEntityId} onChange={(event) => update('adEntityId', event.target.value)} /></label>
-              <label><span>产品标识</span><input disabled={Boolean(record)} value={draft.productId} onChange={(event) => update('productId', event.target.value)} /></label>
-              <label><span>内部动作值</span><input readOnly value={draft.actionType} /></label>
-            </div>
-          </details>
-        </div>
-        <footer>
-          <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button>
-          <button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : '保存经营决策'}</button>
-        </footer>
-      </section>
-    </div>
-  );
-}
+import { type DecisionsWorkspaceProps, type DecisionDraft } from './decision-workspace-contracts';
+import { VIEW_COPY, decisionCapabilityReady, PAGE_SIZE, preferredDecisionId, authorizationMissionIds, analysisActionBatchOptions, message, responseMatchesDecisionDetail, OPERATOR, STATUS_LABELS, preferredDecisionIdAfterTargetVerification, targetVerificationOperatorError, buildAnalysisBatchAuthorizationRequest, decisionActionVisibility, decisionOperatorCopy, decisionRevisionDisplayLabel, decisionListScopeLabel, formatDecisionMoney, DecisionEvidenceFacts, decisionHistoryEventLabel, grantTerminalDisplayLabel } from './decision-workspace-model';
+import { readRecommendationTargetBindingWindowApi, proposalHasVerifiedAdsAuthority, proposalIsSafeTargetVerificationCandidate, findSafeTargetVerificationProposal, buildProposalTargetVerificationPlan, AnalysisProposalAuthorityStatus } from './decision-workspace-authority';
+import { buildReviseDecisionInput, buildCreateDecisionInput, decisionDraft, DecisionDialog } from './decision-workspace-editor';
+import { AnalysisProposalBusinessTable } from './decision-workspace-analysis';
 
 export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedReason, capabilities, onInspectBoundary, previewMode, storeContext, view }: DecisionsWorkspaceProps) {
   const copy = VIEW_COPY[view];
-  const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
+  const [decisionRows, setDecisions] = useState<DecisionRecord[]>([]);
+  const [publishedKey, setPublishedKey] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [history, setHistory] = useState<DecisionHistoryRecord[]>([]);
   const [grants, setGrants] = useState<MissionGrantRecord[]>([]);
@@ -777,7 +84,15 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   const analysisSequence = useRef(0);
   const authorizationAnalysisSequence = useRef(0);
   const mutationSequence = useRef(0);
-  const authorityKey = storeContext ? missionControlContextKey(storeContext) : '';
+  const authority = useCanonicalWorkspaceOperation(storeContext, capabilities, view);
+  const authorityKey = authority.key;
+  const operation = authority.operation;
+  const renderedAuthority = useRef(`${authorityKey}|${view}`);
+  if (renderedAuthority.current !== `${authorityKey}|${view}`) {
+    renderedAuthority.current = `${authorityKey}|${view}`;
+    mutationSequence.current++; sequence.current++; detailSequence.current++;
+    analysisSequence.current++; authorizationAnalysisSequence.current++;
+  }
   const authorityRef = useRef(authorityKey); authorityRef.current = authorityKey;
   const api = useMemo(() => apiOverride ?? readDecisionDomainWindowApi(), [apiOverride]);
   const analysisApi = analysisApiOverride ?? readAnalysisAuthorityWindowApi();
@@ -786,8 +101,9 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     : readRecommendationTargetBindingWindowApi((window as unknown as { electronAPI?: unknown }).electronAPI);
   const expectedState = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
   const viewId = view === 'decisions/recommendations' ? 'decisions.recommendations.view' : view === 'decisions/approval' ? 'decisions.approval.view' : 'decisions.decided.view';
-  const viewReady = decisionCapabilityReady(capabilities, viewId, view, previewMode);
+  const viewReady = authority.ready && decisionCapabilityReady(capabilities, viewId, view, previewMode);
   const can = (id: string) => Boolean(api && storeContext && viewReady && decisionCapabilityReady(capabilities, id, view, previewMode));
+  const decisions = publishedKey === authority.projectionKey ? decisionRows : [];
   const filtered = useMemo(() => {
     const allowed = view === 'decisions/recommendations'
       ? new Set<DecisionStatus>(['proposed', 'blocked'])
@@ -795,7 +111,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         ? new Set<DecisionStatus>(['needs_approval'])
         : new Set<DecisionStatus>(['approved', 'rejected', 'blocked', 'superseded', 'executed', 'verified']);
     const normalized = query.trim().toLowerCase();
-    return decisions.filter((item) => allowed.has(item.status) && (!normalized || `${item.id} ${item.title} ${item.recommendation} ${item.productId ?? ''}`.toLowerCase().includes(normalized)));
+    return decisions.filter((item) => allowed.has(item.status) && (!normalized || `${item.id} ${decisionOperatorCopy(item.title, '未命名经营决策')} ${item.recommendation} ${item.productId ?? ''}`.toLowerCase().includes(normalized)));
   }, [decisions, query, view]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -816,7 +132,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     () => analysisActionBatchOptions(authorizationAnalysis),
     [authorizationAnalysis],
   );
-  const busy = pending !== null;
+  const busy = operation.busy;
   const terminalGrantEvent = (grant: MissionGrantRecord) => grantEvents.find((event) => (
     event.grantId === grant.id && isTerminalMissionGrantEventType(event.eventType)
   )) ?? (Date.parse(grant.expiresAt) <= Date.now() ? {
@@ -825,16 +141,26 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   } : undefined);
 
   const load = async (context: StoreContextEnvelope, key: string) => {
+    const isCurrent = operation.capture();
     const current = ++sequence.current;
     if (!viewReady || !api) { setPhase('blocked'); setDecisions([]); setError(!viewReady ? `${copy.title}未获得生产能力，当前已失败关闭。` : '生产经营决策服务未接入；界面不会回退到示例数据。'); return; }
     setPhase('loading'); setError(''); setFeedback('');
     try {
       assertMissionAuthorityContext(context);
       const result = await api.listDecisions(context);
-      if (authorityRef.current !== key || sequence.current !== current) return;
+      if (!isCurrent() || authorityRef.current !== key || sequence.current !== current) return;
       result.forEach((item) => assertDecisionBelongsToContext(item, context));
-      setDecisions(result); setSelectedId((id) => result.some((item) => item.id === id) ? id : ''); setPhase('ready');
-    } catch (loadError) { if (authorityRef.current === key && sequence.current === current) { setPhase('error'); setDecisions([]); setError(message(loadError)); } }
+      setPublishedKey(authority.projectionKey); setDecisions(result); setSelectedId((id) => result.some((item) => item.id === id) ? id : ''); setPhase('ready');
+    } catch (loadError) { rendererRuntimeLog.error('decisions.operation_failed', { error: loadError });  if (isCurrent() && authorityRef.current === key && sequence.current === current) { setPhase('error'); setDecisions([]); setError(message(loadError)); } }
+  };
+
+  const refresh = async () => {
+    if (!storeContext) return;
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setPending('refresh');
+    try { await load(storeContext, authorityKey); }
+    finally { if (ticket.isCurrent()) setPending(null); ticket.finish(); }
   };
 
   useEffect(() => {
@@ -846,7 +172,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     setAuthorizationAnalysis(null); setAuthorizationMissionId(''); setAuthorizationBatchId('');
     setAuthorizationAnalysisLoading(false); setAuthorizationAnalysisError('');
     if (storeContext) void load(storeContext, authorityKey); else { setPhase('blocked'); setError('等待本机安全进程确认当前店铺范围。'); }
-  }, [authorityKey, apiOverride, viewReady]);
+  }, [authorityKey, apiOverride, viewReady, view]);
 
   useEffect(() => { setSelectedId((id) => filtered.some((item) => item.id === id) ? id : preferredDecisionId(view, filtered)); }, [view, filtered]);
 
@@ -870,6 +196,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       detailSequence.current += 1;
       setHistory([]); setGrants([]); setGrantEvents([]); return;
     }
+    const isCurrent = operation.capture();
     const capturedKey = authorityKey; const capturedId = selected.id;
     const capturedSequence = ++detailSequence.current;
     void Promise.all([
@@ -877,7 +204,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       api.listHumanGrants(storeContext, selected.missionId),
       api.listHumanGrantEvents(storeContext, selected.missionId),
     ]).then(([historyRows, grantRows, eventRows]) => {
-      if (!responseMatchesDecisionDetail(authorityRef.current, capturedKey, selectedRef.current, capturedId, detailSequence.current, capturedSequence)) return;
+      if (!isCurrent() || !responseMatchesDecisionDetail(authorityRef.current, capturedKey, selectedRef.current, capturedId, detailSequence.current, capturedSequence)) return;
       if (grantRows.some((grant) => String(grant.storeId) !== String(storeContext.storeId) || grant.missionId !== selected.missionId)
         || eventRows.some((event) => String(event.storeId) !== String(storeContext.storeId))) {
         throw new Error('本机安全进程返回了不属于当前运营任务的授权记录。');
@@ -886,7 +213,8 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       setGrants(grantRows);
       setGrantEvents(eventRows);
     }).catch((loadError) => {
-      if (responseMatchesDecisionDetail(authorityRef.current, capturedKey, selectedRef.current, capturedId, detailSequence.current, capturedSequence)) setError(message(loadError));
+      rendererRuntimeLog.error('decisions.load_failed', { error: loadError });
+      if (isCurrent() && responseMatchesDecisionDetail(authorityRef.current, capturedKey, selectedRef.current, capturedId, detailSequence.current, capturedSequence)) setError(message(loadError));
     });
   }, [selected?.id, authorityKey, api, phase]);
 
@@ -896,15 +224,17 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       setAnalysis(null);
       return;
     }
+    const isCurrent = operation.capture();
     const capturedKey = authorityKey;
     const capturedMissionId = selected.missionId;
     const current = ++analysisSequence.current;
     void analysisApi.getMissionProjection(storeContext, selected.missionId).then((projection) => {
-      if (authorityRef.current !== capturedKey || selectedMissionRef.current !== capturedMissionId || analysisSequence.current !== current) return;
+      if (!isCurrent() || authorityRef.current !== capturedKey || selectedMissionRef.current !== capturedMissionId || analysisSequence.current !== current) return;
       assertAnalysisProjectionBelongsToContext(storeContext, capturedMissionId, projection);
       setAnalysis(projection);
     }).catch((loadError) => {
-      if (authorityRef.current === capturedKey && selectedMissionRef.current === capturedMissionId && analysisSequence.current === current) {
+      rendererRuntimeLog.error('decisions.load_failed', { error: loadError });
+      if (isCurrent() && authorityRef.current === capturedKey && selectedMissionRef.current === capturedMissionId && analysisSequence.current === current) {
         setAnalysis(null);
         setError(message(loadError));
       }
@@ -921,6 +251,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       setAuthorizationAnalysisError('');
       return;
     }
+    const isCurrent = operation.capture();
     const capturedKey = authorityKey;
     const capturedMissionId = authorizationMissionId;
     const current = ++authorizationAnalysisSequence.current;
@@ -929,66 +260,73 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     setAuthorizationAnalysisLoading(true);
     setAuthorizationAnalysisError('');
     void analysisApi.getMissionProjection(storeContext, capturedMissionId).then((projection) => {
-      if (authorityRef.current !== capturedKey || authorizationMissionRef.current !== capturedMissionId
+      if (!isCurrent() || authorityRef.current !== capturedKey || authorizationMissionRef.current !== capturedMissionId
         || authorizationAnalysisSequence.current !== current) return;
       assertAnalysisProjectionBelongsToContext(storeContext, capturedMissionId, projection);
       setAuthorizationAnalysis(projection);
     }).catch((loadError) => {
-      if (authorityRef.current === capturedKey && authorizationMissionRef.current === capturedMissionId
+      rendererRuntimeLog.error('decisions.load_failed', { error: loadError });
+      if (isCurrent() && authorityRef.current === capturedKey && authorizationMissionRef.current === capturedMissionId
         && authorizationAnalysisSequence.current === current) {
         setAuthorizationAnalysis(null);
         setAuthorizationAnalysisError(message(loadError));
       }
     }).finally(() => {
-      if (authorityRef.current === capturedKey && authorizationMissionRef.current === capturedMissionId
+      if (isCurrent() && authorityRef.current === capturedKey && authorizationMissionRef.current === capturedMissionId
         && authorizationAnalysisSequence.current === current) setAuthorizationAnalysisLoading(false);
     });
   }, [analysisApi, authorityKey, authorizationMissionId, authorizationMissions, phase, storeContext, view]);
 
-  const mutate = async <T,>(key: string, operation: (domain: DecisionDomainRendererApi, context: StoreContextEnvelope) => Promise<T>): Promise<T | null> => {
+  const mutate = async <T,>(key: string, domainOperation: (domain: DecisionDomainRendererApi, context: StoreContextEnvelope) => Promise<T>): Promise<T | null> => {
     if (!api || !storeContext || busy) return null;
+    const ticket = operation.begin();
+    if (!ticket) return null;
     const capturedContext = storeContext;
-    const capturedKey = missionControlContextKey(capturedContext);
+    const capturedKey = authorityKey;
     const current = ++mutationSequence.current;
     setPending(key); setError(''); setFeedback('');
     try {
-      const result = await operation(api, capturedContext);
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return null;
+      const result = await domainOperation(api, capturedContext);
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return null;
       return result;
-    } catch (mutationError) {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(mutationError));
+    } catch (mutationError) { rendererRuntimeLog.error('decisions.operation_failed', { error: mutationError });
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(mutationError));
       return null;
     } finally {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      ticket.finish();
     }
   };
 
   const saveDecision = async () => {
     if (!editor || !storeContext) return;
+    const isCurrent = operation.capture();
     try {
       const saved = editor.record
         ? await mutate('decision-save', (domain, context) => domain.reviseDecision(context, buildReviseDecisionInput(editor.record!, editor.draft)))
         : await mutate('decision-save', (domain, context) => domain.createDecision(context, buildCreateDecisionInput(editor.draft, `DECISION-${String(storeContext.storeId)}-${Date.now()}`)));
-      if (!saved) return; assertDecisionBelongsToContext(saved, storeContext);
+      if (!saved || !isCurrent()) return; assertDecisionBelongsToContext(saved, storeContext);
       setDecisions((items) => items.some((item) => item.id === saved.id) ? items.map((item) => item.id === saved.id ? saved : item) : [saved, ...items]);
       setEditor(null); setFeedback(editor.record ? '经营决策已通过版本校验修订。' : '经营决策已创建。');
-    } catch (validationError) { setError(message(validationError)); }
+    } catch (validationError) { rendererRuntimeLog.error('decisions.operation_failed', { error: validationError }); if (isCurrent()) setError(message(validationError)); }
   };
 
   const resolveDecision = async (reasonFromDialog: string) => {
+    const isCurrent = operation.capture();
     if (view !== 'decisions/approval') { setError('人工决议只能在审批工作台执行。'); return; }
     const trimmedReason = reasonFromDialog.trim();
     if (!selected || !resolution || !trimmedReason) { setError('人工决议必须填写原因。'); return; }
     const saved = await mutate('resolve', (domain, context) => domain.resolveDecisionHuman(context, { id: selected.id, expectedRevision: selected.revision, status: resolution, reason: trimmedReason, actorId: OPERATOR }));
-    if (!saved) return;
+    if (!saved || !isCurrent()) return;
     setDecisions((items) => items.map((item) => item.id === saved.id ? saved : item)); setResolution(null); setFeedback(`经营决策已${STATUS_LABELS[saved.status]}；这不代表真实 Ads 已执行。`);
   };
 
   const revokeGrant = async (grant: MissionGrantRecord, reason: string) => {
+    const isCurrent = operation.capture();
     if (view !== 'decisions/decided') { setError('人工授权只能在已决策工作台撤销。'); return; }
     if (!reason.trim()) { setError('撤销授权必须填写业务原因。'); return; }
     const event = await mutate('grant-revoke', (domain, context) => domain.revokeHumanGrant(context, { id: `GRANT-EVENT-${grant.id}-${Date.now()}`, grantId: grant.id, reason: reason.trim(), actorId: OPERATOR }));
-    if (!event) return;
+    if (!event || !isCurrent()) return;
     if (selectedMissionRef.current === grant.missionId) setGrantEvents((events) => [event, ...events]);
     setFeedback('人工授权已撤销，原记录保留在审计链。');
     setGrantToRevoke(null);
@@ -1023,17 +361,21 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       setFeedback('当前建议的 Ads 对象版本已经核验，无需重复操作。');
       return;
     }
+    const ticket = operation.begin();
+    if (!ticket) return;
     const capturedKey = authorityKey;
     const current = ++mutationSequence.current;
     setPending('target-verify'); setError(''); setFeedback('');
     try {
       const operationScope = await targetBindingApi.getOperationScope(storeContext);
+      if (!ticket.isCurrent()) return;
       let verificationEvidencePackages = analysis?.evidencePackages ?? [];
       let safetyProposal = proposalIsSafeTargetVerificationCandidate(selectedProposal)
         ? selectedProposal
         : undefined;
       if (!safetyProposal) {
         const prepared = await analysisApi.runMissionAnalysis({ context: storeContext, missionId: selected.missionId });
+        if (!ticket.isCurrent()) return;
         safetyProposal = findSafeTargetVerificationProposal(prepared.proposals, selectedProposal);
         verificationEvidencePackages = [prepared.evidencePackage];
       }
@@ -1044,6 +386,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         context: storeContext,
         recommendationId: safetyProposal.legacyRecommendationId,
       });
+      if (!ticket.isCurrent()) return;
       const verificationPlan = buildProposalTargetVerificationPlan(
         storeContext,
         selected.missionId,
@@ -1052,7 +395,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         operationScope,
         discovery.recommendationAsin,
       );
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       if (discovery.recommendationId !== safetyProposal.legacyRecommendationId
         || discovery.writableTarget.entityType !== 'keyword'
         || discovery.writableTarget.entityId !== discovery.pageIdentity.keywordId
@@ -1073,8 +416,9 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
           writableTarget: discovery.writableTarget,
         },
       });
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       const rerun = await analysisApi.runMissionAnalysis(verificationPlan.analysisRequest);
+      if (!ticket.isCurrent()) return;
       const verified = rerun.proposals.find((proposal) => (
         proposal.legacyRecommendationId === discovery.recommendationId
         && proposalHasVerifiedAdsAuthority(proposal)
@@ -1086,7 +430,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         analysisApi.getMissionProjection(storeContext, selected.missionId),
         api.listDecisions(storeContext),
       ]);
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       assertAnalysisProjectionBelongsToContext(storeContext, selected.missionId, projection);
       refreshedDecisions.forEach((item) => assertDecisionBelongsToContext(item, storeContext));
       setAnalysis(projection);
@@ -1099,12 +443,13 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         view,
       ));
       setFeedback(`Ads 对象已核验；新分析批次已生成，当前值 $${(verified.currentBidCents / 100).toFixed(2)}，建议值 $${(verified.proposedBidCents / 100).toFixed(2)}。尚未批准或执行。`);
-    } catch (verificationError) {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) {
+    } catch (verificationError) { rendererRuntimeLog.error('decisions.operation_failed', { error: verificationError });
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) {
         setError(targetVerificationOperatorError(verificationError));
       }
     } finally {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      ticket.finish();
     }
   };
 
@@ -1114,6 +459,8 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       setError('当前没有可整批授权的真实分析建议。');
       return;
     }
+    const ticket = operation.begin();
+    if (!ticket) return;
     const capturedKey = authorityKey;
     const current = ++mutationSequence.current;
     setPending('analysis-authorize'); setError(''); setFeedback('');
@@ -1125,9 +472,10 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
         authorizationAnalysis,
       );
       const result = await analysisApi.authorizeProposalBatch(request);
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       if (!result.authorized || !result.grant) {
-        setError(result.blockers.map((blocker) => blocker.code).join('；') || '整批授权未通过 Main 权威校验。');
+        rendererRuntimeLog.warn('decisions.authorization_blocked', { blockers: result.blockers });
+        setError('整批授权未通过当前证据核验，请刷新当前店铺后重试。');
         return;
       }
       if (selectedMissionRef.current === authorizationMissionId) {
@@ -1136,19 +484,20 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       let refreshWarning = '';
       try {
         const refreshed = await api.listDecisions(storeContext);
-        if (authorityRef.current === capturedKey && mutationSequence.current === current) {
+        if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) {
           refreshed.forEach((item) => assertDecisionBelongsToContext(item, storeContext));
           setDecisions(refreshed);
         }
-      } catch {
+      } catch (refreshError) { rendererRuntimeLog.error('decisions.operation_failed', { error: refreshError });
         refreshWarning = ' 经营决策列表刷新失败，请手动刷新；不要重复授权。';
       }
-      if (authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
+      if (!ticket.isCurrent() || authorityRef.current !== capturedKey || mutationSequence.current !== current) return;
       setFeedback(`${result.mode === 'policy_auto' ? '策略自动' : '人工审批'}已签发同一执行授权：${result.proposalIds.length} 条建议整批授权，尚未执行 Ads。${refreshWarning}`);
-    } catch (authorizationError) {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(authorizationError));
+    } catch (authorizationError) { rendererRuntimeLog.error('decisions.operation_failed', { error: authorizationError });
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) setError(message(authorizationError));
     } finally {
-      if (authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      if (ticket.isCurrent() && authorityRef.current === capturedKey && mutationSequence.current === current) setPending(null);
+      ticket.finish();
     }
   };
 
@@ -1169,9 +518,9 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
   );
   return <div className="mission-control-workspace-root decision-domain-workspace" data-canonical-surface="decisions" data-capability-state={viewReady ? expectedState : 'BLOCKED'} data-preview-mode={previewMode || undefined} data-view={view}>
     <p className="sr-only">{viewReady && api ? `${copy.title}经营决策服务已接入。` : `${copy.title}已失败关闭；${!api ? '生产决策服务未接入。' : visibleBlockedReason}`}</p>
-    <PageFrame className="decision-domain-page" pageId={view.replace('/', '-')} title="建议与审批" description={copy.description} task={<TaskBanner compact eyebrow={previewMode ? '开发预览 · 经营决策' : '经营决策'} title={copy.task} description={previewMode ? copy.taskDescription : `${copy.taskDescription} 建议必须绑定当前运营任务。`} primaryAction={{ actionId: 'decisions.recommendations.create', label: '新建经营决策', disabled: view !== 'decisions/recommendations' || !can('decisions.recommendations.create') || busy, disabledReason: visibleBlockedReason, onClick: () => storeContext && setEditor({ record: null, draft: decisionDraft(storeContext) }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'decision-boundary', label: '查看接入边界', onClick: onInspectBoundary }] : []} status={<span className="decision-domain-authority" data-state={viewReady ? expectedState : 'BLOCKED'}>{previewMode ? '仅开发预览' : viewReady ? '生产服务已接入' : '已阻断'}</span>}>{previewMode && <p className="decision-domain-preview-note">仅开发预览 · Amazon 美国站 · USD · 批准不代表执行</p>}</TaskBanner>} summary={<SummaryStrip ariaLabel="经营决策当前范围" items={[{ id: 'store', label: '当前店铺', value: storeContext ? '已选择' : '等待选择' }, { id: 'view', label: '当前队列', value: copy.title }, { id: 'count', label: '匹配经营决策', value: `${filtered.length} 条` }, { id: 'currency', label: '站点 / 币种', value: 'US / USD' }]} />}>
+    <PageFrame className="decision-domain-page" pageId={view.replace('/', '-')} title="建议与审批" description={copy.description} task={<TaskBanner compact eyebrow={previewMode ? '开发预览 · 经营决策' : '经营决策'} title={copy.task} description={previewMode ? copy.taskDescription : `${copy.taskDescription} 建议必须绑定当前运营任务。`} primaryAction={{ actionId: 'decisions.recommendations.create', label: '新建经营决策', disabled: view !== 'decisions/recommendations' || !can('decisions.recommendations.create') || busy, disabledReason: busy ? '当前决策操作进行中，请稍候。' : view !== 'decisions/recommendations' ? '新建经营决策请到待判断工作台。' : visibleBlockedReason, onClick: () => storeContext && setEditor({ record: null, draft: decisionDraft(storeContext) }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'decision-boundary', label: '查看接入边界', onClick: onInspectBoundary }] : []} status={<span className="decision-domain-authority" data-state={viewReady ? expectedState : 'BLOCKED'}>{previewMode ? '仅开发预览' : viewReady ? '生产服务已接入' : '已阻断'}</span>}>{previewMode && <p className="decision-domain-preview-note">仅开发预览 · Amazon 美国站 · USD · 批准不代表执行</p>}</TaskBanner>} summary={<SummaryStrip ariaLabel="经营决策当前范围" items={[{ id: 'store', label: '当前店铺', value: storeContext ? '已选择' : '等待选择' }, { id: 'view', label: '当前队列', value: copy.title }, { id: 'count', label: '匹配经营决策', value: `${filtered.length} 条` }, { id: 'currency', label: '站点 / 币种', value: 'US / USD' }]} />}>
       <div className="decision-domain-layout">
-        <WorkbenchPanel className="decision-domain-list-panel" title={copy.title} description="视图默认按决策状态分流。" footer={`第 ${safePage}/${pageCount} 页 · ${filtered.length} 条`} toolbar={<button className="workspace-button workspace-button--primary" disabled={view !== 'decisions/recommendations' || !can('decisions.recommendations.create') || busy} onClick={() => storeContext && setEditor({ record: null, draft: decisionDraft(storeContext) })} type="button"><Plus size={15} />新建</button>}>
+        <WorkbenchPanel className="decision-domain-list-panel" title={copy.title} description="视图默认按决策状态分流。" footer={`第 ${safePage}/${pageCount} 页 · ${filtered.length} 条`} toolbar={<><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!storeContext || !viewReady || !api || busy} disabledReason={busy ? '当前决策操作进行中，请等待完成后刷新。' : '请先选择店铺并确认连接及读取权限后刷新。'} busy={pending === 'refresh' && busy} busyLabel="刷新中…" onClick={() => void refresh()} type="button">刷新经营决策</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--primary" disabled={view !== 'decisions/recommendations' || !can('decisions.recommendations.create') || busy} onClick={() => storeContext && setEditor({ record: null, draft: decisionDraft(storeContext) })} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '请到待判断工作台，确认当前店铺已开放新建经营决策。'}><Plus size={15} />新建</WorkspaceActionButton></>}>
           {view === 'decisions/decided' && (
             <section className="decision-domain-batch-authority decision-domain-analysis-batch" aria-label="分析建议整批授权">
               <header>
@@ -1179,19 +528,19 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
                   <strong>整批授权一次</strong>
                   <small>人工审批须先在“待审批”逐条填写原因并批准，再签发整个最新批次的授权。策略内自动由当前策略核验完整批次，不需要人工补签。</small>
                 </div>
-                <button className="workspace-button workspace-button--primary" disabled={!canAuthorizeAnalysisBatch || authorizationProposals.length === 0 || busy || authorizationAnalysisLoading} onClick={() => void authorizeSelectedBatch()} type="button"><ShieldCheck size={14} />{pending === 'analysis-authorize' ? '授权校验中…' : `授权 ${authorizationProposals.length} 条`}</button>
+                <WorkspaceActionButton className="workspace-button workspace-button--primary" disabled={!canAuthorizeAnalysisBatch || authorizationProposals.length === 0 || busy || authorizationAnalysisLoading} onClick={() => void authorizeSelectedBatch()} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : authorizationAnalysisLoading ? '正在读取当前分析批次，请稍候。' : '请先选择当前运营任务及完整最新建议批次，并确认该模式具备授权权限。'} busy={pending === 'analysis-authorize'} busyLabel="授权校验中…"><ShieldCheck size={14} />{pending === 'analysis-authorize' ? '授权校验中…' : `授权 ${authorizationProposals.length} 条`}</WorkspaceActionButton>
               </header>
-              <div className="decision-domain-analysis-scope">
+              <p id="decision-authorization-selector-reason">{busy ? '当前授权操作进行中，选择器暂时锁定，请稍候。' : authorizationAnalysisLoading ? '正在读取所选任务的最新动作批次，请稍候。' : '请先选择包含当前完整分析建议的运营任务，再核对其最新动作批次。'}</p><div className="decision-domain-analysis-scope">
                 <label>
                   <span>授权运营任务</span>
-                  <select aria-label="选择授权运营任务" disabled={busy || authorizationMissions.length === 0} value={authorizationMissionId} onChange={(event) => setAuthorizationMissionId(event.target.value)}>
+                  <select aria-describedby="decision-authorization-selector-reason" aria-label="选择授权运营任务" disabled={busy || authorizationMissions.length === 0} value={authorizationMissionId} onChange={(event) => setAuthorizationMissionId(event.target.value)}>
                     <option value="">{authorizationMissions.length ? '请选择运营任务' : '暂无可授权运营任务'}</option>
                     {authorizationMissions.map((missionId, index) => <option key={missionId} value={missionId}>运营任务 {index + 1}</option>)}
                   </select>
                 </label>
                 <label>
                   <span>最新动作批次</span>
-                  <select aria-label="选择最新动作批次" disabled={busy || authorizationAnalysisLoading || authorizationBatches.length === 0} value={authorizationBatchId} onChange={(event) => setAuthorizationBatchId(event.target.value)}>
+                  <select aria-describedby="decision-authorization-selector-reason" aria-label="选择最新动作批次" disabled={busy || authorizationAnalysisLoading || authorizationBatches.length === 0} value={authorizationBatchId} onChange={(event) => setAuthorizationBatchId(event.target.value)}>
                     <option value="">{authorizationAnalysisLoading ? '正在读取动作批次…' : authorizationBatches.length ? '等待最新批次' : '暂无动作批次'}</option>
                     {authorizationBatches.map((batch) => <option key={batch.id} value={batch.id}>最新动作批次 · {batch.proposalCount} 条</option>)}
                   </select>
@@ -1205,8 +554,8 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
           {phase === 'loading' && <WorkspaceState kind="loading" title="读取经营决策" description="正在读取当前店铺决策与历史。" />}
           {(phase === 'blocked' || phase === 'error') && <WorkspaceState kind="blocked" title="经营决策已失败关闭" description="生产模式不会使用界面临时数据。" details={visibleBlockedReason} />}
           {phase === 'ready' && !rows.length && <WorkspaceState kind="empty" title={`${copy.title}暂无记录`} description="切换其他经营决策视图或创建新建议。" />}
-          <ul className="decision-domain-list" aria-label={`${copy.title}列表`}>{rows.map((item) => <li key={item.id}><button aria-pressed={item.id === selected?.id} data-selected={item.id === selected?.id || undefined} onClick={() => setSelectedId(item.id)} type="button"><span><em data-status={item.status}>{STATUS_LABELS[item.status]}</em><time>{decisionRevisionDisplayLabel(item.revision)}</time></span><strong>{item.title}</strong><small>{decisionListScopeLabel(item)}</small><b>置信度 {Math.round(item.confidence * 100)}%</b></button></li>)}</ul>
-          <nav className="decision-domain-pagination" aria-label="经营决策分页"><button disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button">上一页</button><span>{safePage}/{pageCount}</span><button disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button">下一页</button></nav>
+          <ul className="decision-domain-list" aria-label={`${copy.title}列表`}>{rows.map((item) => <li key={item.id}><button aria-pressed={item.id === selected?.id} data-selected={item.id === selected?.id || undefined} onClick={() => setSelectedId(item.id)} type="button"><span><em data-status={item.status}>{STATUS_LABELS[item.status]}</em><time>{decisionRevisionDisplayLabel(item.revision)}</time></span><strong>{decisionOperatorCopy(item.title, '未命名经营决策')}</strong><small>{decisionListScopeLabel(item)}</small><b>置信度 {Math.round(item.confidence * 100)}%</b></button></li>)}</ul>
+          <nav className="decision-domain-pagination" aria-label="经营决策分页"><WorkspaceActionButton disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} type="button" disabledReason={'已经是第一页。'}>上一页</WorkspaceActionButton><span>{safePage}/{pageCount}</span><WorkspaceActionButton disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} type="button" disabledReason={'已经是最后一页。'}>下一页</WorkspaceActionButton></nav>
         </WorkbenchPanel>
         <div className="decision-domain-detail">{selected ? <>
           {view === 'decisions/recommendations' && selectedMissionProposals.length > 0 && <section className="decision-domain-analysis-overview" aria-label="本次分析建议">
@@ -1221,26 +570,26 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
           <section className="decision-domain-detail-head">
             <div>
               <span>经营决策</span>
-              <h2>{selected.title}</h2>
+              <h2>{decisionOperatorCopy(selected.title, '未命名经营决策')}</h2>
               <p>已绑定运营任务、数据批次与策略版本</p>
               <details><summary>诊断详情</summary><code>{selected.id}</code><code>{selected.missionId}</code><code>{selected.dataBatchId}</code><code>{selected.revision}</code></details>
             </div>
             <em data-status={selected.status}>{STATUS_LABELS[selected.status]}</em>
-            <div className="decision-domain-actions">{actionVisibility?.revise && <button className="workspace-button workspace-button--primary" disabled={!can('decisions.recommendations.update') || busy} onClick={() => storeContext && setEditor({ record: selected, draft: decisionDraft(storeContext, selected) })} type="button"><PencilSimple size={15} />修订</button>}{actionVisibility?.resolve && <><button className="workspace-button workspace-button--primary" disabled={!can('decisions.approval.approve') || busy} onClick={() => setResolution('approved')} type="button"><Check size={15} />批准</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('rejected')} type="button"><ThumbsDown size={15} />拒绝</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('blocked')} type="button"><Prohibit size={15} />阻断</button><button className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('superseded')} type="button"><ArrowRight size={15} />标记被替代</button></>}</div>
+            <div className="decision-domain-actions">{actionVisibility?.revise && <WorkspaceActionButton className="workspace-button workspace-button--primary" disabled={!can('decisions.recommendations.update') || busy} onClick={() => storeContext && setEditor({ record: selected, draft: decisionDraft(storeContext, selected) })} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '当前决策状态或权限不允许修订，请刷新当前店铺后重试。'}><PencilSimple size={15} />修订</WorkspaceActionButton>}{actionVisibility?.resolve && <><WorkspaceActionButton className="workspace-button workspace-button--primary" disabled={!can('decisions.approval.approve') || busy} onClick={() => setResolution('approved')} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '当前店铺未开放此人工决议，请在待审批工作台核对权限后重试。'}><Check size={15} />批准</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('rejected')} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '当前店铺未开放此人工决议，请在待审批工作台核对权限后重试。'}><ThumbsDown size={15} />拒绝</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('blocked')} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '当前店铺未开放此人工决议，请在待审批工作台核对权限后重试。'}><Prohibit size={15} />阻断</WorkspaceActionButton><WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!can('decisions.approval.reject') || busy} onClick={() => setResolution('superseded')} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : '当前店铺未开放此人工决议，请在待审批工作台核对权限后重试。'}><ArrowRight size={15} />标记被替代</WorkspaceActionButton></>}</div>
           </section>
           <section className="decision-domain-recommendation">
-            <div><FileText size={20} weight="duotone" /><div><span>推荐动作</span><strong>{selected.recommendation}</strong><p>{selected.rationale}</p>{selectedProposal && <div className="decision-domain-proposal-source"><small>{selectedProposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'} · 证据已锁定</small><AnalysisProposalAuthorityStatus busy={pending === 'target-verify'} onVerify={targetBindingApi ? () => void verifySelectedProposalTarget() : undefined} proposal={selectedProposal} /></div>}</div></div>
+            <div><FileText size={20} weight="duotone" /><div><span>推荐动作</span><strong>{decisionOperatorCopy(selected.recommendation, '推荐动作待补充')}</strong><p>{decisionOperatorCopy(selected.rationale, '判断依据待补充')}</p>{selectedProposal && <div className="decision-domain-proposal-source"><small>{selectedProposal.source === 'rule_ai' ? '规则 + AI 一致' : '单一分析来源'} · 证据已锁定</small><AnalysisProposalAuthorityStatus busy={pending === 'target-verify'} onVerify={targetBindingApi ? () => void verifySelectedProposalTarget() : undefined} proposal={selectedProposal} /></div>}</div></div>
             <dl><div><dt>当前值</dt><dd>{formatDecisionMoney(selected.currentValue, selectedProposal?.currentBidCents)}</dd></div><div><dt>推荐值</dt><dd>{formatDecisionMoney(selected.recommendedValue, selectedProposal?.proposedBidCents)}</dd></div><div><dt>策略快照</dt><dd>已锁定策略版本</dd></div><div><dt>有效期</dt><dd>{selected.validUntil?.slice(0, 10) ?? '未设置'}</dd></div></dl>
             <details><summary>诊断详情</summary><code>{selected.policyVersionId}</code><code>{selected.policyRevision}</code>{selectedProposal && <><code>{selectedProposal.evidencePackageHash}</code><code>{selectedProposal.adEntityRevision ?? '—'}</code></>}</details>
           </section>
-          <div className="decision-domain-evidence-grid"><section><h3>可核验事实</h3><DecisionEvidenceFacts facts={selected.facts} /></section><section><h3>备选方案</h3>{selected.alternatives.length ? <ol>{selected.alternatives.map((alternative) => <li key={alternative}>{alternative}</li>)}</ol> : <p>未记录备选方案。</p>}<strong>预期效果</strong><p>{selected.expectedEffect ?? '未记录'}</p></section></div>
+          <div className="decision-domain-evidence-grid"><section><h3>可核验事实</h3><DecisionEvidenceFacts facts={selected.facts} /></section><section><h3>备选方案</h3>{selected.alternatives.length ? <ol>{selected.alternatives.map((alternative) => <li key={decisionOperatorCopy(alternative, '备选方案待补充')}>{decisionOperatorCopy(alternative, '备选方案待补充')}</li>)}</ol> : <p>未记录备选方案。</p>}<strong>预期效果</strong><p>{decisionOperatorCopy(selected.expectedEffect, '未记录')}</p></section></div>
           <section className="decision-domain-history">
             <header><div><h3>决策历史</h3><p>每次修订与人工决议都保留快照。</p></div><ClockCounterClockwise size={19} /></header>
-            <div>{history.map((item) => <article key={item.id}><span>{decisionHistoryEventLabel(item.eventType)}</span><strong>版本快照已保留</strong><small>{item.reason ?? item.createdAt}</small><details><summary>诊断详情</summary><code>{item.id}</code><code>{item.eventType}</code><code>{item.decisionRevision}</code><code>{item.actorId}</code></details></article>)}</div>
+            <div>{history.map((item) => <article key={item.id}><span>{decisionHistoryEventLabel(item.eventType)}</span><strong>版本快照已保留</strong><small>{decisionOperatorCopy(item.reason || item.createdAt, '历史变更已保留')}</small><details><summary>诊断详情</summary><code>{item.id}</code><code>{item.eventType}</code><code>{item.decisionRevision}</code><code>{item.actorId}</code></details></article>)}</div>
           </section>
           <section className="decision-domain-grants">
             <header><div><h3>执行授权</h3><p>人工审批与策略自动共用同一不可变授权模型；终态从持久化授权事件派生。</p></div><ShieldCheck size={19} /></header>
-            {grants.length ? <div>{grants.map((grant) => { const terminal = terminalGrantEvent(grant); return <article data-revoked={terminal?.eventType === 'revoked' || undefined} data-terminal={terminal?.eventType} key={grant.id}><div><strong>执行授权</strong><small>{grant.issuer.type === 'policy' ? '策略自动' : '人工审批'} · {grant.allowedAdEntityIds.length} 个对象 · ≤ {grant.maxChangePct}% · ${grant.totalImpactBudget} · {grantTerminalDisplayLabel(grant.usage?.status ?? terminal?.eventType)}</small>{grant.usage && <small>总额度 {grant.usage.totalSlots} 次 · 提交中 {grant.usage.reservedSlots} 次 · 已消费 {grant.usage.spentSlots} 次 · 剩余 {grant.usage.residualSlots} 次；消费不代表执行成功。</small>}<details><summary>诊断详情</summary><code>{grant.id}</code><code>{grant.allowedAdEntityIds.join(',')}</code><code>{terminal?.eventType ?? 'issued'}</code></details></div>{view === 'decisions/decided' && grant.issuer.type === 'human' && <button className="workspace-button workspace-button--secondary" disabled={!can('decisions.grants.revoke') || busy || Boolean(terminal)} onClick={() => setGrantToRevoke(grant)} type="button">{terminal ? grantTerminalDisplayLabel(terminal.eventType) : '撤销人工授权'}</button>}</article>; })}</div> : <p>当前运营任务没有授权。</p>}
+            {grants.length ? <div>{grants.map((grant) => { const terminal = terminalGrantEvent(grant); return <article data-revoked={terminal?.eventType === 'revoked' || undefined} data-terminal={terminal?.eventType} key={grant.id}><div><strong>执行授权</strong><small>{grant.issuer.type === 'policy' ? '策略自动' : '人工审批'} · {grant.allowedAdEntityIds.length} 个对象 · ≤ {grant.maxChangePct}% · ${grant.totalImpactBudget} · {grantTerminalDisplayLabel(grant.usage?.status ?? terminal?.eventType)}</small>{grant.usage && <small>总额度 {grant.usage.totalSlots} 次 · 提交中 {grant.usage.reservedSlots} 次 · 已消费 {grant.usage.spentSlots} 次 · 剩余 {grant.usage.residualSlots} 次；消费不代表执行成功。</small>}<details><summary>诊断详情</summary><code>{grant.id}</code><code>{grant.allowedAdEntityIds.join(',')}</code><code>{terminal?.eventType ?? 'issued'}</code></details></div>{view === 'decisions/decided' && grant.issuer.type === 'human' && <WorkspaceActionButton className="workspace-button workspace-button--secondary" disabled={!can('decisions.grants.revoke') || busy || Boolean(terminal)} onClick={() => setGrantToRevoke(grant)} type="button" disabledReason={busy ? '当前决策操作进行中，请稍候。' : terminal ? '该执行授权已终结，无需重复撤销。' : '当前店铺未开放撤销人工授权，请刷新后重试。'}>{terminal ? grantTerminalDisplayLabel(terminal.eventType) : '撤销人工授权'}</WorkspaceActionButton>}</article>; })}</div> : <p>当前运营任务没有授权。</p>}
           </section>
         </> : phase === 'ready' ? <WorkspaceState kind="empty" title={`等待选择${copy.title}`} description="从左侧选择经营决策，查看事实、审批历史与授权边界。" /> : null}</div>
       </div>
@@ -1251,7 +600,7 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
       <ReasonRequiredDialog
         open
         eyebrow="人工经营决策"
-        title={`${STATUS_LABELS[resolution]}"${selected.title}"`}
+        title={`${STATUS_LABELS[resolution]}"${decisionOperatorCopy(selected.title, '未命名经营决策')}"`}
         description="状态写入使用版本校验；批准不代表 Ads 已执行。"
         tone={resolution === 'approved' ? 'primary' : 'danger'}
         confirmLabel={`确认${STATUS_LABELS[resolution]}`}
@@ -1266,3 +615,8 @@ export function DecisionsWorkspace({ apiOverride, analysisApiOverride, blockedRe
     {grantToRevoke && <ReasonRequiredDialog open eyebrow="执行授权" title="撤销人工授权" description="填写业务原因后撤销剩余授权，历史判断和已提交结果继续保留。" tone="danger" confirmLabel="确认撤销" reasonLabel="撤销原因 *" reasonMinLength={1} busy={Boolean(pending)} onConfirm={reason => void revokeGrant(grantToRevoke, reason)} onClose={() => setGrantToRevoke(null)} />}
   </div>;
 }
+export { decisionActionVisibility, decisionCapabilityReady, preferredDecisionId, preferredDecisionIdAfterTargetVerification, authorizationMissionIds, analysisActionBatchOptions, buildAnalysisBatchAuthorizationRequest, formatDecisionMoney, decisionRevisionDisplayLabel, decisionFactProjection, DecisionEvidenceFacts, decisionListScopeLabel, decisionOperatorCopy, targetVerificationOperatorError, responseMatchesDecisionDetail } from './decision-workspace-model';
+export { type DecisionWorkspaceView, type DecisionsWorkspaceProps, type AnalysisProposalBusinessRow, type DecisionDraft, type AnalysisActionBatchOption } from './decision-workspace-contracts';
+export { proposalHasVerifiedAdsAuthority, proposalIsSafeTargetVerificationCandidate, findSafeTargetVerificationProposal, buildProposalTargetVerificationPlan, AnalysisProposalAuthorityStatus } from './decision-workspace-authority';
+export { analysisProposalMatchTypeLabel, analysisProposalBusinessRow, AnalysisProposalBusinessTable } from './decision-workspace-analysis';
+export { buildCreateDecisionInput, buildReviseDecisionInput, DecisionDialog } from './decision-workspace-editor';

@@ -1,0 +1,206 @@
+.product-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.product-option-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.product-option-card:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.product-option-card strong {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.product-option-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.product-option-card-active {
+  border-color: var(--primary);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
+}
+
+.product-management-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.product-management-option {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+}
+
+.product-management-option:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.product-management-option:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 2px;
+}
+
+.product-management-option:active {
+  transform: scale(0.98);
+}
+
+.product-management-option-active {
+  border-color: var(--primary);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
+}
+
+.product-management-option-locked {
+  animation: product-management-lock-pulse 360ms ease-out;
+}
+
+.product-management-option-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.product-management-option-lock {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.product-management-option-lock-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+}
+
+.product-management-option strong,
+.product-management-option span {
+  overflow-wrap: anywhere;
+}
+
+.product-management-option strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.product-management-option span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.product-management-selection-live {
+  min-height: 20px;
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.product-management-task-feedback {
+  display: inline-flex;
+  min-height: 28px;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--tone-pending-bg);
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.product-management-task-feedback span {
+  flex: 0 0 auto;
+}
+
+.product-management-task-feedback strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.product-management-task-feedback-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  animation: event-card-flash 450ms ease-out;
+}
+
+.product-management-task-feedback-pending {
+  border-color: var(--line-soft);
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+}
+
+.product-management-task-feedback-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--amber);
+}
+
+.product-management-task-feedback-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
+.product-management-event {
+  min-height: 0;
+}
+
+@keyframes product-management-lock-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.26);
+  }
+  100% {
+    box-shadow: 0 0 0 5px rgba(37, 99, 235, 0);
+  }
+}
+

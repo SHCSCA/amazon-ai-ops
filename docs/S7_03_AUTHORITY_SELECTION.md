@@ -1,5 +1,7 @@
 # S7.03 唯一生产 Authority DB 预检
 
+> 2026-10-27 文档对齐：本文定义合同、方法或验收案例，不提供当前通过结论。现行状态、失败与后续计划统一见 [项目状态](PROJECT_STATUS.md)；当前仍为 APP_NEEDS_WORK / INTERNAL NON_READY。正文中的旧检查点只适用于当时版本。
+
 `scripts/verify-production-authority-selection.js` 是 Windows 本地运行环境进入生产数据链之前的只读选择门。它解决的是“哪一个 SQLite 文件是当前唯一权威库”，不迁移数据库、不采集业务报表，也不执行 Amazon Ads。
 
 ## 必需输入

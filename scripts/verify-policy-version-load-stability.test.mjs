@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const { build } = require('../apps/desktop/node_modules/esbuild');
 const { chromium } = require('./playwright-loader.js');
 
-test('production policy adapter loads versions once across ordinary React renders', { timeout: 20000 }, async () => {
+test('production policy adapter loads versions once across ordinary React renders', async () => {
   const bundle = await build({
     stdin: { sourcefile: 'policy-version-stability.tsx', resolveDir: path.resolve('apps/desktop/src/renderer'), loader: 'tsx', contents: `
       import React from 'react';
@@ -43,4 +43,4 @@ test('production policy adapter loads versions once across ordinary React render
     await page.waitForTimeout(150);
     assert.deepEqual(await page.evaluate(() => window.versionReads), ['policy-0', 'policy-1']);
   } finally { await browser.close(); }
-});
+}, 20000);

@@ -1,381 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Archive,
-  ArrowsClockwise,
-  CalendarBlank,
-  CheckCircle,
-  Clock,
-  Database,
-  Play,
-  ShieldCheck,
-  WarningCircle,
-  X,
-} from '@phosphor-icons/react';
-import {
-  missionControlContextKey,
-  type MissionControlCapabilityProjection,
-  type StoreCollectionScheduleProjection,
-  type StoreCollectionScheduleRunResult,
-  type StoreCollectionScheduleState,
-  type StoreContextEnvelope,
-} from '@amazon-ai-ops/shared-types';
-import {
-  PageFrame,
-  SummaryStrip,
-  TaskBanner,
-  WorkbenchPanel,
-  WorkspaceState,
-  type WorkspaceTone,
-} from '../components/workspace';
-import type { AppRoute } from '../types';
-import { toUserFacingError } from '../user-facing-error';
+import { Archive, ArrowsClockwise, CalendarBlank, CheckCircle, Clock, Database, Play, ShieldCheck, WarningCircle, X } from '@phosphor-icons/react';
+import { missionControlContextKey, type StoreCollectionScheduleProjection, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import { PageFrame, SummaryStrip, TaskBanner, WorkbenchPanel, WorkspaceState } from '../components/workspace';
 
-export const STORE_AUTOMATION_CAPABILITY_IDS = {
-  view: 'settings.scheduler.view',
-  runNow: 'settings.scheduler.run-now',
-  retentionPreview: 'settings.scheduler.retention-preview',
-} as const;
-
-export interface StoreEvidenceRetentionBlockerView {
-  code: string;
-  detail: string;
-  diagnosticDetail: string;
-}
-
-/**
- * Renderer-safe subset of the Main-only retention manifest. Candidate and
- * protected file names deliberately stay out of component state and the DOM.
- */
-export interface StoreEvidenceRetentionSummary {
-  schemaVersion: 1;
-  mode: 'dry-run';
-  deletionSupported: false;
-  generatedAt: string;
-  storeId: string;
-  profileId: string;
-  marketplace: 'US';
-  currency: 'USD';
-  retentionDays: number;
-  cutoffAt: string;
-  scanSafe: boolean;
-  candidateCount: number;
-  candidateBytes: number;
-  protectedCount: number;
-  blockers: readonly StoreEvidenceRetentionBlockerView[];
-}
-
-interface RawStoreEvidenceRetentionManifest {
-  schemaVersion?: unknown;
-  mode?: unknown;
-  deletionSupported?: unknown;
-  generatedAt?: unknown;
-  storeId?: unknown;
-  profileId?: unknown;
-  marketplace?: unknown;
-  currency?: unknown;
-  retentionDays?: unknown;
-  cutoffAt?: unknown;
-  expiryBasis?: unknown;
-  applyable?: unknown;
-  scanSafe?: unknown;
-  candidateCount?: unknown;
-  candidateBytes?: unknown;
-  protectedScopeCount?: unknown;
-  protectedFileCount?: unknown;
-  blockerCount?: unknown;
-  blockers?: unknown;
-}
-
-export interface StoreAutomationRendererApi {
-  getStoreCollectionSchedule(context: StoreContextEnvelope): Promise<StoreCollectionScheduleProjection>;
-  runStoreCollectionScheduleNow(context: StoreContextEnvelope): Promise<StoreCollectionScheduleRunResult>;
-  previewStoreEvidenceRetention(context: StoreContextEnvelope): Promise<RawStoreEvidenceRetentionManifest>;
-}
-
-export interface SchedulerPageProps {
-  storeContext: StoreContextEnvelope;
-  capabilities: readonly MissionControlCapabilityProjection[];
-  previewMode?: boolean;
-  api?: StoreAutomationRendererApi | null;
-}
-
-export const STORE_AUTOMATION_STATES: readonly {
-  state: StoreCollectionScheduleState;
-  label: string;
-  detail: string;
-}[] = [
-  { state: 'not_configured', label: '未配置', detail: '先在 AI 与本地设置创建当前店铺配置。' },
-  { state: 'archived', label: '已归档', detail: '配置不再生效，需先恢复。' },
-  { state: 'waiting', label: '等待计划', detail: '等待店铺业务时区的配置时间。' },
-  { state: 'due', label: '计划已到', detail: '调度器可认领本业务日采集。' },
-  { state: 'claimed', label: '正在采集', detail: '已持久认领，使用可见浏览器执行。' },
-  { state: 'succeeded', label: '已完成', detail: '同一店铺、业务日与采集口径不重复认领。' },
-  { state: 'failed', label: '失败关闭', detail: '同一采集口径不重试，等待人工排查。' },
-] as const;
-
-const SCHEDULE_STATES = new Set<StoreCollectionScheduleState>(
-  STORE_AUTOMATION_STATES.map((item) => item.state),
-);
-
-export function readStoreAutomationRendererApi(target: unknown = globalThis): StoreAutomationRendererApi | null {
-  const candidate = (target as { electronAPI?: Partial<StoreAutomationRendererApi> } | null)?.electronAPI;
-  if (!candidate) return null;
-  return (
-    typeof candidate.getStoreCollectionSchedule === 'function'
-    && typeof candidate.runStoreCollectionScheduleNow === 'function'
-    && typeof candidate.previewStoreEvidenceRetention === 'function'
-  )
-    ? candidate as StoreAutomationRendererApi
-    : null;
-}
-
-export function resolveStoreAutomationAccess(
-  capabilities: readonly MissionControlCapabilityProjection[],
-  previewMode: boolean,
-) {
-  const allowed = (capabilityId: string, productionStates: readonly MissionControlCapabilityProjection['state'][]) => {
-    const capability = capabilities.find((item) => (
-      item.capabilityId === capabilityId
-      && item.workspace === 'settings'
-      && item.view === 'settings/scheduler'
-    ));
-    const states = previewMode ? ['PROTOTYPE_ONLY'] : productionStates;
-    return {
-      allowed: Boolean(capability && states.includes(capability.state)),
-      capability,
-    };
-  };
-  return {
-    view: allowed(STORE_AUTOMATION_CAPABILITY_IDS.view, ['LEGACY_ADAPTER', 'PRODUCTION_NATIVE']),
-    runNow: allowed(STORE_AUTOMATION_CAPABILITY_IDS.runNow, ['PRODUCTION_NATIVE']),
-    retentionPreview: allowed(STORE_AUTOMATION_CAPABILITY_IDS.retentionPreview, ['PRODUCTION_NATIVE']),
-  };
-}
-
-const SCHEDULER_INTERNAL_OPERATOR_COPY = /\b(?:Main|StoreContext|Authority|Renderer|Profile|Mission|Experiment|UNKNOWN|revision|draft|set_keyword_bid|manifest|fingerprint|dry-run|CRUD|PRODUCTION_NATIVE|PROTOTYPE_ONLY|LEGACY_ADAPTER|sequence|append-only|correction|DECISION|ACTION|READBACK|EFFECT)\b/i;
-
-export function schedulerOperatorMessage(value: unknown, fallback: string): string {
-  const mapped = toUserFacingError(value, fallback);
-  return SCHEDULER_INTERNAL_OPERATOR_COPY.test(mapped) ? fallback : mapped;
-}
-
-export function schedulerRunNowPolicy(
-  projection: StoreCollectionScheduleProjection | null,
-): { allowed: boolean; reason: string } {
-  if (!projection) return { allowed: false, reason: '尚未读取当前店铺计划。' };
-  switch (projection.state) {
-    case 'waiting':
-    case 'due':
-      return { allowed: true, reason: '需要二次确认；系统会再次核对当前店铺与可见领星会话。' };
-    case 'not_configured':
-      return { allowed: false, reason: '当前店铺尚未配置，请先前往 AI 与本地设置。' };
-    case 'archived':
-      return { allowed: false, reason: '当前店铺配置已归档，请先恢复配置。' };
-    case 'claimed':
-      return { allowed: false, reason: '当前店铺已有采集任务执行中，禁止重复触发。' };
-    case 'succeeded':
-      return { allowed: false, reason: '同一店铺、业务日与采集口径已完成，幂等边界禁止重复触发。' };
-    case 'failed':
-      return {
-        allowed: false,
-        reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。',
-      };
-  }
-}
-
-export function schedulerFailureReviewLabel(
-  state: StoreCollectionScheduleProjection['state'],
-): string {
-  return state === 'failed'
-    ? '同采集口径关闭 · 不重试'
-    : '状态无法确认或采集失败时，均需人工核对';
-}
-
-export function storeAutomationRequestMatches(
-  sequence: number,
-  currentSequence: number,
-  capturedAuthorityKey: string,
-  currentAuthorityKey: string,
-): boolean {
-  return sequence === currentSequence && capturedAuthorityKey === currentAuthorityKey;
-}
-
-export function normalizeRetentionSummary(
-  value: RawStoreEvidenceRetentionManifest,
-  context: StoreContextEnvelope,
-): StoreEvidenceRetentionSummary {
-  if (!value || typeof value !== 'object') throw new Error('证据保留预览返回了无效对象。');
-  const storeId = String(value.storeId ?? '');
-  const profileId = String(value.profileId ?? '');
-  const blockers = Array.isArray(value.blockers)
-    ? value.blockers.map((item) => {
-        if (!item || typeof item !== 'object') throw new Error('证据保留阻塞项格式无效。');
-        const blocker = item as { code?: unknown; detail?: unknown };
-        const code = String(blocker.code ?? '').trim();
-        const detail = String(blocker.detail ?? '').trim();
-        if (!code || !detail) throw new Error('证据保留阻塞项不完整。');
-        return {
-          code,
-          detail: schedulerOperatorMessage(
-            detail,
-            '此候选项未通过安全检查，当前不会删除或应用。',
-          ),
-          diagnosticDetail: detail,
-        };
-      })
-    : [];
-  const retentionDays = Number(value.retentionDays);
-  const candidateCount = Number(value.candidateCount);
-  const candidateBytes = Number(value.candidateBytes);
-  const protectedScopeCount = Number(value.protectedScopeCount);
-  const protectedFileCount = Number(value.protectedFileCount);
-  const blockerCount = Number(value.blockerCount);
-  const generatedAt = String(value.generatedAt ?? '');
-  const cutoffAt = String(value.cutoffAt ?? '');
-  if (
-    value.schemaVersion !== 1
-    || value.mode !== 'dry-run'
-    || value.deletionSupported !== false
-    || storeId !== String(context.storeId)
-    || profileId !== String(context.browserProfileId)
-    || value.marketplace !== 'US'
-    || value.currency !== 'USD'
-    || value.expiryBasis !== 'mtime-before-cutoff'
-    || !Number.isInteger(retentionDays)
-    || retentionDays < 30
-    || !Number.isInteger(candidateCount)
-    || candidateCount < 0
-    || !Number.isFinite(candidateBytes)
-    || candidateBytes < 0
-    || !Number.isInteger(protectedScopeCount)
-    || protectedScopeCount < 0
-    || !Number.isInteger(protectedFileCount)
-    || protectedFileCount < 0
-    || !Number.isInteger(blockerCount)
-    || blockerCount !== blockers.length
-    || !validTimestamp(generatedAt)
-    || !validTimestamp(cutoffAt)
-    || value.applyable !== false
-    || typeof value.scanSafe !== 'boolean'
-    || value.scanSafe !== (blockers.length === 0)
-  ) {
-    throw new Error('证据保留预览未通过当前店铺、US/USD 或 dry-run 安全校验。');
-  }
-  return {
-    schemaVersion: 1,
-    mode: 'dry-run',
-    deletionSupported: false,
-    generatedAt,
-    storeId,
-    profileId,
-    marketplace: 'US',
-    currency: 'USD',
-    retentionDays,
-    cutoffAt,
-    scanSafe: value.scanSafe,
-    candidateCount,
-    candidateBytes,
-    protectedCount: protectedScopeCount + protectedFileCount,
-    blockers,
-  };
-}
-
-function navigate(route: AppRoute) {
-  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
-}
-
-function validTimestamp(value: string): boolean {
-  const timestamp = Date.parse(value);
-  return Boolean(value && Number.isFinite(timestamp));
-}
-
-function validateScheduleProjection(
-  value: StoreCollectionScheduleProjection,
-  context: StoreContextEnvelope,
-): StoreCollectionScheduleProjection {
-  if (
-    !value
-    || typeof value !== 'object'
-    || String(value.storeId) !== String(context.storeId)
-    || String(value.businessDate) !== String(context.businessDate)
-    || !SCHEDULE_STATES.has(value.state)
-    || typeof value.enabled !== 'boolean'
-    || typeof value.detail !== 'string'
-  ) {
-    throw new Error('店铺计划结果与当前店铺不一致，已安全停止。');
-  }
-  return value;
-}
-
-function stateTone(state?: StoreCollectionScheduleState): WorkspaceTone {
-  if (state === 'succeeded') return 'confirmed';
-  if (state === 'failed' || state === 'archived') return 'blocked';
-  if (state === 'due' || state === 'claimed' || state === 'not_configured') return 'attention';
-  return 'neutral';
-}
-
-function stateLabel(state?: StoreCollectionScheduleState): string {
-  return STORE_AUTOMATION_STATES.find((item) => item.state === state)?.label ?? '等待读取';
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function taskCopy(
-  projection: StoreCollectionScheduleProjection | null,
-  loading: boolean,
-  error: string | null,
-) {
-  if (loading) {
-    return {
-      title: '正在读取当前店铺自动化',
-      detail: '系统正在核对当前店铺、运行配置与本业务日执行记录。',
-      tone: 'neutral' as WorkspaceTone,
-    };
-  }
-  if (error || !projection) {
-    return {
-      title: '当前店铺自动化已失败关闭',
-      detail: error ?? '没有可验证的店铺计划投影。',
-      tone: 'blocked' as WorkspaceTone,
-    };
-  }
-  const copies: Record<StoreCollectionScheduleState, { title: string; detail: string }> = {
-    not_configured: {
-      title: '先创建当前店铺运行配置',
-      detail: '计划时间、回看窗口和证据保留期必须先在 AI 与本地设置中按店铺保存。',
-    },
-    archived: {
-      title: '当前店铺运行配置已归档',
-      detail: '自动采集已停止；恢复配置前不会认领任何本业务日任务。',
-    },
-    waiting: {
-      title: `等待 ${projection.scheduleLocalTime ?? '配置时间'} 自动采集`,
-      detail: '计划按当前店铺业务时区解释；也可二次确认后立即触发一次。',
-    },
-    due: {
-      title: '当前店铺计划已到执行时间',
-      detail: '系统将在可见领星会话就绪后认领任务；重复请求会被拒绝。',
-    },
-    claimed: {
-      title: '当前店铺采集正在执行',
-      detail: '任务已认领并绑定当前店铺的独立浏览器会话；切换店铺不会接收该结果。',
-    },
-    succeeded: {
-      title: '本业务日采集已完成',
-      detail: '同一店铺、业务日与采集口径不会再次执行；调整触发时间不会绕过安全限制，只有回看窗口变化才形成新的采集口径标识。',
-    },
-    failed: {
-      title: '本业务日采集已失败关闭',
-      detail: '同一店铺、业务日与采集口径不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。',
-    },
-  };
-  return { ...copies[projection.state], tone: stateTone(projection.state) };
-}
+import { WorkspaceActionButton } from '../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
+import { rendererRuntimeLog } from '../runtime-log';
+import { STORE_AUTOMATION_CAPABILITY_IDS, type StoreEvidenceRetentionBlockerView, type StoreEvidenceRetentionSummary, type StoreAutomationRendererApi, type SchedulerPageProps, STORE_AUTOMATION_STATES, readStoreAutomationRendererApi, resolveStoreAutomationAccess, schedulerOperatorMessage, schedulerRunNowPolicy, schedulerFailureReviewLabel, storeAutomationRequestMatches, normalizeRetentionSummary, navigate, validateScheduleProjection, stateLabel, formatBytes, taskCopy } from './scheduler-model';
+export { STORE_AUTOMATION_CAPABILITY_IDS, type StoreEvidenceRetentionBlockerView, type StoreEvidenceRetentionSummary, type StoreAutomationRendererApi, type SchedulerPageProps, STORE_AUTOMATION_STATES, readStoreAutomationRendererApi, resolveStoreAutomationAccess, schedulerOperatorMessage, schedulerRunNowPolicy, schedulerFailureReviewLabel, storeAutomationRequestMatches, normalizeRetentionSummary } from './scheduler-model';
 
 export function SchedulerPage({
   storeContext,
@@ -385,6 +17,7 @@ export function SchedulerPage({
 }: SchedulerPageProps) {
   const api = explicitApi === undefined ? readStoreAutomationRendererApi(window) : explicitApi;
   const authorityKey = missionControlContextKey(storeContext);
+  const operation = useWorkspaceOperation(authorityKey);
   const access = useMemo(
     () => resolveStoreAutomationAccess(capabilities, previewMode),
     [capabilities, previewMode],
@@ -398,12 +31,13 @@ export function SchedulerPage({
   const [error, setError] = useState<string | null>(null);
   const [retentionError, setRetentionError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [refreshOrigin, setRefreshOrigin] = useState<'primary' | 'secondary'>('primary');
   const requestSequence = useRef(0);
   const confirmDialogRef = useRef<HTMLElement | null>(null);
   const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const isCurrentRequest = (sequence: number, key: string) => (
-    storeAutomationRequestMatches(sequence, requestSequence.current, key, authorityKey)
+    operation.capture()() && storeAutomationRequestMatches(sequence, requestSequence.current, key, authorityKey)
   );
 
   async function loadRetention(
@@ -419,6 +53,7 @@ export function SchedulerPage({
       const next = normalizeRetentionSummary(raw, context);
       if (isCurrentRequest(sequence, key)) setRetention(next);
     } catch (caught) {
+      rendererRuntimeLog.error('scheduler.retention_read_failed', { error: caught });
       if (isCurrentRequest(sequence, key)) {
         setRetention(null);
         setRetentionError(schedulerOperatorMessage(caught, '读取证据保留预览失败，请刷新后重试。'));
@@ -449,6 +84,7 @@ export function SchedulerPage({
         await loadRetention(context, sequence, key);
       }
     } catch (caught) {
+      rendererRuntimeLog.error('scheduler.schedule_read_failed', { error: caught });
       if (isCurrentRequest(sequence, key)) {
         setError(schedulerOperatorMessage(caught, '读取当前店铺自动化失败，请刷新后重试。'));
       }
@@ -462,7 +98,7 @@ export function SchedulerPage({
     const key = authorityKey;
     const context = storeContext;
     setLoading(true);
-    // Every new StoreContext sequence owns its own retention request state.
+    // 每次范围变化都独立持有证据预览请求状态。
     setRetentionLoading(false);
     setError(null);
     setProjection(null);
@@ -478,6 +114,22 @@ export function SchedulerPage({
     await loadCurrentStoreAuthorized(context, sequence, key);
   }
 
+  async function refreshCurrentStore(origin: 'primary' | 'secondary') {
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setRefreshOrigin(origin);
+    try { await loadCurrentStore(); } finally { ticket.finish(); }
+  }
+
+  async function refreshRetention() {
+    const ticket = operation.begin();
+    if (!ticket) return;
+    try {
+      const sequence = ++requestSequence.current;
+      await loadRetention(storeContext, sequence, authorityKey);
+    } finally { ticket.finish(); }
+  }
+
   useEffect(() => {
     setProjection(null);
     setRetention(null);
@@ -491,8 +143,7 @@ export function SchedulerPage({
     return () => {
       requestSequence.current += 1;
     };
-    // The authority key includes every store/profile/session field that may
-    // authorize a result; a changed key invalidates all prior async responses.
+    // 店铺、档案或会话变化必须使旧异步结果失效。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorityKey, access.view.allowed, access.retentionPreview.allowed, api]);
 
@@ -540,9 +191,11 @@ export function SchedulerPage({
   }
 
   async function runNow() {
-    if (!api || running || !projection || !access.runNow.allowed) return;
+    if (!api || running || loading || retentionLoading || !projection || !access.runNow.allowed) return;
     const policy = schedulerRunNowPolicy(projection);
     if (!policy.allowed) return;
+    const ticket = operation.begin();
+    if (!ticket) return;
     const sequence = ++requestSequence.current;
     const context = storeContext;
     const key = authorityKey;
@@ -568,12 +221,14 @@ export function SchedulerPage({
         await loadRetention(context, sequence, key);
       }
     } catch (caught) {
+      rendererRuntimeLog.error('scheduler.run_now_failed', { error: caught });
       if (isCurrentRequest(sequence, key)) {
         setConfirmRun(false);
         setError(schedulerOperatorMessage(caught, '立即触发当前店铺采集失败，请刷新后重试。'));
       }
     } finally {
-      if (isCurrentRequest(sequence, key)) setRunning(false);
+      if (ticket.isCurrent() && isCurrentRequest(sequence, key)) setRunning(false);
+      ticket.finish();
     }
   }
 
@@ -600,19 +255,17 @@ export function SchedulerPage({
           actionId: STORE_AUTOMATION_CAPABILITY_IDS.runNow,
           label: '立即采集',
           onClick: openRunConfirmation,
-          disabled: !access.runNow.allowed || running,
-          disabledReason: !access.runNow.allowed ? runNowDisabledReason : undefined,
+          disabled: !access.runNow.allowed || running || loading || retentionLoading || operation.busy,
+          disabledReason: !access.runNow.allowed ? runNowDisabledReason : '当前店铺计划或证据预览处理中，请等待完成后采集。',
         }
       : {
           actionId: 'settings.scheduler.refresh',
           label: '刷新当前店铺',
-          busy: loading,
+          busy: loading && refreshOrigin === 'primary',
           busyLabel: '读取中…',
-          onClick: () => { void loadCurrentStore(); },
-          disabled: running,
-          disabledReason: projection?.state === 'failed'
-            ? '仅刷新状态，不会重试同一店铺、业务日与采集口径的失败任务。'
-            : undefined,
+          onClick: () => { void refreshCurrentStore('primary'); },
+          disabled: running || retentionLoading || operation.busy,
+          disabledReason: '当前店铺操作处理中，请等待完成；刷新不会重试已失败的同一采集口径。',
         };
 
   return (
@@ -633,10 +286,11 @@ export function SchedulerPage({
             {
               actionId: 'settings.scheduler.refresh-secondary',
               label: '刷新',
-              busy: loading,
+              busy: loading && refreshOrigin === 'secondary',
               busyLabel: '读取中…',
-              disabled: running,
-              onClick: () => { void loadCurrentStore(); },
+              disabled: running || retentionLoading || operation.busy,
+              disabledReason: '当前店铺采集或证据预览处理中，请等待完成后刷新。',
+              onClick: () => { void refreshCurrentStore('secondary'); },
             },
           ]}
           meta={message ?? projectionDetail}
@@ -769,20 +423,17 @@ export function SchedulerPage({
         status={<span>仅预览 · 不支持删除</span>}
         title="证据保留预览"
         toolbar={(
-          <button
+          <WorkspaceActionButton disabledReason={needsConfig ? '当前店铺尚无生效配置，请前往 AI 与本地设置创建或恢复。' : !access.retentionPreview.allowed ? schedulerOperatorMessage(access.retentionPreview.capability?.detail, '当前店铺证据预览权限不可用，请刷新或检查运行设置。') : !api ? '当前应用接口不可用，请重新打开最新安装版。' : '当前店铺操作处理中，请等待返回后刷新只读预览。'} busy={retentionLoading} busyLabel="扫描中…"
             aria-busy={retentionLoading || undefined}
             className="workspace-button workspace-button--secondary"
             data-capability-id={STORE_AUTOMATION_CAPABILITY_IDS.retentionPreview}
-            disabled={
-              retentionLoading
+            disabled={(retentionLoading
               || running
               || needsConfig
               || !access.retentionPreview.allowed
-              || !api
-            }
+              || !api) || loading || retentionLoading || operation.busy}
             onClick={() => {
-              const sequence = ++requestSequence.current;
-              void loadRetention(storeContext, sequence, authorityKey);
+              void refreshRetention();
             }}
             title={!access.retentionPreview.allowed
               ? schedulerOperatorMessage(
@@ -794,7 +445,7 @@ export function SchedulerPage({
           >
             <ArrowsClockwise aria-hidden="true" size={16} />
             {retentionLoading ? '扫描中…' : '刷新只读预览'}
-          </button>
+          </WorkspaceActionButton>
         )}
       >
         {needsConfig ? (
@@ -908,41 +559,41 @@ export function SchedulerPage({
                   {' '}{projection.dateStart} 至 {projection.dateEnd}。系统会再次核对可见领星会话与采集口径。
                 </p>
               </div>
-              <button
+              <WorkspaceActionButton disabledReason={'当前店铺采集或读取处理中，请等待完成后关闭确认。'}
                 aria-label="关闭立即采集确认"
                 className="mission-control-dialog__close"
-                disabled={running}
+                disabled={(running) || loading || retentionLoading || operation.busy}
                 onClick={() => setConfirmRun(false)}
                 type="button"
               >
                 <X aria-hidden="true" size={18} />
-              </button>
+              </WorkspaceActionButton>
             </header>
             <div className="mission-control-automation-confirm-boundary">
               <WarningCircle aria-hidden="true" size={20} />
               <p>同一店铺、业务日与采集口径一旦形成终态就不重试；调整触发时间不会绕过安全限制，只有回看窗口变化才会形成新的采集口径标识。</p>
             </div>
             <footer>
-              <button
+              <WorkspaceActionButton disabledReason={'当前店铺采集或读取处理中，请等待完成后关闭确认。'}
                 className="workspace-button workspace-button--secondary"
                 data-confirm-initial
-                disabled={running}
+                disabled={(running) || loading || retentionLoading || operation.busy}
                 onClick={() => setConfirmRun(false)}
                 type="button"
               >
                 取消
-              </button>
-              <button
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={running || operation.busy ? '正在提交当前店铺采集请求，请等待返回。' : runNowDisabledReason || '正在核对当前店铺配置，请等待完成。'} busy={running} busyLabel="正在触发…"
                 aria-busy={running || undefined}
                 className="workspace-button workspace-button--primary"
                 data-capability-id={STORE_AUTOMATION_CAPABILITY_IDS.runNow}
-                disabled={running || !runPolicy.allowed || !access.runNow.allowed}
+                disabled={(running || !runPolicy.allowed || !access.runNow.allowed) || loading || retentionLoading || operation.busy}
                 onClick={() => { void runNow(); }}
                 type="button"
               >
                 <Play aria-hidden="true" size={16} weight="fill" />
                 {running ? '正在触发…' : '确认立即采集'}
-              </button>
+              </WorkspaceActionButton>
             </footer>
           </section>
         </div>

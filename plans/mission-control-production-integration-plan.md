@@ -1,5 +1,7 @@
 # Mission Control 生产对接实施计划
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../docs/PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > `all-plan` 设计基线；以 `plans/amazon-ops-autonomy-greenfield-plan.md` 为架构母版，以当前 Mission Control 原型为产品与交互事实源，以现有 Electron 项目为生产能力底座。
 
 **独立评审**：8.1/10，Round 1 PASS；五个维度均通过，评审要求已纳入阶段 0 基线、逐表迁移、首个真实 Ads canary 和连续采集 SLO。

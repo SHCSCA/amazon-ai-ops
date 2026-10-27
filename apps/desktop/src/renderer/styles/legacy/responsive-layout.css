@@ -1,0 +1,113 @@
+@media (max-width: 1180px) {
+  .scope-title-row {
+    grid-template-columns: 1fr;
+  }
+
+  .scope-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scope-editor {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .page-header {
+    grid-template-columns: 1fr;
+  }
+
+  .business-split {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-toolbar,
+  .inline-confirmation {
+    grid-template-columns: 1fr;
+  }
+
+  .collection-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .context-summary-grid,
+  .state-light-grid,
+  .real-file-chip-grid,
+  .issue-summary-grid,
+  .collection-progress-grid,
+  .settings-rule-summary,
+  .readback-session-list,
+  .readback-session-result {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timeline-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar,
+  .topbar-right,
+  .scope-actions,
+  .scope-title-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .app-body {
+    flex-direction: column;
+  }
+
+  .app-sidebar {
+    width: 100%;
+    max-height: 260px;
+  }
+
+  .scope-summary,
+  .scope-editor,
+  .page-header-rail,
+  .context-summary-grid,
+  .state-light-grid,
+  .real-file-chip-grid,
+  .issue-summary-grid,
+  .collection-progress-grid,
+  .settings-rule-summary,
+  .readback-session-list,
+  .readback-session-result {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline-card-header {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scope-actions select,
+  .scope-title-actions select,
+  .scope-title-actions button,
+  .scope-actions button {
+    width: 100%;
+  }
+
+  .selection-toolbar .table-action-row button,
+  .inline-confirmation .table-action-row button,
+  .collection-action-button {
+    width: 100%;
+  }
+
+  .settings-diagnostic-row {
+    grid-template-columns: 1fr;
+  }
+
+  .form-table-row,
+  .micro-step {
+    grid-template-columns: 1fr;
+  }
+
+  .kpi-row {
+    grid-template-columns: 1fr;
+  }
+}
+

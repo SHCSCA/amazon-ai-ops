@@ -1,5 +1,7 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { deliveryCompositionSource } from './delivery-composition.test-support';
 import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryReadbackVerifierPassed, deliverySummaryStatusLabel, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
 
@@ -58,7 +60,7 @@ describe('deliverySummaryStatusLabel', () => {
 
 describe('delivery collection artifacts', () => {
   it('keeps report folder and manifest opens on the store-bound artifact bridge', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
     expect(source).toContain('apiSurface.openReportArtifact(artifactId, { ...storeContext })');
     expect(source).toContain('reportFolderArtifact?.artifactId');
     expect(source).toContain('reportManifestArtifact?.artifactId');
@@ -219,8 +221,8 @@ describe('canExportDeliveryBundle', () => {
   });
 
   it('keeps the blocked export button physically disabled with a red forbidden cursor contract', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
-    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
+    const stylesheet = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('disabled: !deliveryReady');
     expect(source).toContain('disabled={deliveryPrimaryButton.disabled}');
@@ -235,7 +237,7 @@ describe('canExportDeliveryBundle', () => {
 
 describe('Phase 5 delivery user task surface', () => {
   it('answers delivery readiness first and keeps file paths plus technical details secondary', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
 
     expect(source).toContain('判断当前范围能不能交付、最关键阻塞是什么、交付包在哪里');
     expect(source).toContain('<Panel title="交付判断依据"');
@@ -251,7 +253,7 @@ describe('Phase 5 delivery user task surface', () => {
   });
 
   it('keeps ProgressiveDetails as siblings instead of nesting native details disclosures', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
 
     expect(maxProgressiveDetailsDepth(source)).toBeLessThanOrEqual(1);
     expect(source).not.toContain('<ProgressiveDetails title="交付证据、文件与回读支持">');
@@ -260,7 +262,7 @@ describe('Phase 5 delivery user task surface', () => {
   });
 
   it('renders the computed delivery primary action once on the first screen', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
 
     expect(source).toContain('data-action-priority="primary"');
     expect(source).toContain('onClick={deliveryPrimaryAction.onClick}');
@@ -426,7 +428,7 @@ describe('readback blocker helpers', () => {
   });
 
   it('persists the repair intent before navigating to readback', () => {
-    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const source = deliveryCompositionSource();
 
     expect(source).toContain('READBACK_REPAIR_INTENT_STORAGE_KEY');
     expect(source).toContain('READBACK_REPAIR_INTENT_EVENT');
@@ -493,5 +495,22 @@ describe('buildDeliveryItems', () => {
 
     expect(blockerItem?.actions).toContain('AI 候选缺少可回查证据引用。');
     expect(blockerItem?.actions).toContain('真实报表 sourceRow 缺失。');
+  });
+});
+
+
+describe('delivery unknown business-data presentation', () => {
+  it('keeps unread business data unknown in the overview instead of showing measured zero', () => {
+    const facts = buildDeliveryOverviewFacts({ scopeSummary: '隔离新店', businessDataAvailable: false,
+      realFileCount: 0, importedRows: 0, readinessStatusText: '还不能交付', gateSummaryText: '未生成', packageSummaryText: '安装包未记录' });
+    expect(facts.find(item => item.label === '真实数据')?.value).toContain('未知');
+    expect(facts.find(item => item.label === '真实数据')?.value).not.toMatch(/0 个文件|0 行/);
+  });
+  it('does not invent zero-valued file or metric evidence for an unread data pipeline', () => {
+    const items = buildDeliveryItems(null, null, null);
+    expect(items.find(item => item.title === '原始广告报表')?.summary).toContain('未知');
+    const metrics = items.find(item => item.title === '广告指标入库');
+    expect(metrics?.summary).toContain('未知');
+    expect(metrics?.evidence?.join(' ')).not.toMatch(/0\.00 USD|订单：0|点击：0/);
   });
 });

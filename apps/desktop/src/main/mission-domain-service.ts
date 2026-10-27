@@ -26,7 +26,7 @@ export const MISSION_DOMAIN_OPERATIONS = [
   'experiments.update', 'experiments.transition', 'experiments.evaluate', 'experiments.archive',
   'experiments.restore', 'experiments.listObservations',
   'experiments.listMetricSnapshots', 'experiments.appendObservation',
-  'causal.listEvents', 'causal.appendEvent',
+  'causal.listEvents', 'causal.appendEvent', 'causal.exportTimeline',
 ] as const;
 
 export type MissionDomainOperation = (typeof MISSION_DOMAIN_OPERATIONS)[number];
@@ -51,7 +51,7 @@ type MissionDomainRepositoryPort = Pick<MissionDomainRepository,
   | 'listExperimentMetricSnapshots' | 'appendExperimentObservation'
   | 'appendExperimentMetricSnapshot'
   | 'appendCausalEvent' | 'listCausalEvents' | 'appendCausalLink'
-  | 'appendEvidenceRef'
+  | 'appendEvidenceRef' | 'exportCausalTimeline'
 >;
 
 export interface MissionDomainServiceOptions {
@@ -201,6 +201,10 @@ export class MissionDomainService {
       case 'experiments.listMetricSnapshots': return this.run(contextInput, (c) => this.repository.listExperimentMetricSnapshots(c, requiredString(input, 'experimentId')));
       case 'experiments.appendObservation': return this.run(contextInput, (c) => this.repository.appendExperimentObservation(c, withActor(input) as never));
       case 'causal.listEvents': return this.run(contextInput, (c) => this.repository.listCausalEvents(c, input as never));
+      case 'causal.exportTimeline': {
+        if (Object.keys(input).some(key => !['missionId', 'stages'].includes(key))) throw new TypeError('导出只能指定任务或阶段范围。');
+        return this.run(contextInput, c => this.repository.exportCausalTimeline(c, input as never));
+      }
       case 'causal.appendEvent': {
         const stage = requiredString(input, 'stage');
         if (!['FACT', 'ANALYSIS'].includes(stage)) {

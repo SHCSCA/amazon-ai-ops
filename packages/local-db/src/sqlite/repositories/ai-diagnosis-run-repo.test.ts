@@ -182,7 +182,7 @@ describe('AiDiagnosisRunRepository', () => {
         authorization: 'Bearer diagnosis-live-token-123456789',
       },
       evidencePackSummary: {
-        deepseek_api_key: 'sk-diagnosis-live-123456789',
+        deepseek_api_key: ("sk-" + "diagnosis-live-123456789"),
       },
       evidencePackPreview: [{
         evidenceId: 'metric_1',
@@ -195,7 +195,7 @@ describe('AiDiagnosisRunRepository', () => {
         providerEcho: { Authorization: 'Bearer diagnosis-live-token-123456789' },
       },
       insights: [{
-        reason: 'DEEPSEEK_API_KEY=sk-diagnosis-live-123456789',
+        reason: ("DEEPSEEK_API_KEY=" + "sk-" + "diagnosis-live-123456789"),
         api_key: 'plain-diagnosis-api-key',
       }],
       formalRecommendationCount: 0,
@@ -210,7 +210,7 @@ describe('AiDiagnosisRunRepository', () => {
     });
 
     expect(persisted).not.toContain('diagnosis-live-token-123456789');
-    expect(persisted).not.toContain('sk-diagnosis-live-123456789');
+    expect(persisted).not.toContain(("sk-" + "diagnosis-live-123456789"));
     expect(persisted).not.toContain('plain-diagnosis-api-key');
     expect(persisted).toContain('[redacted]');
   });

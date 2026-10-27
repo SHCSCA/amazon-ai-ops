@@ -1,3 +1,4 @@
+import { appendAnalysisFailureReceiptBestEffort, appendAnalysisCheckpointOnce } from './analysis-service-ledger';
 import { assertRendererPayloadIsPathFree } from './main-artifact-registry';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
@@ -28,7 +29,6 @@ import {
   type VerifiedAdEntityAuthorityRecord,
   type WritableAdTargetEvidence,
 } from '@amazon-ai-ops/shared-types';
-import type { StoreCoordinator } from './store-coordinator';
 import { createAnalysisRunsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-runs-repo';
 import type { AnalysisRunRecord } from '@amazon-ai-ops/shared-types';
 import { assertCurrentWritableAdTargetAuthority } from './writable-ad-target-resolution';
@@ -37,97 +37,25 @@ import {
   analysisErrorCode,
   uniqueAnalysisBlockers,
 } from './analysis-authority-blockers';
+import {
+  type AnalysisAuthorityServiceOptions, type CapturedAnalysisGenerationAuthority, type RecommendationGenerationResultForAnalysis,
+} from './analysis-service-contracts';
+import {
+  validatedAnalysisGenerationTimeout, DEFAULT_ANALYSIS_GENERATION_TIMEOUT_MS, generateRecommendationsWithinDeadline,
+} from './analysis-service-generation';
+import {
+  requiredId, sha256Text, effectiveModelRevision,
+  requiredText, ANALYSIS_ACTION_CONTRACT_VERSION, compactId,
+  ANALYSIS_EVIDENCE_FRESHNESS_HOURS, normalizedOptionalText, proposalValidUntil,
+  safeAiAnalysisDetail, analysisRunFailureOperatorReason, uniqueNonEmptyIds,
+  blockedResult, policyUsageAuthorizationBlocker, sameSet, MAX_IDENTITY_PROOF_BYTES,
+  isPathWithinRoot, analysisCausalMemoryDigest, normalizedPath,
+} from './analysis-service-values';
+import {
+  projectMissionAnalysisRun,
+} from './analysis-service-projections';
+import { projectAnalysisRunForRenderer } from './analysis-service-projections';
 
-export interface RecommendationGenerationResultForAnalysis {
-  generated: number;
-  metrics: number;
-  skippedDuplicates: number;
-  refreshedDuplicates: number;
-  recommendationCandidates: number;
-  recommendationIds: number[];
-  aiExplanation: {
-    configured: boolean;
-    invoked: boolean;
-    reason: string;
-    model?: string;
-    strategyDiagnosis?: { source?: 'ai' | 'rule' };
-  };
-  scope: {
-    storeId: string;
-    storeName: string;
-    marketplaceCode: string;
-    dateFrom: string;
-    dateTo: string;
-    asin?: string;
-    batchId?: string;
-  };
-}
-
-export interface AnalysisRecommendationGenerationScope {
-  missionId?: string;
-  storeContext: StoreContextEnvelope;
-  dateFrom: string;
-  dateTo: string;
-  storeName: string;
-  marketplaceCode: 'US';
-  asin?: string;
-  batchId: string;
-  /** Main-only, product-scoped and proof-backed prior outcomes. */
-  causalMemory: readonly AnalysisCausalMemoryItem[];
-  /** Stable digest over normalized causal-memory business content and proofs. */
-  memoryDigest: string;
-  /** Cancels Main/provider work when the bounded analysis run is no longer authoritative. */
-  signal: AbortSignal;
-}
-
-/**
- * One immutable analysis-run authority captured before evidence sealing.
- *
- * Main must bind `generateRecommendations` to the exact runtime/rule/AI
- * snapshot represented by these revisions. Keeping the closure and revisions
- * together prevents a long AI await from re-reading mutable global settings.
- */
-export interface CapturedAnalysisGenerationAuthority {
-  readonly ruleRevision: string;
-  readonly modelRevision: string;
-  readonly generateRecommendations: (
-    scope: AnalysisRecommendationGenerationScope,
-  ) => Promise<RecommendationGenerationResultForAnalysis>;
-}
-
-export interface AnalysisAuthorityServiceOptions {
-  db: Database.Database;
-  repository: AnalysisAuthorityRepository;
-  missionRepository: MissionDomainRepository;
-  recommendationRepository: RecommendationRepository;
-  storeCoordinator: Pick<StoreCoordinator, 'assertActiveStoreContext'>;
-  generateRecommendations: CapturedAnalysisGenerationAuthority['generateRecommendations'];
-  /**
-   * Preferred production boundary. The legacy generator remains temporarily
-   * available so Main can be migrated without weakening authorization-time
-   * current-revision checks.
-   */
-  captureGenerationAuthority?: () => CapturedAnalysisGenerationAuthority;
-  currentRuleRevision: () => string;
-  currentModelRevision: () => string;
-  allowedProofRoots: (context: StoreContextEnvelope) => readonly string[];
-  onAutomaticGrantIssued?: (
-    context: StoreContextEnvelope,
-    grant: MissionGrantRecord,
-  ) => void;
-  onAnalysisRunCompleted?: (run: MissionAnalysisRunProjection) => void;
-  /** Main-only deadline for one recommendation-generation attempt. */
-  generationTimeoutMs?: number | undefined;
-  now?: () => Date;
-}
-
-const ANALYSIS_EVIDENCE_FRESHNESS_HOURS = 48;
-const ANALYSIS_ACTION_CONTRACT_VERSION = 'keyword-bid-cents/v16-1';
-const MAX_IDENTITY_PROOF_BYTES = 16 * 1024 * 1024;
-export const DEFAULT_ANALYSIS_GENERATION_TIMEOUT_MS = 120_000;
-const MAX_ANALYSIS_GENERATION_TIMEOUT_MS = 15 * 60_000;
-
-/** Main-only orchestrator for sealed analysis, Decision creation and grants. */
 export class AnalysisAuthorityService {
   private readonly activeRuns = new Set<string>();
   private readonly pendingMissions = new Set<string>();
@@ -566,71 +494,27 @@ export class AnalysisAuthorityService {
   }
 
   private projectAnalysisRun(context: StoreContextEnvelope, run: AnalysisRunRecord): AnalysisRunRecord {
-    const allowed = ['storeContext', 'missionRevision', 'policyRevision', 'fingerprint', 'evidencePackageId', 'evidencePackageHash', 'actionBatchId', 'reusedFromRunId', 'provenance', 'productId', 'dateFrom', 'dateTo', 'ruleRevision', 'modelRevision', 'proposalsGenerated', 'skippedUnsupportedCount', 'aiSummary', 'recommendationSummary'] as const;
-    const metadata = Object.fromEntries(allowed.flatMap(key => {
-      const value = run.metadata?.[key];
-      if (value === undefined) return [];
-      try { assertRendererPayloadIsPathFree({ [key]: value }); return [[key, value]]; }
-      catch { return []; } // Retain unsafe legacy metadata in Main, while history stays readable.
-    })) as NonNullable<AnalysisRunRecord['metadata']>;
-    let blockedReason = run.blockedReason;
-    try { assertRendererPayloadIsPathFree(blockedReason); }
-    catch { blockedReason = analysisRunFailureOperatorReason(new Error(blockedReason)); }
-    const interrupted = ['pending', 'analyzing'].includes(run.status) && (!this.activeRuns.has(run.runId)
-      || JSON.stringify(metadata.storeContext) !== JSON.stringify(context));
-    return { ...run, status: interrupted ? 'blocked' : run.status,
-      blockedReason: interrupted ? '上次分析已中断；刷新当前店铺后重新运行分析。' : blockedReason,
-      metadata: { ...metadata, historicalOnly: metadata.provenance !== 'analysis-authority/v16' } };
+    return projectAnalysisRunForRenderer(context, run, this.activeRuns);
   }
 
   private appendAnalysisFailureReceiptBestEffort(
     context: StoreContextEnvelope,
-    missionId: string,
-    analysisRunId: string,
-    error: unknown,
+  missionId: string,
+  analysisRunId: string,
+  error: unknown
   ): void {
-    try {
-      this.missionRepository.appendCausalEvent(context, {
-        id: compactId('analysis-run-event', [analysisRunId, 'failed']),
-        stage: 'ANALYSIS',
-        eventType: 'analysis_run_failed',
-        entityType: 'analysis_run',
-        entityId: analysisRunId,
-        missionId,
-        title: '分析未完成',
-        signal: analysisRunFailureOperatorReason(error),
-        status: 'failed',
-        source: 'analysis-authority',
-        actorId: 'analysis-agent',
-      });
-    } catch {
-      // Store/session authority may have changed while analysis was awaiting AI.
-      // Preserve the original failure; the orphaned started receipt is shown as
-      // interrupted on the next load instead of fabricating a terminal state.
-    }
+    appendAnalysisFailureReceiptBestEffort(this.missionRepository, context, missionId, analysisRunId, error);
   }
 
   private appendAnalysisCheckpointOnce(
     context: StoreContextEnvelope,
-    missionId: string,
-    actionBatchId: string,
-    stage: 'FACT' | 'ANALYSIS',
-    title: string,
-    evidenceCount: number,
+  missionId: string,
+  actionBatchId: string,
+  stage: 'FACT' | 'ANALYSIS',
+  title: string,
+  evidenceCount: number
   ): void {
-    const id = compactId('analysis-checkpoint', [missionId, actionBatchId, stage]);
-    const exists = this.missionRepository.listMissionCheckpoints(context, missionId)
-      .some((checkpoint) => checkpoint.id === id);
-    if (exists) return;
-    this.missionRepository.appendMissionCheckpoint(context, {
-      id,
-      missionId,
-      stage,
-      title,
-      status: 'completed',
-      evidenceCount,
-      actorId: 'analysis-agent',
-    });
+    appendAnalysisCheckpointOnce(this.missionRepository, context, missionId, actionBatchId, stage, title, evidenceCount);
   }
 
   getMissionAnalysisProjection(
@@ -673,36 +557,36 @@ export class AnalysisAuthorityService {
           requiredMode,
           selectedIds,
           [],
-          '策略运行模式已变化；自动授权未降级为人工授权。',
+          analysisBlocker('AUTONOMY_MODE_CHANGED', '策略运行模式已变化；自动授权未降级为人工授权。'),
         );
       }
       const mission = this.missionRepository.getMission(context, missionId);
-      if (!mission) return blockedResult(mode, selectedIds, [], 'Mission 不存在或不属于当前店铺。');
+      if (!mission) return blockedResult(mode, selectedIds, [], analysisBlocker('MISSION_NOT_FOUND', 'Mission 不存在或不属于当前店铺。'));
       if (mission.status !== 'active') {
-        return blockedResult(mode, selectedIds, [], 'Mission 必须处于 active 才能签发执行授权。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('MISSION_NOT_ACTIVE', 'Mission 必须处于 active 才能签发执行授权。'));
       }
 
       const selected = selectedIds.map((id) => this.repository.getProposalSnapshot(context, id));
       if (selected.some((row) => !row)) {
-        return blockedResult(mode, selectedIds, [], '选择中包含不存在或跨店铺的建议快照。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('PROPOSAL_NOT_FOUND', '选择中包含不存在或跨店铺的建议快照。'));
       }
       const proposals = selected as AnalysisProposalSnapshotRecord[];
       const actionBatchIds = new Set(proposals.map((row) => row.actionBatchId));
       if (actionBatchIds.size !== 1 || proposals.some((row) => row.missionId !== mission.id)) {
-        return blockedResult(mode, selectedIds, [], '一次授权必须来自同一个 Mission 动作批次。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('BATCH_MISMATCH', '一次授权必须来自同一个 Mission 动作批次。'));
       }
       const actionBatchId = proposals[0].actionBatchId;
       const latestBatch = this.repository.getLatestActionBatch(context, mission.id);
       if (!latestBatch || latestBatch.id !== actionBatchId
         || latestBatch.actionRevision !== proposals[0].actionRevision) {
-        return blockedResult(mode, selectedIds, [], '只能授权当前 Mission 的最新分析动作批次。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('STALE_ACTION_BATCH', '只能授权当前 Mission 的最新分析动作批次。'));
       }
       if (latestBatch.missionRevision !== mission.revision
         || proposals.some((proposal) => proposal.missionRevision !== mission.revision)) {
-        return blockedResult(mode, selectedIds, [], 'Mission 已修订；旧分析建议必须重新运行后才能授权。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('STALE_MISSION_REVISION', 'Mission 已修订；旧分析建议必须重新运行后才能授权。'));
       }
       try { this.missionRepository.assertWriteAuthority(context, latestBatch.authority); }
-      catch { return blockedResult(mode, selectedIds, [], '动作批次的店铺、会话或授权模式版本已变化；请重新分析。'); }
+      catch { return blockedResult(mode, selectedIds, [], analysisBlocker('AUTONOMY_MODE_CHANGED', '动作批次的店铺、会话或授权模式版本已变化；请重新分析。')); }
       const currentRuleRevision = sha256Text(this.currentRuleRevision(), 'ruleRevision');
       const currentMemory = this.captureAnalysisCausalMemory(context, mission.productId);
       const currentModelRevision = effectiveModelRevision(
@@ -712,16 +596,16 @@ export class AnalysisAuthorityService {
       );
       if (latestBatch.ruleRevision !== currentRuleRevision
         || proposals.some((proposal) => proposal.ruleRevision !== currentRuleRevision)) {
-        return blockedResult(mode, selectedIds, [], '当前规则 revision 已变化；必须重新分析。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('RULE_REVISION_MISMATCH', '当前规则 revision 已变化；必须重新分析。'));
       }
       if (latestBatch.modelRevision !== currentModelRevision
         || proposals.some((proposal) => proposal.modelRevision !== currentModelRevision)) {
-        return blockedResult(mode, selectedIds, [], '当前 AI 模型 revision 已变化；必须重新分析。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('MODEL_REVISION_MISMATCH', '当前 AI 模型 revision 已变化；必须重新分析。'));
       }
       const completeBatch = this.repository.listProposalSnapshots(context, mission.id)
         .filter((row) => row.actionBatchId === actionBatchId);
       if (!sameSet(selectedIds, completeBatch.map((row) => row.id))) {
-        return blockedResult(mode, selectedIds, [], '必须整批授权，不能只批准动作批次的一部分。');
+        return blockedResult(mode, selectedIds, [], analysisBlocker('INCOMPLETE_BATCH', '必须整批授权，不能只批准动作批次的一部分。'));
       }
 
       const links = this.repository.listProposalDecisionLinks(context, mission.id)
@@ -730,33 +614,33 @@ export class AnalysisAuthorityService {
       const decisionIds = proposals
         .map((proposal) => decisionByProposal.get(proposal.id))
         .filter(Boolean) as string[];
-      const blockers: string[] = [];
-      if (decisionIds.length !== proposals.length) blockers.push('至少一个建议缺少不可变 Decision 关联。');
+      const blockers: AnalysisAuthorizationBlocker[] = [];
+      if (decisionIds.length !== proposals.length) blockers.push(analysisBlocker('MISSING_DECISION_LINK', '至少一个建议缺少不可变 Decision 关联。'));
       const now = this.now().getTime();
       const evidenceById = new Map<string, AnalysisEvidencePackageRecord>();
       for (const proposal of proposals) {
         const eligibility = mode === 'policy_auto' ? proposal.authorization.policy : proposal.authorization.human;
-        if (!eligibility.eligible) blockers.push(`${proposal.entityName}: ${eligibility.blockers.join(', ')}`);
+        if (!eligibility.eligible) blockers.push(...eligibility.blockers.map(code => analysisBlocker(code, `${proposal.entityName}：当前证据或策略不满足该授权路径，请核对建议中的条件。`)));
         if (proposal.entityType !== 'keyword' || proposal.actionType !== 'set_keyword_bid') {
-          blockers.push(`${proposal.entityName}: V1 仅允许关键词竞价动作。`);
+          blockers.push(analysisBlocker('UNSUPPORTED_ACTION', `${proposal.entityName}: V1 仅允许关键词竞价动作。`));
         }
-        if (Date.parse(proposal.validUntil) <= now) blockers.push(`${proposal.entityName}: 建议已过期。`);
+        if (Date.parse(proposal.validUntil) <= now) blockers.push(analysisBlocker('PROPOSAL_EXPIRED', `${proposal.entityName}: 建议已过期。`));
         const evidence = this.repository.getEvidencePackage(context, proposal.evidencePackageId);
         if (!evidence
           || evidence.packageHash !== proposal.evidencePackageHash
           || evidence.dataBatchId !== mission.dataBatchId
           || Date.parse(evidence.freshUntil) <= now) {
-          blockers.push(`${proposal.entityName}: 证据包不存在、已变化或已过期。`);
+          blockers.push(analysisBlocker('EVIDENCE_STALE', `${proposal.entityName}: 证据包不存在、已变化或已过期。`));
         } else {
           evidenceById.set(evidence.id, evidence);
         }
         if (!proposal.adEntityId || !proposal.adEntityRevision) {
-          blockers.push(`${proposal.entityName}: 缺少稳定 Ads 实体。`);
+          blockers.push(analysisBlocker('MISSING_STABLE_AD_ENTITY', `${proposal.entityName}: 缺少稳定 Ads 实体。`));
         } else {
           const latest = this.repository.getLatestVerifiedAdEntityById(context, proposal.adEntityId);
           if (!latest || latest.entityRevision !== proposal.adEntityRevision
             || latest.entityType !== 'keyword') {
-            blockers.push(`${proposal.entityName}: Ads 实体身份 revision 或类型已变化。`);
+            blockers.push(analysisBlocker('STALE_AD_ENTITY_REVISION', `${proposal.entityName}: Ads 实体身份 revision 或类型已变化。`));
           }
         }
       }
@@ -765,7 +649,7 @@ export class AnalysisAuthorityService {
       if (!policyVersion || policyVersion.revision !== proposals[0].policyRevision
         || proposals.some((proposal) => proposal.policyVersionId !== policyVersion.id
           || proposal.policyRevision !== policyVersion.revision)) {
-        blockers.push('Mission 策略版本或 revision 已变化。');
+        blockers.push(analysisBlocker('POLICY_REVISION_MISMATCH', 'Mission 策略版本或 revision 已变化。'));
       }
       const allowedAdEntityIds = proposals.map((proposal) => proposal.adEntityId!).filter(Boolean);
       if (policyVersion && allowedAdEntityIds.length > 0) {
@@ -776,13 +660,13 @@ export class AnalysisAuthorityService {
             at: new Date(now).toISOString(),
           });
           if (effectivePolicyVersion.id !== policyVersion.id) {
-            blockers.push('当前运营任务策略不是这些广告对象数字最小的优先匹配；请重新运行分析。');
+            blockers.push(analysisBlocker('POLICY_PRIORITY_MISMATCH', '当前运营任务策略不是这些广告对象数字最小的优先匹配；请重新运行分析。'));
           }
         } catch (error) {
           const reason = error instanceof Error && error.message.trim()
             ? error.message.trim()
             : '请检查策略对象范围与优先级。';
-          blockers.push(`策略优先级无法唯一确定：${reason}`);
+          blockers.push(analysisBlocker('POLICY_PRIORITY_MISMATCH', `策略优先级无法唯一确定：${reason}`));
         }
       }
       if (mode === 'policy_auto' && (
@@ -790,10 +674,10 @@ export class AnalysisAuthorityService {
         || runtime.circuitBreakerState !== 'closed'
         || !runtime.activePolicyVersionId
       )) {
-        blockers.push('策略自动模式被 kill switch、熔断器或未武装的策略运行时阻断。');
+        blockers.push(analysisBlocker('POLICY_RUNTIME_BLOCKED', '策略自动模式被 kill switch、熔断器或未武装的策略运行时阻断。'));
       }
       if (new Set(allowedAdEntityIds).size !== allowedAdEntityIds.length) {
-        blockers.push('同一动作批次包含重复 Ads 实体，必须重新分析去重。');
+        blockers.push(analysisBlocker('DUPLICATE_AD_ENTITY', '同一动作批次包含重复 Ads 实体，必须重新分析去重。'));
       }
       const maxChangePct = Math.max(...proposals.map((proposal) => Math.abs(proposal.changePct)));
       const totalImpactBudget = proposals.reduce(
@@ -803,28 +687,28 @@ export class AnalysisAuthorityService {
       const rules = policyVersion?.rules as PolicyVersionRules | undefined;
       if (!rules || maxChangePct > Number(rules.maxChangePct)
         || totalImpactBudget > Number(rules.totalImpactBudget)) {
-        blockers.push('动作批次超过当前不可变策略的变化或影响预算。');
+        blockers.push(analysisBlocker('CHANGE_LIMIT_EXCEEDED', '动作批次超过当前不可变策略的变化或影响预算。'));
       }
 
       const decisions = decisionIds.map((id) => this.missionRepository.getDecision(context, id));
       if (decisions.some((row) => !row)) {
-        blockers.push('Decision 已被删除或不属于当前店铺。');
+        blockers.push(analysisBlocker('DECISION_NOT_FOUND', 'Decision 已被删除或不属于当前店铺。'));
       } else {
         for (const decision of decisions) {
           if (decision && !['proposed', 'needs_approval', 'approved'].includes(decision.status)) {
-            blockers.push(`Decision ${decision.id} 当前状态 ${decision.status} 不可整批授权。`);
+            blockers.push(analysisBlocker('DECISION_NOT_AUTHORIZABLE', `Decision ${decision.id} 当前状态 ${decision.status} 不可整批授权。`));
           }
           if (!decision) continue;
           try { this.missionRepository.assertWriteAuthority(context, decision.authority); }
-          catch { blockers.push(`${decision.title}：判断不属于当前店铺、会话和授权模式版本，请重新分析。`); }
+          catch { blockers.push(analysisBlocker('AUTONOMY_MODE_CHANGED', `${decision.title}：判断不属于当前店铺、会话和授权模式版本，请重新分析。`)); }
           if (mode === 'manual_approval' && decision.status !== 'approved') {
-            blockers.push(`${decision.title}：请先在待审批中逐条批准并填写业务原因，再整批签发授权。`);
+            blockers.push(analysisBlocker('DECISION_NOT_AUTHORIZABLE', `${decision.title}：请先在待审批中逐条批准并填写业务原因，再整批签发授权。`));
           }
           if (decision.status === 'approved') {
             const approval = this.missionRepository.listDecisionHistory(context, decision.id)
               .find(event => event.eventType === 'approved' && event.decisionRevision === decision.revision);
             if (!approval?.reason?.trim() || approval.actorId !== (mode === 'manual_approval' ? 'operator' : 'policy-engine')) {
-              blockers.push(`${decision.title}：缺少当前授权路径的判断和业务原因，禁止混合人工与策略授权。`);
+              blockers.push(analysisBlocker('DECISION_NOT_AUTHORIZABLE', `${decision.title}：缺少当前授权路径的判断和业务原因，禁止混合人工与策略授权。`));
             }
           }
         }
@@ -837,7 +721,7 @@ export class AnalysisAuthorityService {
         .find((grant) => grant.actionRevision === latestBatch.actionRevision);
       if (existing) {
         try { this.missionRepository.assertWriteAuthority(context, existing.authority); }
-        catch { return blockedResult(mode, selectedIds, decisionIds, '历史授权不属于当前授权模式版本，请重新分析。'); }
+        catch { return blockedResult(mode, selectedIds, decisionIds, analysisBlocker('AUTONOMY_MODE_CHANGED', '历史授权不属于当前授权模式版本，请重新分析。')); }
         const existingMode = existing.issuer.type === 'policy' ? 'policy_auto' : 'manual_approval';
         const terminal = this.missionRepository.getMissionGrantTerminalEvent(context, existing.id);
         if (terminal || Date.parse(existing.expiresAt) <= now) {
@@ -846,8 +730,8 @@ export class AnalysisAuthorityService {
             selectedIds,
             decisionIds,
             terminal
-              ? `该动作批次授权已进入终态：${terminal.eventType}。`
-              : '该动作批次授权已经过期。',
+              ? analysisBlocker('GRANT_TERMINAL', `该动作批次授权已进入终态：${terminal.eventType}。`)
+              : analysisBlocker('GRANT_EXPIRED', '该动作批次授权已经过期。'),
           );
         }
         return {
@@ -861,7 +745,7 @@ export class AnalysisAuthorityService {
       }
 
       try { this.missionRepository.assertPolicyUsage(context, policyVersion.id, allowedAdEntityIds); }
-      catch (error) { return blockedResult(mode, selectedIds, decisionIds, error instanceof Error ? error.message : '策略额度校验未完成，请重试。'); }
+      catch (error) { return blockedResult(mode, selectedIds, decisionIds, policyUsageAuthorizationBlocker(error)); }
 
       for (const decision of decisions) {
         if (mode !== 'policy_auto' || !decision || decision.status === 'approved') continue;
@@ -1098,236 +982,8 @@ export class AnalysisAuthorityService {
   }
 }
 
-function projectMissionAnalysisRun(
-  run: AnalysisRunRecord,
-  missionId: string,
-): MissionAnalysisRunProjection {
-  if (run.status === 'completed') {
-    return {
-      status: 'done',
-      missionId,
-      evidencePackageId: typeof run.metadata?.evidencePackageId === 'string'
-        ? run.metadata.evidencePackageId
-        : undefined,
-    };
-  }
-  if (run.status === 'analyzing') return { status: 'running', missionId };
-  return {
-    status: 'retryable',
-    missionId,
-    blockerCodes: [analysisErrorCode(new Error(run.blockedReason ?? ''))],
-  };
-}
+export { type RecommendationGenerationResultForAnalysis, type AnalysisRecommendationGenerationScope, type CapturedAnalysisGenerationAuthority, type AnalysisAuthorityServiceOptions } from './analysis-service-contracts';
 
-function blockedResult(
-  mode: AuthorizeAnalysisProposalBatchResult['mode'],
-  proposalIds: readonly string[],
-  decisionIds: readonly string[],
-  ...blockers: Array<AnalysisAuthorizationBlocker | string>
-): AuthorizeAnalysisProposalBatchResult {
-  return {
-    mode,
-    proposalIds,
-    decisionIds,
-    authorized: false,
-    blockers: uniqueAnalysisBlockers(blockers.map(normalizeAnalysisBlocker)),
-  };
-}
+export { analysisRunFailureOperatorReason } from './analysis-service-values';
 
-function normalizeAnalysisBlocker(
-  blocker: AnalysisAuthorizationBlocker | string,
-): AnalysisAuthorizationBlocker {
-  if (typeof blocker !== 'string') return blocker;
-  const match = blocker.match(/\b([A-Z][A-Z0-9_]+)\b/);
-  const code = (match?.[1] ?? 'ANALYSIS_INTERRUPTED') as AnalysisAuthorizationBlockerCode;
-  return analysisBlocker(code, blocker);
-}
-
-function proposalValidUntil(now: Date, evidenceFreshUntil: string, missionObservationEnd: string): string {
-  const twentyFourHours = now.getTime() + 24 * 60 * 60 * 1000;
-  const candidate = Math.min(twentyFourHours, Date.parse(evidenceFreshUntil), Date.parse(missionObservationEnd));
-  if (!Number.isFinite(candidate) || candidate <= now.getTime()) {
-    throw new Error('Mission analysis blocked: no future proposal validity window remains.');
-  }
-  return new Date(candidate).toISOString();
-}
-
-function uniqueNonEmptyIds(value: readonly string[], field: string): string[] {
-  if (!Array.isArray(value)) throw new TypeError(`${field} must be an array.`);
-  const ids = value.map((id) => requiredId(id, field));
-  const unique = [...new Set(ids)];
-  if (unique.length === 0 || unique.length !== ids.length) {
-    throw new TypeError(`${field} must be non-empty and contain unique ids.`);
-  }
-  return unique;
-}
-
-function requiredId(value: unknown, field: string): string {
-  const normalized = requiredText(value, field);
-  if (normalized.length > 180) throw new TypeError(`${field} is too long.`);
-  return normalized;
-}
-
-function requiredText(value: unknown, field: string): string {
-  const normalized = String(value ?? '').trim();
-  if (!normalized) throw new TypeError(`${field} is required.`);
-  return normalized;
-}
-
-function sha256Text(value: unknown, field: string): string {
-  const normalized = requiredText(value, field).toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(normalized)) throw new TypeError(`${field} must be SHA-256.`);
-  return normalized;
-}
-
-function compactId(prefix: string, payload: unknown): string {
-  return `${prefix}:${createHash('sha256').update(stableJson(payload)).digest('hex').slice(0, 32)}`;
-}
-
-function analysisCausalMemoryDigest(items: readonly AnalysisCausalMemoryItem[]): string {
-  const normalized = items.map((item) => ({
-    stage: item.stage,
-    eventType: normalizedMemoryText(item.eventType),
-    entityType: normalizedMemoryText(item.entityType),
-    entityId: normalizedMemoryText(item.entityId),
-    title: normalizedMemoryText(item.title),
-    observedEffect: normalizedMemoryText(item.observedEffect),
-    status: normalizedMemoryText(item.status).toLowerCase(),
-    source: normalizedMemoryText(item.source),
-    businessDate: normalizedMemoryText(item.businessDate),
-    proofs: item.proofs.map((proof) => ({
-      evidenceType: normalizedMemoryText(proof.evidenceType),
-      evidenceRef: normalizedMemoryText(proof.evidenceRef),
-      sha256: normalizedMemoryText(proof.sha256).toLowerCase(),
-    })).sort(compareStableValues),
-  })).sort(compareStableValues);
-  return createHash('sha256').update(stableJson(normalized)).digest('hex');
-}
-
-function effectiveModelRevision(
-  baseModelRevision: string,
-  memoryDigest: string,
-  memoryCount: number,
-): string {
-  return memoryCount === 0
-    ? baseModelRevision
-    : `${baseModelRevision}|causal-memory:${memoryDigest}`;
-}
-
-function normalizedMemoryText(value: unknown): string {
-  return String(value ?? '').trim().replace(/\s+/g, ' ');
-}
-
-function compareStableValues(left: unknown, right: unknown): number {
-  const leftJson = stableJson(left);
-  const rightJson = stableJson(right);
-  return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
-}
-
-export function analysisRunFailureOperatorReason(error: unknown): string {
-  if (error instanceof AnalysisGenerationTimeoutError) {
-    return 'AI 分析等待超时，已安全停止且未生成建议；请检查网络、AI Key 与模型设置后重新运行分析。';
-  }
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  if (/\b(ai|provider|model|recommendation|generation|rule|policy)\b/i.test(message)) {
-    return '分析服务或策略生成未完成；请检查 AI 与策略配置后重试。';
-  }
-  if (/batch|evidence|report|import|lingxing|metric/i.test(message)) {
-    return '当前任务的数据证据不完整或已变化；请先完成 8 类报表采集与导入，再重新分析。';
-  }
-  if (/store|mission|context|session|scope|changed|店铺|任务|上下文|会话|已变化/i.test(message)) {
-    return '分析期间店铺、任务或会话已变化；请刷新当前店铺并重新运行分析。';
-  }
-  return '分析未完成；请刷新当前店铺确认数据与策略状态后重试。';
-}
-
-class AnalysisGenerationTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(
-      `AI 分析在 ${formatAnalysisTimeout(timeoutMs)} 内未完成，已安全停止且未生成建议；`
-      + '请检查网络、AI Key 与模型设置后重试。',
-    );
-    this.name = 'AnalysisGenerationTimeoutError';
-  }
-}
-
-function validatedAnalysisGenerationTimeout(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_ANALYSIS_GENERATION_TIMEOUT_MS) {
-    throw new RangeError(
-      `generationTimeoutMs must be an integer between 1 and ${MAX_ANALYSIS_GENERATION_TIMEOUT_MS}`,
-    );
-  }
-  return value;
-}
-
-async function generateRecommendationsWithinDeadline(
-  generateRecommendations: CapturedAnalysisGenerationAuthority['generateRecommendations'],
-  scope: Omit<AnalysisRecommendationGenerationScope, 'signal'>,
-  timeoutMs: number,
-): Promise<RecommendationGenerationResultForAnalysis> {
-  const controller = new AbortController();
-  const timeoutError = new AnalysisGenerationTimeoutError(timeoutMs);
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      controller.abort(timeoutError);
-      reject(timeoutError);
-    }, timeoutMs);
-  });
-  const generation = Promise.resolve().then(() => generateRecommendations({
-    ...scope,
-    signal: controller.signal,
-  }));
-  try {
-    return await Promise.race([generation, timeout]);
-  } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-  }
-}
-
-function formatAnalysisTimeout(timeoutMs: number): string {
-  if (timeoutMs >= 1_000 && timeoutMs % 1_000 === 0) return `${timeoutMs / 1_000} 秒`;
-  return `${timeoutMs} 毫秒`;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
-
-function normalizedPath(value: string): string {
-  const resolved = path.resolve(value);
-  const canonical = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
-  return canonical.replace(/\\/g, '/').toLowerCase();
-}
-
-function isPathWithinRoot(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function normalizedOptionalText(value: unknown): string {
-  return String(value ?? '').trim().toUpperCase();
-}
-
-function safeAiAnalysisDetail(
-  explanation: RecommendationGenerationResultForAnalysis['aiExplanation'],
-): string {
-  if (explanation.invoked && explanation.strategyDiagnosis?.source === 'ai') {
-    return 'AI 已完成结构化诊断；建议仍受规则、批次授权与真实回读安全门约束。';
-  }
-  if (!explanation.configured) {
-    return 'AI 未配置；本次仅保留规则降级结果，不能进入执行授权。';
-  }
-  return 'AI 本次未完成；仅保留规则降级结果，不能进入执行授权。';
-}
-
-function sameSet(left: readonly string[], right: readonly string[]): boolean {
-  const leftSet = new Set(left);
-  const rightSet = new Set(right);
-  return leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
-}
+export { DEFAULT_ANALYSIS_GENERATION_TIMEOUT_MS } from './analysis-service-generation';

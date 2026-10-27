@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +9,7 @@ function source(relativePath: string): string {
 
 describe('retired legacy Listing/keyword renderer mutation channels', () => {
   it('does not expose path-based imports or non-CAS Listing persistence through preload/Main IPC', () => {
-    const main = source('./index.ts');
+    const main = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
     const preload = source('../preload/index.ts');
     const retiredChannels = [
       'v1_5:keywords:import-report',
@@ -20,18 +21,15 @@ describe('retired legacy Listing/keyword renderer mutation channels', () => {
       'v1_5:listing:probe-detail-and-extract',
     ];
     for (const channel of retiredChannels) {
-      expect(main).not.toContain(`registerTrackedIpcHandler('${channel}'`);
+      for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain(`registerTrackedIpcHandler('${channel}'`); }
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
     expect(preload).not.toMatch(/import(?:KeywordReport|ListingContent):\s*\(filePath/);
   });
 
   it('routes internal Lingxing Listing persistence through the store-scoped CAS service', () => {
-    const main = source('./index.ts');
-    const persist = main.slice(
-      main.indexOf('function persistListingContent'),
-      main.indexOf('function readCurrentOperationScopeValue'),
-    );
+    const main = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
+    const persist = mainRuntimeFunctionContract('persistListingContent');
     expect(persist).toContain('canonicalizeAmazonAsin(listing.asin)');
     expect(persist).toContain('storeScopedAdListingService.updateListingContent');
     expect(persist).toContain('expectedRevision: existing.revision');

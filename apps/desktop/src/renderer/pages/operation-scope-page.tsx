@@ -1,3 +1,4 @@
+import { BusinessDataConfigurationGuard, BusinessDataConfigurationNotice } from '../components/business-data-configuration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LingxingCollectionJobSnapshot, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { useBusinessDataPipeline } from '../components/business-data';
@@ -12,6 +13,10 @@ import {
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { AppRoute, OperationScope } from '../types';
+import { missionControlContextKey } from '@amazon-ai-ops/shared-types';
+import { WorkspaceActionButton } from '../components/workspace/action-feedback';
+import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
+import { rendererRuntimeLog } from '../runtime-log';
 
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
@@ -144,16 +149,20 @@ export function buildOperationScopeTaskState(input: {
 }
 
 export function OperationScopePage({ storeContext }: { storeContext: StoreContextEnvelope }) {
-  const { data, scope, loading, error } = useBusinessDataPipeline();
+  const { data, scope, loading, error, configurationRequired } = useBusinessDataPipeline();
+  const operationKey = `${missionControlContextKey(storeContext)}|${operationScopeSignature(scope)}`;
+  const operation = useWorkspaceOperation(operationKey);
   const setScope = useScopeStore((state) => state.setScope);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<OperationScope>(scope);
   const [saveStatus, setSaveStatus] = useState<OperationScopeSaveStatus>('idle');
+  const [saveOrigin, setSaveOrigin] = useState<'banner' | 'editor'>('banner');
   const confirmationStorageKey = `amazon-ai-ops:confirmed-operation-scope:${storeContext.storeId}`;
   const [confirmedScopeSignature, setConfirmedScopeSignature] = useState(() => {
     try {
       return window.sessionStorage.getItem(confirmationStorageKey) || '';
-    } catch {
+    } catch (caught) {
+      rendererRuntimeLog.error('operation_scope.confirmation_read_failed', { error: caught });
       return '';
     }
   });
@@ -231,19 +240,28 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
   });
 
   useEffect(() => {
+    setSaveStatus('idle');
+    setSaveError('');
+    setEditing(false);
+    setDraft(scope);
+  }, [operationKey]);
+
+  useEffect(() => {
     if (!editing) setDraft(scope);
   }, [editing, scope]);
 
   useEffect(() => {
     try {
       setConfirmedScopeSignature(window.sessionStorage.getItem(confirmationStorageKey) || '');
-    } catch {
+    } catch (caught) {
+      rendererRuntimeLog.error('operation_scope.confirmation_read_failed', { error: caught });
       setConfirmedScopeSignature('');
     }
   }, [confirmationStorageKey]);
 
   useEffect(() => {
     const sequence = ++collectionJobsLoadSequenceRef.current;
+    const isCurrent = operation.capture();
     const api = (window as any).electronAPI;
     setCollectionJobs([]);
     setCollectionJobsError('');
@@ -258,14 +276,15 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
           storeContext: { ...storeContext },
           limit: 100,
         });
-        if (sequence !== collectionJobsLoadSequenceRef.current) return;
+        if (!isCurrent() || sequence !== collectionJobsLoadSequenceRef.current) return;
         setCollectionJobs(Array.isArray(jobs) ? jobs : []);
       } catch (caught) {
-        if (sequence !== collectionJobsLoadSequenceRef.current) return;
+        rendererRuntimeLog.error('operation_scope.collection_read_failed', { error: caught });
+        if (!isCurrent() || sequence !== collectionJobsLoadSequenceRef.current) return;
         setCollectionJobs([]);
         setCollectionJobsError(toUserFacingError(caught, '生产采集任务读取失败。'));
       } finally {
-        if (sequence === collectionJobsLoadSequenceRef.current) {
+        if (isCurrent() && sequence === collectionJobsLoadSequenceRef.current) {
           setCollectionJobsLoading(false);
         }
       }
@@ -275,9 +294,9 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
         collectionJobsLoadSequenceRef.current += 1;
       }
     };
-  }, [storeContext.browserProfileId, storeContext.currency, storeContext.marketplace, storeContext.storeId]);
+  }, [operationKey]);
 
-  const confirmScope = async (candidate: OperationScope = scope) => {
+  const confirmScope = async (candidate: OperationScope = scope, origin: 'banner' | 'editor' = 'banner') => {
     const normalizedDraft = normalizeOperationScopeDraft(candidate);
     if (!normalizedDraft.dateFrom || !normalizedDraft.dateTo) {
       setSaveStatus('error');
@@ -299,27 +318,36 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
       setSaveError('请填写站点。');
       return;
     }
+    const ticket = operation.begin();
+    if (!ticket) return;
+    setSaveOrigin(origin);
     setSaveStatus('saving');
     setSaveError('');
     try {
       const api = (window as any).electronAPI;
       if (!api?.saveOperationScope) throw new Error('范围保存接口未暴露');
       await api.saveOperationScope(storeContext, normalizedDraft);
+      if (!ticket.isCurrent()) return;
       setScope(normalizedDraft);
       setDraft(normalizedDraft);
       setEditing(false);
       const confirmedSignature = operationScopeSignature(normalizedDraft);
       try {
         window.sessionStorage.setItem(confirmationStorageKey, confirmedSignature);
-      } catch {
-        // The scope is already persisted through Main; session feedback is best-effort only.
+      } catch (caught) {
+        // Main 已持久化范围，浏览器会话存储失败只影响本次确认反馈。
+        rendererRuntimeLog.error('operation_scope.confirmation_write_failed', { error: caught });
       }
       setConfirmedScopeSignature(confirmedSignature);
       setSaveStatus('saved');
       window.dispatchEvent(new CustomEvent('business-ui:data-updated'));
     } catch (caught) {
+      rendererRuntimeLog.error('operation_scope.save_failed', { error: caught });
+      if (!ticket.isCurrent()) return;
       setSaveStatus('error');
       setSaveError(toUserFacingError(caught, '保存当前范围失败。'));
+    } finally {
+      ticket.finish();
     }
   };
 
@@ -330,6 +358,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
         title={PAGE_HEADER_TITLES.operationScope}
         description="确认当前分析口径；全局范围条同步展示，具体修改从范围设置进入。"
       />
+      {configurationRequired && <BusinessDataConfigurationNotice />}
 
       <TaskBanner
         description={saveError
@@ -337,13 +366,15 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
             ? '正在按当前店铺、日期窗和批次核对生产采集任务；完成前不会放行广告表现。'
             : collectionJobsError
               ? `生产采集任务读取失败：${collectionJobsError}`
-              : taskState.detail)}
-        meta={`生产血缘文件 ${Math.min(realReportCount, 8)}/8 类 · 逐类入库 ${importedReportTypeCount}/8 类 · ${importedRows} 行指标`}
+              : configurationRequired ? '当前业务数据尚未读取；仍可确认并保存当前店铺范围。' : taskState.detail)}
+        meta={configurationRequired ? '报表覆盖与入库指标：未读取' : `生产血缘文件 ${Math.min(realReportCount, 8)}/8 类 · 逐类入库 ${importedReportTypeCount}/8 类 · ${importedRows} 行指标`}
         primaryAction={{
-          label: taskState.primaryActionLabel,
+          label: saveStatus === 'saving' && saveOrigin === 'editor' ? '确认并保存范围' : taskState.primaryActionLabel,
           onClick: () => { void confirmScope(); },
-          busy: taskState.primaryActionBusy,
+          busy: taskState.primaryActionBusy && saveOrigin === 'banner',
+          disabled: taskState.primaryActionBusy,
           busyLabel: taskState.primaryActionBusyLabel,
+          disabledReason: '正在保存当前店铺范围，请等待返回后继续。',
         }}
         secondaryActions={[
           {
@@ -354,17 +385,18 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
               setEditing((current) => !current);
             },
             disabled: taskState.primaryActionBusy,
+            disabledReason: '正在保存当前店铺范围，请等待返回后编辑。',
           },
-          { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute), disabled: taskState.primaryActionBusy },
+          { label: configurationRequired ? '打开店铺配置' : taskState.nextActionLabel, onClick: () => navigate(configurationRequired ? 'settings' : taskState.nextRoute), disabled: taskState.primaryActionBusy, disabledReason: '正在保存当前店铺范围，请等待返回后进入后续页面。' },
         ]}
         status={visibleSaveStatus !== 'idle'
           ? operationScopeSaveFeedbackLabel(visibleSaveStatus)
-          : collectionJobsLoading
+          : configurationRequired ? '当前业务数据未读取' : collectionJobsLoading
             ? '核对生产血缘中'
             : canQuantify
               ? operationScopeSaveFeedbackLabel(visibleSaveStatus)
               : '生产血缘未闭合'}
-        title={taskState.title}
+        title={configurationRequired ? '确认并保存当前店铺范围' : taskState.title}
         tone={canQuantify ? 'confirmed' : taskState.tone === 'warning' ? 'attention' : 'blocked'}
       />
 
@@ -387,9 +419,10 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
             tone={saveStatus === 'error' ? 'blocked' : 'default'}
             titleAccessory={<StatusPill tone="pending">美国站 · USD</StatusPill>}
           >
+            {saveStatus === 'saving' && <p id="operation-scope-fields-pending" role="note">当前保存或读取尚未结束，字段暂时锁定，请等待完成后继续编辑。</p>}
             <FormTable>
               <FormTableRow label="开始日期" required hint="按美国站业务日期读取领星报表。">
-                <input
+                <input disabled={saveStatus === 'saving'} aria-describedby={saveStatus === 'saving' ? 'operation-scope-fields-pending' : undefined}
                   aria-label="运营范围开始日期"
                   max={draft.dateTo}
                   onChange={(event) => setDraft((current) => ({ ...current, dateFrom: event.target.value }))}
@@ -398,7 +431,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
                 />
               </FormTableRow>
               <FormTableRow label="结束日期" required hint="不得早于开始日期；默认以当前美国站业务日为结束日。">
-                <input
+                <input disabled={saveStatus === 'saving'} aria-describedby={saveStatus === 'saving' ? 'operation-scope-fields-pending' : undefined}
                   aria-label="运营范围结束日期"
                   min={draft.dateFrom}
                   onChange={(event) => setDraft((current) => ({ ...current, dateTo: event.target.value }))}
@@ -414,7 +447,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
                 </div>
               </FormTableRow>
               <FormTableRow label="ASIN" hint="可选；留空读取当前店铺全部产品。">
-                <input
+                <input disabled={saveStatus === 'saving'} aria-describedby={saveStatus === 'saving' ? 'operation-scope-fields-pending' : undefined}
                   aria-label="运营范围 ASIN"
                   maxLength={10}
                   onChange={(event) => setDraft((current) => ({ ...current, asin: event.target.value.toUpperCase() }))}
@@ -423,7 +456,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
                 />
               </FormTableRow>
               <FormTableRow label="采集批次" hint="可选；留空时自动匹配当前范围最新完整批次。">
-                <input
+                <input disabled={saveStatus === 'saving'} aria-describedby={saveStatus === 'saving' ? 'operation-scope-fields-pending' : undefined}
                   aria-label="运营范围采集批次"
                   maxLength={200}
                   onChange={(event) => setDraft((current) => ({ ...current, batchId: event.target.value }))}
@@ -433,7 +466,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
               </FormTableRow>
             </FormTable>
             <div className="action-row operation-scope-editor-actions" aria-label="范围编辑动作">
-              <button
+              <WorkspaceActionButton disabledReason={'正在保存当前店铺范围，请等待应用返回后继续编辑或取消。'}
                 className="secondary-button"
                 disabled={saveStatus === 'saving'}
                 onClick={() => {
@@ -444,16 +477,16 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
                 type="button"
               >
                 取消
-              </button>
-              <button
-                aria-busy={saveStatus === 'saving'}
+              </WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={'正在保存当前店铺范围，请等待应用返回后继续编辑或取消。'} busy={saveStatus === 'saving' && saveOrigin === 'editor'} busyLabel="保存中..."
+                aria-busy={saveStatus === 'saving' && saveOrigin === 'editor' || undefined}
                 className="primary-button"
                 disabled={saveStatus === 'saving'}
-                onClick={() => { void confirmScope(draft); }}
+                onClick={() => { void confirmScope(draft, 'editor'); }}
                 type="button"
               >
-                {saveStatus === 'saving' ? '保存中...' : '保存范围'}
-              </button>
+                {saveStatus === 'saving' && saveOrigin === 'editor' ? '保存中...' : '保存范围'}
+              </WorkspaceActionButton>
             </div>
             {saveError && <p className="blocked-line" role="alert">{saveError}</p>}
           </Panel>
@@ -488,13 +521,13 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
               </div>
               <div className="operation-scope-field-card">
                 <span>真实报表</span>
-                <strong>{Math.min(realReportCount, 8)}/8 类</strong>
-                <p>{realReportCount ? '当前范围已有可用文件。' : '保存后进入数据采集。'}</p>
+                <strong>{configurationRequired ? '未读取' : `${Math.min(realReportCount, 8)}/8 类`}</strong>
+                <p>{configurationRequired ? '创建运行配置后再读取当前范围文件。' : realReportCount ? '当前范围已有可用文件。' : '保存后进入数据采集。'}</p>
               </div>
               <div className="operation-scope-field-card">
                 <span>入库指标</span>
-                <strong>{importedRows} 行</strong>
-                <p>{canQuantify ? '8 类逐类入库完成，可进入广告表现。' : importedRows > 0 ? '仅部分覆盖，仍需补齐或导入。' : '需要先导入校验。'}</p>
+                <strong>{configurationRequired ? '未读取' : `${importedRows} 行`}</strong>
+                <p>{configurationRequired ? '量化状态未知，不推断指标行数。' : canQuantify ? '8 类逐类入库完成，可进入广告表现。' : importedRows > 0 ? '仅部分覆盖，仍需补齐或导入。' : '需要先导入校验。'}</p>
               </div>
             </div>
           </div>
@@ -502,10 +535,10 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
             <p className="warning-line" role="status">DEV 预览不会注入伪造任务、lineage 或入库成功；此状态不提供生产就绪证明。</p>
           )}
           {collectionJobsError && <p className="blocked-line" role="alert">生产任务读取失败：{collectionJobsError}</p>}
-          {!collectionJobsLoading && !collectionJobsError && !canQuantify && (
+          {!configurationRequired && !collectionJobsLoading && !collectionJobsError && !canQuantify && (
             <p className="warning-line" role="status">{lineageReadiness.detail}</p>
           )}
-          {(aggregateRealReportCount !== realReportCount || aggregateImportedRows !== importedRows) && (
+          {!configurationRequired && (aggregateRealReportCount !== realReportCount || aggregateImportedRows !== importedRows) && (
             <p className="warning-line">
               当前日期窗聚合检测到 {aggregateRealReportCount}/8 类文件、{aggregateImportedRows} 行指标；其中只有 {realReportCount}/8 类、{importedRows} 行属于当前生产授权链，其他批次不参与放行。
             </p>
@@ -514,7 +547,8 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
         {(loading || collectionJobsLoading) && <p className="muted-line">正在读取当前范围数据与生产任务状态...</p>}
         {error && <p className="blocked-line">范围数据读取异常：{error}</p>}
 
-        <details className="folded-ops-panel operation-scope-impact-panel">
+        <BusinessDataConfigurationGuard configurationRequired={configurationRequired}>
+<details className="folded-ops-panel operation-scope-impact-panel">
           <summary>
             <span>后续读取与影响页面</span>
             <StatusPill tone={canQuantify ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>
@@ -543,6 +577,7 @@ export function OperationScopePage({ storeContext }: { storeContext: StoreContex
             </div>
           </div>
         </details>
+</BusinessDataConfigurationGuard>
       </div>
     </div>
   );

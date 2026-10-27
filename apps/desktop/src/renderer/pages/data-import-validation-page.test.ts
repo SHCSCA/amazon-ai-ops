@@ -1,3 +1,5 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
+import { importValidationCompositionSource } from './import-validation-composition.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -65,7 +67,7 @@ describe('data import report table sorting', () => {
   });
 
   it('wires the import task model and ledger gate into one first-screen task banner', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
     const header = source.slice(source.indexOf('<PageHeader'), source.indexOf('/>', source.indexOf('<PageHeader')) + 2);
     const primaryPanel = source.slice(source.indexOf('className="data-import-primary-panel"'), source.indexOf('</Panel>', source.indexOf('className="data-import-primary-panel"')));
 
@@ -93,7 +95,7 @@ describe('data import report table sorting', () => {
   });
 
   it('uses opaque artifacts for report, manifest, diagnostic, and reconciliation access', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
 
     for (const forbidden of ['filePath', 'folderPath', 'downloadDir', 'manifestPath', 'jsonPath', 'markdownPath']) {
       expect(source).not.toContain(forbidden);
@@ -104,7 +106,7 @@ describe('data import report table sorting', () => {
   });
 
   it('accepts a schema-valid zero-row receipt without treating row count as an import error', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
 
     expect(source).not.toContain('inserted <= 0');
     expect(source).toContain('parsedFiles <= 0 || errors > 0');
@@ -112,7 +114,7 @@ describe('data import report table sorting', () => {
   });
 
   it('keeps production readiness bound to store task lineage instead of aggregate same-date files', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
 
     expect(source).toContain('listLingxingCollectionJobs({');
     expect(source).toContain('limit: 100');
@@ -164,7 +166,7 @@ describe('data import report table sorting', () => {
 
 describe('data import table micro-feedback', () => {
   it('keeps the first screen table-first instead of duplicating import status in KPI cards', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
     const firstPanelStart = source.indexOf('className="data-import-primary-panel"');
     const firstPanelEnd = source.indexOf('className={importFeedback.className}', firstPanelStart);
     const firstPanel = source.slice(firstPanelStart, firstPanelEnd);
@@ -217,8 +219,8 @@ describe('data import table micro-feedback', () => {
   });
 
   it('keeps the 200ms sorting feedback and aria-live contract wired', () => {
-    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = importValidationCompositionSource();
+    const styles = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('data-import-table-feedback');

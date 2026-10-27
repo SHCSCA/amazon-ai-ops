@@ -1,5 +1,7 @@
 # Mission Control 当前交付状态（2026-08-04）
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 > 2026-08-05 的便携包身份、启动修复和 authority DB 迁移状态已由
 > [PORTABLE_RECOVERY_STATUS_2026-08-05.md](./PORTABLE_RECOVERY_STATUS_2026-08-05.md) 取代。
 > 本文保留为 2026-08-04 Mission Control 候选的历史基线，不得继续引用其中包哈希作为当前包身份。

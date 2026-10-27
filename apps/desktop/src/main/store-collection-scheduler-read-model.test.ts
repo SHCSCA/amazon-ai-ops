@@ -1,488 +1,28 @@
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { readStoreCollectionAutomation } from '@amazon-ai-ops/shared-types';
 import {
   ANALYSIS_REQUIRED_REPORT_TYPES,
-  type LingxingCollectionImportState,
-  type LingxingCollectionJobState,
   type StoreCollectionScheduleProjection,
-  type StoreContextEnvelope,
-  type StoreRuntimeConfigRecord,
 } from '@amazon-ai-ops/shared-types';
+import { fingerprintLingxingCollectionAuthorityProof } from '@amazon-ai-ops/local-db';
 import {
-  fingerprintCollectionResumeExecutionContext,
-  fingerprintLingxingCollectionAuthorityProof,
-  type CollectionInPlaceResumeState,
-  type CollectionResumeAttemptReceipt,
-  type LingxingCollectionAuthorityProof,
-} from '@amazon-ai-ops/local-db';
-import { describe, expect, it, vi } from 'vitest';
-import type {
-  StoreCollectionProtectedSemanticAttemptReadback,
-} from './store-collection-orchestrator';
-import { StoreCollectionSchedulerReadModel } from './store-collection-scheduler-read-model';
-
-const CONTEXT: StoreContextEnvelope = {
-  storeId: 'store-one' as StoreContextEnvelope['storeId'],
-  browserProfileId: 'profile-one' as StoreContextEnvelope['browserProfileId'],
-  marketplace: 'US',
-  currency: 'USD',
-  businessTimezone: 'America/Los_Angeles',
-  businessDate: '2026-07-22' as StoreContextEnvelope['businessDate'],
-  sessionGeneration: 4,
-};
-
-function config(
-  patch: Partial<StoreRuntimeConfigRecord> = {},
-): StoreRuntimeConfigRecord {
-  return {
-    configId: 'config-one',
-    storeId: CONTEXT.storeId,
-    marketplace: 'US',
-    currency: 'USD',
-    businessTimezone: 'America/Los_Angeles',
-    status: 'active',
-    revision: 3,
-    values: {
-      aiRecommendationsEnabled: true,
-      collectionScheduleLocalTime: '07:30',
-      collectionLookbackDays: 7,
-      analysisWindowDays: 30,
-      defaultTargetAcosPercent: 28,
-      minimumRecommendationConfidencePercent: 80,
-      evidenceRetentionDays: 90,
-    },
-    createdAt: '2026-07-01T00:00:00.000Z',
-    updatedAt: '2026-07-21T00:00:00.000Z',
-    ...patch,
-  };
-}
-
-function expectedFingerprint(
-  context: StoreContextEnvelope = CONTEXT,
-): string {
-  return createHash('sha256').update(JSON.stringify({
-    collectionContractVersion: 'lingxing-us-ads-full8-v1',
-    storeId: context.storeId,
-    browserProfileId: context.browserProfileId,
-    businessDate: context.businessDate,
-    lookbackDays: 7,
-    dateStart: '2026-07-15',
-    dateEnd: '2026-07-21',
-  })).digest('hex');
-}
-
-function durableProof(input: {
-  state?: LingxingCollectionJobState;
-  importState?: LingxingCollectionImportState;
-  requestId?: string;
-  context?: StoreContextEnvelope;
-  dateStart?: string;
-  dateEnd?: string;
-} = {}): LingxingCollectionAuthorityProof {
-  const context = input.context ?? CONTEXT;
-  const state = input.state ?? 'running';
-  const requestId = input.requestId ?? 'scheduler-request-one';
-  const dateStart = input.dateStart ?? '2026-07-15';
-  const dateEnd = input.dateEnd ?? '2026-07-21';
-  const terminal = !['queued', 'running'].includes(state);
-  const downloadComplete = state === 'completed';
-  const completedAt = terminal ? '2026-07-22T15:02:00.000Z' : undefined;
-  const updatedAt = terminal
-    ? '2026-07-22T15:05:00.000Z'
-    : '2026-07-22T15:01:00.000Z';
-  const reports: LingxingCollectionAuthorityProof['job']['reports'] = (
-    ANALYSIS_REQUIRED_REPORT_TYPES.map((reportType) => ({
-      reportType,
-      state: downloadComplete ? 'downloaded' as const : state === 'queued' ? 'queued' as const : 'failed' as const,
-      attemptIndex: 0,
-      autoRetryCount: 0,
-      ...(downloadComplete ? {
-        createdReportIdentity: {
-          provider: 'lingxing' as const,
-          reportType,
-          externalReportName: `report-${reportType}`,
-          dateStart,
-          dateEnd,
-          createdAt: '2026-07-22T15:00:30.000Z',
-        },
-        fileSizeBytes: 1024,
-      } : {}),
-      updatedAt: '2026-07-22T15:01:00.000Z',
-    }))
-  );
-  const importAttemptedAt = state === 'completed'
-    && ['pending', 'failed', 'succeeded'].includes(String(input.importState))
-    ? '2026-07-22T15:03:00.000Z'
-    : undefined;
-  const importCompletedAt = state === 'completed'
-    && (input.importState === 'failed' || input.importState === 'succeeded')
-    ? '2026-07-22T15:04:00.000Z'
-    : undefined;
-  const job: LingxingCollectionAuthorityProof['job'] = {
-    jobId: 'job-one',
-    request: {
-      requestId,
-      storeContext: context,
-      dateStart,
-      dateEnd,
-      mode: 'create-and-download' as const,
-      reportTypes: ANALYSIS_REQUIRED_REPORT_TYPES,
-    },
-    lineage: {
-      lineageId: 'job-one',
-      rootJobId: 'job-one',
-      expectedReportTypes: ANALYSIS_REQUIRED_REPORT_TYPES,
-      purpose: 'production_full',
-    },
-    state,
-    reports,
-    createdAt: '2026-07-22T15:00:00.000Z',
-    updatedAt,
-    ...(completedAt ? { completedAt } : {}),
-    ...(input.importState ? { importState: input.importState } : {}),
-    ...(importAttemptedAt ? { importAttemptedAt } : {}),
-    ...(importCompletedAt ? { importCompletedAt } : {}),
-    ...(state === 'completed' && input.importState === 'failed'
-      ? { importError: 'IMPORT_FAILED' }
-      : {}),
-  };
-  const batch: LingxingCollectionAuthorityProof['batch'] = terminal ? {
-    id: job.jobId,
-    requestId,
-    storeId: context.storeId,
-    browserProfileId: context.browserProfileId,
-    businessDate: context.businessDate,
-    sessionGeneration: context.sessionGeneration,
-    dateStart: job.request.dateStart,
-    dateEnd: job.request.dateEnd,
-    marketplaceCode: 'US',
-    status: state === 'completed'
-      ? 'completed'
-      : state === 'completed_with_errors'
-        ? 'completed_with_errors'
-        : 'failed',
-    downloadDir: `C:\\reports\\${job.jobId}`,
-    createdAt: job.createdAt,
-    completedAt: completedAt!,
-  } : undefined;
-  const lingxingFiles: LingxingCollectionAuthorityProof['lingxingFiles'] = downloadComplete
-    ? reports.map((checkpoint) => ({
-        storeId: context.storeId,
-        id: `lingxing-${checkpoint.reportType}`,
-        batchId: job.jobId,
-        reportType: checkpoint.reportType,
-        displayName: `${checkpoint.reportType}.xlsx`,
-        status: 'downloaded',
-        filePath: `C:\\reports\\${job.jobId}\\${checkpoint.reportType}.xlsx`,
-        fileSizeBytes: checkpoint.fileSizeBytes!,
-        createdAt: '2026-07-22T15:00:30.000Z',
-        updatedAt: checkpoint.updatedAt,
-      }))
-    : [];
-  const importRun: LingxingCollectionAuthorityProof['importRuns'][number] | undefined = (
-    state === 'completed' && input.importState === 'succeeded'
-  ) ? {
-      storeId: context.storeId,
-      runId: 'run-job-one',
-      idempotencyKey: 'import-job-one',
-      inputFingerprint: 'a'.repeat(64),
-      batchId: job.jobId,
-      status: 'completed',
-      sourceFileCount: ANALYSIS_REQUIRED_REPORT_TYPES.length,
-      metricRowCount: 80,
-      reconciliationCount: ANALYSIS_REQUIRED_REPORT_TYPES.length,
-      startedAt: importAttemptedAt!,
-      completedAt: importCompletedAt!,
-      createdAt: importCompletedAt!,
-    } : undefined;
-  const importedReportFiles: LingxingCollectionAuthorityProof['importedReportFiles'] = importRun
-    ? lingxingFiles.map((file, index) => ({
-        id: index + 1,
-        storeId: context.storeId,
-        batchId: job.jobId,
-        reportType: file.reportType,
-        filePath: file.filePath!,
-        fileName: file.displayName,
-        fileSizeBytes: file.fileSizeBytes!,
-        status: 'imported',
-        importedRows: 10,
-        fileHash: `${(index + 1).toString(16)}`.repeat(64).slice(0, 64),
-        lastImportedAt: importCompletedAt!,
-      }))
-    : [];
-  const importFileSnapshots: LingxingCollectionAuthorityProof['importFileSnapshots'] = importRun
-    ? lingxingFiles.map((file, index) => ({
-        storeId: context.storeId,
-        snapshotId: `snapshot-${file.reportType}`,
-        runId: importRun.runId,
-        batchId: job.jobId,
-        lingxingFileId: file.id,
-        reportFileId: importedReportFiles[index]!.id,
-        reportType: file.reportType,
-        filePath: file.filePath!,
-        fileName: file.displayName,
-        fileSizeBytes: file.fileSizeBytes!,
-        fileHash: importedReportFiles[index]!.fileHash!,
-        importedRows: importedReportFiles[index]!.importedRows,
-        capturedAt: '2026-07-22T15:03:30.000Z',
-      }))
-    : [];
-  const reconciliations: LingxingCollectionAuthorityProof['reconciliations'] = importRun
-    ? lingxingFiles.map((file, index) => ({
-        storeId: context.storeId,
-        reconciliationId: `reconciliation-${file.reportType}`,
-        runId: importRun.runId,
-        batchId: job.jobId,
-        dateStart,
-        dateEnd,
-        metricDate: dateEnd,
-        reportType: file.reportType,
-        currency: 'USD',
-        expectedRows: 10,
-        actualRows: 10,
-        expectedCost: index + 1,
-        actualCost: index + 1,
-        absoluteCostDelta: 0,
-        tolerance: 0.01,
-        withinTolerance: true,
-        status: 'matched',
-        reconciledAt: importCompletedAt!,
-      }))
-    : [];
-  const metricEvidence: LingxingCollectionAuthorityProof['metricEvidence'] = importRun
-    ? [{
-        storeId: context.storeId,
-        runId: importRun.runId,
-        batchId: job.jobId,
-        rowCount: importRun.metricRowCount,
-        payloadSha256: 'd'.repeat(64),
-        createdAt: importRun.completedAt,
-      }]
-    : [];
-  return {
-    job,
-    jobRow: {
-      storeId: context.storeId,
-      jobId: job.jobId,
-      requestId,
-      browserProfileId: context.browserProfileId,
-      marketplace: 'US',
-      currency: 'USD',
-      businessTimezone: 'America/Los_Angeles',
-      businessDate: context.businessDate,
-      sessionGeneration: context.sessionGeneration,
-      dateStart,
-      dateEnd,
-      mode: 'create-and-download',
-      reportTypesJson: JSON.stringify(ANALYSIS_REQUIRED_REPORT_TYPES),
-      state,
-      createdAt: job.createdAt,
-      updatedAt,
-      completedAt: completedAt ?? null,
-      blockerCode: null,
-      detail: null,
-    },
-    checkpointCount: reports.length,
-    ...(batch ? { batch } : {}),
-    lingxingFileCount: lingxingFiles.length,
-    lingxingFiles,
-    importRunCount: importRun ? 1 : 0,
-    importRuns: importRun ? [importRun] : [],
-    importFileSnapshotCount: importFileSnapshots.length,
-    importFileSnapshots,
-    importedReportFileCount: importedReportFiles.length,
-    importedReportFiles,
-    reconciliationRowCount: reconciliations.length,
-    reconciliations,
-    metricEvidenceCount: metricEvidence.length,
-    metricEvidence,
-  };
-}
-
-function protectedAttempt(input: {
-  requestId?: string;
-  context?: StoreContextEnvelope;
-  fingerprint?: string;
-  terminalState?: 'succeeded' | 'blocked' | 'failed' | null;
-} = {}): StoreCollectionProtectedSemanticAttemptReadback {
-  const context = input.context ?? CONTEXT;
-  const fingerprint = input.fingerprint ?? expectedFingerprint(context);
-  const requestId = input.requestId ?? 'scheduler-request-one';
-  const semanticAttempt = {
-    semanticAttemptId: 'semantic-attempt-one',
-    cycleId: 'cycle-one',
-    transitionId: 'transition-one',
-    storeId: context.storeId,
-    browserProfileId: context.browserProfileId,
-    expectedFingerprint: fingerprint,
-    businessDate: context.businessDate,
-    sessionGeneration: context.sessionGeneration,
-    schedulerAttemptId: 'scheduler-attempt-one',
-    schedulerRequestId: requestId,
-    attemptedAt: '2026-07-22T15:00:00.000Z',
-    integrityDigest: 'a'.repeat(64),
-  };
-  const terminalState = input.terminalState === undefined ? null : input.terminalState;
-  return {
-    semanticAttempt,
-    terminalOutcome: terminalState === null
-      ? null
-      : {
-          outcomeId: 'outcome-one',
-          cycleId: 'cycle-one',
-          transitionId: 'transition-one',
-          owner: 'store-collection-orchestrator',
-          storeId: context.storeId,
-          browserProfileId: context.browserProfileId,
-          businessDate: context.businessDate,
-          sessionGeneration: context.sessionGeneration,
-          fingerprint,
-          attemptId: 'scheduler-attempt-one',
-          requestId,
-          schedulerSucceeded: terminalState === 'succeeded',
-          cleanupStatus: 'confirmed',
-          state: terminalState,
-          startedAt: '2026-07-22T15:00:00.000Z',
-          completedAt: '2026-07-22T15:01:00.000Z',
-          ...(terminalState === 'succeeded' ? {} : { failureCode: 'IDENTITY_UNVERIFIED' as const }),
-          integrityDigest: 'b'.repeat(64),
-        },
-  };
-}
-
-function inPlaceResumeState(
-  proof: LingxingCollectionAuthorityProof,
-): CollectionInPlaceResumeState {
-  return {
-    jobId: proof.job.jobId,
-    job: proof.job,
-    request: proof.job.request,
-    reports: proof.job.reports,
-    batch: proof.batch!,
-    files: proof.lingxingFiles,
-    expectedJobUpdatedAt: proof.job.updatedAt,
-    authorityProofSha256: fingerprintLingxingCollectionAuthorityProof(proof),
-  };
-}
-
-function resumeReceipt(input: {
-  before: LingxingCollectionAuthorityProof;
-  after: LingxingCollectionAuthorityProof;
-  outcome: 'succeeded' | 'failed' | 'interrupted';
-}): CollectionResumeAttemptReceipt {
-  return {
-    storeId: CONTEXT.storeId,
-    attemptId: 'resume-attempt-one',
-    jobId: input.before.job.jobId,
-    requestId: input.before.job.request.requestId,
-    outcome: input.outcome,
-    baseJobUpdatedAt: input.before.job.updatedAt,
-    finalJobUpdatedAt: input.after.job.updatedAt,
-    baseAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(input.before),
-    finalAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(input.after),
-    durableSessionGeneration: CONTEXT.sessionGeneration,
-    executionSessionGeneration: CONTEXT.sessionGeneration,
-    executionContextSha256: fingerprintCollectionResumeExecutionContext(CONTEXT),
-    claimedAt: '2026-07-22T15:05:30.000Z',
-    completedAt: '2026-07-22T15:06:00.000Z',
-  };
-}
-
-interface HarnessOptions {
-  currentConfig?: StoreRuntimeConfigRecord | null;
-  now?: string;
-}
-
-function harness(options: HarnessOptions = {}) {
-  const active: { current: StoreContextEnvelope | null } = { current: CONTEXT };
-  const runtimeConfigState: { current: StoreRuntimeConfigRecord | null } = {
-    current: options.currentConfig ?? null,
-  };
-  const authority = {
-    assertActiveStoreContext: vi.fn((value: unknown) => {
-      if (!active.current || value !== active.current) throw new Error('stale or wrong active context');
-      return active.current;
-    }),
-    getActiveStoreContext: vi.fn(() => active.current),
-  };
-  const runtimeConfig = {
-    get: vi.fn((_context: StoreContextEnvelope) => ({
-      current: runtimeConfigState.current,
-      versions: [],
-    })),
-  };
-  const importRepository = {
-    getCollectionJobForStore: vi.fn(
-      (_storeId: unknown, _jobId: unknown): LingxingCollectionAuthorityProof['job'] | undefined => (
-        undefined
-      ),
-    ),
-    inspectUniqueCollectionJobForSemanticScope: vi.fn(
-      (_input: unknown): LingxingCollectionAuthorityProof | undefined => undefined,
-    ),
-    readUniqueCollectionAuthorityProofForStoreByRequestId: vi.fn(
-      (_storeId: unknown, _requestId: unknown): LingxingCollectionAuthorityProof | undefined => (
-        undefined
-      ),
-    ),
-    getCollectionInPlaceResumeStateForStore: vi.fn(
-      (_storeId: unknown, _jobId: unknown): CollectionInPlaceResumeState | undefined => undefined,
-    ),
-    readLatestCollectionResumeAttemptReceiptForStore: vi.fn(
-      (
-        _storeId: unknown,
-        _jobId: unknown,
-        _requestId: unknown,
-      ): CollectionResumeAttemptReceipt | undefined => undefined,
-    ),
-    readUniqueSucceededCollectionResumeReceiptForStore: vi.fn(
-      (
-        _storeId: unknown,
-        _jobId: unknown,
-        _requestId: unknown,
-      ): CollectionResumeAttemptReceipt | undefined => undefined,
-    ),
-  };
-  const orchestrator = {
-    readProtectedSemanticAttempt: vi.fn(
-      (_input: unknown): StoreCollectionProtectedSemanticAttemptReadback | null => null,
-    ),
-  };
-  const manualRun = vi.fn(async (_context: StoreContextEnvelope): Promise<unknown> => ({
-      cycleId: 'cycle-one',
-      state: 'completed' as const,
-      outcomes: [],
-      skippedStoreIds: [],
-      plannedDueStoreIds: [CONTEXT.storeId],
-      attemptedStoreIds: [CONTEXT.storeId],
-    }));
-  const resumeExisting = vi.fn(async (_input: unknown): Promise<unknown> => ({
-    state: 'completed' as const,
-  }));
-  const model = new StoreCollectionSchedulerReadModel({
-    authority,
-    runtimeConfig,
-    importRepository,
-    orchestrator,
-    manualRun,
-    resumeExisting,
-    now: () => new Date(options.now ?? '2026-07-22T15:00:00.000Z'),
-  });
-  return {
-    active,
-    runtimeConfigState,
-    authority,
-    runtimeConfig,
-    importRepository,
-    orchestrator,
-    manualRun,
-    resumeExisting,
-    model,
-  };
-}
+  describe,
+  expect,
+  it,
+} from 'vitest';
+import {
+  CONTEXT,
+  config,
+  expectedFingerprint,
+  durableProof,
+  protectedAttempt,
+  inPlaceResumeState,
+  resumeReceipt,
+  harness,
+} from "./collection-schedule-view.test-fixtures";
 
 describe('StoreCollectionSchedulerReadModel', () => {
-  it('routes an exact durable failed full8 job through same-job resume instead of manual duplicate', async () => {
+it('routes an exact durable failed full8 job through same-job resume instead of manual duplicate', async () => {
     const test = harness({ currentConfig: config() });
     const before = durableProof({ state: 'failed', importState: 'not_applicable' });
     const after = durableProof({ state: 'failed', importState: 'not_applicable' });
@@ -527,7 +67,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).not.toHaveBeenCalled();
   });
 
-  it('routes an exact durable completed-with-errors full8 job through the same double-read resume proof', async () => {
+it('routes an exact durable completed-with-errors full8 job through the same double-read resume proof', async () => {
     const test = harness({ currentConfig: config() });
     const before = durableProof({ state: 'completed_with_errors', importState: 'not_applicable' });
     const after = durableProof({ state: 'completed_with_errors', importState: 'not_applicable' });
@@ -556,7 +96,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).not.toHaveBeenCalled();
   });
 
-  it('locks a selected failed job before mutation even when current lookback now targets another window', async () => {
+it('locks a selected failed job before mutation even when current lookback now targets another window', async () => {
     const changedConfig = config({
       values: {
         ...config().values,
@@ -603,7 +143,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     }));
   });
 
-  it('rejects replay of a stale terminal receipt when the resume callback performs no new attempt', async () => {
+it('rejects replay of a stale terminal receipt when the resume callback performs no new attempt', async () => {
     const test = harness({ currentConfig: config() });
     const before = durableProof({ state: 'failed', importState: 'not_applicable' });
     const staleReceipt = {
@@ -626,7 +166,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.resumeExisting).toHaveBeenCalledOnce();
   });
 
-  it('authorizes the exact active context and projects missing config without consulting execution history', () => {
+it('authorizes the exact active context and projects missing config without consulting execution history', () => {
     const test = harness();
 
     expect(test.model.get(CONTEXT)).toEqual({
@@ -643,7 +183,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).not.toHaveBeenCalled();
   });
 
-  it('projects an archived config without reading durable or protected attempts', () => {
+it('projects an archived config without reading durable or protected attempts', () => {
     const test = harness({ currentConfig: config({ status: 'archived' }) });
 
     expect(test.model.get(CONTEXT)).toEqual({
@@ -657,7 +197,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.orchestrator.readProtectedSemanticAttempt).not.toHaveBeenCalled();
   });
 
-  it('derives the exact full8 semantic scope and waits before the Los Angeles schedule time', () => {
+it('derives the exact full8 semantic scope and waits before the Los Angeles schedule time', () => {
     const test = harness({
       currentConfig: config(),
       now: '2026-07-22T14:29:00.000Z',
@@ -692,7 +232,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     });
   });
 
-  it.each([
+it.each([
     ['queued', undefined, 'claimed'],
     ['running', undefined, 'claimed'],
     ['completed', 'pending', 'claimed'],
@@ -720,7 +260,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     },
   );
 
-  it.each([
+it.each([
     ['completed without import lifecycle', 'completed', undefined],
     ['completed/not_applicable', 'completed', 'not_applicable'],
     ['completed_with_errors/failed', 'completed_with_errors', 'failed'],
@@ -736,7 +276,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => test.model.get(CONTEXT)).toThrow(/collection proof UNKNOWN/i);
   });
 
-  it('fails closed when completed/succeeded markers lack complete 8/8 authority proof', () => {
+it('fails closed when completed/succeeded markers lack complete 8/8 authority proof', () => {
     const test = harness({ currentConfig: config() });
     const incomplete = durableProof({ state: 'completed', importState: 'succeeded' });
     incomplete.importRunCount = 0;
@@ -750,7 +290,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => test.model.get(CONTEXT)).toThrow(/collection proof UNKNOWN/i);
   });
 
-  it.each([
+it.each([
     [null, 'claimed'],
     ['failed', 'failed'],
     ['blocked', 'failed'],
@@ -769,7 +309,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     },
   );
 
-  it('fails closed when protected success has no exact authority DB job', () => {
+it('fails closed when protected success has no exact authority DB job', () => {
     const test = harness({ currentConfig: config() });
     test.orchestrator.readProtectedSemanticAttempt.mockReturnValue(
       protectedAttempt({ terminalState: 'succeeded' }),
@@ -778,7 +318,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => test.model.get(CONTEXT)).toThrow(/protected success.*authority DB/i);
   });
 
-  it.each([
+it.each([
     ['requestId', protectedAttempt({ requestId: 'another-request' })],
     ['storeId', protectedAttempt({ context: { ...CONTEXT, storeId: 'other-store' as typeof CONTEXT.storeId } })],
     ['profileId', protectedAttempt({ context: { ...CONTEXT, browserProfileId: 'other-profile' as typeof CONTEXT.browserProfileId } })],
@@ -794,7 +334,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => test.model.get(CONTEXT)).toThrow(/identity mismatch/i);
   });
 
-  it('combines only matching durable and protected identities', () => {
+it('combines only matching durable and protected identities', () => {
     const test = harness({ currentConfig: config() });
     test.importRepository.inspectUniqueCollectionJobForSemanticScope.mockReturnValue(
       durableProof({ state: 'completed', importState: 'succeeded' }),
@@ -806,7 +346,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.model.get(CONTEXT)).toMatchObject({ state: 'succeeded' });
   });
 
-  it('combines matching failed import and protected failure terminals', () => {
+it('combines matching failed import and protected failure terminals', () => {
     const test = harness({ currentConfig: config() });
     test.importRepository.inspectUniqueCollectionJobForSemanticScope.mockReturnValue(
       durableProof({ state: 'completed', importState: 'failed' }),
@@ -818,7 +358,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.model.get(CONTEXT)).toMatchObject({ state: 'failed' });
   });
 
-  it('accepts protected original failure beside durable resumed success only with its exact receipt', () => {
+it('accepts protected original failure beside durable resumed success only with its exact receipt', () => {
     const test = harness({ currentConfig: config() });
     const before = durableProof({ state: 'failed', importState: 'not_applicable' });
     const after = durableProof({ state: 'completed', importState: 'succeeded' });
@@ -837,7 +377,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
       .toHaveBeenCalledWith(CONTEXT.storeId, 'job-one', 'scheduler-request-one');
   });
 
-  it('accepts the append-only recovered-succeeded bridge after an orphan resume was interrupted', () => {
+it('accepts the append-only recovered-succeeded bridge after an orphan resume was interrupted', () => {
     const test = harness({ currentConfig: config() });
     const base = durableProof({ state: 'failed', importState: 'not_applicable' });
     const recovered = durableProof({ state: 'completed', importState: 'succeeded' });
@@ -862,7 +402,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
       .toHaveBeenCalledWith(CONTEXT.storeId, 'job-one', 'scheduler-request-one');
   });
 
-  it('returns duplicate on a successful resumed-job repeat without resuming it again', async () => {
+it('returns duplicate on a successful resumed-job repeat without resuming it again', async () => {
     const test = harness({ currentConfig: config() });
     const before = durableProof({ state: 'failed', importState: 'not_applicable' });
     const after = durableProof({ state: 'completed', importState: 'succeeded' });
@@ -888,7 +428,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.importRepository.getCollectionInPlaceResumeStateForStore).not.toHaveBeenCalled();
   });
 
-  it.each([
+it.each([
     [
       'protected failure versus DB success',
       durableProof({ state: 'completed', importState: 'succeeded' }),
@@ -917,7 +457,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => test.model.get(CONTEXT)).toThrow(/identity mismatch/i);
   });
 
-  it('propagates duplicate or corrupt authority readers instead of falling back to due', () => {
+it('propagates duplicate or corrupt authority readers instead of falling back to due', () => {
     const dbFailure = harness({ currentConfig: config() });
     dbFailure.importRepository.inspectUniqueCollectionJobForSemanticScope.mockImplementation(() => {
       throw new Error('duplicate durable semantic scope');
@@ -932,7 +472,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(() => protectedFailure.model.get(CONTEXT)).toThrow('corrupt protected history');
   });
 
-  it.each([
+it.each([
     ['wrong store', { ...CONTEXT, storeId: 'other-store' as typeof CONTEXT.storeId }],
     ['stale generation', { ...CONTEXT, sessionGeneration: CONTEXT.sessionGeneration - 1 }],
   ])('rejects %s before reading config, DB, or protected history', async (_label, stale) => {
@@ -946,7 +486,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).not.toHaveBeenCalled();
   });
 
-  it('projects due at or after the configured Los Angeles schedule time', () => {
+it('projects due at or after the configured Los Angeles schedule time', () => {
     const test = harness({
       currentConfig: config(),
       now: '2026-07-22T14:30:00.000Z',
@@ -958,7 +498,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     });
   });
 
-  it("propagates the caller's Package UI read-only rejection before post-run readback", async () => {
+it("propagates the caller's Package UI read-only rejection before post-run readback", async () => {
     const test = harness({ currentConfig: config() });
     const packageUiRejection = Object.assign(new Error('PACKAGE_UI_READ_ONLY'), {
       code: 'PACKAGE_UI_READ_ONLY',
@@ -973,7 +513,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.runtimeConfig.get).toHaveBeenCalledOnce();
   });
 
-  it('returns duplicate for an exact skipped target and attaches only a sanitized durable job', async () => {
+it('returns duplicate for an exact skipped target and attaches only a sanitized durable job', async () => {
     const test = harness({ currentConfig: config() });
     const proof = durableProof({ state: 'running' });
     (proof.job as typeof proof.job & { downloadDir: string }).downloadDir = 'C:\\authority\\secret';
@@ -1003,7 +543,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.manualRun).toHaveBeenCalledWith(CONTEXT);
   });
 
-  it('allowlists nested created report identity fields in the Renderer duplicate DTO', async () => {
+it('allowlists nested created report identity fields in the Renderer duplicate DTO', async () => {
     const test = harness({ currentConfig: config() });
     const proof = durableProof({ state: 'completed', importState: 'pending' });
     const createdReportIdentity = proof.job.reports[0]!.createdReportIdentity!;
@@ -1032,7 +572,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(JSON.stringify(result)).not.toContain('authority-secret');
   });
 
-  it('fails closed when the exact config revision drifts during a skipped manual run', async () => {
+it('fails closed when the exact config revision drifts during a skipped manual run', async () => {
     const initial = config();
     const test = harness({ currentConfig: initial });
     test.importRepository.inspectUniqueCollectionJobForSemanticScope.mockReturnValue(
@@ -1057,7 +597,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     await expect(test.model.runNow(CONTEXT)).rejects.toThrow(/manual run scope changed/i);
   });
 
-  it('fails closed when the exact fingerprint drifts during a skipped manual run', async () => {
+it('fails closed when the exact fingerprint drifts during a skipped manual run', async () => {
     const initial = config();
     const test = harness({ currentConfig: initial });
     const firstProof = durableProof({ state: 'running' });
@@ -1092,7 +632,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     await expect(test.model.runNow(CONTEXT)).rejects.toThrow(/manual run scope changed/i);
   });
 
-  it('accepts an exact attempted target after Main advances only the session generation', async () => {
+it('accepts an exact attempted target after Main advances only the session generation', async () => {
     const test = harness({ currentConfig: config() });
     const refreshed = { ...CONTEXT, sessionGeneration: CONTEXT.sessionGeneration + 1 };
     test.importRepository.inspectUniqueCollectionJobForSemanticScope.mockReturnValue(
@@ -1134,7 +674,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.authority.assertActiveStoreContext).toHaveBeenLastCalledWith(refreshed);
   });
 
-  it.each([
+it.each([
     ['store', { ...CONTEXT, storeId: 'other-store' as typeof CONTEXT.storeId, sessionGeneration: 5 }],
     ['profile', { ...CONTEXT, browserProfileId: 'other-profile' as typeof CONTEXT.browserProfileId, sessionGeneration: 5 }],
     ['business date', { ...CONTEXT, businessDate: '2026-07-23' as typeof CONTEXT.businessDate, sessionGeneration: 5 }],
@@ -1167,7 +707,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     expect(test.runtimeConfig.get).toHaveBeenCalledWith(CONTEXT);
   });
 
-  it('keeps accepted true and the due projection for a pre-scheduler identity block with no records', async () => {
+it('keeps accepted true and the due projection for a pre-scheduler identity block with no records', async () => {
     const test = harness({ currentConfig: config() });
     test.manualRun.mockResolvedValue({
       cycleId: 'cycle-login-blocked',
@@ -1196,7 +736,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     });
   });
 
-  it.each([
+it.each([
     ['unrelated target', {
       outcomes: [], skippedStoreIds: [], plannedDueStoreIds: [], attemptedStoreIds: [],
     }],
@@ -1216,7 +756,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     await expect(test.model.runNow(CONTEXT)).rejects.toThrow(/manual cycle.*ambiguous/i);
   });
 
-  it('rejects a skipped cycle without durable or protected duplicate proof', async () => {
+it('rejects a skipped cycle without durable or protected duplicate proof', async () => {
     const test = harness({ currentConfig: config() });
     test.manualRun.mockResolvedValue({
       cycleId: 'cycle-unproved-duplicate',
@@ -1230,7 +770,7 @@ describe('StoreCollectionSchedulerReadModel', () => {
     await expect(test.model.runNow(CONTEXT)).rejects.toThrow(/duplicate.*proof/i);
   });
 
-  it('rejects a record-free attempted failure unless it is an identity/login block', async () => {
+it('rejects a record-free attempted failure unless it is an identity/login block', async () => {
     const test = harness({ currentConfig: config() });
     test.manualRun.mockResolvedValue({
       cycleId: 'cycle-runtime-failed',
@@ -1251,13 +791,63 @@ describe('StoreCollectionSchedulerReadModel', () => {
     await expect(test.model.runNow(CONTEXT)).rejects.toThrow(/identity block proof/i);
   });
 
-  it('does not import or invoke the legacy StoreCollectionScheduler execution surface', () => {
-    const source = readFileSync(
-      new URL('./store-collection-scheduler-read-model.ts', import.meta.url),
-      'utf8',
-    );
-    expect(source).not.toMatch(/from ['"]\.\/store-collection-scheduler['"]/);
-    expect(source).not.toContain('.reconcile(');
-    expect(source).not.toContain('.start()');
+it('does not import or invoke the legacy StoreCollectionScheduler execution surface', () => {
+    for (const file of [
+  "store-collection-scheduler-read-model.ts",
+  "collection-schedule-view-contracts.ts",
+  "collection-schedule-view-manual-proof.ts",
+  "collection-schedule-view-resume-proof.ts",
+  "collection-schedule-view-identity-proof.ts",
+  "collection-schedule-view-values.ts",
+  "collection-schedule-view-projection.ts",
+  "collection-schedule-view-manual-run.ts",
+  "collection-schedule-view-resume-job.ts",
+  "collection-schedule-view-runtime.ts"
+]) {
+      const source = readFileSync(new URL('./' + file, import.meta.url), 'utf8');
+      expect(source).not.toMatch(/from ['"]\.\/store-collection-scheduler['"]/);
+      expect(source).not.toContain('.reconcile(');
+      expect(source).not.toContain('.start()');
+    }
+  });
+});
+
+
+describe('StoreCollectionSchedulerReadModel automatic collection override', () => {
+  const disabled = () => readStoreCollectionAutomation(JSON.stringify({ schemaVersion: 1,
+    storeId: CONTEXT.storeId, browserProfileId: CONTEXT.browserProfileId, revision: 1,
+    automaticCollectionEnabled: false, updatedAt: '2026-07-22T14:00:00.000Z',
+  }), CONTEXT);
+  it('shows explicit automatic pause while keeping the original configured manual scope enabled', () => {
+    const test = harness({ currentConfig: config() });
+    test.automationControl.get.mockReturnValue(disabled());
+    const value = test.model.get(CONTEXT);
+    expect(value.state).toBe('waiting');
+    expect(value.enabled).toBe(true);
+    expect(value.automaticCollectionEnabled).toBe(false);
+    expect(value.automationSource).toBe('explicit-override');
+    expect(value.automationRevision).toBe(1);
+    expect(value.detail).toContain('自动采集已关闭');
+    expect(value.dateStart).toBe('2026-07-15');
+    expect(value.dateEnd).toBe('2026-07-21');
+  });
+  it('preserves the complete legacy-default projection shape without optional override fields', () => {
+    const test = harness({ currentConfig: config() });
+    const value = test.model.get(CONTEXT);
+    expect(value.enabled).toBe(true);
+    expect(value.state).toBe('due');
+    for (const key of ['automaticCollectionEnabled', 'automationSource', 'automationRevision']) expect(value).not.toHaveProperty(key);
+  });
+  it('still calls the original manual permission port and preserves its rejection identity when auto is disabled', async () => {
+    const test = harness({ currentConfig: config() }), rejection = new Error('original manual permission denied');
+    test.automationControl.get.mockReturnValue(disabled());
+    test.manualRun.mockRejectedValue(rejection);
+    await expect(test.model.runNow(CONTEXT)).rejects.toBe(rejection);
+    expect(test.manualRun).toHaveBeenCalledWith(CONTEXT);
+  });
+  it('rejects a corrupt automatic override instead of presenting a due schedule', () => {
+    const test = harness({ currentConfig: config() }), failure = new Error('corrupt automatic override');
+    test.automationControl.get.mockImplementation(() => { throw failure; });
+    expect(() => test.model.get(CONTEXT)).toThrow(failure);
   });
 });

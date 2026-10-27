@@ -1,5 +1,7 @@
 # V1.6 数据库升级与兼容规格
 
+> 2026-10-27 文档对齐：本文定义合同、方法或验收案例，不提供当前通过结论。现行状态、失败与后续计划统一见 [项目状态](PROJECT_STATUS.md)；当前仍为 APP_NEEDS_WORK / INTERNAL NON_READY。正文中的旧检查点只适用于当时版本。
+
 版本：1.0；状态：待真实升级验收。本文定义流程，不证明迁移已完成。执行结果只记录 PROGRESS.md / BLOCKED.md。
 
 ## 权威与范围
@@ -40,3 +42,18 @@ manifest 声明各报表业务维度；文件 SHA-256 与原始 source row 是�
 ## 验收证据
 
 隔离库 L1/L3：db、legacy-upgrade、0014/0015/0016、upgrade-backup、store-repo 及离线/独占迁移脚本回归。L6：正式库一致备份、独占升级、前后摘要、恢复演练、旧包拒写及两店独立历史。任何测试替身都不计正式库验收。
+
+## Companion 责任索引
+
+版本：`v16.companion-responsibilities/1`。本表只定位唯一合同与实施入口，不复制业务 schema、审批状态或验收结果；需求及 AC 仍以 PRD 和需求索引为准。
+
+| 责任 | 唯一规格 | 实施入口 |
+|---|---|---|
+| schema | docs/v16_companion_migration_compatibility.md | packages/local-db/src/sqlite/db.ts |
+| template | docs/v16_companion_migration_compatibility.md | packages/report-parser/src/lingxing-template-manifest.ts |
+| projection | docs/v16_companion_migration_compatibility.md | packages/shared-types/src/mission-domain.ts |
+| evidence | docs/v16_companion_release_canary.md | scripts/mission-control-production-canary-artifacts.js |
+| test | docs/v16_companion_verification_traceability.md | docs/v16_required_test_manifest.json |
+| release | docs/v16_companion_release_canary.md | scripts/v16-publication-closure.js |
+
+本表由 `scripts/v16-companion-responsibilities.js` 只读核对唯一责任、三份规格、实施入口、PRD/需求/测试清单的实际存在和链接；该检查不授予现场验收信用。projection 的版本、scope 与 opaque evidence 合同由共享类型和 Main 服务执行，不在规格内维护第二份 DTO。evidence 的三段回读以不可变事件与原件为事实源，release 只消费经过校验的产物。

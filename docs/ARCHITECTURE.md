@@ -1,0 +1,38 @@
+# 当前架构导航
+
+更新日期：2026-10-27。本文说明源码职责；验收状态见 [PROJECT_STATUS](PROJECT_STATUS.md)，历史 v1.2 设计保留在原路径供比较。
+
+## Windows 本地应用
+
+应用采用 Electron Main / Preload / Renderer 与本地工作区包。Main 是配置、凭证、数据库、浏览器连接和执行权限的权威边界，Renderer 通过受限 IPC 获取视图与提交意图。
+
+| 责任 | 主要入口 |
+| --- | --- |
+| 组合根 | `apps/desktop/src/main/index.ts`、`main-runtime-context.ts`、`main-runtime-access.ts` |
+| 启动与恢复 | `desktop-bootstrap.ts`、`desktop-startup.ts`、`main-application-initialization-runtime.ts` |
+| 配置 | `bootstrap-configuration.ts`、`configuration-bus.ts`；共享显式配置端口见治理基线 |
+| 日志与异常 | `runtime-logger.ts`、`runtime-error-handlers.ts`、`tracked-ipc-handler.ts`、共享 `runtime-log-format.cjs` |
+| IPC 装配 | `main-ipc-registration-runtime.ts` 与按领域拆分的 IPC/服务模块 |
+| 跨进程桥 | `apps/desktop/src/preload/index.ts` 及领域 API |
+| 页面注册 | `renderer/mission-control/workspaces/registry.ts` |
+| 六模块导航 | 同目录 `v16-module-router.ts` |
+| 持久化 | `packages/local-db/src/sqlite/` 的迁移与按领域拆分仓储 |
+
+路径表中未写绝对目录的 Main 文件位于 `apps/desktop/src/main/`，Renderer 文件位于 `apps/desktop/src/`。原大型聚合文件已按领域拆分，不能重新通过拼接、压行或泛化巨型模块规避尺寸门。
+
+## 当前信息架构
+
+实际路由为六个业务模块，映射十个内部 workspace 和 22 个入口。`registry.ts` 定义 workspace/subview，`v16-module-router.ts` 定义一级模块映射；“六模块”和“十 workspace”是不同层级。
+
+业务主链为：店铺连接与身份确认 → 八类报表采集/校验/导入 → 分析与建议 → Decision/MissionGrant → 执行前检查 → 一次动作和回读 → 实验 → 因果记忆。
+
+## 跨领域不变量
+
+- 数据、查询、策略、授权、任务、浏览器 Profile 和回读始终绑定当前店铺及版本/会话。
+- 同一事务内的批次、revision、session、Grant 核验不能在拆文件后变成独立事务。
+- 人工批准和策略自动授权各有来源；批准不等于执行，执行不等于回读通过。
+- 配置来自统一启动快照、持久配置总线或显式端口；消费者不临时读取环境作为 fallback。
+- 异常通过统一边界记录首错和次错，不能吞异常、强退后补写正常关闭或把 UNKNOWN 转绿。
+- Listing 为本地版本和导出，不自动提交到 Amazon 或领星。
+
+原生采集、尺寸、日志、配置和六项退出条件详见 [MAINTAINABILITY_BASELINE](MAINTAINABILITY_BASELINE.md)；证据 schema 与拒绝规则见 [V16_NATIVE_EVIDENCE_PROTOCOL](V16_NATIVE_EVIDENCE_PROTOCOL.md) 和 [验证追踪合同](v16_companion_verification_traceability.md)。

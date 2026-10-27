@@ -1,12 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-  normalizeStoreContextEnvelope,
-  type PolicyRuntimeRecord,
-  type StoreContextEnvelope,
-} from '@amazon-ai-ops/shared-types';
+import  {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import { normalizeStoreContextEnvelope, type PolicyRuntimeRecord, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { MissionDomainRepository } from '@amazon-ai-ops/local-db';
 import { MissionDomainService } from './mission-domain-service';
-
 function context(overrides: Partial<StoreContextEnvelope> = {}): StoreContextEnvelope {
   return normalizeStoreContextEnvelope({
     storeId: 'store-one',

@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import  {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import {
-  MISSION_DOMAIN_IPC_CHANNELS,
-  MISSION_DOMAIN_IPC_ROUTES,
-  registerMissionDomainIpcHandlers,
-} from './mission-domain-ipc';
-
+import { MISSION_DOMAIN_IPC_CHANNELS, MISSION_DOMAIN_IPC_ROUTES, registerMissionDomainIpcHandlers } from './mission-domain-ipc';
 const storeContext = normalizeStoreContextEnvelope({
   storeId: 'store-one',
   browserProfileId: 'profile-one',

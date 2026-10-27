@@ -1,0 +1,30 @@
+/* 业务流使用内容与动作两列，保留旧三列列表的样式边界。 */
+.mission-control-workspace-root .canonical-next-actions.operator-flow-feedback li {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.mission-control-workspace-root .operator-flow-feedback li > div {
+  min-width: 0;
+}
+
+.mission-control-workspace-root .operator-flow-feedback dl {
+  display: grid;
+  gap: var(--workspace-space-1);
+  margin-top: var(--workspace-space-1);
+}
+
+.mission-control-workspace-root .operator-flow-feedback dl > div {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--workspace-space-2);
+}
+
+.mission-control-workspace-root .operator-flow-feedback dt {
+  color: var(--workspace-text-secondary);
+}
+
+.mission-control-workspace-root .operator-flow-feedback dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

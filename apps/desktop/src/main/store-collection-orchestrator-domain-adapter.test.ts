@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readStoreCollectionAutomation } from '@amazon-ai-ops/shared-types';
 import {
   normalizeStoreContextEnvelope,
   type BrowserProfileId,
@@ -126,7 +127,9 @@ function harness(options: { now?: Date } = {}) {
     }),
   }));
   const inspectUniqueCollectionJobForSemanticScope = vi.fn(() => undefined);
+  const automationControl = { getForStoreRecord: vi.fn((record: StoreRecord) => readStoreCollectionAutomation(null, record)) };
   const adapter = new StoreCollectionOrchestratorDomainAdapter({
+    automationControl,
     coordinator,
     scheduler: { inspectForStore },
     config: {
@@ -141,6 +144,7 @@ function harness(options: { now?: Date } = {}) {
   });
   return {
     adapter,
+    automationControl,
     coordinator,
     inspectForStore,
     inspectUniqueCollectionJobForSemanticScope,
@@ -695,5 +699,38 @@ describe('StoreCollectionOrchestratorDomainAdapter', () => {
     expect(adapter).not.toHaveProperty('recover');
     expect(adapter).not.toHaveProperty('switchStore');
     expect(adapter).not.toHaveProperty('reconnectStore');
+  });
+});
+
+
+describe('StoreCollectionOrchestratorDomainAdapter automatic collection override', () => {
+  it('suppresses only new automatic due work for an explicitly disabled Store/Profile', () => {
+    const test = harness();
+    expect(test.adapter.inspectStoreSchedule(test.storeB).state).toBe('due');
+    test.automationControl.getForStoreRecord.mockReturnValue(readStoreCollectionAutomation(JSON.stringify({
+      schemaVersion: 1, storeId: test.storeB.storeId, browserProfileId: test.storeB.browserProfileId,
+      revision: 1, automaticCollectionEnabled: false, updatedAt: '2026-07-23T15:00:00.000Z',
+    }), test.storeB));
+    expect(test.adapter.inspectStoreSchedule(test.storeB)).toEqual({ state: 'not_due' });
+    expect(test.automationControl.getForStoreRecord).toHaveBeenLastCalledWith(test.storeB);
+  });
+  it('keeps the original manual identity and config eligibility when automatic collection is disabled', () => {
+    const test = harness(), context = test.coordinator.switchStore(test.storeB.storeId).context;
+    test.automationControl.getForStoreRecord.mockImplementation(() => { throw new Error('manual must not consult automatic override'); });
+    expect(test.adapter.inspectManualStoreSchedule(test.storeB, context).state).toBe('eligible');
+    expect(test.automationControl.getForStoreRecord).not.toHaveBeenCalled();
+  });
+  it('propagates a corrupt override instead of silently falling back to enabled automatic collection', () => {
+    const test = harness(), failure = new Error('corrupt automatic override');
+    test.automationControl.getForStoreRecord.mockImplementation(() => { throw failure; });
+    expect(() => test.adapter.inspectStoreSchedule(test.storeB)).toThrow(failure);
+  });
+  it('preserves due behavior for an explicit enabled override', () => {
+    const test = harness();
+    test.automationControl.getForStoreRecord.mockReturnValue(readStoreCollectionAutomation(JSON.stringify({
+      schemaVersion: 1, storeId: test.storeB.storeId, browserProfileId: test.storeB.browserProfileId,
+      revision: 2, automaticCollectionEnabled: true, updatedAt: '2026-07-23T15:00:00.000Z',
+    }), test.storeB));
+    expect(test.adapter.inspectStoreSchedule(test.storeB).state).toBe('due');
   });
 });

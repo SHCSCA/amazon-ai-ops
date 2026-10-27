@@ -37,6 +37,8 @@ export function WorkspaceState({
 }: WorkspaceStateProps) {
   const live = kind === 'loading' || kind === 'busy';
   const role = kind === 'error' ? 'alert' : 'status';
+  const actionDisabled = Boolean(action?.disabled || action?.busy);
+  const actionReason = action?.disabledReason || (action?.busy ? '当前操作正在处理，请等待完成。' : '请先完成上方说明中的条件，再重试。');
 
   return (
     <div
@@ -61,11 +63,13 @@ export function WorkspaceState({
         {details && <div className="workspace-state__details">{details}</div>}
       </div>
       {action && (
+        <span className="task-banner__action-shell">
         <button
           aria-busy={action.busy || undefined}
           aria-label={action.ariaLabel}
           className={`workspace-state__action${action.busy ? ' workspace-button--busy' : ''}`}
           disabled={action.disabled || action.busy}
+          aria-description={actionDisabled ? actionReason : undefined}
           onClick={action.onClick}
           title={action.disabledReason}
           type="button"
@@ -73,6 +77,8 @@ export function WorkspaceState({
           {action.busy && <span aria-hidden="true" className="workspace-spinner" />}
           <span>{action.busy ? action.busyLabel ?? '处理中...' : action.label}</span>
         </button>
+        {actionDisabled && <span className="task-banner__disabled-reason">{actionReason}</span>}
+        </span>
       )}
     </div>
   );

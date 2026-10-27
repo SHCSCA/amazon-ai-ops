@@ -1,5 +1,7 @@
 # Amazon AI Ops UI Redesign Implementation Notes
 
+> 历史文档（2026-10-27 归类）：以下计划、完成声明、计数、包哈希及 READY 只描述原阶段，不代表当前版本。现行状态及后续工作见 [项目状态](../PROJECT_STATUS.md)；保留正文供追溯，不自动重新执行旧计划。
+
 ## Stitch Status
 
 `C:\Users\wz\.codex\config.toml` 已配置 Stitch MCP：

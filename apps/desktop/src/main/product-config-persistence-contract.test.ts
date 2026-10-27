@@ -1,13 +1,14 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('desktop product config persistence contract', () => {
   it('retires unversioned product persistence channels', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const source = mainRuntimeModuleContract('main-ipc-registration-runtime.ts');
     const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8');
 
-    expect(source).not.toContain("registerTrackedIpcHandler('products:save-config'");
-    expect(source).not.toContain("registerTrackedIpcHandler('products:bulk-update-target-acos'");
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('products:save-config'"); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('products:bulk-update-target-acos'"); }
     expect(preload).not.toContain("ipcRenderer.invoke('products:save-config'");
     expect(preload).not.toContain("ipcRenderer.invoke('products:bulk-update-target-acos'");
   });

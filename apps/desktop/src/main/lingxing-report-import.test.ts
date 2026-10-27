@@ -177,8 +177,17 @@ describe('Eight workbook import into the production business services', () => {
     expect(completed).toMatchObject({ status: 'completed', conclusion: expect.stringContaining('0.6667 → 0.3333') });
     expect(success(await h.api.experimentGet(h.request({ id: running.id })))).toMatchObject({ status: 'completed', conclusion: completed.conclusion });
     expect(success(await h.api.missionGet(h.request({ id: h.missionId })))).toMatchObject({ status: 'completed', phase: 'effect' });
-    expect(h.missionRepository.listAnalysisCausalMemory(h.context, { productId: 'B0TEST', limit: 40 })).toEqual([
+    const trustedMemory = h.missionRepository.listAnalysisCausalMemory(h.context, { productId: 'B0TEST', limit: 40 });
+    expect(trustedMemory).toHaveLength(2);
+    const effectMemory = trustedMemory.filter(item => item.eventType === 'experiment_completed');
+    expect(effectMemory).toEqual([
       expect.objectContaining({ eventType: 'experiment_completed', proofs: [expect.objectContaining({ sha256: expect.stringMatching(/^[a-f0-9]{64}$/) })] })]);
+    const readbackMemory = trustedMemory.filter(item => item.eventType === 'execution_readback_verified');
+    expect(readbackMemory).toHaveLength(1);
+    expect(readbackMemory[0]).toMatchObject({ missionId: h.missionId, stage: 'READBACK', status: 'verified',
+      businessDate: '2026-07-22', sessionGeneration: h.context.sessionGeneration });
+    expect(readbackMemory[0].proofs.map(proof => proof.evidenceType).sort()).toEqual(['ad_execution_after', 'ad_execution_before', 'ad_execution_reload']);
+    expect(readbackMemory[0].proofs.every(proof => /^[a-f0-9]{64}$/i.test(proof.sha256))).toBe(true);
     expect(h.page.clickCount).toBe(1);
   });
 });

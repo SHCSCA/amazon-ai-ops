@@ -1,4 +1,6 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { describe, expect, it } from 'vitest';
+import { recommendationCompositionSource } from './recommendation-composition.test-support';
 import {
   generateAiStatus,
   generateDecisionDiagnosticLine,
@@ -30,6 +32,17 @@ describe('recommendation workflow invalidation contract', () => {
 
     await runRecommendationWorkflowMutation(action, async () => undefined, target);
     expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+
+  it.each(['generate', 'refresh'] as const)('does not broadcast a stale %s result into the new workspace', async action => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation(detail => sources.push(detail.source), target);
+
+    await runRecommendationWorkflowMutation(action, async () => 42, target, () => false);
+
+    expect(sources).toEqual([]);
     unsubscribe();
   });
 });
@@ -633,7 +646,7 @@ describe('recommendationBatchSelectionState', () => {
 
   it('defines checkbox and selected-count micro-response styles', async () => {
     const { readFileSync } = await import('node:fs');
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(css).toContain('.recommendation-selection-count');
     expect(css).toContain('recommendation-selection-count-pop');
@@ -646,7 +659,7 @@ describe('recommendationBatchSelectionState', () => {
 describe('recommendation Phase 4 user-task copy', () => {
   it('keeps the default recommendation table focused on business actions instead of diagnostics', async () => {
     const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('./recommendations-page.tsx', import.meta.url), 'utf8');
+    const source = recommendationCompositionSource();
 
     expect(source).toContain('recommendation-primary-head');
     expect(source).toContain('recommendation-title-pills');
@@ -663,8 +676,8 @@ describe('recommendation Phase 4 user-task copy', () => {
 
   it('hides batch selection checkboxes until formal approval rows exist', async () => {
     const { readFileSync } = await import('node:fs');
-    const source = readFileSync(new URL('./recommendations-page.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const source = recommendationCompositionSource();
+    const css = readStyleComposition(new URL('../styles.css', import.meta.url));
 
     expect(source).toContain('const showApprovalSelection = visibleFormalApprovalRecommendations.length > 0;');
     expect(source).toContain('{showApprovalSelection && (');

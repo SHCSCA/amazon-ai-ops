@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
@@ -60,11 +61,8 @@ describe('daily report recommendation summary', () => {
   });
 
   it('wires daily report generation through the tested status reader', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const dailyReportBlock = source.slice(
-      source.indexOf('async function runDailyReportGeneration'),
-      source.indexOf('// IPC Handlers'),
-    );
+    const source = mainRuntimeModuleContract('main-ad-execution-runtime.ts');
+    const dailyReportBlock = mainRuntimeSectionContract('async function runDailyReportGeneration', '// IPC Handlers');
 
     expect(dailyReportBlock).toContain(
       'recommendationsSummary: readDailyReportRecommendationSummary(',

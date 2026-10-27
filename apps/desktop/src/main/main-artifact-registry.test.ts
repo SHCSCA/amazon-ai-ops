@@ -1,3 +1,4 @@
+import { mainRuntimeModuleContracts, mainRuntimeModuleContract, mainRuntimeFunctionContract, mainRuntimeVariableContract, mainRuntimeSectionContract } from './main-runtime-source.test-support';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -102,12 +103,12 @@ describe('MainArtifactRegistry', () => {
   });
 
   it('keeps legacy path-returning report IPC endpoints out of the Main boundary', () => {
-    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const source = mainRuntimeModuleContract('main-artifacts-runtime.ts');
 
-    expect(source).not.toContain("registerTrackedIpcHandler('report:download'");
-    expect(source).not.toContain("registerTrackedIpcHandler('report:parse'");
-    expect(source).not.toContain("registerTrackedIpcHandler('report:select-file'");
-    expect(source).toContain("registerTrackedIpcHandler('v1_5:reports:open-artifact'");
-    expect(source).toContain("registerTrackedIpcHandler('v1_5:business-ui:export-data-reconciliation-artifacts'");
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('report:download'"); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('report:parse'"); }
+    for (const module of mainRuntimeModuleContracts()) { expect(module.source).not.toContain("registerTrackedIpcHandler('report:select-file'"); }
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain("registerTrackedIpcHandler('v1_5:reports:open-artifact'");
+    expect(mainRuntimeModuleContract('main-ipc-registration-runtime.ts')).toContain("registerTrackedIpcHandler('v1_5:business-ui:export-data-reconciliation-artifacts'");
   });
 });

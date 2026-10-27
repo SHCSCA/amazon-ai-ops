@@ -1,4 +1,6 @@
 import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
+import { recordCredentialFailure } from './credential-error-diagnostics';
+import { runtimeLogger, type RuntimeLogPort } from './runtime-logger';
 
 export const LEGACY_LOGIN_MIGRATION_MARKER = 'amazon-ai-ops:legacy-login-migration/v1';
 
@@ -118,6 +120,7 @@ export function saveLoginCredentials(
 export function readSavedLoginCredentialStatus(
   store: LoginCredentialStore,
   cipher: LoginCredentialCipher,
+  logger: RuntimeLogPort = runtimeLogger,
 ): SavedLoginCredentialStatus {
   const username = store.get(LOGIN_USERNAME_KEY) ?? '';
   const rememberSetting = store.get(LOGIN_REMEMBER_PASSWORD_KEY);
@@ -128,7 +131,8 @@ export function readSavedLoginCredentialStatus(
         store.delete(LOGIN_PASSWORD_ENCRYPTED_KEY);
         store.delete(LEGACY_LOGIN_PASSWORD_KEY);
       });
-    } catch {
+    } catch (error) {
+      recordCredentialFailure('login_clear', error, logger);
       return status(username, false, false, 'migration_failed');
     }
     return status(username, false, false, 'none');
@@ -139,7 +143,7 @@ export function readSavedLoginCredentialStatus(
   const rememberPassword = rememberSetting === 'true' || Boolean(encryptedPassword || legacyPassword);
 
   if (encryptedPassword) {
-    if (!encryptionAvailable(cipher)) {
+    if (!encryptionAvailable(cipher, logger)) {
       return status(username, rememberPassword, false, 'encryption_unavailable');
     }
     try {
@@ -148,22 +152,24 @@ export function readSavedLoginCredentialStatus(
       if (legacyPassword) {
         try {
           store.transaction(() => store.delete(LEGACY_LOGIN_PASSWORD_KEY));
-        } catch {
+        } catch (error) {
+          recordCredentialFailure('login_remove_legacy', error, logger);
           return status(username, true, false, 'migration_failed');
         }
       }
       return status(username, true, true, 'encrypted_ready');
-    } catch {
+    } catch (error) {
+      recordCredentialFailure('login_decrypt', error, logger);
       if (!legacyPassword) {
         return status(username, rememberPassword, false, 'encrypted_corrupt');
       }
-      const migration = migrateLegacyPassword(store, legacyPassword, cipher);
+      const migration = migrateLegacyPassword(store, legacyPassword, cipher, logger);
       return statusFromMigration(username, migration);
     }
   }
 
   if (legacyPassword) {
-    const migration = migrateLegacyPassword(store, legacyPassword, cipher);
+    const migration = migrateLegacyPassword(store, legacyPassword, cipher, logger);
     return statusFromMigration(username, migration);
   }
 
@@ -177,8 +183,9 @@ export function resolveSavedLoginPassword(
   store: LoginCredentialStore,
   cipher: LoginCredentialCipher,
   requestedUsername: string,
+  logger: RuntimeLogPort = runtimeLogger,
 ): string {
-  const statusResult = readSavedLoginCredentialStatus(store, cipher);
+  const statusResult = readSavedLoginCredentialStatus(store, cipher, logger);
   if (requestedUsername.trim() !== statusResult.username.trim()) {
     throw new Error('保存的账号与当前账号不一致，请重新输入密码。');
   }
@@ -187,14 +194,15 @@ export function resolveSavedLoginPassword(
   }
 
   const encryptedPassword = store.get(LOGIN_PASSWORD_ENCRYPTED_KEY);
-  if (!encryptedPassword || !encryptionAvailable(cipher)) {
+  if (!encryptedPassword || !encryptionAvailable(cipher, logger)) {
     throw new Error('本机保存的密码当前不可用，请重新输入密码。');
   }
   try {
     const password = cipher.decrypt(encryptedPassword);
     if (!password) throw new Error('empty decrypted password');
     return password;
-  } catch {
+  } catch (error) {
+    recordCredentialFailure('login_resolve', error, logger);
     throw new Error('本机保存的密码无法解密，请重新输入并保存。');
   }
 }
@@ -203,27 +211,29 @@ function migrateLegacyPassword(
   store: LoginCredentialStore,
   legacyPassword: string,
   cipher: LoginCredentialCipher,
+  logger: RuntimeLogPort,
 ): MigrationOutcome {
   const marker = LEGACY_LOGIN_MIGRATION_MARKER;
-  if (!encryptionAvailable(cipher)) {
+  if (!encryptionAvailable(cipher, logger)) {
     return { credentialState: 'encryption_unavailable', marker };
   }
 
   try {
-    const encryptedPassword = encryptAndVerifyPassword(legacyPassword, cipher);
+    const encryptedPassword = encryptAndVerifyPassword(legacyPassword, cipher, logger);
     store.transaction(() => {
       store.set(LOGIN_PASSWORD_ENCRYPTED_KEY, encryptedPassword);
       store.set(LOGIN_REMEMBER_PASSWORD_KEY, 'true');
       store.delete(LEGACY_LOGIN_PASSWORD_KEY);
     });
     return { credentialState: 'migrated', marker };
-  } catch {
+  } catch (error) {
+    recordCredentialFailure('login_migrate', error, logger);
     return { credentialState: 'migration_failed', marker };
   }
 }
 
-function encryptAndVerifyPassword(password: string, cipher: LoginCredentialCipher): string {
-  if (!encryptionAvailable(cipher)) {
+function encryptAndVerifyPassword(password: string, cipher: LoginCredentialCipher, logger: RuntimeLogPort = runtimeLogger): string {
+  if (!encryptionAvailable(cipher, logger)) {
     throw new Error('当前系统不支持本机加密保存密码，请取消勾选“记住密码”。');
   }
   const encryptedPassword = cipher.encrypt(password);
@@ -233,10 +243,11 @@ function encryptAndVerifyPassword(password: string, cipher: LoginCredentialCiphe
   return encryptedPassword;
 }
 
-function encryptionAvailable(cipher: LoginCredentialCipher): boolean {
+function encryptionAvailable(cipher: LoginCredentialCipher, logger: RuntimeLogPort = runtimeLogger): boolean {
   try {
     return cipher.isEncryptionAvailable();
-  } catch {
+  } catch (error) {
+    recordCredentialFailure('login_capability', error, logger);
     return false;
   }
 }

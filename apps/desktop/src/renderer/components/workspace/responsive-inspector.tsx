@@ -264,9 +264,11 @@ export function ResponsiveInspector({
             <p className="responsive-inspector__description" id={descriptionId}>{description}</p>
           )}
         </div>
+        <span className="task-banner__action-shell">
         <button
           aria-disabled={dismissLocked || undefined}
           aria-label="关闭详情检查器"
+          aria-describedby={dismissLocked ? `${titleId}-close-reason` : undefined}
           className="responsive-inspector__close"
           disabled={dismissLocked}
           onClick={dismissLocked ? undefined : onClose}
@@ -275,6 +277,8 @@ export function ResponsiveInspector({
         >
           关闭
         </button>
+        {dismissLocked && <span className="task-banner__disabled-reason" id={`${titleId}-close-reason`}>当前操作正在处理，请等待完成后关闭详情。</span>}
+        </span>
       </header>
       <div className="responsive-inspector__body">{children}</div>
     </>

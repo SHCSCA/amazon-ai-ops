@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Archive,
-  ArrowsClockwise,
-  CalendarDots,
-  CaretLeft,
-  CaretRight,
-  Check,
-  NotePencil,
-  Package,
-  PencilSimple,
-  Plus,
-  X,
-} from '@phosphor-icons/react';
+import { rendererRuntimeLog } from '../../runtime-log';
+import { WorkspaceActionButton, createWorkspaceActionAdmission } from '../../components/workspace/action-feedback';
+import { Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { CalendarDots } from '@phosphor-icons/react/dist/csr/CalendarDots';
+import { CaretLeft } from '@phosphor-icons/react/dist/csr/CaretLeft';
+import { CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { Check } from '@phosphor-icons/react/dist/csr/Check';
+import { NotePencil } from '@phosphor-icons/react/dist/csr/NotePencil';
+import { Package } from '@phosphor-icons/react/dist/csr/Package';
+import { PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { X } from '@phosphor-icons/react/dist/csr/X';
 import {
   canonicalizeAmazonAsin,
   inspectAmazonAsin,
@@ -27,400 +27,29 @@ import {
   type PriorityDataTableColumn,
 } from '../../components/workspace';
 import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
+import { VersionedProductView, VersionedOperationEventView, ProductDraft, EventDraft, ProductMutationInput, OperationEventMutationInput, StoreObjectsRendererApi, ObjectsSubview, PendingAction, StoreScopedObjectsPanelProps, COST_FIELDS, PERCENT_FIELDS, EVENT_PAGE_SIZE, EVENT_TYPE_LABELS, EVENT_IMPACT_LABELS } from './store-objects-contracts';
+import { operationEventIsArchived, operationEventTypeLabel, operationEventImpactLabel, paginateOperationEvents, resultBelongsToStore, responseBelongsToRequest, readApi, errorMessage, money, percent, ProductStatus, OperationEventStatus, operationEventNeedsReconciliation, operationEventReconciliationReason } from './store-objects-model';
+import { buildProductCreateInput, buildProductUpdateInput, buildProductRestoreInput, buildEventCreateInput, buildEventUpdateInput, buildEventRestoreInput, buildCostPatch, parseNumber, parsePercent, emptyToUndefined, productDraft, eventDraft } from './store-objects-inputs';
 
-export type VersionedProductView = {
-  id: number;
-  storeId: StoreId;
-  marketplace_code: string;
-  store_name: string;
-  asin: string;
-  asinValid: boolean;
-  parent_asin: string;
-  msku: string;
-  sku: string;
-  title: string;
-  product_stage: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  cost?: ProductCost;
-  revision: string;
-};
-
-export type VersionedOperationEventView = {
-  id: number;
-  storeId: StoreId;
-  eventDate: string;
-  storeName: string;
-  marketplaceCode: string;
-  asin?: string;
-  asinValid: boolean;
-  campaignName?: string;
-  adGroupName?: string;
-  eventType: string;
-  title: string;
-  impactExpectation?: string;
-  notes?: string;
-  evidenceArtifactId?: string;
-  evidenceRefValid: boolean;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string;
-  archiveRevision: number;
-  revision: string;
-};
-
-export type ProductDraft = {
-  asin: string;
-  parentAsin: string;
-  msku: string;
-  sku: string;
-  title: string;
-  productStage: string;
-  status: 'active' | 'inactive';
-  purchaseCost: string;
-  firstLegCost: string;
-  fbaFee: string;
-  referralFeeRate: string;
-  storageFee: string;
-  otherCost: string;
-  currentPrice: string;
-  minPrice: string;
-  targetNetMargin: string;
-  targetAcos: string;
-  targetTacos: string;
-};
-
-export type EventDraft = {
-  eventDate: string;
-  title: string;
-  eventType: string;
-  impactExpectation: string;
-  asin: string;
-  campaignName: string;
-  adGroupName: string;
-  notes: string;
-};
-
-type ProductMutationInput = {
-  id: number;
-  expectedRevision: string;
-  patch: Record<string, unknown>;
-  cost?: Record<string, number>;
-};
-
-type OperationEventMutationInput = {
-  id: number;
-  expectedRevision: string;
-  patch: Record<string, unknown>;
-};
-
-type StoreObjectsRendererApi = {
-  listStoreProducts(context: StoreContextEnvelope, input?: { includeArchived?: boolean }): Promise<VersionedProductView[]>;
-  createStoreProduct(context: StoreContextEnvelope, input: Record<string, unknown>): Promise<VersionedProductView>;
-  updateStoreProduct(context: StoreContextEnvelope, input: ProductMutationInput): Promise<VersionedProductView>;
-  archiveStoreProduct(context: StoreContextEnvelope, input: { id: number; expectedRevision: string }): Promise<VersionedProductView>;
-  listStoreOperationEvents(context: StoreContextEnvelope, input?: { limit?: number; includeArchived?: boolean }): Promise<VersionedOperationEventView[]>;
-  createStoreOperationEvent(context: StoreContextEnvelope, input: Record<string, unknown>): Promise<VersionedOperationEventView>;
-  updateStoreOperationEvent(context: StoreContextEnvelope, input: OperationEventMutationInput): Promise<VersionedOperationEventView>;
-  deleteStoreOperationEvent(context: StoreContextEnvelope, input: { id: number; expectedRevision: string }): Promise<VersionedOperationEventView>;
-};
-
-export type ObjectsSubview = 'products' | 'events';
-type PendingAction = 'load' | 'save-product' | 'archive-product' | 'restore-product' | 'save-event' | 'archive-event' | 'restore-event';
-
-export type StoreScopedObjectsPanelProps = {
-  storeContext: StoreContextEnvelope | null;
-  fixedSubview?: ObjectsSubview;
-};
-
-const COST_FIELDS = [
-  'purchaseCost',
-  'firstLegCost',
-  'fbaFee',
-  'storageFee',
-  'otherCost',
-  'currentPrice',
-  'minPrice',
-] as const;
-
-const PERCENT_FIELDS = [
-  'referralFeeRate',
-  'targetNetMargin',
-  'targetAcos',
-  'targetTacos',
-] as const;
-
-export function buildProductCreateInput(draft: ProductDraft): Record<string, unknown> {
-  return {
-    asin: canonicalizeAmazonAsin(draft.asin),
-    parentAsin: draft.parentAsin.trim(),
-    msku: draft.msku.trim(),
-    sku: draft.sku.trim(),
-    title: draft.title.trim(),
-    productStage: draft.productStage.trim(),
-    status: draft.status,
-    marketplace: 'US',
-    currency: 'USD',
-    cost: buildCostPatch(draft),
-  };
-}
-
-export function buildProductUpdateInput(
-  product: VersionedProductView,
-  draft: ProductDraft,
-): ProductMutationInput {
-  return {
-    id: product.id,
-    expectedRevision: product.revision,
-    patch: {
-      parentAsin: draft.parentAsin.trim(),
-      msku: draft.msku.trim(),
-      sku: draft.sku.trim(),
-      title: draft.title.trim(),
-      productStage: draft.productStage.trim(),
-      status: draft.status,
-      marketplace: 'US',
-      currency: 'USD',
-    },
-    cost: buildCostPatch(draft),
-  };
-}
-
-export function buildProductRestoreInput(product: VersionedProductView): ProductMutationInput {
-  return {
-    id: product.id,
-    expectedRevision: product.revision,
-    patch: { status: 'active' },
-  };
-}
-
-export function buildEventCreateInput(draft: EventDraft): Record<string, unknown> {
-  const eventAsin = draft.asin.trim();
-  return {
-    eventDate: draft.eventDate,
-    title: draft.title.trim(),
-    eventType: draft.eventType,
-    impactExpectation: draft.impactExpectation || 'unknown',
-    asin: eventAsin ? canonicalizeAmazonAsin(eventAsin) : undefined,
-    campaignName: emptyToUndefined(draft.campaignName.trim()),
-    adGroupName: emptyToUndefined(draft.adGroupName.trim()),
-    notes: emptyToUndefined(draft.notes.trim()),
-    marketplace: 'US',
-    currency: 'USD',
-  };
-}
-
-export function buildEventUpdateInput(
-  event: VersionedOperationEventView,
-  draft: EventDraft,
-): OperationEventMutationInput {
-  return {
-    id: event.id,
-    expectedRevision: event.revision,
-    patch: buildEventCreateInput(draft),
-  };
-}
-
-export function buildEventRestoreInput(
-  event: VersionedOperationEventView,
-): OperationEventMutationInput {
-  return {
-    id: event.id,
-    expectedRevision: event.revision,
-    patch: { archived: false },
-  };
-}
-
-export function operationEventIsArchived(event: VersionedOperationEventView): boolean {
-  return Boolean(event.archivedAt);
-}
-
-const EVENT_PAGE_SIZE = 6;
-
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  manual_note: '运营备注',
-  coupon: 'Coupon',
-  deal: 'Deal',
-  price_change: '改价',
-  listing_change: 'Listing 调整',
-  inventory_issue: '库存异常',
-  external_traffic: '站外流量',
-};
-
-const EVENT_IMPACT_LABELS: Record<string, string> = {
-  unknown: '待观察',
-  conversion_up: '转化上升',
-  conversion_down: '转化下降',
-  traffic_up: '流量上升',
-  traffic_down: '流量下降',
-  acos_up: 'ACOS 上升',
-  acos_down: 'ACOS 下降',
-  watch: '待观察',
-};
-
-export function operationEventTypeLabel(value: string): string {
-  return EVENT_TYPE_LABELS[value] ?? value.replaceAll('_', ' ');
-}
-
-export function operationEventImpactLabel(value?: string): string {
-  if (!value) return '待观察';
-  return EVENT_IMPACT_LABELS[value] ?? value.replaceAll('_', ' ');
-}
-
-export function paginateOperationEvents(
-  events: readonly VersionedOperationEventView[],
-  requestedPage: number,
-  pageSize = EVENT_PAGE_SIZE,
-) {
-  const safePageSize = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : EVENT_PAGE_SIZE;
-  const pageCount = Math.max(1, Math.ceil(events.length / safePageSize));
-  const page = Math.min(Math.max(1, Math.trunc(requestedPage) || 1), pageCount);
-  const offset = (page - 1) * safePageSize;
-  return {
-    page,
-    pageCount,
-    start: events.length === 0 ? 0 : offset + 1,
-    end: Math.min(offset + safePageSize, events.length),
-    rows: events.slice(offset, offset + safePageSize),
-  };
-}
-
-export function resultBelongsToStore(
-  value: { storeId: StoreId },
-  context: StoreContextEnvelope,
-): boolean {
-  return String(value.storeId) === String(context.storeId);
-}
-
-export function responseBelongsToRequest(
-  currentAuthorityKey: string,
-  capturedAuthorityKey: string,
-  currentSequence: number,
-  capturedSequence: number,
-): boolean {
-  return currentAuthorityKey === capturedAuthorityKey
-    && currentSequence === capturedSequence;
-}
-
-function buildCostPatch(draft: ProductDraft): Record<string, number> {
-  const cost: Record<string, number> = {};
-  for (const field of COST_FIELDS) cost[field] = parseNumber(draft[field], field);
-  for (const field of PERCENT_FIELDS) cost[field] = parsePercent(draft[field], field);
-  return cost;
-}
-
-function parseNumber(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} 必须是不小于 0 的数字。`);
-  return parsed;
-}
-
-function parsePercent(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < (label === 'targetNetMargin' ? -100 : 0) || parsed > 100) {
-    throw new Error(`${label} 必须在 ${label === 'targetNetMargin' ? '-100' : '0'}% 到 100% 之间。`);
-  }
-  return parsed / 100;
-}
-
-function emptyToUndefined(value: string): string | undefined {
-  return value || undefined;
-}
-
-function productDraft(product?: VersionedProductView | null): ProductDraft {
-  const cost = product?.cost;
-  return {
-    asin: product?.asin ?? '',
-    parentAsin: product?.parent_asin ?? '',
-    msku: product?.msku ?? '',
-    sku: product?.sku ?? '',
-    title: product?.title ?? '',
-    productStage: product?.product_stage ?? 'keyword_exploration',
-    status: product?.status === 'inactive' ? 'inactive' : 'active',
-    purchaseCost: String(cost?.purchaseCost ?? 0),
-    firstLegCost: String(cost?.firstLegCost ?? 0),
-    fbaFee: String(cost?.fbaFee ?? 0),
-    referralFeeRate: String((cost?.referralFeeRate ?? 0.15) * 100),
-    storageFee: String(cost?.storageFee ?? 0),
-    otherCost: String(cost?.otherCost ?? 0),
-    currentPrice: String(cost?.currentPrice ?? 0),
-    minPrice: String(cost?.minPrice ?? 0),
-    targetNetMargin: String((cost?.targetNetMargin ?? 0) * 100),
-    targetAcos: String((cost?.targetAcos ?? 0) * 100),
-    targetTacos: String((cost?.targetTacos ?? 0) * 100),
-  };
-}
-
-function eventDraft(businessDate: string, event?: VersionedOperationEventView | null): EventDraft {
-  return {
-    eventDate: event?.eventDate ?? businessDate,
-    title: event?.title ?? '',
-    eventType: event?.eventType ?? 'manual_note',
-    impactExpectation: event?.impactExpectation ?? 'unknown',
-    asin: event?.asin ?? '',
-    campaignName: event?.campaignName ?? '',
-    adGroupName: event?.adGroupName ?? '',
-    notes: event?.notes ?? '',
-  };
-}
-
-function readApi(): StoreObjectsRendererApi | null {
-  const candidate = (window as unknown as { electronAPI?: Partial<StoreObjectsRendererApi> }).electronAPI;
-  if (!candidate) return null;
-  const required = [
-    'listStoreProducts',
-    'createStoreProduct',
-    'updateStoreProduct',
-    'archiveStoreProduct',
-    'listStoreOperationEvents',
-    'createStoreOperationEvent',
-    'updateStoreOperationEvent',
-    'deleteStoreOperationEvent',
-  ] as const;
-  return required.every((key) => typeof candidate[key] === 'function')
-    ? candidate as StoreObjectsRendererApi
-    : null;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return '操作未完成，请重新读取当前店铺后再试。';
-}
-
-function money(value?: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value ?? 0);
-}
-
-function percent(value?: number): string {
-  return `${((value ?? 0) * 100).toFixed(1)}%`;
-}
-
-function ProductStatus({ status }: { status: string }) {
-  const label = status === 'archived' ? '已归档' : status === 'inactive' ? '已停用' : '运行中';
-  return <span className="store-object-status" data-object-status={status}>{label}</span>;
-}
-
-function OperationEventStatus({ event }: { event: VersionedOperationEventView }) {
-  if (operationEventNeedsReconciliation(event)) {
-    return <span className="store-object-status" data-object-status="reconcile">待对账 · 只读</span>;
-  }
-  return operationEventIsArchived(event)
-    ? <span className="store-object-status" data-object-status="archived">已归档</span>
-    : null;
-}
-
-export function operationEventNeedsReconciliation(event: VersionedOperationEventView): boolean {
-  return event.asinValid === false || event.evidenceRefValid === false;
-}
-
-function operationEventReconciliationReason(event: VersionedOperationEventView): string {
-  const reasons = [
-    event.asinValid === false ? '历史 ASIN 无效' : '',
-    event.evidenceRefValid === false ? '历史证据引用未通过当前店铺 Artifact 校验' : '',
-  ].filter(Boolean);
-  return reasons.length > 0 ? `${reasons.join('；')}，完成对账前禁止修改、归档或恢复。` : '';
-}
+export type { VersionedProductView } from './store-objects-contracts';
+export type { VersionedOperationEventView } from './store-objects-contracts';
+export type { ProductDraft } from './store-objects-contracts';
+export type { EventDraft } from './store-objects-contracts';
+export type { ObjectsSubview } from './store-objects-contracts';
+export type { StoreScopedObjectsPanelProps } from './store-objects-contracts';
+export { buildProductCreateInput } from './store-objects-inputs';
+export { buildProductUpdateInput } from './store-objects-inputs';
+export { buildProductRestoreInput } from './store-objects-inputs';
+export { buildEventCreateInput } from './store-objects-inputs';
+export { buildEventUpdateInput } from './store-objects-inputs';
+export { buildEventRestoreInput } from './store-objects-inputs';
+export { operationEventIsArchived } from './store-objects-model';
+export { operationEventTypeLabel } from './store-objects-model';
+export { operationEventImpactLabel } from './store-objects-model';
+export { paginateOperationEvents } from './store-objects-model';
+export { resultBelongsToStore } from './store-objects-model';
+export { responseBelongsToRequest } from './store-objects-model';
+export { operationEventNeedsReconciliation } from './store-objects-model';
 
 export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreScopedObjectsPanelProps) {
   const [subview, setSubview] = useState<ObjectsSubview>('products');
@@ -435,6 +64,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   const [confirmProductArchive, setConfirmProductArchive] = useState<VersionedProductView | null>(null);
   const [confirmEventArchive, setConfirmEventArchive] = useState<VersionedOperationEventView | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<number | null>(null);
   const busy = pending !== null;
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
@@ -442,7 +72,11 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   const currentAuthorityKey = useRef(authorityKey);
   const requestSequence = useRef(0);
   const mutationSequence = useRef(0);
-  currentAuthorityKey.current = authorityKey;
+  const epoch = useRef(0);
+  const admission = useRef(createWorkspaceActionAdmission());
+  if (currentAuthorityKey.current !== authorityKey) { epoch.current += 1; currentAuthorityKey.current = authorityKey; }
+  admission.current.update(authorityKey);
+  useEffect(() => () => { epoch.current += 1; }, []);
   const visibleSubview = fixedSubview ?? subview;
   const dialogOpen = Boolean(productEditor || eventEditor || confirmProductArchive || confirmEventArchive);
   const errorFeedback = error && <div className="store-object-feedback store-object-feedback--error" role="alert">{error}</div>;
@@ -472,10 +106,11 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
   );
 
   async function loadObjects(context: StoreContextEnvelope, capturedKey: string, showBusy = true) {
+    const capturedEpoch = epoch.current;
     const capturedSequence = ++requestSequence.current;
     const api = readApi();
     if (!api) {
-      if (responseBelongsToRequest(
+      if (epoch.current === capturedEpoch && responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         requestSequence.current,
@@ -487,14 +122,16 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       }
       return;
     }
-    if (showBusy) setPending('load');
+    const release = showBusy ? admission.current.tryEnter() : undefined;
+    if (showBusy && !release) return;
+    if (showBusy) { setPending('load'); setPendingTarget(null); }
     setError(null);
     try {
       const [nextProducts, nextEvents] = await Promise.all([
         api.listStoreProducts(context, { includeArchived: includeArchivedProducts }),
         api.listStoreOperationEvents(context, { limit: 200, includeArchived: includeArchivedEvents }),
       ]);
-      if (!responseBelongsToRequest(
+      if (epoch.current !== capturedEpoch || !responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         requestSequence.current,
@@ -514,7 +151,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
             : `已读取 ${nextProducts.length} 个产品与 ${nextEvents.length} 条运营事件。`,
       );
     } catch (loadError) {
-      if (!responseBelongsToRequest(
+      rendererRuntimeLog.error('renderer.store_objects_load_failed', { error: loadError });
+      if (epoch.current !== capturedEpoch || !responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         requestSequence.current,
@@ -524,7 +162,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       setEvents([]);
       setError(errorMessage(loadError));
     } finally {
-      if (showBusy && responseBelongsToRequest(
+      release?.();
+      if (showBusy && epoch.current === capturedEpoch && responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         requestSequence.current,
@@ -549,14 +188,14 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
     setPending(null);
     if (!storeContext || !authorityKey) return;
     void loadObjects(storeContext, authorityKey);
-    // The authority key includes session generation and business date. Any
-    // response from the previous key is discarded by currentAuthorityKey.
+    // 店铺、会话或业务日变化后丢弃旧响应，并清空当前编辑状态。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorityKey, includeArchivedProducts, includeArchivedEvents]);
 
   const runMutation = async <T,>(
     action: Exclude<PendingAction, 'load'>,
     operation: (api: StoreObjectsRendererApi, context: StoreContextEnvelope) => Promise<T>,
+    targetId?: number,
   ): Promise<T | undefined> => {
     if (!storeContext || pending) return undefined;
     const api = readApi();
@@ -564,15 +203,19 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       setError('店铺对象生产接口未接入；写操作已阻断。');
       return undefined;
     }
+    const release = admission.current.tryEnter();
+    if (!release) return undefined;
     const capturedContext = storeContext;
     const capturedKey = missionControlContextKey(capturedContext);
+    const capturedEpoch = epoch.current;
     const capturedSequence = ++mutationSequence.current;
     setPending(action);
+    setPendingTarget(targetId ?? null);
     setError(null);
     setFeedback('');
     try {
       const result = await operation(api, capturedContext);
-      if (!responseBelongsToRequest(
+      if (epoch.current !== capturedEpoch || !responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         mutationSequence.current,
@@ -580,7 +223,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )) return undefined;
       return result;
     } catch (mutationError) {
-      if (responseBelongsToRequest(
+      rendererRuntimeLog.error('renderer.store_objects_operation_failed', { operation: action, error: mutationError });
+      if (epoch.current === capturedEpoch && responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         mutationSequence.current,
@@ -588,7 +232,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       )) setError(errorMessage(mutationError));
       return undefined;
     } finally {
-      if (responseBelongsToRequest(
+      release();
+      if (epoch.current === capturedEpoch && responseBelongsToRequest(
         currentAuthorityKey.current,
         capturedKey,
         mutationSequence.current,
@@ -609,7 +254,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         : await api.createStoreProduct(context, buildProductCreateInput(productEditor.draft));
       if (!resultBelongsToStore(result, context)) throw new Error('Main 返回了错误店铺的产品写入结果。');
       return result;
-    });
+    }, productEditor.product?.id);
     if (!saved) return;
     setProducts((current) => {
       const exists = current.some((item) => item.id === saved.id);
@@ -629,7 +274,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       });
       if (!resultBelongsToStore(result, context)) throw new Error('Main 返回了错误店铺的产品归档结果。');
       return result;
-    });
+    }, target.id);
     if (!archived) return;
     setProducts((current) => includeArchivedProducts
       ? current.map((item) => item.id === archived.id ? archived : item)
@@ -645,7 +290,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       });
       if (!resultBelongsToStore(result, context)) throw new Error('Main 返回了错误店铺的产品恢复结果。');
       return result;
-    });
+    }, target.id);
     if (!restored) return;
     setProducts((current) => current.map((item) => item.id === restored.id ? restored : item));
     setFeedback(`${restored.asin} 已恢复为运行中。`);
@@ -666,7 +311,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         : await api.createStoreOperationEvent(context, buildEventCreateInput(eventEditor.draft));
       if (!resultBelongsToStore(result, context)) throw new Error('Main 返回了错误店铺的运营事件写入结果。');
       return result;
-    });
+    }, eventEditor.event?.id);
     if (!saved) return;
     setEvents((current) => {
       const exists = current.some((item) => item.id === saved.id);
@@ -692,7 +337,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         || !resultBelongsToStore(result, context)
       ) throw new Error('运营事件归档回读不一致。');
       return result;
-    });
+    }, target.id);
     if (!archived) return;
     setEvents((current) => includeArchivedEvents
       ? current.map((item) => item.id === archived.id ? archived : item)
@@ -708,7 +353,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         throw new Error('运营事件恢复回读不一致。');
       }
       return result;
-    });
+    }, target.id);
     if (!restored) return;
     setEvents((current) => current.map((item) => item.id === restored.id ? restored : item));
     setFeedback(`运营事件“${restored.title}”已恢复到当前 AI 因果上下文。`);
@@ -774,33 +419,33 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         <div className="store-object-actions" role="group" aria-label={`${product.asin}产品操作`}>
           {product.status !== 'archived' ? (
             <>
-              <button
+              <WorkspaceActionButton disabledReason={product.asinValid === false ? '历史产品标识无效，当前只读；请先核对真实 ASIN 后重新建立产品。' : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…"
                 aria-label={`编辑 ${product.asin}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 disabled={busy || product.asinValid === false}
                 onClick={() => { setError(null); setProductEditor({ product, draft: productDraft(product) }); }}
                 title={product.asinValid === false ? '历史 ASIN 无效，需先完成数据对账' : '编辑产品、成本与目标'}
                 type="button"
-              ><PencilSimple aria-hidden="true" size={16} /></button>
-              <button
+              ><PencilSimple aria-hidden="true" size={16} /></WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={product.asinValid === false ? '历史产品标识无效，当前只读；请先核对真实 ASIN 后重新建立产品。' : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…"
                 aria-label={`归档 ${product.asin}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 disabled={busy || product.asinValid === false}
                 onClick={() => setConfirmProductArchive(product)}
                 title={product.asinValid === false ? '历史 ASIN 无效，需先完成数据对账' : '可恢复归档'}
                 type="button"
-              ><Archive aria-hidden="true" size={16} /></button>
+              ><Archive aria-hidden="true" size={16} /></WorkspaceActionButton>
             </>
           ) : (
-            <button
-              aria-busy={pending === 'restore-product' || undefined}
+            <WorkspaceActionButton disabledReason={product.asinValid === false ? '历史产品标识无效，当前只读；请先核对真实 ASIN 后重新建立产品。' : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'restore-product' && pendingTarget === product.id} busyLabel="恢复中…"
+
               aria-label={`恢复 ${product.asin}`}
               className="workspace-button workspace-button--secondary"
               disabled={busy || product.asinValid === false}
               onClick={() => void restoreProduct(product)}
               title="恢复到运行中"
               type="button"
-            ><ArrowsClockwise aria-hidden="true" size={16} />恢复</button>
+            ><ArrowsClockwise aria-hidden="true" size={16} />恢复</WorkspaceActionButton>
           )}
         </div>
       ),
@@ -845,33 +490,33 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
         <div className="store-object-actions" role="group" aria-label={`${event.title}事件操作`}>
           {!operationEventIsArchived(event) ? (
             <>
-              <button
+              <WorkspaceActionButton disabledReason={operationEventNeedsReconciliation(event) ? operationEventReconciliationReason(event) : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…"
                 aria-label={`编辑 ${event.title}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 disabled={busy || operationEventNeedsReconciliation(event)}
                 onClick={() => { setError(null); setEventEditor({ event, draft: eventDraft(storeContext.businessDate, event) }); }}
                 title={operationEventReconciliationReason(event) || '编辑运营事件'}
                 type="button"
-              ><PencilSimple aria-hidden="true" size={16} /></button>
-              <button
+              ><PencilSimple aria-hidden="true" size={16} /></WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={operationEventNeedsReconciliation(event) ? operationEventReconciliationReason(event) : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…"
                 aria-label={`归档 ${event.title}`}
                 className="workspace-button workspace-button--secondary mission-control-icon-button"
                 disabled={busy || operationEventNeedsReconciliation(event)}
                 onClick={() => setConfirmEventArchive(event)}
                 title={operationEventReconciliationReason(event) || '可恢复归档，不删除历史记录'}
                 type="button"
-              ><Archive aria-hidden="true" size={16} /></button>
+              ><Archive aria-hidden="true" size={16} /></WorkspaceActionButton>
             </>
           ) : (
-            <button
-              aria-busy={pending === 'restore-event' || undefined}
+            <WorkspaceActionButton disabledReason={operationEventNeedsReconciliation(event) ? operationEventReconciliationReason(event) : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'restore-event' && pendingTarget === event.id} busyLabel="恢复中…"
+
               aria-label={`恢复 ${event.title}`}
               className="workspace-button workspace-button--secondary"
               disabled={busy || operationEventNeedsReconciliation(event)}
               onClick={() => void restoreEvent(event)}
               title={operationEventReconciliationReason(event) || '恢复到当前 AI 因果上下文'}
               type="button"
-            ><ArrowsClockwise aria-hidden="true" size={16} />恢复</button>
+            ><ArrowsClockwise aria-hidden="true" size={16} />恢复</WorkspaceActionButton>
           )}
         </div>
       ),
@@ -912,8 +557,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
             <>
               <label className="store-object-search"><span className="sr-only">查询产品</span><input onChange={(event) => setSearch(event.target.value)} placeholder="查询 ASIN / 标题 / SKU" value={search} /></label>
               <label className="store-object-toggle"><input checked={includeArchivedProducts} onChange={(event) => setIncludeArchivedProducts(event.target.checked)} type="checkbox" />包含已归档</label>
-              <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</button>
-              <button className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setProductEditor({ product: null, draft: productDraft() }); }} type="button"><Plus aria-hidden="true" size={16} />新建产品</button>
+              <WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'load'} busyLabel="读取中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setProductEditor({ product: null, draft: productDraft() }); }} type="button"><Plus aria-hidden="true" size={16} />新建产品</WorkspaceActionButton>
             </>
           )}
         >
@@ -934,8 +579,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
           toolbar={(
             <>
               <label className="store-object-toggle"><input checked={includeArchivedEvents} onChange={(event) => { setEventPage(1); setIncludeArchivedEvents(event.target.checked); }} type="checkbox" />查看已归档事件</label>
-              <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</button>
-              <button className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setEventEditor({ event: null, draft: eventDraft(storeContext.businessDate) }); }} type="button"><Plus aria-hidden="true" size={16} />记录事件</button>
+              <WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'load'} busyLabel="读取中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => void loadObjects(storeContext, authorityKey)} type="button"><ArrowsClockwise aria-hidden="true" size={16} />{pending === 'load' ? '读取中…' : '刷新'}</WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--primary" data-action-priority="primary" disabled={busy} onClick={() => { setError(null); setEventEditor({ event: null, draft: eventDraft(storeContext.businessDate) }); }} type="button"><Plus aria-hidden="true" size={16} />记录事件</WorkspaceActionButton>
             </>
           )}
         >
@@ -949,8 +594,8 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
           <nav aria-label="运营事件分页" className="store-object-pagination">
             <span>第 {eventPageView.page} / {eventPageView.pageCount} 页 · {eventPageView.start}–{eventPageView.end} / {events.length} 条</span>
             <div>
-              <button aria-label="上一页运营事件" className="workspace-button workspace-button--secondary mission-control-icon-button" disabled={busy || eventPageView.page <= 1} onClick={() => setEventPage((page) => Math.max(1, page - 1))} type="button"><CaretLeft aria-hidden="true" size={16} /></button>
-              <button aria-label="下一页运营事件" className="workspace-button workspace-button--secondary mission-control-icon-button" disabled={busy || eventPageView.page >= eventPageView.pageCount} onClick={() => setEventPage((page) => Math.min(eventPageView.pageCount, page + 1))} type="button"><CaretRight aria-hidden="true" size={16} /></button>
+              <WorkspaceActionButton disabledReason={eventPageView.page <= 1 ? '已经是第一页。' : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" aria-label="上一页运营事件" className="workspace-button workspace-button--secondary mission-control-icon-button" disabled={busy || eventPageView.page <= 1} onClick={() => setEventPage((page) => Math.max(1, page - 1))} type="button"><CaretLeft aria-hidden="true" size={16} /></WorkspaceActionButton>
+              <WorkspaceActionButton disabledReason={eventPageView.page >= eventPageView.pageCount ? '已经是最后一页。' : busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" aria-label="下一页运营事件" className="workspace-button workspace-button--secondary mission-control-icon-button" disabled={busy || eventPageView.page >= eventPageView.pageCount} onClick={() => setEventPage((page) => Math.min(eventPageView.pageCount, page + 1))} type="button"><CaretRight aria-hidden="true" size={16} /></WorkspaceActionButton>
             </div>
           </nav>
         </WorkbenchPanel>
@@ -961,10 +606,10 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
           <section aria-labelledby="store-product-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
             <header>
               <div><span>当前店铺产品</span><h2 id="store-product-editor-title">{productEditor.product ? `编辑 ${productEditor.product.asin}` : '新建美国站产品'}</h2><p>站点固定 Amazon US，金额固定 USD；保存前本机安全进程会校验店铺范围和对象版本。</p></div>
-              <button aria-label="关闭产品编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setProductEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
+              <WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" aria-label="关闭产品编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setProductEditor(null)} type="button"><X aria-hidden="true" size={18} /></WorkspaceActionButton>
             </header>
             <div className="store-object-form store-object-form--product">{errorFeedback && <div className="store-object-form__wide">{errorFeedback}</div>}
-              <label><span>ASIN *</span><input disabled={Boolean(productEditor.product)} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, asin: e.target.value } } : current)} value={productEditor.draft.asin} /></label>
+              <label><span>ASIN *</span><input aria-describedby="store-object-asin-fixed" disabled={Boolean(productEditor.product)} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, asin: e.target.value } } : current)} value={productEditor.draft.asin} />{productEditor.product && <small id="store-object-asin-fixed">ASIN 是产品身份，编辑时保持固定；需要其他产品时请新建产品。</small>}</label>
               <label><span>产品标题</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, title: e.target.value } } : current)} value={productEditor.draft.title} /></label>
               <label><span>Parent ASIN</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, parentAsin: e.target.value } } : current)} value={productEditor.draft.parentAsin} /></label>
               <label><span>MSKU</span><input onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, msku: e.target.value } } : current)} value={productEditor.draft.msku} /></label>
@@ -980,7 +625,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
                 ['referralFeeRate', '推荐费率'], ['targetNetMargin', '目标净利率'], ['targetAcos', '目标 ACOS'], ['targetTacos', '目标 TACOS'],
               ] as const).map(([field, label]) => <label key={field}><span>{label} (%)</span><input max="100" min={field === 'targetNetMargin' ? '-100' : '0'} onChange={(e) => setProductEditor((current) => current ? { ...current, draft: { ...current.draft, [field]: e.target.value } } : current)} step="0.1" type="number" value={productEditor.draft[field]} /></label>)}
             </div>
-            <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setProductEditor(null)} type="button">取消</button><button aria-busy={pending === 'save-product' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void saveProduct()} type="button"><Check aria-hidden="true" size={16} />{pending === 'save-product' ? '保存中…' : '保存产品'}</button></footer>
+            <footer><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setProductEditor(null)} type="button">取消</WorkspaceActionButton><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'save-product'} busyLabel="保存中…"  className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void saveProduct()} type="button"><Check aria-hidden="true" size={16} />{pending === 'save-product' ? '保存中…' : '保存产品'}</WorkspaceActionButton></footer>
           </section>
         </div>
       )}
@@ -988,7 +633,7 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
       {eventEditor && (
         <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}>
           <section aria-labelledby="store-event-editor-title" aria-modal="true" className="mission-control-dialog store-object-editor" ref={dialogFocus.surfaceRef} tabIndex={-1} role="dialog">
-            <header><div><span>CAUSAL CONTEXT</span><h2 id="store-event-editor-title">{eventEditor.event ? '编辑运营事件' : '记录运营事件'}</h2><p>只写入当前店铺；可限定到 ASIN、Campaign 或广告组。</p></div><button aria-label="关闭事件编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEventEditor(null)} type="button"><X aria-hidden="true" size={18} /></button></header>
+            <header><div><span>经营事件上下文</span><h2 id="store-event-editor-title">{eventEditor.event ? '编辑运营事件' : '记录运营事件'}</h2><p>只写入当前店铺；可限定到 产品 ASIN、广告活动或广告组。</p></div><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" aria-label="关闭事件编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEventEditor(null)} type="button"><X aria-hidden="true" size={18} /></WorkspaceActionButton></header>
             <div className="store-object-form">{errorFeedback && <div className="store-object-form__wide">{errorFeedback}</div>}
               <label><span>事件日期 *</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, eventDate: e.target.value } } : current)} type="date" value={eventEditor.draft.eventDate} /></label>
               <label className="store-object-form__wide"><span>事件标题 *</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, title: e.target.value } } : current)} value={eventEditor.draft.title} /></label>
@@ -999,17 +644,17 @@ export function StoreScopedObjectsPanel({ storeContext, fixedSubview }: StoreSco
               <label><span>广告组</span><input onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, adGroupName: e.target.value } } : current)} value={eventEditor.draft.adGroupName} /></label>
               <label className="store-object-form__wide"><span>备注</span><textarea onChange={(e) => setEventEditor((current) => current ? { ...current, draft: { ...current.draft, notes: e.target.value } } : current)} rows={4} value={eventEditor.draft.notes} /></label>
             </div>
-            <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setEventEditor(null)} type="button">取消</button><button aria-busy={pending === 'save-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void saveEvent()} type="button"><Check aria-hidden="true" size={16} />{pending === 'save-event' ? '保存中…' : '保存事件'}</button></footer>
+            <footer><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setEventEditor(null)} type="button">取消</WorkspaceActionButton><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'save-event'} busyLabel="保存中…"  className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void saveEvent()} type="button"><Check aria-hidden="true" size={16} />{pending === 'save-event' ? '保存中…' : '保存事件'}</WorkspaceActionButton></footer>
           </section>
         </div>
       )}
 
       {confirmProductArchive && (
-        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-product-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>ARCHIVE PRODUCT</span><h2 id="store-product-archive-title">归档 {confirmProductArchive.asin}？</h2><p>产品会从默认列表隐藏，但历史数据、事件、决策与执行证据仍保留。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmProductArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-product' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveProduct()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-product' ? '归档中…' : '确认归档'}</button></footer></section></div>
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-product-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>归档产品</span><h2 id="store-product-archive-title">归档 {confirmProductArchive.asin}？</h2><p>产品会从默认列表隐藏，但历史数据、事件、决策与执行证据仍保留。</p></div></header><footer><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmProductArchive(null)} type="button">取消</WorkspaceActionButton><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'archive-product'} busyLabel="归档中…"  className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveProduct()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-product' ? '归档中…' : '确认归档'}</WorkspaceActionButton></footer></section></div>
       )}
 
       {confirmEventArchive && (
-        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>归档运营事件</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。本机安全进程会通过版本校验防止覆盖并发修改。</p></div></header><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</button><button aria-busy={pending === 'archive-event' || undefined} className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</button></footer></section></div>
+        <div className="mission-control-dialog-backdrop" ref={dialogFocus.overlayRootRef}><section aria-labelledby="store-event-archive-title" aria-modal="true" className="mission-control-dialog mission-control-dialog--confirm" ref={dialogFocus.surfaceRef} tabIndex={-1} role="alertdialog">{errorFeedback}<header><div><span>归档运营事件</span><h2 id="store-event-archive-title">归档“{confirmEventArchive.title}”？</h2><p>事件会退出当前 AI 因果上下文，但不会被删除；之后可在“查看已归档事件”中精准检索并恢复。本机安全进程会通过版本校验防止覆盖并发修改。</p></div></header><footer><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={false} busyLabel="处理中…" className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setConfirmEventArchive(null)} type="button">取消</WorkspaceActionButton><WorkspaceActionButton disabledReason={busy ? '当前店铺对象操作正在处理，请等待完成后再操作。' : '请核对当前对象状态。'} busy={pending === 'archive-event'} busyLabel="归档中…"  className="workspace-button workspace-button--primary" disabled={busy} onClick={() => void archiveEvent()} type="button"><Archive aria-hidden="true" size={16} />{pending === 'archive-event' ? '归档中…' : '确认归档'}</WorkspaceActionButton></footer></section></div>
       )}
     </div>
   );

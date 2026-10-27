@@ -1,3 +1,4 @@
+import { readStyleComposition } from '../styles/css-source.test-support';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -21,7 +22,7 @@ function source(): string {
 }
 
 function css(): string {
-  return readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  return readStyleComposition(new URL('../styles.css', import.meta.url));
 }
 
 describe('VirtualDataTable', () => {

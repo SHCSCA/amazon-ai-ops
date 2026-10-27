@@ -5,6 +5,8 @@ import { registerAnalysisAuthorityIpcHandlers } from './analysis-authority-ipc';
 import { registerExecutionAuthorityIpcHandlers } from './execution-authority-ipc';
 import { assertRendererPayloadIsPathFree } from './main-artifact-registry';
 import { assertValidStoreContext } from './v16-store-context-guard';
+import { MissionAuthorityGateError, ExecutionAuthorityGateError } from '@amazon-ai-ops/local-db';
+import { runtimeLogger, type RuntimeLogPort } from './runtime-logger';
 
 export { V16_SERVICE_CHANNELS };
 export interface V16ServicesIpcRegistrar {
@@ -17,7 +19,7 @@ export interface V16Services {
   storeCoordinator: Pick<StoreCoordinator, 'assertActiveStoreContext'>;
 }
 
-export function registerV16ServicesIpc(registrar: V16ServicesIpcRegistrar, services: V16Services): void {
+export function registerV16ServicesIpc(registrar: V16ServicesIpcRegistrar, services: V16Services, logger: RuntimeLogPort = runtimeLogger): void {
   const handlers = new Map<string, (event: unknown, request?: unknown) => unknown>();
   const collect: V16ServicesIpcRegistrar = { handle: (channel, handler) => { handlers.set(channel, handler); } };
   registerMissionDomainIpcHandlers(collect, services.domain);
@@ -43,6 +45,11 @@ export function registerV16ServicesIpc(registrar: V16ServicesIpcRegistrar, servi
         return { success: true, data };
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code) ? error.code : 'V16_OPERATION_FAILED';
+        const authorityGate = error instanceof MissionAuthorityGateError || error instanceof ExecutionAuthorityGateError ? error.authorityGate : undefined;
+        logger.error('v16.operation_failed', { method, code, ...(authorityGate ? { blockedPriorities: authorityGate.blockers.map(blocker => blocker.priority) } : {}) });
+        if (authorityGate) {
+          return { success: false, code, error: authorityGate.primaryBlocker.message, authorityGate };
+        }
         return { success: false, code, error: '操作未完成。请检查当前店铺、数据批次和授权状态，刷新后重试；结果不确定的执行只能只读对账。' };
       }
     });
