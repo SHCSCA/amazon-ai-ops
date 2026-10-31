@@ -242,11 +242,11 @@ export async function handleResumeLingxingCollection(input: unknown) {
       job: minimalLingxingCollectionJobForRenderer(job),
       importState: job.importState,
       resumedFromJobId: jobId,
-      reusedDownloadedReportTypes: validatedDownloadedResumeReportTypes(job),
+      reusedDownloadedReportTypes: await validatedDownloadedResumeReportTypes(job),
     };
   }
   const reboundRequestId = isCanary ? asLingxingCanaryRequestId(requestId) : requestId;
-  const rebound = rebindLingxingResumeState(job, reboundRequestId, context);
+  const rebound = await rebindLingxingResumeState(job, reboundRequestId, context);
   if (!rebound.resumeFrom || rebound.reportTypes.length === 0) {
     if (isCanary) {
       const canaryJob = job.importState === 'not_applicable'
@@ -260,7 +260,7 @@ export async function handleResumeLingxingCollection(input: unknown) {
         reusedDownloadedReportTypes: rebound.reused,
       };
     }
-    const recovery = recoverCompletedLingxingCollectionImport(job, context);
+    const recovery = await recoverCompletedLingxingCollectionImport(job, context);
     return {
       alreadyComplete: true,
       job: minimalLingxingCollectionJobForRenderer(recovery.job),

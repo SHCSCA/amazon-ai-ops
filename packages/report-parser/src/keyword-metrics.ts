@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as XLSX from 'xlsx';
 import type { KeywordMetric } from '@amazon-ai-ops/shared-types';
+import { readBoundedReportFileBytes, readReportWorkbookBytes, reportSheetRows } from './report-workbook-reader';
+import { rejectReport, reportResourceBoundary, type ReportResourceOptions } from './report-resource-policy';
 
 export interface ParseKeywordMetricsOptions {
   source?: KeywordMetric['source'];
@@ -49,21 +50,37 @@ const DEFAULT_FIELD_ALIASES: Record<string, string[]> = {
 export function parseKeywordMetrics(
   filePath: string,
   options: ParseKeywordMetricsOptions = {},
+  resource: ReportResourceOptions = {},
 ): KeywordMetric[] {
-  return parseKeywordMetricsWithDiagnostics(filePath, options).metrics;
+  return parseKeywordMetricsWithDiagnostics(filePath, options, resource).metrics;
 }
 
 export function parseKeywordMetricsWithDiagnostics(
   filePath: string,
   options: ParseKeywordMetricsOptions = {},
+  resource: ReportResourceOptions = {},
 ): KeywordMetricParseResult {
   if (!fs.existsSync(filePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
+  const { fieldMappingsDir, ...snapshot } = options;
+  const source = options.source ?? inferKeywordMetricSource(filePath);
+  return parseKeywordMetricsBytes(readBoundedReportFileBytes(filePath, resource), filePath,
+    { ...snapshot, source, fieldMapping: mergeAliases(loadMappingFromDir(source, fieldMappingsDir), options.fieldMapping) }, resource);
+}
+
+export function parseKeywordMetricsBytes(
+  bytes: Uint8Array, filePath: string, options: ParseKeywordMetricsOptions = {}, resource: ReportResourceOptions = {},
+): KeywordMetricParseResult {
+  return reportResourceBoundary(resource, () => parseKeywordBytesCore(bytes, filePath, options, resource));
+}
+
+function parseKeywordBytesCore(bytes: Uint8Array, filePath: string, options: ParseKeywordMetricsOptions, resource: ReportResourceOptions): KeywordMetricParseResult {
+  if (options.fieldMappingsDir !== undefined) rejectReport('keyword-bytes-options', 'REPORT_PARSE_OPTIONS_INVALID');
+  const workbook = readReportWorkbookBytes(bytes, filePath, {}, resource);
   const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
+  const rows = reportSheetRows<Record<string, unknown>>(worksheet, { defval: '' }, resource);
   const source = options.source ?? inferKeywordMetricSource(filePath);
   const fieldAliases = buildFieldAliases(source, options);
   const nonEmptyRows = rows

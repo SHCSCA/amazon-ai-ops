@@ -116,5 +116,6 @@ const runnerSourcePaths = Object.freeze([
   require.resolve('./v16-ui-owned-caption.js'),
   require.resolve('./verify-production-authority-selection.js'),
   require.resolve('./verify-s7-live-migration-acceptance.js'),
+  require.resolve('./migration-contract-source.js'),
 ]);
 module.exports = { moduleNames, runnerSourcePaths };

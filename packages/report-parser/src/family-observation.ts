@@ -1,6 +1,7 @@
 import { AD_SOURCE_METRIC_BITS, type AdDailyMetrics } from '@amazon-ai-ops/shared-types';
 import { createHash } from 'node:crypto';
 import { ReportParser } from './parser';
+import { checkReportInput, reportResourceBoundary, resolveReportResourceLimits, type ReportResourceOptions } from './report-resource-policy';
 
 export type FamilyReportLevel = 'campaign' | 'ad_group' | 'keyword';
 export interface FamilyReportBinding {
@@ -92,8 +93,12 @@ function summarize(rows: AdDailyMetrics[], sha256: string): FamilyLevelObservati
 
 // 仅观察指定字节与日期范围；不写库，不补 ASIN，不替代正式诊断的证据门。
 export function observeOwnerConfirmedFamily(
-  scope: OwnerConfirmedFamilyScope, reports: readonly FamilyReportBytes[],
+  scope: OwnerConfirmedFamilyScope, reports: readonly FamilyReportBytes[], resource: ReportResourceOptions = {},
 ): FamilyObservation {
+  return reportResourceBoundary(resource, () => observeFamilyCore(scope, reports, resource));
+}
+
+function observeFamilyCore(scope: OwnerConfirmedFamilyScope, reports: readonly FamilyReportBytes[], resource: ReportResourceOptions): FamilyObservation {
   if (scope.schemaVersion !== 1 || scope.provenanceLabel !== 'user_confirmed_scope' || !scope.familyLabel?.trim()
     || !scope.confirmationReference?.trim() || !scope.storeName?.trim() || !scope.marketplaceCode?.trim()) fail('missing explicit scope provenance');
   if (!Array.isArray(scope.files) || !Array.isArray(reports) || scope.files.length > 32 || reports.length > 3) fail('invalid report bundle');
@@ -109,6 +114,7 @@ export function observeOwnerConfirmedFamily(
   const byLevel = new Map<FamilyReportLevel, { hash: string; days: Map<string, AdDailyMetrics[]> }>();
   const consumedHashes: string[] = [];
   for (const input of reports) {
+    checkReportInput(input.bytes, resolveReportResourceLimits(resource.limits));
     if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength === 0 || input.bytes.byteLength > 32 * 1024 * 1024) fail('report bytes required');
     const bytes = Uint8Array.from(input.bytes);
     const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -116,7 +122,7 @@ export function observeOwnerConfirmedFamily(
     const report = { sha256, reportType: input.reportType };
     if (!binding || binding.reportType !== report.reportType || !levels.includes(report.reportType)) fail('unconfirmed file or report type');
     if (byLevel.has(report.reportType)) fail('overlapping report level requires explicit resolution');
-    const parsed = new ReportParser().parseExcelBytes(bytes, `sha256:${sha256}`,
+    const parsed = new ReportParser(resource).parseExcelBytes(bytes, `sha256:${sha256}`,
       { reportType: report.reportType, requireRegisteredTemplate: true });
     if (parsed.data.length > 100_000) fail('parsed row limit exceeded');
     consumedHashes.push(sha256);

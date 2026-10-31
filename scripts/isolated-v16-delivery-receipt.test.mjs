@@ -64,10 +64,16 @@ describe('isolated packaged Worker receipt validation', () => {
     expect(() => requireInsideRuntimeProfile(profile, profile)).toThrow();
     expect(() => requireInsideRuntimeProfile(profile, path.join(profile, '..', 'foreign'))).toThrow();
     const main = path.join(profile, 'main'); fs.mkdirSync(main);
-    for (const name of ['index.js', 'delivery-v16-worker.cjs', 'delivery-v16-backup-child.cjs']) fs.writeFileSync(path.join(main, name), name);
-    const hashes = currentWorkerRuntimeHashes(profile); expect(Object.keys(hashes)).toHaveLength(3);
-    fs.appendFileSync(path.join(main, 'delivery-v16-worker.cjs'), 'changed'); expect(currentWorkerRuntimeHashes(profile)).not.toEqual(hashes);
-    fs.unlinkSync(path.join(main, 'delivery-v16-backup-child.cjs')); expect(() => currentWorkerRuntimeHashes(profile)).toThrow();
+    const names = ['index.js', 'delivery-v16-worker.cjs', 'delivery-v16-backup-child.cjs', 'report-parser-worker.cjs'];
+    for (const name of names) fs.writeFileSync(path.join(main, name), name);
+    const hashes = currentWorkerRuntimeHashes(profile); expect(Object.keys(hashes)).toEqual(names);
+    for (const name of names) {
+      const file = path.join(main, name);
+      fs.appendFileSync(file, 'changed'); expect(currentWorkerRuntimeHashes(profile)).not.toEqual(hashes);
+      fs.writeFileSync(file, name);
+      fs.unlinkSync(file); expect(() => currentWorkerRuntimeHashes(profile)).toThrow();
+      fs.writeFileSync(file, name);
+    }
   });
   it('classifies only the exact injected settings fault while retaining the explicit missing-manifest warning', () => {
     const warning = { level: 'warn', event: 'delivery.worker_diagnostic', context: { diagnostic: { event: 'delivery.v16_manifest_missing', level: 'warn' } } };

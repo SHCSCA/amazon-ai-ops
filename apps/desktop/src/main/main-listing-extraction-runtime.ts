@@ -1,7 +1,7 @@
 import { validateListing } from './main-input-contract';
 import * as path from 'path';
 import { BrowserController } from '@amazon-ai-ops/browser-worker';
-import { parseListingContent } from '@amazon-ai-ops/report-parser';
+import { loadFixedReportFieldMapping } from './report-parser-field-mapping';
 import type { ListingContent } from '@amazon-ai-ops/shared-types';
 import { canonicalizeAmazonAsin } from '@amazon-ai-ops/shared-types';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
@@ -13,16 +13,24 @@ import { handleGetOperationScope } from './main-delivery-scope-runtime';
 import type { ListingReadOptions, ListingReadPersistContext } from './main-runtime-contracts';
 import { getMainRuntimeContext } from './main-runtime-access';
 
-export function handleImportListingContent(filePath: string): ListingContent {
+export async function handleImportListingContent(filePath: string): Promise<ListingContent> {
   if (typeof filePath !== 'string' || !filePath.trim()) {
     throw new Error('请选择 Listing 文案文件');
   }
 
-  const listing = parseListingContent(filePath, {
-    fieldMappingsDir: path.join(getBundledResourcesPath(), 'field-mappings'),
+  const mainRuntimeContext = getMainRuntimeContext();
+  const context = resolveBusinessStoreAuthority().context;
+  const parser = mainRuntimeContext.reportParserRuntime.createSession();
+  const snapshot = parser.read(filePath);
+  try {
+  const listing = await parser.listing(snapshot, {
+    fieldMapping: loadFixedReportFieldMapping('listing'),
   });
+  mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(context);
+  parser.assertCurrent(snapshot);
   validateListing(listing);
   return listing;
+  } finally { parser.release(snapshot); }
 }
 
 export function handleExtractListingFromLingxing(options: ListingReadOptions = {}) {

@@ -16,7 +16,7 @@ export function requireInsideRuntimeProfile(profile, file) {
 }
 
 export function currentWorkerRuntimeHashes(bundleRoot) {
-  return Object.fromEntries(['index.js', 'delivery-v16-worker.cjs', 'delivery-v16-backup-child.cjs']
+  return Object.fromEntries(['index.js', 'delivery-v16-worker.cjs', 'delivery-v16-backup-child.cjs', 'report-parser-worker.cjs']
     .map(name => [name, hashRuntimeFile(path.join(bundleRoot, 'main', name))]));
 }
 

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { observeOwnerConfirmedFamily, type FamilyReportLevel } from '@amazon-ai-ops/report-parser';
+import type { OwnerConfirmedFamilyScope, FamilyReportBytes, FamilyObservation, FamilyReportLevel } from '@amazon-ai-ops/report-parser';
 import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { ConfirmFamilyObservationInput, FamilyObservationFile, FamilyObservationPreview, FamilyObservationScope, PrepareFamilyObservationInput } from '../shared/family-observation-contracts';
 
@@ -18,6 +18,8 @@ export interface FamilyObservationDependencies {
   authority(context: unknown): FamilyObservationAuthority;
   files(authority: FamilyObservationAuthority): FamilyObservationSource[];
   read(source: FamilyObservationSource, authority: FamilyObservationAuthority): Uint8Array;
+  reserveInputBytes(bytes: number, fileSizes: readonly number[]): () => void;
+  observe(scope: OwnerConfirmedFamilyScope, reports: FamilyReportBytes[], signal: AbortSignal): Promise<FamilyObservation>;
   now?: () => number;
 }
 const levels = new Set<string>(['campaign', 'ad_group', 'keyword']);
@@ -46,8 +48,13 @@ interface Pending {
 // 确认仅存在于当前 Main 会话；不创建持久授权或未来报表范围。
 export class FamilyObservationService {
   private pending = new Map<number, Pending>();
+  private active = new Map<number, AbortController>();
   constructor(private readonly dependencies: FamilyObservationDependencies) {}
-  cancel(senderId: number): void { this.pending.delete(senderId); }
+  cancel(senderId: number): void {
+    this.pending.delete(senderId);
+    this.active.get(senderId)?.abort();
+    this.active.delete(senderId);
+  }
   private authority(scope: FamilyObservationScope): FamilyObservationAuthority {
     if (!scope || !scope.storeContext || !windowValid(scope.dateFrom, scope.dateTo)) reject();
     return this.dependencies.authority(scope.storeContext);
@@ -80,6 +87,15 @@ export class FamilyObservationService {
     if (bytes.byteLength !== source.fileSize || createHash('sha256').update(bytes).digest('hex') !== source.sha256) reject();
     return bytes;
   }
+  private inputBytes(files: FamilyObservationSource[], retainMain: boolean): number {
+    let retained = 0, temporary = 0;
+    for (const file of files) {
+      if (!Number.isSafeInteger(file.fileSize) || file.fileSize < 1 || file.fileSize > 32 * 1024 * 1024) reject();
+      temporary = Math.max(temporary, file.fileSize);
+      if (retainMain && levels.has(file.reportType)) retained += file.fileSize;
+    }
+    return retained + temporary;
+  }
   prepare(senderId: number, input: PrepareFamilyObservationInput): FamilyObservationPreview {
     this.cancel(senderId);
     const authority = this.authority(input);
@@ -88,7 +104,9 @@ export class FamilyObservationService {
     const typed = files.filter(file => levels.has(file.reportType));
     if (!typed.some(file => file.reportType === 'campaign') || new Set(typed.map(file => file.reportType)).size !== typed.length
       || new Set(files.map(file => file.sha256)).size !== files.length) reject();
-    for (const file of files) this.bytes(file, authority);
+    const release = this.dependencies.reserveInputBytes(this.inputBytes(files, false), files.map(file => file.fileSize));
+    try { for (const file of files) this.bytes(file, authority); }
+    finally { release(); }
     const preview: FamilyObservationPreview = { token: randomUUID(), familyLabel: input.familyLabel.trim(), storeName: authority.storeName,
       marketplaceCode: authority.context.marketplace, dateFrom: input.dateFrom, dateTo: input.dateTo, files: files.map(publicFile) };
     const now = this.dependencies.now?.() ?? Date.now();
@@ -99,7 +117,7 @@ export class FamilyObservationService {
       preview, fingerprints: files.map(file => JSON.stringify(file)), expiresAt: (this.dependencies.now?.() ?? Date.now()) + 10 * 60_000 });
     return structuredClone(preview);
   }
-  confirm(senderId: number, input: ConfirmFamilyObservationInput) {
+  async confirm(senderId: number, input: ConfirmFamilyObservationInput) {
     const pending = this.pending.get(senderId);
     this.cancel(senderId);
     if (!pending || !input || input.token !== pending.preview.token || (this.dependencies.now?.() ?? Date.now()) >= pending.expiresAt) reject();
@@ -107,14 +125,35 @@ export class FamilyObservationService {
     if (contextKey(authority.context) !== pending.authorityKey || authority.storeName !== pending.preview.storeName) reject();
     const files = this.selected(pending.input, authority);
     if (files.some((file, i) => JSON.stringify(file) !== pending.fingerprints[i])) reject();
-    const reports = files.flatMap(file => {
+    const release = this.dependencies.reserveInputBytes(this.inputBytes(files, true), files.map(file => file.fileSize));
+    let reports: FamilyReportBytes[] = [];
+    try {
+    reports = files.flatMap(file => {
       const bytes = this.bytes(file, authority);
       return levels.has(file.reportType) ? [{ bytes, reportType: file.reportType as FamilyReportLevel }] : [];
     });
-    return observeOwnerConfirmedFamily({ schemaVersion: 1, provenanceLabel: 'user_confirmed_scope',
+    const controller = new AbortController();
+    this.active.set(senderId, controller);
+    try {
+      const result = await this.dependencies.observe({ schemaVersion: 1, provenanceLabel: 'user_confirmed_scope',
       familyLabel: pending.preview.familyLabel, confirmationReference: pending.preview.token, storeName: authority.storeName,
       marketplaceCode: authority.context.marketplace, dateFrom: pending.input.dateFrom, dateTo: pending.input.dateTo,
       files: files.map(file => ({ sha256: file.sha256, reportType: levels.has(file.reportType) ? file.reportType as FamilyReportLevel : 'auxiliary', dateFrom: file.dateFrom, dateTo: file.dateTo })) },
-    reports);
+      reports, controller.signal);
+      // 等待期间取消、换店或新确认均使旧结果失效；重新读取来源后才返回观察。
+      if (controller.signal.aborted || this.active.get(senderId) !== controller
+        || (this.dependencies.now?.() ?? Date.now()) >= pending.expiresAt) reject();
+      const current = this.dependencies.authority(input.storeContext);
+      if (contextKey(current.context) !== pending.authorityKey || current.storeName !== pending.preview.storeName) reject();
+      const latest = this.selected(pending.input, current);
+      if (latest.some((file, index) => JSON.stringify(file) !== pending.fingerprints[index])) reject();
+      for (const file of latest) this.bytes(file, current);
+      return result;
+    } finally { if (this.active.get(senderId) === controller) this.active.delete(senderId); }
+    } finally {
+      // 三份主报表外再保留一份临时重读额度，辅助报表不会被累计留存。
+      for (const report of reports) report.bytes = new Uint8Array();
+      release();
+    }
   }
 }

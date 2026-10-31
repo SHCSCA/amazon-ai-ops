@@ -127,7 +127,7 @@ it('binds the actually imported native focus metadata helper while preserving th
   const focus = require.resolve('./v16-ui-nvda-focus-phase.js');
   expect(reader).toContain("require('./v16-ui-nvda-focus-phase')");
   expect(registry.runnerSourcePaths.filter(file => file === focus)).toHaveLength(1);
-  expect(registry.runnerSourcePaths).toHaveLength(113);
+  expect(registry.runnerSourcePaths).toHaveLength(114);
   expect(registry.runnerSourcePaths.filter(file => file === require.resolve('./v16-nvda-native-keys-contract.js'))).toHaveLength(1);
   expect(registry.runnerSourcePaths.filter(file => file === require.resolve('./v16-ui-nvda-native-keys.js'))).toHaveLength(1);
   expect(reader).toContain("require('./v16-ui-nvda-native-keys')");
@@ -138,7 +138,7 @@ it('binds the actually imported native focus metadata helper while preserving th
   expect(Object.keys(evidence)).toHaveLength(134);
 });
 
-it.each(['v16-ui-owned-accessibility.js', 'v16-ui-nvda-speech-bracket.js'])(
+it.each(['v16-ui-owned-accessibility.js', 'v16-ui-nvda-speech-bracket.js', 'migration-contract-source.js'])(
   'binds current bytes and sizes of %s into evidenceScript independently of test ports', (helper) => {
     const helperPath = require.resolve('./' + helper);
     const bytes = new Map([...new Set([...registry.runnerSourcePaths, helperPath])]

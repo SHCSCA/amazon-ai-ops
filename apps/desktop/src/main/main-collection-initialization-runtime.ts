@@ -1,5 +1,5 @@
 import { BrowserController, CollectionOperationGuard } from '@amazon-ai-ops/browser-worker';
-import { getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
+import { getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, inspectReportRowsContent } from '@amazon-ai-ops/lingxing-report-collector';
 import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { runtimeLog } from './runtime-log-adapter';
 import { openLingxingAdsFromErp, readLingxingAdsProfileEvidence, resolveLingxingStableIdentityFromAdsProfile } from './lingxing-ads-sso';
@@ -19,6 +19,7 @@ import { navigateToLingxingDownloadCenter } from './main-download-navigation-run
 import { persistCollectionOnlyDownloadCenterDiagnostic } from './main-download-diagnostics-runtime';
 import { publishStoreContextChanged } from './main-store-context-runtime';
 import { getMainRuntimeContext } from './main-runtime-access';
+import { withCollectionImportStateCas } from './collection-import-state-cas';
 
 export function initializeLingxingCollectionCoordinator(): void {
   const mainRuntimeContext = getMainRuntimeContext();
@@ -33,6 +34,8 @@ export function initializeLingxingCollectionCoordinator(): void {
   mainRuntimeContext.state.lingxingCollectionCoordinator = new LingxingCollectionCoordinator({
     authority: mainRuntimeContext.state.storeCoordinator,
     operations,
+    reportContentInspector: async (filePath, reportType) => inspectReportRowsContent(
+      await mainRuntimeContext.reportParserRuntime.createSession().preflight(filePath), reportType),
     resolveRuntime(context, options) {
       const authorized = authorizedLingxingCollectionTarget(context);
       const activeContext = authorized.context;
@@ -128,11 +131,12 @@ export function initializeLingxingCollectionCoordinator(): void {
           files: result.files,
         });
       },
-      persistImportState(job) {
-        mainRuntimeContext.state.lingxingImportRepo!.upsertCollectionJobSnapshotForStore(
-          job.request.storeContext.storeId,
-          job,
-        );
+      persistImportState(job, expectedJob) {
+        const { db, lingxingImportRepo } = mainRuntimeContext.state;
+        if (!db || !lingxingImportRepo) throw new Error('COLLECTION_IMPORT_STATE_CAS_REQUIRED');
+        withCollectionImportStateCas(db, expectedJob, job, () => {
+          lingxingImportRepo.upsertCollectionJobSnapshotForStore(job.request.storeContext.storeId, job);
+        });
       },
       acquireCollectionResumeClaimForStore(storeId, input) {
         return mainRuntimeContext.state.lingxingImportRepo!.acquireCollectionResumeClaimForStore(storeId, input);
@@ -155,8 +159,12 @@ export function initializeLingxingCollectionCoordinator(): void {
     },
     productionImport: {
       policy: 'exact-eight-lineage-v1',
-      run: (result, options) => {
-        const summary = importStoreScopedLingxingDownloadedReportMetrics(result, options);
+      run: async (result, options) => {
+        if (typeof options.assertBeforeCommit !== 'function') throw new Error('REPORT_IMPORT_COORDINATOR_GUARD_REQUIRED');
+        const summary = await importStoreScopedLingxingDownloadedReportMetrics(result, {
+          startedAt: options.startedAt, assertCurrent: options.assertBeforeCommit, expectedJob: result.job,
+          expectedClaim: options.expectedClaim,
+        });
         if (summary.errors.length > 0 || summary.parsedFiles <= 0 || !summary.importRunId) {
           const detail = summary.errors.map((error) => error.message).join('；')
             || '真实报表未形成可提交的逐文件导入凭证。';

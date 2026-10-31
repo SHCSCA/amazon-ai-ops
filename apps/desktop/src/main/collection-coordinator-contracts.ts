@@ -53,7 +53,7 @@ export interface LingxingCollectionRuntime {
 export interface LingxingCollectionPersistence {
   persistProgress(event: LingxingCollectionProgressEvent): void | Promise<void>;
   persistResult(result: RunBatchResult): void | Promise<void>;
-  persistImportState(job: LingxingCollectionJobSnapshot): void | Promise<void>;
+  persistImportState(job: LingxingCollectionJobSnapshot, expectedJob: LingxingCollectionJobSnapshot): void | Promise<void>;
   acquireCollectionResumeClaimForStore?(
     storeId: StoreContextEnvelope['storeId'],
     input: AcquireCollectionResumeClaimInput,
@@ -95,17 +95,18 @@ export interface LingxingCollectionCoordinatorDependencies {
     context: StoreContextEnvelope,
     runtime: LingxingCollectionRuntime,
   ): void;
+  reportContentInspector?: RunBatchOptions['reportContentInspector'];
   clearCancellation?(input: { jobId?: string; requestId: string; storeId: string }): void;
   persistence: LingxingCollectionPersistence;
   importResult?(
     result: RunBatchResult,
-    options: { startedAt: string },
+    options: { startedAt: string; assertBeforeCommit?: () => void; expectedClaim?: CollectionResumeClaim },
   ): unknown | Promise<unknown>;
   productionImport?: {
     policy: 'exact-eight-lineage-v1';
     run(
       result: RunBatchResult,
-      options: { startedAt: string },
+      options: { startedAt: string; assertBeforeCommit?: () => void; expectedClaim?: CollectionResumeClaim },
     ): unknown | Promise<unknown>;
   };
   publishProgress?(event: LingxingCollectionProgressEvent): void;

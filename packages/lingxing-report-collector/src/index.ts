@@ -4,6 +4,8 @@ export * from './diagnostic-evidence-gate';
 export * from './collection-preflight';
 export * from './download-center-page';
 export * from './file-verifier';
+export { inspectReportRowsContent, inspectReportFileContent } from './report-file-inspector';
+export type { ReportContentInspection, ReportContentInspector } from './report-file-inspector';
 export * from './filename-date-range';
 export * from './manifest';
 export * from './page-model-draft';

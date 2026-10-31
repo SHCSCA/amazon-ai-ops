@@ -358,8 +358,8 @@ export function registerIpcHandlers(): void {
       projectBusinessBatchOptionForRenderer(storeId, batch)
     )));
   });
-  mainRuntimeContext.registerTrackedIpcHandler('v1_5:business-ui:import-current-reports', (_, scope) =>
-    projectBusinessImportResultForRenderer(handleImportCurrentBusinessReports(scope))
+  mainRuntimeContext.registerTrackedIpcHandler('v1_5:business-ui:import-current-reports', async (_, scope) =>
+    projectBusinessImportResultForRenderer(await handleImportCurrentBusinessReports(scope))
   );
   mainRuntimeContext.registerTrackedIpcHandler('v1_5:business-ui:import-local-report-files', async (_, scope) =>
     projectBusinessImportResultForRenderer(await handleImportLocalBusinessReportFiles(scope))
@@ -370,8 +370,8 @@ export function registerIpcHandlers(): void {
   mainRuntimeContext.registerTrackedIpcHandler('family-observation:prepare', (event, input) =>
     rendererPayload(handlePrepareFamilyObservation(event.sender.id, input))
   );
-  mainRuntimeContext.registerTrackedIpcHandler('family-observation:confirm', (event, input) =>
-    rendererPayload(handleConfirmFamilyObservation(event.sender.id, input))
+  mainRuntimeContext.registerTrackedIpcHandler('family-observation:confirm', async (event, input) =>
+    rendererPayload(await handleConfirmFamilyObservation(event.sender.id, input))
   );
   mainRuntimeContext.registerTrackedIpcHandler('family-observation:cancel', (event) =>
     handleCancelFamilyObservation(event.sender.id)

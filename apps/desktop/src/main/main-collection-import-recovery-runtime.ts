@@ -2,7 +2,7 @@ import { LINGXING_REPORT_TYPE_SET } from './main-input-contract';
 import * as crypto from 'crypto';
 import { invalidLingxingImportReconciliationEvidence } from './lingxing-report-import';
 import { type ReportImportRunRecord } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
-import { LINGXING_AD_REPORTS, verifyDownloadedFile } from '@amazon-ai-ops/lingxing-report-collector';
+import { LINGXING_AD_REPORTS, verifyDownloadedFileAsync, inspectReportRowsContent } from '@amazon-ai-ops/lingxing-report-collector';
 import type { LingxingReportType } from '@amazon-ai-ops/shared-types';
 import type { StoreContextEnvelope, LingxingCollectionImportState, LingxingCollectionJobSnapshot, LingxingCollectionProgressEvent, LingxingCollectionReportCheckpoint, LingxingCollectionResumeState } from '@amazon-ai-ops/shared-types';
 import { runtimeLog } from './runtime-log-adapter';
@@ -13,10 +13,12 @@ import { rendererPayload } from './main-artifacts-runtime';
 import { importStoreScopedLingxingDownloadedReportMetrics } from './main-local-report-import-runtime';
 import { getMainRuntimeContext } from './main-runtime-access';
 import { publishCollectionProgressAfterPersistence } from './collection-progress-publication';
+import { lingxingCollectionCancellationKey } from './main-business-pipeline-runtime';
+import { withCollectionImportStateCas } from './collection-import-state-cas';
 
-export function validatedDownloadedResumeReportTypes(
+export async function validatedDownloadedResumeReportTypes(
   job: LingxingCollectionJobSnapshot,
-): LingxingReportType[] {
+): Promise<LingxingReportType[]> {
   const mainRuntimeContext = getMainRuntimeContext();
   if (!mainRuntimeContext.state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
   const snapshot = mainRuntimeContext.state.lingxingImportRepo.getCollectionSnapshotForStore(
@@ -26,6 +28,7 @@ export function validatedDownloadedResumeReportTypes(
   const downloaded = job.reports
     .filter((checkpoint) => checkpoint.state === 'downloaded')
     .map((checkpoint) => checkpoint.reportType);
+  const parser = mainRuntimeContext.reportParserRuntime.createSession();
   for (const reportType of downloaded) {
     const file = snapshot?.files.find((candidate) => (
       candidate.reportType === reportType
@@ -34,7 +37,7 @@ export function validatedDownloadedResumeReportTypes(
     ));
     const definition = LINGXING_AD_REPORTS.find((candidate) => candidate.type === reportType);
     const verification = file?.filePath && snapshot
-      ? verifyDownloadedFile(file.filePath, {
+      ? await verifyDownloadedFileAsync(file.filePath, {
           expectedDateRange: {
             start: job.request.dateStart,
             end: job.request.dateEnd,
@@ -42,7 +45,7 @@ export function validatedDownloadedResumeReportTypes(
           expectedDownloadDir: snapshot.batch.downloadDir,
           expectedFilenameKeyword: definition?.expectedFilenameKeyword,
           expectedReportType: reportType,
-        })
+        }, async (filePath, reportType) => inspectReportRowsContent(await parser.preflight(filePath), reportType))
       : { valid: false, errorMessage: '缺少已下载文件快照' };
     if (!verification.valid) {
       throw new Error(
@@ -54,16 +57,16 @@ export function validatedDownloadedResumeReportTypes(
   return downloaded;
 }
 
-export function rebindLingxingResumeState(
+export async function rebindLingxingResumeState(
   job: LingxingCollectionJobSnapshot,
   requestId: string,
   context: StoreContextEnvelope,
-): {
+): Promise<{
   resumeFrom?: LingxingCollectionResumeState;
   reportTypes: LingxingReportType[];
   reused: LingxingReportType[];
   lineage?: StartLingxingCollectionInput['lineage'];
-} {
+}> {
   if (
     job.request.storeContext.storeId !== context.storeId
     || job.request.storeContext.browserProfileId !== context.browserProfileId
@@ -78,7 +81,7 @@ export function rebindLingxingResumeState(
       `${manualReconciliation.reportType} 的创建结果不确定，必须先在领星下载中心人工核对；系统不会自动恢复或重复创建。`,
     );
   }
-  const reused = validatedDownloadedResumeReportTypes(job);
+  const reused = await validatedDownloadedResumeReportTypes(job);
   const reportTypes = job.request.reportTypes.filter((reportType) => !reused.includes(reportType));
   if (reportTypes.length === 0) return { reportTypes: [], reused };
 
@@ -165,14 +168,16 @@ export function persistLingxingCollectionImportState(
     ...(options.completedAt ? { importCompletedAt: options.completedAt } : {}),
     ...(options.error ? { importError: options.error } : {}),
   };
-  const persisted = mainRuntimeContext.state.lingxingImportRepo.upsertCollectionProgressForStore(
+  const { db, lingxingImportRepo } = mainRuntimeContext.state;
+  if (!db) throw new Error('COLLECTION_IMPORT_STATE_CAS_REQUIRED');
+  const persisted = withCollectionImportStateCas(db, job, next, () => lingxingImportRepo.upsertCollectionProgressForStore(
     next.request.storeContext.storeId,
     {
       eventId: `${next.jobId}:import-recovery:${importState}`,
       emittedAt: updatedAt,
       job: next,
     },
-  );
+  ));
   const event = { eventId: `${persisted.jobId}:import-recovery:${importState}`,
     emittedAt: persisted.updatedAt, job: persisted } satisfies LingxingCollectionProgressEvent;
   publishCollectionProgressAfterPersistence({ phase: 'import_recovery', event,
@@ -223,7 +228,7 @@ export function assertPersistedFullLingxingReconciliationProof(
   }
 }
 
-export function recoverCompletedLingxingCollectionImport(
+export async function recoverCompletedLingxingCollectionImport(
   job: LingxingCollectionJobSnapshot,
   context: StoreContextEnvelope,
   options: { requireActiveContext?: boolean } = {},
@@ -333,10 +338,19 @@ export function recoverCompletedLingxingCollectionImport(
   }
   const attemptedAt = nextLingxingCollectionSnapshotTimestamp(job.updatedAt);
   let pending = persistLingxingCollectionImportState(job, 'pending', { attemptedAt });
-  let metricsImport: ReturnType<typeof importStoreScopedLingxingDownloadedReportMetrics>;
+  let metricsImport: Awaited<ReturnType<typeof importStoreScopedLingxingDownloadedReportMetrics>>;
   let committedRun: ReportImportRunRecord | undefined;
   try {
-    metricsImport = importStoreScopedLingxingDownloadedReportMetrics(snapshot, { startedAt: attemptedAt });
+    metricsImport = await importStoreScopedLingxingDownloadedReportMetrics(snapshot, { startedAt: attemptedAt, expectedJob: pending,
+      assertCurrent: () => {
+        if (options.requireActiveContext !== false) mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(context);
+        const store = mainRuntimeContext.state.storeRepo?.getStore(context.storeId);
+        if (!store || store.status !== 'active' || store.browserProfileId !== context.browserProfileId
+          || store.marketplace !== context.marketplace || store.currency !== context.currency) throw new Error('REPORT_IMPORT_RECOVERY_DOMAIN_CHANGED');
+        if (lingxingCollectionCancellationKey({ storeId: context.storeId, jobId: job.jobId, requestId: job.request.requestId })
+          .some(key => mainRuntimeContext.cancelledLingxingCollectionRequests.has(key))) throw new Error('REPORT_IMPORT_RECOVERY_CANCELLED');
+      },
+    });
     if (metricsImport.errors.length > 0 || metricsImport.parsedFiles <= 0 || !metricsImport.importRunId) {
       const detail = metricsImport.errors.map((error) => error.message).join('；')
         || '真实报表未形成可提交的逐文件导入凭证。';
@@ -373,19 +387,6 @@ export function recoverCompletedLingxingCollectionImport(
       },
     );
   } catch (error) {
-    const currentJob = mainRuntimeContext.state.lingxingImportRepo.getCollectionJobForStore(
-      context.storeId,
-      pending.jobId,
-    );
-    if (!currentJob
-      || currentJob.request.requestId !== pending.request.requestId
-      || currentJob.updatedAt !== pending.updatedAt
-      || currentJob.importState !== 'pending') {
-      throw new Error(
-        'COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT: 补导失败后 job 已发生并发变化，拒绝用 stale pending 快照覆盖。',
-        { cause: error },
-      );
-    }
     const failureFloor = committedRun
       ? [pending.updatedAt, committedRun.completedAt, committedRun.createdAt]
           .reduce((latest, candidate) => (
@@ -393,11 +394,12 @@ export function recoverCompletedLingxingCollectionImport(
           ))
       : pending.updatedAt;
     const completedAt = nextLingxingCollectionSnapshotTimestamp(failureFloor);
-    const failedJob = persistLingxingCollectionImportState(pending, 'failed', {
-      attemptedAt,
-      completedAt,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    let failedJob: LingxingCollectionJobSnapshot;
+    try { failedJob = persistLingxingCollectionImportState(pending, 'failed', {
+      attemptedAt, completedAt, error: error instanceof Error ? error.message : String(error),
+    }); } catch (settlementError) {
+      throw new AggregateError([error, settlementError], 'COLLECTION_IMPORT_RECOVERY_FAILURE_SETTLEMENT_CONFLICT');
+    }
     const discoveredRun = committedRun ?? mainRuntimeContext.state.lingxingImportRepo.getImportRunForStore(
       context.storeId,
       runId,
@@ -419,13 +421,13 @@ export function recoverCompletedLingxingCollectionImport(
   return { job: pending, importRecovered: true, metricsImport };
 }
 
-export function recoverPendingLingxingCollectionImportsOnStartup(): {
+export async function recoverPendingLingxingCollectionImportsOnStartup(): Promise<{
   inspected: number;
   recovered: number;
   failed: number;
   knownFailed: number;
   authorityFailed: number;
-} {
+}> {
   const mainRuntimeContext = getMainRuntimeContext();
   if (!mainRuntimeContext.state.lingxingImportRepo || !mainRuntimeContext.state.storeRepo) {
     return {
@@ -456,7 +458,7 @@ export function recoverPendingLingxingCollectionImportsOnStartup(): {
       for (const job of page.jobs) {
         inspected += 1;
         try {
-          recoverCompletedLingxingCollectionImport(job, job.request.storeContext, {
+          await recoverCompletedLingxingCollectionImport(job, job.request.storeContext, {
             requireActiveContext: false,
           });
           recovered += 1;

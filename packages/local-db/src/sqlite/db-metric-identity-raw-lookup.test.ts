@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
-import { initSqlite, SQLITE_SCHEMA_VERSION } from './db';
+import { initSqlite, SQLITE_MIGRATION_CONTRACT, SQLITE_SCHEMA_VERSION } from './db';
 import { installStoreScopedMetricIdentitySafeguards } from './db-metric-identity';
 import { collectionSnapshot, createHarness, importInput, metric } from './repositories/lingxing-import-test-fixture';
 import { databases } from './repositories/lingxing-import-test-environment';
@@ -99,8 +99,14 @@ describe('ad metric raw identity lookup index', () => {
     const driver = database.prepare('SELECT sqlite_version() AS version').get() as { version: string };
     expect(driver.version).toMatch(/^\d+\.\d+\.\d+$/);
     console.info(JSON.stringify({ event: 'metric.raw_identity_driver_version', sqliteVersion: driver.version }));
+    const before = stableSnapshot(database);
+    expect(before.migrations).toEqual(SQLITE_MIGRATION_CONTRACT.map(migration =>
+      expect.objectContaining({ ...migration, status: 'applied' })));
+    expect((before.migrations.at(-1) as { version: number }).version).toBe(SQLITE_SCHEMA_VERSION);
+    // 索引维护不能推进迁移或重写已应用账本。
+    installStoreScopedMetricIdentitySafeguards(database);
     assertRawIndex(database);
-    expect(SQLITE_SCHEMA_VERSION).toBe(20);
+    expect(stableSnapshot(database)).toEqual(before);
   });
 
   it('makes the unchanged trigger SELECT use all raw identity keys without changing the production DELETE plan', () => {
@@ -122,7 +128,7 @@ describe('ad metric raw identity lookup index', () => {
   });
 
   it.each(['missing', 'wrong-partial', 'wrong-unique'] as const)(
-    'repairs %s definitions on schema20 and keeps full data evidence and triggers stable across two reopens', condition => {
+    'repairs %s definitions on the current schema and keeps full data evidence and triggers stable across two reopens', condition => {
       const { database, databasePath, source } = harness();
       const id = clone(database, source, { store_authority_quarantined: 1 });
       quarantine(database, id, 'ambiguous_store_identity');

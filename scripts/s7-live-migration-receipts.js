@@ -1,11 +1,14 @@
 // 按职责复用原有严格校验，公共入口继续保持兼容。
-const { TARGET_VERSION, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
+const { getTargetVersion, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
 const { REQUIRED_TABLES, inspectStoreProviderIdentityV11Schema, legacyV1Checksum, migrationContract, migrationRowsMatchProductionContract, migrationV1ChecksumWhitelist, } = require('./verify-production-authority-selection.js');
 const { CURRENTNESS_METHOD, SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION, runReadonlySqliteOnlineBackupSync, } = require('./sqlite-authority-currentness.js');
 const { normalizeSha256 } = require('./s7-live-migration-artifacts.js');
 const { AUTHORITY_SELECTION_KIND, AUTHORITY_SELECTION_SCHEMA_VERSION, KIND, MIGRATION_VERIFICATION_KIND, MIGRATION_VERIFICATION_SCHEMA_VERSION, OFFLINE_MIGRATION_KIND, OFFLINE_MIGRATION_SCHEMA_VERSION, REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES, REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES, SCHEMA_VERSION, addRequiredCheck, fail, hasExactKeys, isCleanAbsolutePath, isListingMergeBaseline, isNumericRowCountRecord, isSha256, requireAcceptanceArtifact, requireAcceptanceOfflineArtifact, requireExactKeys, samePath, stableJson } = require('./s7-live-migration-contracts.js');
 
-function validateS7LiveMigrationAcceptanceReceipt(receipt) {
+function validateS7LiveMigrationAcceptanceReceipt(receipt, targetVersion = getTargetVersion()) {
+    if (!Number.isSafeInteger(targetVersion) || targetVersion < 1) {
+        fail('Live migration acceptance target version is invalid.');
+    }
     requireExactKeys(receipt, [
         'kind',
         'schemaVersion',
@@ -84,7 +87,7 @@ function validateS7LiveMigrationAcceptanceReceipt(receipt) {
         || summary.failed !== 0
         || summary.integrityCheck !== 'ok'
         || summary.foreignKeyViolationCount !== 0
-        || summary.migrationCount !== TARGET_VERSION
+        || summary.migrationCount !== targetVersion
         || summary.requiredTableCount !== REQUIRED_TABLES.length) {
         fail('Live migration acceptance summary does not match the complete passed proof.');
     }
@@ -92,8 +95,8 @@ function validateS7LiveMigrationAcceptanceReceipt(receipt) {
     if (summary.offlineArtifacts.pathsDistinct !== true) {
         fail('Live migration acceptance offline artifact paths are not distinct.');
     }
-    requireAcceptanceOfflineArtifact(summary.offlineArtifacts.working, 'Live migration acceptance offline working artifact', 'working');
-    requireAcceptanceOfflineArtifact(summary.offlineArtifacts.restore, 'Live migration acceptance offline restore artifact', 'restore');
+    requireAcceptanceOfflineArtifact(summary.offlineArtifacts.working, 'Live migration acceptance offline working artifact', 'working', targetVersion);
+    requireAcceptanceOfflineArtifact(summary.offlineArtifacts.restore, 'Live migration acceptance offline restore artifact', 'restore', targetVersion);
     requireExactKeys(summary.businessRowPreservation, [
         'passed',
         'failureCount',
@@ -123,8 +126,8 @@ function validateS7LiveMigrationAcceptanceReceipt(receipt) {
     ], 'Live migration acceptance recovery');
     if (!Number.isInteger(summary.recovery.sourceVersion)
         || summary.recovery.sourceVersion < 0
-        || summary.recovery.sourceVersion >= TARGET_VERSION
-        || summary.recovery.targetVersion !== TARGET_VERSION
+        || summary.recovery.sourceVersion >= targetVersion
+        || summary.recovery.targetVersion !== targetVersion
         || !isCleanAbsolutePath(summary.recovery.backupPath)
         || !isSha256(summary.recovery.backupSha256)
         || !Number.isSafeInteger(summary.recovery.backupSizeBytes)
@@ -195,10 +198,10 @@ function validateOfflineMigrationManifest(manifest, databaseArtifact, checks) {
         && manifest.schemaVersion === OFFLINE_MIGRATION_SCHEMA_VERSION
         && manifest.passed === true, 'offline migration manifest must be s7-offline-db-upgrade schema v1 and passed');
     addRequiredCheck(checks, 'OFFLINE_MIGRATION_SOURCE_PATH_BOUND', samePath(manifest.source?.path, databaseArtifact.realPath), 'offline migration source.path must equal the canonical live --db path');
-    addRequiredCheck(checks, 'OFFLINE_MIGRATION_TARGET_V9', manifest.targetVersion === TARGET_VERSION, `offline migration targetVersion must be ${TARGET_VERSION}`);
+    addRequiredCheck(checks, 'OFFLINE_MIGRATION_TARGET_V9', manifest.targetVersion === getTargetVersion(), `offline migration targetVersion must be ${getTargetVersion()}`);
     addRequiredCheck(checks, 'OFFLINE_MIGRATION_SOURCE_BASELINE_VALID', Number.isInteger(manifest.source?.version)
         && manifest.source.version >= 0
-        && manifest.source.version < TARGET_VERSION
+        && manifest.source.version < getTargetVersion()
         && isNumericRowCountRecord(manifest.source?.tableRowCounts)
         && isListingMergeBaseline(manifest.source?.listingMergeBaseline), 'offline source version, tableRowCounts, and listingMergeBaseline must be valid');
     const sourceSha256 = normalizeSha256(manifest.source?.sha256, 'Offline migration source SHA-256');
@@ -219,13 +222,13 @@ function validateOfflineMigrationManifest(manifest, databaseArtifact, checks) {
         && manifest.restore?.version === manifest.source.version
         && manifest.restore?.integrityCheck === 'ok', 'working and restored artifacts must expose bound absolute paths, hashes, and integrity results');
     const migrationRows = Array.isArray(manifest.migrations) ? manifest.migrations : [];
-    addRequiredCheck(checks, 'OFFLINE_MIGRATION_RECORDS_PRESERVATION_PASSED', migrationRows.length === TARGET_VERSION
+    addRequiredCheck(checks, 'OFFLINE_MIGRATION_RECORDS_PRESERVATION_PASSED', migrationRows.length === getTargetVersion()
         && migrationRows.every((row, index) => Number(row?.version) === index + 1 && row?.status === 'applied')
         && manifest.businessRowPreservation?.passed === true
         && Array.isArray(manifest.businessRowPreservation?.failures)
         && manifest.businessRowPreservation.failures.length === 0
         && Array.isArray(manifest.preservationFailures)
-        && manifest.preservationFailures.length === 0, `offline manifest must bind ${TARGET_VERSION} applied migrations and a passed business-row preservation proof`);
+        && manifest.preservationFailures.length === 0, `offline manifest must bind ${getTargetVersion()} applied migrations and a passed business-row preservation proof`);
 }
 
 function validateMigrationVerification(verification, verificationArtifact, migrationManifestArtifact, checks) {

@@ -1,5 +1,15 @@
 # 开发交接与继续执行
 
+<!-- 本轮推进状态开始 -->
+## 2026-10-31 · 当前接续入口
+
+先读根PROGRESS/BLOCKED与PROJECT_STATUS的冻结前检查点。最新原件总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`；新候选目录预定`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`，开跑与终态以`internal-run.json`和三个原始runner/封套及真实CLI为准。目录未生成或报告无终态时不可推定通过。
+
+迁移CLI按实际registry静态元数据，打包路径使用可信冻结migrationContract；不回读开发TS树、不信raw目标。包界面113路径仅末尾追加元数据模块至114。报表经统一资源端口与派生STORE，源文件/原SHA保持；Main原快照/Worker克隆分开持有预算，来源最终重核用受控同步流式hash。Worker成功须唯一有效结果和实际正常退出，预算未归还或线程未退出仍阻断关闭。
+
+新Main的owner/Program/完整函数有限准入须保留全部旧条目/原算法并以完整逆证明、真实Main反例和独审绑定；新内建读取遵循原白名单端口并核无写/逃逸。最终候选先提交代码并冻结HEAD、全部docs及完整测试清单，执行全量L1–L3；运行与匹配实包采集期间不改source/docs/HEAD，实时更新仅放根PROGRESS/BLOCKED/README。后续按原六项内部退出完成实包、读屏/性能、安全与恢复；正常DB启动前仍先最终快照和字节备份，不复用旧包或旧C信用。
+<!-- 本轮推进状态结束 -->
+
 ## 2026-10-30 · 1.6.1-dev.1 开发快照
 
 本次统一来源与决策安全、原生 ASIN 部分日观察、产品族桌面会话确认等开发增量；不纳入另行隔离的 source-first 修复补丁，相关生产隔离器及其失败夹具保持原样。产品根包、桌面包和 Main 版本同步；锁文件没有根包版本字段，工作区库仍保留各自版本。

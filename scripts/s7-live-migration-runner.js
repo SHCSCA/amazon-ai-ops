@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { TARGET_VERSION, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
+const { getTargetVersion, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
 const { REQUIRED_TABLES, inspectStoreProviderIdentityV11Schema, legacyV1Checksum, migrationContract, migrationRowsMatchProductionContract, migrationV1ChecksumWhitelist, } = require('./verify-production-authority-selection.js');
 const { CURRENTNESS_METHOD, SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION, runReadonlySqliteOnlineBackupSync, } = require('./sqlite-authority-currentness.js');
 const { assertCleanAbsolutePath, assertDirectExistingPath, assertOutputAvailable, entryExists, fileArtifact, normalizeSha256, readJsonArtifact, sameMainArtifact } = require('./s7-live-migration-artifacts.js');
@@ -73,7 +73,7 @@ function validateContext(context) {
             fail(`Acceptance ${label} dependency is invalid.`);
     }
     if (!Array.isArray(context.migrationContract)
-        || context.migrationContract.length !== TARGET_VERSION) {
+        || context.migrationContract.length !== getTargetVersion()) {
         fail('Acceptance migrationContract dependency is invalid.');
     }
     if (!(context.allowedV1Checksums instanceof Set)

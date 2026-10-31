@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@amazon-ai-ops/report-parser": "workspace:*",
     "@amazon-ai-ops/shared-types": "workspace:*",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },

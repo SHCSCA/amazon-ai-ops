@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
-import { initSqlite, SQLITE_SCHEMA_VERSION } from './db';
+import { initSqlite, SQLITE_MIGRATION_CONTRACT, SQLITE_SCHEMA_VERSION } from './db';
 import { installStoreScopedMetricIdentitySafeguards } from './db-metric-identity';
 import { hashCanonicalMetrics, readCanonicalMetrics } from './migrations/0010-collection-resume-authority';
 import { collectionSnapshot, createHarness, importInput, metric } from './repositories/lingxing-import-test-fixture';
@@ -115,8 +115,14 @@ function explain(database: Database.Database, sql: string, params: Record<string
 describe('ad metric full identity lookup index', () => {
   it('installs a non-unique non-partial lookup with the existing thirteen identity expressions', () => {
     const { database } = importedHarness();
+    const before = snapshot(database);
+    expect(before.ledger).toEqual(SQLITE_MIGRATION_CONTRACT.map(migration =>
+      expect.objectContaining({ ...migration, status: 'applied' })));
+    expect((before.ledger.at(-1) as { version: number }).version).toBe(SQLITE_SCHEMA_VERSION);
+    // 索引维护不能推进迁移或重写已应用账本。
+    installStoreScopedMetricIdentitySafeguards(database);
     expectLookupIndex(database);
-    expect(SQLITE_SCHEMA_VERSION).toBe(20);
+    expect(snapshot(database)).toEqual(before);
   });
 
   it('changes the actual production DELETE plan from a store prefix to all thirteen identity fields', () => {
@@ -136,7 +142,7 @@ describe('ad metric full identity lookup index', () => {
   });
 
   it.each(['missing', 'wrong-definition'] as const)(
-    'repairs a %s lookup on an existing schema20 database and remains idempotent after repeated reopen',
+    'repairs a %s lookup on an existing current-schema database and remains idempotent after repeated reopen',
     condition => {
       const { database, databasePath } = importedHarness();
       const row = database.prepare('SELECT id FROM ad_daily_metrics WHERE store_id = ?')
@@ -147,7 +153,7 @@ describe('ad metric full identity lookup index', () => {
         database.exec(`CREATE INDEX ${LOOKUP_INDEX} ON ad_daily_metrics(store_id) WHERE store_authority_quarantined = 0`);
       }
       const before = snapshot(database);
-      expect((before.ledger[before.ledger.length - 1] as { version: number }).version).toBe(20);
+      expect((before.ledger[before.ledger.length - 1] as { version: number }).version).toBe(SQLITE_SCHEMA_VERSION);
       database.close();
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const reopened = initSqlite(databasePath);

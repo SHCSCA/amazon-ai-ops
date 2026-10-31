@@ -29,8 +29,10 @@ export const NOW = '2026-07-22T12:00:00.000Z';
 export const RULE_REVISION = 'a'.repeat(64);
 export const tempDirs: string[] = [];
 export const databases: Database.Database[] = [];
+const pendingHarnessImports: Array<Promise<{ error?: unknown }>> = [];
 
-afterEach(() => {
+afterEach(async () => {
+  const imports = await Promise.all(pendingHarnessImports.splice(0));
   while (databases.length > 0) {
     const database = databases.pop();
     if (database?.open) database.close();
@@ -39,6 +41,8 @@ afterEach(() => {
     const directory = tempDirs.pop();
     if (directory) fs.rmSync(directory, { recursive: true, force: true });
   }
+  const failures = imports.flatMap(result => result.error === undefined ? [] : [result.error]);
+  if (failures.length) throw new AggregateError(failures, 'HARNESS_REJECTED_ASYNC_IMPORT_FAILED');
 });
 
 export interface Harness {
@@ -58,7 +62,7 @@ export interface Harness {
   generationScopes: AnalysisRecommendationGenerationScope[];
 }
 
-export function createHarness(options: {
+export interface AnalysisHarnessOptions {
   autonomyMode?: 'manual_approval' | 'policy_auto';
   withWritableTarget?: boolean;
   fallback?: boolean;
@@ -80,7 +84,32 @@ export function createHarness(options: {
   now?: () => Date;
   reportDateEnd?: string;
   policyValidUntil?: string;
-} = {}): Harness {
+}
+
+function finishHarness(steps: Generator<{ database: Database.Database; directory: string }, Harness, Record<string, string>>, paths: Record<string, string>): Harness {
+  const result = steps.next(paths);
+  if (!result.done) throw new Error('HARNESS_INITIALIZATION_NOT_COMPLETE');
+  return result.value;
+}
+export function createHarness(options: AnalysisHarnessOptions = {}): Harness {
+  const steps = createHarnessSteps(options), setup = steps.next();
+  if (setup.done) throw new Error('HARNESS_IMPORT_STAGE_MISSING');
+  const paths = (options.importReports ?? seedImportAuthority)(setup.value.database, setup.value.directory);
+  if (paths && typeof (paths as unknown as PromiseLike<unknown>).then === 'function') {
+    pendingHarnessImports.push(Promise.resolve(paths).then(() => ({}), error => ({ error })));
+    throw new Error('HARNESS_ASYNC_IMPORT_REQUIRES_ASYNC_ENTRY');
+  }
+  return finishHarness(steps, paths);
+}
+export async function createHarnessAsync(options: Omit<AnalysisHarnessOptions, 'importReports'> & {
+  importReports: (database: Database.Database, directory: string) => Promise<Record<string, string>>;
+}): Promise<Harness> {
+  const steps = createHarnessSteps({ ...options, importReports: undefined }), setup = steps.next();
+  if (setup.done) throw new Error('HARNESS_IMPORT_STAGE_MISSING');
+  // 真实异步导入完成后才初始化依赖其凭证的领域服务；同步夹具沿用同一后半段。
+  return finishHarness(steps, await options.importReports(setup.value.database, setup.value.directory));
+}
+function* createHarnessSteps(options: AnalysisHarnessOptions): Generator<{ database: Database.Database; directory: string }, Harness, Record<string, string>> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
   tempDirs.push(directory);
   const database = initSqlite(path.join(directory, 'app.db'));
@@ -180,7 +209,7 @@ export function createHarness(options: {
   for (const reportType of REQUIRED_COLLECTION_REPORT_TYPES) {
     insertCheckpoint.run(COLLECTION_JOB_ID, reportType, NOW);
   }
-  const reportPaths = (options.importReports ?? seedImportAuthority)(database, directory);
+  const reportPaths = yield { database, directory };
   const proofPath = path.join(directory, 'proof.png');
   fs.writeFileSync(proofPath, Buffer.from('verified visible Ads identity proof'));
 

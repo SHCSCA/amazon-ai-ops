@@ -1,6 +1,6 @@
 import * as fs from 'fs';
-import * as path from 'path';
-import * as XLSX from 'xlsx';
+import { readBoundedReportFileBytes, readReportHeaderRowsBytes } from '@amazon-ai-ops/report-parser';
+import type { ReportResourceOptions } from '@amazon-ai-ops/report-parser';
 import type { LingxingReportType } from '@amazon-ai-ops/shared-types';
 
 const COLUMN_ALIASES = {
@@ -74,23 +74,9 @@ function matchingHeaders(headers: readonly string[], aliases: readonly string[])
   return headers.filter((header) => normalizedAliases.has(normalizeHeader(header)));
 }
 
-function readWorkbookRows(filePath: string): unknown[][] {
-  // XLSX handles CSV, XLS and XLSX through the same row model and correctly
-  // preserves quoted CSV headers. Reading only the first sheet is deliberate:
-  // Lingxing exports one report per workbook.
-  const extension = path.extname(filePath).toLowerCase();
-  const workbook = extension === '.csv' || extension === '.txt' || extension === '.tsv'
-    ? XLSX.read(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''), { type: 'string' })
-    : XLSX.read(fs.readFileSync(filePath), { type: 'buffer', cellDates: false, raw: false });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return [];
-  const worksheet = workbook.Sheets[sheetName];
-  return XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-    header: 1,
-    defval: '',
-    raw: false,
-    blankrows: false,
-  }).slice(0, 12);
+function readWorkbookRows(filePath: string, resource: ReportResourceOptions = {}): unknown[][] {
+  // 共用格式与资源门，仅返回首张工作表的有界表头样本。
+  return readReportHeaderRowsBytes(readBoundedReportFileBytes(filePath, resource), filePath, resource);
 }
 
 function selectSemanticHeaderRow(
@@ -200,10 +186,26 @@ function aliasesForReportType(reportType: LingxingReportType): readonly string[]
 export function inspectReportFileContent(
   filePath: string,
   expectedReportType: LingxingReportType,
+  resource: ReportResourceOptions = {},
 ): ReportContentInspection {
   try {
     if (!fs.existsSync(filePath)) throw new Error('file does not exist');
-    const rows = readWorkbookRows(filePath);
+    return inspectReportRowsContent(readWorkbookRows(filePath, resource), expectedReportType);
+  } catch (error) {
+    return {
+      readable: false, matched: false, matchedTokens: [], sampledText: '',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export type ReportContentInspector = (filePath: string, expectedReportType: LingxingReportType) => Promise<ReportContentInspection>;
+
+export function inspectReportRowsContent(rows: readonly unknown[][], expectedReportType: LingxingReportType): ReportContentInspection {
+  try {
+    if (!Array.isArray(rows) || rows.length > 12 || rows.some(row => !Array.isArray(row) || row.length > 80)) {
+      throw new Error('预检工作表范围超出安全预算。');
+    }
     const { headers, rowIndex: headerRowIndex } = selectSemanticHeaderRow(rows);
     const headerReportType = inferLingxingReportTypeFromHeaders(headers);
     const genericAutoTargetingType = inferGenericAutoTargetingFromRows(

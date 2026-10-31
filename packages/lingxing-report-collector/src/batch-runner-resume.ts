@@ -1,7 +1,8 @@
 // 职责模块保留原有公开接口及安全校验边界。
 import { normalizeStoreContextEnvelope, type LingxingCollectionExternalStep, type LingxingCollectionGuardContext, type LingxingCollectionGuardDecision, type LingxingCollectionJobSnapshot, type LingxingCollectionProgressEvent, type LingxingCollectionReportCheckpoint, type LingxingCollectionReportState, type LingxingCollectionRequestDto, type LingxingCollectionResumeState, type LingxingCreateReportOutcome, type LingxingCreatedReportIdentity, type LingxingReportBatch, type LingxingReportDefinition, type LingxingReportFile, type LingxingReportType, type StoreContextEnvelope, } from '@amazon-ai-ops/shared-types';
 import { LINGXING_AD_REPORTS } from './report-types';
-import { verifyDownloadedFile } from './file-verifier';
+import { verifyDownloadedFile, verifyDownloadedFileAsync, type DownloadedFileVerificationOptions, type FileVerificationResult } from './file-verifier';
+import type { ReportContentInspector } from './report-file-inspector';
 import { type LingxingInPlaceResumeState, type ValidatedResumeState } from './batch-runner-contracts';
 import { isInPlaceResumeState, assertPathWithin, cloneCheckpoint, normalizeCreatedIdentity, cloneReportFile } from './batch-runner-snapshots';
 import { storeContextKey, stableJsonForIdentity } from './batch-runner-values';
@@ -13,7 +14,10 @@ export function isReconciledCreateFailure(checkpoint: LingxingCollectionReportCh
             || checkpoint.errorCode === 'LINGXING_CREATE_CONFIRMED_FAILED');
 }
 
-export function validateResumeState(resumeFrom: LingxingCollectionResumeState | LingxingInPlaceResumeState | undefined, request: LingxingCollectionRequestDto, maxRetries: number, rootDownloadDir: string, deferReconciledCreateFailures: boolean): ValidatedResumeState {
+type ResumeArguments = [resumeFrom: LingxingCollectionResumeState | LingxingInPlaceResumeState | undefined, request: LingxingCollectionRequestDto, maxRetries: number, rootDownloadDir: string, deferReconciledCreateFailures: boolean];
+type VerificationStep = { filePath: string; options: DownloadedFileVerificationOptions };
+
+function* validateResumeStateSteps(...[resumeFrom, request, maxRetries, rootDownloadDir, deferReconciledCreateFailures]: ResumeArguments): Generator<VerificationStep, ValidatedResumeState, FileVerificationResult> {
     if (!resumeFrom) {
         return { checkpoints: new Map(), downloadedFiles: new Map() };
     }
@@ -119,16 +123,17 @@ export function validateResumeState(resumeFrom: LingxingCollectionResumeState | 
             const report = LINGXING_AD_REPORTS.find((candidate) => (candidate.type === rawCheckpoint.reportType));
             if (!report)
                 throw new Error('downloaded resume checkpoint report type is unknown');
-            const verification = verifyDownloadedFile(durableFile.filePath, {
+            const verification = yield { filePath: durableFile.filePath, options: {
                 minBytes: 128,
                 expectedFilenameKeyword: report.expectedFilenameKeyword,
                 expectedDateRange: { start: request.dateStart, end: request.dateEnd },
                 expectedDownloadDir: inPlace.batch.downloadDir,
                 expectedReportType: report.type,
-            });
+                expectedFileSizeBytes: durableFile.fileSizeBytes,
+            } };
             if (!verification.valid || verification.fileSizeBytes !== durableFile.fileSizeBytes) {
                 throw new Error(verification.errorMessage
-                    || 'downloaded resume file no longer matches its durable verification metadata');
+                    || 'downloaded resume file no longer matches its durable verification metadata', { cause: verification.failure });
             }
             checkpoints.set(rawCheckpoint.reportType, cloneCheckpoint(rawCheckpoint));
             downloadedFiles.set(rawCheckpoint.reportType, cloneReportFile(durableFile));
@@ -162,4 +167,21 @@ export function validateResumeState(resumeFrom: LingxingCollectionResumeState | 
         throw new Error('in-place resume must contain exactly eight report checkpoints');
     }
     return { checkpoints, downloadedFiles, ...(inPlace ? { inPlace } : {}) };
+}
+
+export function validateResumeState(...args: ResumeArguments): ValidatedResumeState {
+    const steps = validateResumeStateSteps(...args);
+    let step = steps.next();
+    while (!step.done) step = steps.next(verifyDownloadedFile(step.value.filePath, step.value.options));
+    return step.value;
+}
+
+export async function validateResumeStateAsync(inspector: ReportContentInspector, ...args: ResumeArguments): Promise<ValidatedResumeState> {
+    if (typeof inspector !== 'function') throw new Error('REPORT_CONTENT_INSPECTOR_REQUIRED');
+    // 等待解析时不再引用调用方可改写的恢复记录和请求对象。
+    const snapshot: ResumeArguments = [args[0] === undefined ? undefined : structuredClone(args[0]), structuredClone(args[1]), args[2], args[3], args[4]];
+    const steps = validateResumeStateSteps(...snapshot);
+    let step = steps.next();
+    while (!step.done) step = steps.next(await verifyDownloadedFileAsync(step.value.filePath, step.value.options, inspector));
+    return step.value;
 }

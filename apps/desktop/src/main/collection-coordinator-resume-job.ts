@@ -130,6 +130,7 @@ export async function resumeInPlace(this: CollectionCoordinatorRuntime,
           progressSink: persistResumeProgress,
           authorityGuard: this.buildAuthorityGuard(operation, capturedContext, runtime),
           cancellationGuard: this.buildCancellationGuard(),
+          reportContentInspector: this.dependencies.reportContentInspector ?? (async () => { throw new Error('REPORT_CONTENT_INSPECTOR_REQUIRED'); }),
           resumeFrom: input.resumeFrom as LingxingInPlaceResumeState,
           ...(input.deferReconciledCreateFailures === true
             ? { deferReconciledCreateFailures: true }
@@ -208,6 +209,12 @@ export async function resumeInPlace(this: CollectionCoordinatorRuntime,
             }
             importSummary = await importResult(finalizedResult, {
               startedAt: attemptedAt,
+              expectedClaim: claim,
+              assertBeforeCommit: () => {
+                this.assertNotCancelled(finalizedResult.job.jobId, request, capturedContext);
+                operation.assertStepCurrent();
+                this.dependencies.assertRuntimeCurrent?.(capturedContext, runtime);
+              },
             });
             claim = await persistence.advanceCollectionResumeClaimAfterImportForStore(
               request.storeContext.storeId,

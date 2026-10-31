@@ -56,3 +56,19 @@ pnpm run build:win
 提交源码、测试、锁文件、配置及文档；不提交 `output/`、`storage/`、AppData DB/Profile、Local State、原始报表、凭证、密钥、安装 EXE、ZIP 或回滚包。历史回滚包取消 Git 跟踪后仍保留在磁盘，历史证据不删除、不改写。
 
 本次为代码迭代快照，不创建生产 Release、不宣称新安装包已验收。文档整理前的说明和全部历史检查点见 [归档索引](docs/history/2026-10-27-documentation-sync/README.md)。
+
+## 验收命令与兼容分支
+
+以下是维护人员的独立验证入口，不是已通过的流水线。每次使用当前源码、包体、隔离路径与新证据目录：
+
+```powershell
+pnpm run build:win
+pnpm run smoke:package-launch
+pnpm run smoke:folder-zip-launch
+node scripts/generate-v16-l1-evidence.mjs --out-dir output/v16-evidence/<new-run>
+pnpm run verify:v16-full
+```
+
+`pnpm run test:v16:evidence` 是默认写入 `output/v16-evidence/current` 的兼容别名；不要用它覆盖已有原件，也不要追加第二个 `--out-dir` 试图覆盖首个参数。受保护收尾使用上面显式的新目录入口。`verify:v16-full` 的默认输入仍为 current，使用前须按当前实际候选绑定必要输入，不能直接把新目录生成结果当默认聚合器已验证。
+
+构建、smoke、定向测试或旧版安全分支单独通过不能替代 V1.6 最终验收。现存 V1.5 指南、状态报告和旧包只作历史参考；保留的 V1.5 证据工具仍需按明确状态分支交接，不能作为 172 MUST / L1–L8 的旁路。兼容操作见 [用户指南的维护附录](docs/USER_GUIDE_v1_5.md#维护附录证据命令与历史兼容分支)。

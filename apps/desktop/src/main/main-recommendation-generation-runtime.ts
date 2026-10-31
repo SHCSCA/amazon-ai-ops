@@ -171,7 +171,7 @@ export async function runRecommendationGeneration(
     evidencePackSummary?: AiEvidencePackSummary;
   };
   scope: any;
-  metricsBackfill?: ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>;
+  metricsBackfill?: Awaited<ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>>;
 }> {
   const mainRuntimeContext = getMainRuntimeContext();
   const submitted = request && typeof request === 'object' ? request as Record<string, unknown> : {};

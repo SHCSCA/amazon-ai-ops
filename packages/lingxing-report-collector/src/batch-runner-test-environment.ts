@@ -35,7 +35,7 @@ const REPORT_DIMENSION_HEADER: Record<LingxingReportDefinition['type'], string> 
     user_search_term: '用户搜索词',
 };
 
-type LegacyTestOptions = Omit<RunBatchOptions, 'requestId' | 'storeContext' | 'storeDisplayName' | 'progressSink' | 'authorityGuard' | 'cancellationGuard' | 'automation'> & {
+type LegacyTestOptions = Omit<RunBatchOptions, 'requestId' | 'storeContext' | 'storeDisplayName' | 'progressSink' | 'authorityGuard' | 'cancellationGuard' | 'automation' | 'reportContentInspector'> & {
     automation: Omit<RunBatchOptions['automation'], 'createReport'> & {
         createReport: (...args: Parameters<RunBatchOptions['automation']['createReport']>) => Promise<unknown>;
     };

@@ -362,7 +362,7 @@ export async function initApp(): Promise<void> {
       interrupted: resumeRecovery.filter((receipt) => receipt.outcome === 'interrupted').length,
       succeeded: resumeRecovery.filter((receipt) => receipt.outcome === 'succeeded').length,
     }));
-    const importRecovery = recoverPendingLingxingCollectionImportsOnStartup();
+    const importRecovery = await recoverPendingLingxingCollectionImportsOnStartup();
     runtimeLog.log('[App] init:lingxing-import-recovery', JSON.stringify(importRecovery));
     assertLingxingImportStartupRecoverySafe(importRecovery);
     const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();

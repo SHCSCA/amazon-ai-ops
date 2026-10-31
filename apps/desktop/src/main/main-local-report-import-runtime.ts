@@ -1,17 +1,21 @@
 import { LINGXING_REPORT_TYPE_SET } from './main-input-contract';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as crypto from 'crypto';
+import { REPORT_PARSE_HARD_LIMITS } from '@amazon-ai-ops/report-parser';
 import { type StoreCapsulePaths } from '@amazon-ai-ops/browser-worker';
 import { importLingxingDownloadedReportMetrics, type LingxingBatchFilesResult } from './lingxing-report-import';
 import { inferAdMetricReportType } from '@amazon-ai-ops/local-db/src/sqlite/ad-metric-grain';
-import { LINGXING_AD_REPORTS, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
+import { LINGXING_AD_REPORTS, verifyDownloadedFileAsync, inspectReportRowsContent, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import type { LingxingReportBatch, LingxingReportFile, LingxingReportType } from '@amazon-ai-ops/shared-types';
 import { isPathInsideDirectory } from './acceptance-audit-export';
 import { isExistingRawBusinessReportPath } from './business-report-files';
 import { canonicalizeExistingPath } from './main-store-access-runtime';
 import type { NormalizedBusinessUiScope } from './main-runtime-contracts';
 import { getMainRuntimeContext } from './main-runtime-access';
+import { captureReportImportCommitGuard, type SynchronousImportCheck } from './report-import-commit-guard';
+import { captureReportSourceIdentity } from './report-parser-source';
+import { fingerprintLingxingCollectionAuthorityProof, type CollectionResumeClaim } from '@amazon-ai-ops/local-db';
+import type { LingxingCollectionJobSnapshot } from '@amazon-ai-ops/shared-types';
 
 export async function handleDownloadReport(dateRange: { start: string; end: string }): Promise<string> {
   throw new Error(
@@ -52,13 +56,14 @@ export function inferLingxingReportTypeFromLocalPath(filePath: string): Lingxing
   return undefined;
 }
 
-export function buildLocalBusinessReportBatch(
+export async function buildLocalBusinessReportBatch(
   scope: NormalizedBusinessUiScope,
   selectedPaths: string[],
   capsule: StoreCapsulePaths,
-): { batch: LingxingReportBatch; files: LingxingReportFile[] } {
+): Promise<{ batch: LingxingReportBatch; files: LingxingReportFile[] }> {
   const mainRuntimeContext = getMainRuntimeContext();
   const uniquePaths = Array.from(new Set(selectedPaths.map((item) => canonicalizeExistingPath(item)).filter(Boolean)));
+  if (uniquePaths.length > LINGXING_AD_REPORTS.length) throw new Error('REPORT_IMPORT_FILE_COUNT_LIMIT');
   const rejectedPaths = uniquePaths.filter((filePath) => !isExistingRawBusinessReportPath(filePath));
   if (rejectedPaths.length > 0) {
     throw new Error(`本地导入被阻断：以下文件不是可用的 .xlsx/.xls/.csv 原始广告表格：${rejectedPaths.map((item) => path.basename(item)).join('、')}`);
@@ -81,11 +86,12 @@ export function buildLocalBusinessReportBatch(
   const usedReportTypes = new Set<string>();
   const unknownFiles: string[] = [];
 
-  uniquePaths.forEach((sourcePath, index) => {
+  const parser = mainRuntimeContext.reportParserRuntime.createSession();
+  for (const [index, sourcePath] of uniquePaths.entries()) {
     const reportType = inferLingxingReportTypeFromLocalPath(sourcePath);
     if (!reportType) {
       unknownFiles.push(path.basename(sourcePath));
-      return;
+      continue;
     }
     if (usedReportTypes.has(reportType)) {
       throw new Error(`本地导入被阻断：${path.basename(sourcePath)} 与已选择文件重复对应 ${reportType}，每类报表当前只保留 1 个文件。`);
@@ -93,12 +99,15 @@ export function buildLocalBusinessReportBatch(
     usedReportTypes.add(reportType);
     const definition = LINGXING_AD_REPORTS.find((item) => item.type === reportType);
     const targetPath = path.join(downloadDir, safeLocalReportFileName(sourcePath, index));
-    fs.copyFileSync(sourcePath, targetPath);
-    const verification = verifyDownloadedFile(targetPath, {
+    const sourceSnapshot = parser.read(sourcePath);
+    try { fs.writeFileSync(targetPath, sourceSnapshot.bytes, { flag: 'wx' }); }
+    finally { parser.release(sourceSnapshot); }
+    const verification = await verifyDownloadedFileAsync(targetPath, {
       minBytes: 1,
       expectedDownloadDir: downloadDir,
       expectedReportType: reportType,
-    });
+    }, async (filePath, expectedType) => inspectReportRowsContent(await parser.preflight(filePath), expectedType));
+    mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(scope.storeContext);
     if (!verification.valid) {
       throw new Error(`本地导入被阻断：${path.basename(sourcePath)} 校验失败：${verification.errorMessage || '不是有效广告报表'}`);
     }
@@ -116,7 +125,7 @@ export function buildLocalBusinessReportBatch(
       createdAt: now,
       updatedAt: now,
     });
-  });
+  }
 
   if (unknownFiles.length > 0) {
     throw new Error(`本地导入被阻断：无法从文件名识别报表类型：${unknownFiles.join('、')}。请使用包含 campaign、ad_group、placement、advertised_product、auto_targeting、keyword、product_targeting、search_term，或中文报表名的文件名。`);
@@ -159,7 +168,7 @@ export function fileSizeOrZero(filePath: string): number {
 
 export function fileHashOrNull(filePath: string): string | null {
   try {
-    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    return captureReportSourceIdentity(filePath, REPORT_PARSE_HARD_LIMITS.maxInputBytes).sha256;
   } catch {
     return null;
   }
@@ -173,10 +182,30 @@ export function reportFileIndexKey(batchId: string, reportType: string, filePath
   ].join('|');
 }
 
-export function importStoreScopedLingxingDownloadedReportMetrics(result: LingxingBatchFilesResult, options: { startedAt?: string } = {}) {
+export function importStoreScopedLingxingDownloadedReportMetrics(result: LingxingBatchFilesResult,
+  options: { startedAt?: string; assertCurrent: SynchronousImportCheck; expectedJob?: LingxingCollectionJobSnapshot; expectedClaim?: CollectionResumeClaim }) {
+  result = structuredClone({ batch: result.batch, files: result.files });
+  options = { ...options, expectedJob: options.expectedJob && structuredClone(options.expectedJob),
+    expectedClaim: options.expectedClaim && structuredClone(options.expectedClaim) };
   const mainRuntimeContext = getMainRuntimeContext();
-  if (!mainRuntimeContext.state.lingxingImportRepo || !mainRuntimeContext.state.storeRepo) throw new Error('店铺级领星导入仓库尚未就绪。');
-  return importLingxingDownloadedReportMetrics(result, { repository: mainRuntimeContext.state.lingxingImportRepo, stores: mainRuntimeContext.state.storeRepo }, options);
+  const { db: database, lingxingImportRepo: repository, storeRepo: stores, configurationBus } = mainRuntimeContext.state;
+  if (!database || !repository || !stores || !configurationBus || !result.batch.storeId || typeof options?.assertCurrent !== 'function') throw new Error('REPORT_IMPORT_TRUSTED_CONTEXT_REQUIRED');
+  const parser = mainRuntimeContext.reportParserRuntime.createSession();
+  const guard = captureReportImportCommitGuard({ database, storeId: result.batch.storeId, batchId: result.batch.id,
+    jobId: options.expectedJob?.jobId, expectedJob: options.expectedJob, expectedClaim: options.expectedClaim,
+    readClaimProof: options.expectedClaim ? () => {
+      const proof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(result.batch.storeId!, options.expectedClaim!.requestId);
+      if (!proof) throw new Error('REPORT_IMPORT_CLAIM_PROOF_REQUIRED');
+      return fingerprintLingxingCollectionAuthorityProof(proof);
+    } : undefined,
+    assertAuthority: options.assertCurrent,
+    assertConnection: () => {
+      if (mainRuntimeContext.state.db !== database || mainRuntimeContext.state.lingxingImportRepo !== repository
+        || mainRuntimeContext.state.storeRepo !== stores || mainRuntimeContext.state.configurationBus !== configurationBus) throw new Error('REPORT_IMPORT_RUNTIME_CHANGED');
+    },
+    readSessionGeneration: () => configurationBus.get(`${mainRuntimeContext.STORE_SESSION_GENERATION_SETTING_PREFIX}${result.batch.storeId}`),
+  });
+  return importLingxingDownloadedReportMetrics(result, { repository, stores, parser, guard }, options);
 }
 
 export function loadLatestImportableLingxingBatchForScope(scope: NormalizedBusinessUiScope): LingxingBatchFilesResult | undefined {
@@ -244,7 +273,7 @@ export function loadLatestImportableLingxingBatchForScope(scope: NormalizedBusin
   };
 }
 
-export function backfillAdMetricsFromLatestBatchIfNeeded(scope: NormalizedBusinessUiScope) {
+export async function backfillAdMetricsFromLatestBatchIfNeeded(scope: NormalizedBusinessUiScope) {
   const mainRuntimeContext = getMainRuntimeContext();
   const existing = mainRuntimeContext.state.db?.prepare(`
     SELECT 1 FROM ad_daily_metrics
@@ -253,5 +282,7 @@ export function backfillAdMetricsFromLatestBatchIfNeeded(scope: NormalizedBusine
   `).get(scope.storeId, scope.dateFrom, scope.dateTo);
   if (existing) return undefined;
   const latestBatch = loadLatestImportableLingxingBatchForScope(scope);
-  return latestBatch ? importStoreScopedLingxingDownloadedReportMetrics(latestBatch) : undefined;
+  return latestBatch ? importStoreScopedLingxingDownloadedReportMetrics(latestBatch, {
+    assertCurrent: () => mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(scope.storeContext),
+  }) : undefined;
 }

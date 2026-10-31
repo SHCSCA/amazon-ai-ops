@@ -12,7 +12,7 @@ describe('真实公开UI接口与页签准备调用合同', () => {
     expect(Object.keys(ui)).toHaveLength(134);
     expect(ui.waitForNavigationIdle).toBeUndefined();
     expect(typeof ui.waitForWorkspaceSettled).toBe('function');
-    expect(registry.runnerSourcePaths).toHaveLength(113);
+    expect(registry.runnerSourcePaths).toHaveLength(114);
     const f = axModel(), events = [], records = [], snapshots = [], waits = [];
     const evaluate = f.page.evaluate.bind(f.page);
     f.page.evaluate = async (callback, request) => {

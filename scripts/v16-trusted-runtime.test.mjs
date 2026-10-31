@@ -11,6 +11,7 @@ import trusted from './v16-trusted-runtime.js';
 import business from './v16-native-business-adapters.js';
 import migration from './verify-s7-migration-backup-restore.js';
 import packageUi from './package-ui-evidence.js';
+import version from './current-app-version.js';
 import { nativeFixture } from './v16-native-test-fixture.mjs';
 
 const fixtures = [];
@@ -38,6 +39,27 @@ function envelope(f) {
     artifact: { ...raw, format: 'checks-json' }, result: { success: true, total: 7, passed: 7, failed: 0, skipped: 0 } });
 }
 describe('打包应用可信证据环境', () => {
+  it('当前版本正例统一绑定包元数据、产物路径和冻结身份', () => {
+    const f = setup(), packageVersion = version.currentAppVersion();
+    const metadata = JSON.parse(fs.readFileSync(path.join(f.current.appRoot, 'package.json'), 'utf8'));
+    const desktop = JSON.parse(fs.readFileSync(path.join(f.root, 'apps/desktop/package.json'), 'utf8'));
+    expect(metadata.version).toBe(packageVersion);
+    expect(desktop.version).toBe(packageVersion);
+    expect(f.identity.packageVersion).toBe(packageVersion);
+    expect(path.basename(f.current.paths.installer)).toBe(`AmazonAIOpsAgent-${packageVersion}.exe`);
+    expect(path.basename(f.current.paths.portable)).toBe(`AmazonAIOpsAgent-${packageVersion}-portable.exe`);
+    expect(path.basename(f.current.paths.zip)).toBe(`AmazonAIOpsAgent-${packageVersion}.zip`);
+    expect(f.verify().success).toBe(true);
+  });
+  it('历史版本包元数据不能冒充当前可信构建', () => {
+    const f = setup(), metadataPath = path.join(f.current.appRoot, 'package.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    expect(metadata.version).not.toBe('1.6.0');
+    fs.writeFileSync(metadataPath, JSON.stringify({ ...metadata, version: '1.6.0' }));
+    const result = f.verify();
+    expect(result).toMatchObject({ success: false, caseIds: [], inputArtifacts: [] });
+    expect(result.issues.join('|')).toContain('Packaged app package.json metadata does not match the expected desktop package');
+  });
   it('原生验证导入不读取开发机desktop源码metadata', () => {
     const script = [
       "const fs=require('node:fs');const read=fs.readFileSync;",

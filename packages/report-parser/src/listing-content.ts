@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as XLSX from 'xlsx';
 import type { ListingContent } from '@amazon-ai-ops/shared-types';
+import { firstReportDataRow, readBoundedReportFileBytes, readReportWorkbookBytes } from './report-workbook-reader';
+import { rejectReport, reportResourceBoundary, type ReportResourceOptions } from './report-resource-policy';
 
 export interface ParseListingContentOptions {
   fieldMappingsDir?: string;
@@ -20,15 +21,28 @@ const DEFAULT_FIELD_ALIASES: Record<string, string[]> = {
 export function parseListingContent(
   filePath: string,
   options: ParseListingContentOptions = {},
+  resource: ReportResourceOptions = {},
 ): ListingContent {
   if (!fs.existsSync(filePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
+  const { fieldMappingsDir, ...snapshot } = options;
+  return parseListingContentBytes(readBoundedReportFileBytes(filePath, resource), filePath,
+    { ...snapshot, fieldMapping: mergeAliases(loadMappingFromDir(fieldMappingsDir), options.fieldMapping) }, resource);
+}
+
+export function parseListingContentBytes(
+  bytes: Uint8Array, filePath: string, options: ParseListingContentOptions = {}, resource: ReportResourceOptions = {},
+): ListingContent {
+  return reportResourceBoundary(resource, () => parseListingBytesCore(bytes, filePath, options, resource));
+}
+
+function parseListingBytesCore(bytes: Uint8Array, filePath: string, options: ParseListingContentOptions, resource: ReportResourceOptions): ListingContent {
+  if (options.fieldMappingsDir !== undefined) rejectReport('listing-bytes-options', 'REPORT_PARSE_OPTIONS_INVALID');
+  const workbook = readReportWorkbookBytes(bytes, filePath, {}, resource);
   const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
-  const row = rows.find((item) => Object.values(item).some((value) => String(value ?? '').trim()));
+  const row = firstReportDataRow(worksheet, resource);
   if (!row) {
     throw new Error('Listing file has no data rows');
   }

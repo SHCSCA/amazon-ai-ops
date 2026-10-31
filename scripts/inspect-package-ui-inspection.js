@@ -220,13 +220,10 @@ function inspect(options, injected = {}) {
     const profileDatabasePath = path.join(profileRoot, 'amazon-ai-ops.db');
     const protectedIdentity = stableFileRead(options['protected-db'], 'Protected database', 'PROTECTED_DB_INVALID');
     const profileIdentity = stableFileRead(profileDatabasePath, 'Isolated profile database', 'PROFILE_DATABASE_INVALID');
-    if (
-      samePath(protectedIdentity.file.path, profileIdentity.file.path)
-      || (
-        protectedIdentity.stat.dev === profileIdentity.stat.dev
-        && protectedIdentity.stat.ino === profileIdentity.stat.ino
-      )
-    ) fail('PROFILE_DATABASE_NOT_ISOLATED', 'Isolated profile database is the protected authority database.');
+    // Number文件编号可能舍入重合；精确身份及双向硬链接仍由下方原生端口强制核验。
+    if (samePath(protectedIdentity.file.path, profileIdentity.file.path)) {
+      fail('PROFILE_DATABASE_NOT_ISOLATED', 'Isolated profile database is the protected authority database.');
+    }
     if (!logicalMatches(
       metadata.genesisProfileState.logicalDatabase,
       metadata.protectedDatabaseLogical,

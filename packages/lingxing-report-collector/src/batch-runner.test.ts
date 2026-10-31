@@ -1,6 +1,8 @@
 // 按证据职责拆分共享夹具与断言，保留原有完整测试名称。
 import { type LingxingInPlaceResumeState, type LingxingReportDefinition, type RunBatchOptions, describe, expect, fs, it, normalizeStoreContextEnvelope, os, path, runLingxingReportBatch } from './batch-runner-test-environment';
 import { createThreeOfEightResumeFixture, createdOutcome, downloadExistingTestBatch, runTestBatch, writeSemanticReportFixture } from './batch-runner-test-fixture';
+import { inspectReportFileContent, type ReportContentInspector } from './report-file-inspector';
+const isolatedReportContentInspector: ReportContentInspector = async (filePath, reportType) => inspectReportFileContent(filePath, reportType);
 describe('runLingxingReportBatch', () => {
 it('records all report files and writes a manifest', async () => {
     const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-'));
@@ -586,6 +588,7 @@ it('resumes the same full-eight job in place and performs zero browser work for 
         storeContext: resumeFrom.request.storeContext,
         executionStoreContext,
         progressEventNamespace: 'attempt-in-place-1',
+        reportContentInspector: isolatedReportContentInspector,
         storeDisplayName: resumeFrom.batch.storeName ?? 'SHC001 · 美国站',
         dateStart: resumeFrom.request.dateStart,
         dateEnd: resumeFrom.request.dateEnd,
@@ -678,6 +681,7 @@ it('honors a durable attemptIndex 3 without a retry downgrade and preserves prio
         storeContext: resumeWithAttemptThree.request.storeContext,
         executionStoreContext: resumeWithAttemptThree.request.storeContext,
         progressEventNamespace: 'attempt-index-three',
+        reportContentInspector: isolatedReportContentInspector,
         storeDisplayName: resumeWithAttemptThree.batch.storeName ?? 'SHC001 · 美国站',
         dateStart: resumeWithAttemptThree.request.dateStart,
         dateEnd: resumeWithAttemptThree.request.dateEnd,
@@ -764,6 +768,7 @@ it('finishes untouched queued reports without recreating a reconciled-absent rep
     };
     const createdTypes: string[] = [];
     const options = {
+        reportContentInspector: isolatedReportContentInspector,
         requestId: resumeFrom.request.requestId,
         storeContext: resumeFrom.request.storeContext,
         executionStoreContext: resumeFrom.request.storeContext,
@@ -824,6 +829,7 @@ it('rejects a tampered downloaded resume file before the first browser action', 
         storeContext: resumeFrom.request.storeContext,
         executionStoreContext: resumeFrom.request.storeContext,
         progressEventNamespace: 'attempt-tampered',
+        reportContentInspector: isolatedReportContentInspector,
         storeDisplayName: resumeFrom.batch.storeName ?? 'SHC001 · 美国站',
         dateStart: resumeFrom.request.dateStart,
         dateEnd: resumeFrom.request.dateEnd,

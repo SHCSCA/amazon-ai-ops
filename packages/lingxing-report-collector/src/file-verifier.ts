@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { LingxingReportType } from '@amazon-ai-ops/shared-types';
+import { createRuntimeLogRecord, type LingxingReportType } from '@amazon-ai-ops/shared-types';
 import { analyzeFilenameDateRange, filenameDateRangeAnalysisSummary } from './filename-date-range';
-import { inspectReportFileContent } from './report-file-inspector';
+import { inspectReportFileContent, type ReportContentInspection, type ReportContentInspector } from './report-file-inspector';
 
 export interface FileVerificationResult {
   valid: boolean;
   fileSizeBytes: number;
   errorMessage?: string;
+  readonly failure?: unknown;
 }
 
 export interface DownloadedFileVerificationOptions {
@@ -16,6 +17,7 @@ export interface DownloadedFileVerificationOptions {
   expectedDateRange?: { start: string; end: string };
   expectedDownloadDir?: string;
   expectedReportType?: LingxingReportType;
+  expectedFileSizeBytes?: number;
 }
 
 const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|trace|evidence|acceptance|batch-result|downloaded-report-files|failure)/i;
@@ -31,10 +33,12 @@ function isPathInsideDirectory(candidatePath: string, parentDir: string): boolea
   }
 }
 
-export function verifyDownloadedFile(
+function verifyDownloadedFileInternal(
   filePath: string,
   minBytesOrOptions: number | DownloadedFileVerificationOptions = 128,
   expectedFilenameKeyword?: string,
+  suppliedInspection?: ReportContentInspection,
+  metadataOnly = false,
 ): FileVerificationResult {
   const options: DownloadedFileVerificationOptions = typeof minBytesOrOptions === 'number'
     ? { minBytes: minBytesOrOptions, expectedFilenameKeyword }
@@ -46,6 +50,9 @@ export function verifyDownloadedFile(
   }
 
   const stat = fs.statSync(filePath);
+  if (options.expectedFileSizeBytes !== undefined && stat.size !== options.expectedFileSizeBytes) {
+    return { valid: false, fileSizeBytes: stat.size, errorMessage: 'downloaded resume file size no longer matches durable verification metadata' };
+  }
   const extension = path.extname(filePath).toLowerCase();
   if (!['.csv', '.xls', '.xlsx'].includes(extension)) {
     return { valid: false, fileSizeBytes: stat.size, errorMessage: '文件类型不是 CSV/XLS/XLSX 报表' };
@@ -82,8 +89,8 @@ export function verifyDownloadedFile(
     return { valid: false, fileSizeBytes: stat.size, errorMessage: '文件过小，可能下载失败' };
   }
 
-  if (options.expectedReportType) {
-    const inspection = inspectReportFileContent(filePath, options.expectedReportType);
+  if (options.expectedReportType && !metadataOnly) {
+    const inspection = suppliedInspection ?? inspectReportFileContent(filePath, options.expectedReportType);
     if (!inspection.matched) {
       const reason = inspection.readable
         ? '文件内容表头也无法识别为对应报表（声明类型必须由列语义唯一确认）'
@@ -95,11 +102,42 @@ export function verifyDownloadedFile(
       };
     }
   } else if (
-    options.expectedFilenameKeyword
+    !options.expectedReportType && options.expectedFilenameKeyword
     && !basename.toLowerCase().includes(options.expectedFilenameKeyword.toLowerCase())
   ) {
     return { valid: false, fileSizeBytes: stat.size, errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}` };
   }
 
   return { valid: true, fileSizeBytes: stat.size };
+}
+
+export function verifyDownloadedFile(filePath: string, options: number | DownloadedFileVerificationOptions = 128, expectedFilenameKeyword?: string): FileVerificationResult {
+  return verifyDownloadedFileInternal(filePath, options, expectedFilenameKeyword);
+}
+
+export async function verifyDownloadedFileAsync(
+  filePath: string, options: DownloadedFileVerificationOptions, inspector: ReportContentInspector,
+): Promise<FileVerificationResult> {
+  let fileSizeBytes = 0;
+  try {
+    if (typeof inspector !== 'function') throw new Error('REPORT_CONTENT_INSPECTOR_REQUIRED');
+    const snapshot = structuredClone(options);
+    const metadata = verifyDownloadedFileInternal(filePath, snapshot, undefined, undefined, true);
+    fileSizeBytes = metadata.fileSizeBytes;
+    if (!metadata.valid || !snapshot.expectedReportType) return metadata;
+    const before = fs.statSync(filePath, { bigint: true });
+    const inspection = await inspector(filePath, snapshot.expectedReportType);
+    const after = fs.statSync(filePath, { bigint: true });
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs) {
+      throw new Error('REPORT_SOURCE_CHANGED');
+    }
+    return verifyDownloadedFileInternal(filePath, snapshot, undefined, inspection);
+  } catch (error) {
+    try { console.error(JSON.stringify(createRuntimeLogRecord('error', 'report.preflight_rejected', { stage: 'async-inspection' }))); }
+    catch (loggingError) { throw new AggregateError([error, loggingError], '报表预检与错误记录失败。', { cause: error }); }
+    const result: FileVerificationResult = { valid: false, fileSizeBytes, errorMessage: '报表预检失败或文件发生变化，请重新导出。' };
+    // 首错保留在 Main 内，不通过结果序列化泄露路径或报表内容。
+    Object.defineProperty(result, 'failure', { value: error, enumerable: false });
+    return result;
+  }
 }

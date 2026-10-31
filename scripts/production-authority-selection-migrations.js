@@ -1,51 +1,13 @@
 // 按职责复用原有严格校验，公共入口继续保持兼容。
 const fs = require('node:fs');
 const path = require('node:path');
-const { REQUIRED_TABLES, ROOT, TARGET_MIGRATION_VERSION, fail } = require('./production-authority-selection-contracts.js');
+const { REQUIRED_TABLES, ROOT, getTargetMigrationVersion, fail } = require('./production-authority-selection-contracts.js');
 const { inspectStoreProviderIdentityV11Schema } = require('./production-authority-selection-schema.js');
 
-function readMigrationMetadataSource(filePath, visited = new Set()) {
-    const absolute = path.resolve(filePath);
-    if (visited.has(absolute.toLowerCase()))
-        fail('Migration metadata re-export cycle: ' + absolute);
-    const stat = fs.lstatSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || fs.realpathSync.native(absolute).toLowerCase() !== absolute.toLowerCase())
-        fail('Migration metadata source is not a direct unique file: ' + absolute);
-    const next = new Set([...visited, absolute.toLowerCase()]);
-    const source = fs.readFileSync(absolute, 'utf8');
-    const references = [...source.matchAll(/export\s*\{([\s\S]*?)\}\s*from\s*['"]([^'"]+)['"]/g)]
-        .filter(match => /\b[A-Z0-9_]+_MIGRATION_(?:VERSION|NAME|CHECKSUM)\b/.test(match[1]));
-    return [source, ...references.map(match => {
-            if (!/^\.\/[a-zA-Z0-9_-]+$/.test(match[2]))
-                fail('Migration metadata re-export must remain in its source directory.');
-            return readMigrationMetadataSource(path.join(path.dirname(absolute), match[2] + '.ts'), next);
-        })].join('\n');
-}
+const { getMigrationPlan, readMigrationMetadataSource } = require('./migration-contract-source');
 
 function migrationContract(migrationsRoot = path.join(ROOT, 'packages', 'local-db', 'src', 'sqlite', 'migrations')) {
-    const rows = [];
-    for (const fileName of fs.readdirSync(migrationsRoot)
-        .filter((name) => /^\d{4}-.*\.ts$/.test(name) && !name.endsWith('.test.ts'))
-        .sort()) {
-        const source = readMigrationMetadataSource(path.join(migrationsRoot, fileName));
-        const version = source.match(/export const ([A-Z0-9_]+)_MIGRATION_VERSION = (\d+);/);
-        const name = source.match(new RegExp(`export const ${version?.[1]}_MIGRATION_NAME\\s*=\\s*'([^']+)';`));
-        const checksums = [...source.matchAll(new RegExp(`export const ${version?.[1]}_MIGRATION_CHECKSUM\\s*=\\s*'([^']+)';`, 'g'))];
-        if (!version || !name || checksums.length !== 1) {
-            fail(`Could not read the production migration contract from ${fileName}.`);
-        }
-        rows.push({
-            version: Number(version[2]),
-            name: name[1],
-            checksum: checksums[0][1],
-        });
-    }
-    rows.sort((left, right) => left.version - right.version);
-    if (rows.length !== TARGET_MIGRATION_VERSION
-        || rows.some((row, index) => row.version !== index + 1)) {
-        fail(`Production migration contract must contain versions 1..${TARGET_MIGRATION_VERSION}.`);
-    }
-    return rows;
+    return getMigrationPlan({ migrationsRoot, targetVersion: getTargetMigrationVersion() }).migrations;
 }
 
 function legacyV1Checksum(migrationsRoot = path.join(ROOT, 'packages', 'local-db', 'src', 'sqlite', 'migrations')) {
@@ -91,7 +53,7 @@ function migrationInspection(database, tables, contract = migrationContract()) {
             appliedVersions: [],
             highestVersion: 0,
             highestAppliedVersion: 0,
-            targetVersion: TARGET_MIGRATION_VERSION,
+            targetVersion: contract.at(-1)?.version,
             targetReady: false,
         };
     }
@@ -108,7 +70,7 @@ function migrationInspection(database, tables, contract = migrationContract()) {
             appliedVersions: [],
             highestVersion: null,
             highestAppliedVersion: null,
-            targetVersion: TARGET_MIGRATION_VERSION,
+            targetVersion: contract.at(-1)?.version,
             targetReady: false,
         };
     }
@@ -140,7 +102,7 @@ function migrationInspection(database, tables, contract = migrationContract()) {
             highestVersion: null,
             highestAppliedVersion: null,
             invalidVersionCount,
-            targetVersion: TARGET_MIGRATION_VERSION,
+            targetVersion: contract.at(-1)?.version,
             targetReady: false,
         };
     }
@@ -193,7 +155,7 @@ function migrationInspection(database, tables, contract = migrationContract()) {
         appliedVersions,
         highestVersion: recordedVersions.at(-1) ?? 0,
         highestAppliedVersion: appliedVersions.at(-1) ?? 0,
-        targetVersion: TARGET_MIGRATION_VERSION,
+        targetVersion: contract.at(-1)?.version,
         targetReady,
         duplicateVersions,
         extraVersions,

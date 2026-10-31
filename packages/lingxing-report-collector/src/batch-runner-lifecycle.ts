@@ -2,11 +2,11 @@
 import * as path from 'path';
 import { normalizeStoreContextEnvelope, type LingxingCollectionExternalStep, type LingxingCollectionGuardContext, type LingxingCollectionGuardDecision, type LingxingCollectionJobSnapshot, type LingxingCollectionProgressEvent, type LingxingCollectionReportCheckpoint, type LingxingCollectionReportState, type LingxingCollectionRequestDto, type LingxingCollectionResumeState, type LingxingCreateReportOutcome, type LingxingCreatedReportIdentity, type LingxingReportBatch, type LingxingReportDefinition, type LingxingReportFile, type LingxingReportType, type StoreContextEnvelope, } from '@amazon-ai-ops/shared-types';
 import { DownloadCenterPage, type DownloadCenterAutomationPort } from './download-center-page';
-import { verifyDownloadedFile } from './file-verifier';
+import { verifyDownloadedFileAsync } from './file-verifier';
 import { writeManifest } from './manifest';
 import { type RunBatchOptions, type RunBatchResult, type ReportDownloadMode, type MutableCollectionJob, GuardBlockedError, UnknownCreateOutcomeError, ProgressPersistenceError, KnownNotCreatedError } from './batch-runner-contracts';
 import { validateRequestId, stableStoreContextKey, validateStoreDisplayName, validateDateRange, selectReports, errorMessage, pathFreeDetail, legacyStatusForState, normalizeBlockerCode, createOutcomeError } from './batch-runner-values';
-import { validateResumeState, isReconciledCreateFailure } from './batch-runner-resume';
+import { validateResumeStateAsync, isReconciledCreateFailure } from './batch-runner-resume';
 import { stamp, isoNow, isoAfter } from './batch-runner-clock';
 import { snapshotJob, cloneCreatedIdentity, cloneReportFile, normalizeCreatedIdentity } from './batch-runner-snapshots';
 
@@ -19,6 +19,7 @@ export async function downloadExistingLingxingReportBatch(options: RunBatchOptio
 }
 
 export async function runLingxingReportBatchInternal(options: RunBatchOptions, mode: ReportDownloadMode): Promise<RunBatchResult> {
+    if (typeof options.reportContentInspector !== 'function') throw new Error('REPORT_CONTENT_INSPECTOR_REQUIRED');
     const requestId = validateRequestId(options.requestId);
     const storeContext = Object.freeze({ ...normalizeStoreContextEnvelope(options.storeContext) });
     const executionStoreContext = Object.freeze({
@@ -54,7 +55,7 @@ export async function runLingxingReportBatchInternal(options: RunBatchOptions, m
         mode,
         reportTypes: Object.freeze(selectedReports.map((report) => report.type)),
     });
-    const validatedResume = validateResumeState(options.resumeFrom, request, maxRetries, options.rootDownloadDir, options.deferReconciledCreateFailures === true);
+    const validatedResume = await validateResumeStateAsync(options.reportContentInspector, options.resumeFrom, request, maxRetries, options.rootDownloadDir, options.deferReconciledCreateFailures === true);
     const resumeCheckpoints = validatedResume.checkpoints;
     const batchId = options.resumeFrom?.jobId ?? `batch_${stamp()}`;
     const downloadDir = validatedResume.inPlace?.batch.downloadDir ?? path.join(options.rootDownloadDir, 'lingxing-ad-reports', `${options.dateStart}_${options.dateEnd}`, batchId);
@@ -271,17 +272,18 @@ export async function runLingxingReportBatchInternal(options: RunBatchOptions, m
                 file.filePath = filePath;
                 await updateReport(checkpoint, file, 'verifying', '正在校验报表类型、日期、路径和文件大小。', 'verify');
                 await guardExternalStep('verify', report.type, attempt, createdReportIdentity);
-                const verification = verifyDownloadedFile(filePath, {
+                const verification = await verifyDownloadedFileAsync(filePath, {
                     minBytes: 128,
                     expectedFilenameKeyword: report.expectedFilenameKeyword,
                     expectedDateRange: { start: options.dateStart, end: options.dateEnd },
                     expectedDownloadDir: downloadDir,
                     expectedReportType: report.type,
-                });
+                }, options.reportContentInspector);
+                await guardExternalStep('verify', report.type, attempt, createdReportIdentity);
                 file.fileSizeBytes = verification.fileSizeBytes;
                 checkpoint.fileSizeBytes = verification.fileSizeBytes;
                 if (!verification.valid) {
-                    throw new Error(verification.errorMessage || 'Downloaded file verification failed');
+                    throw new Error(verification.errorMessage || 'Downloaded file verification failed', { cause: verification.failure });
                 }
                 if (traceStarted) {
                     await guardExternalStep('stop_trace', report.type, attempt, createdReportIdentity);

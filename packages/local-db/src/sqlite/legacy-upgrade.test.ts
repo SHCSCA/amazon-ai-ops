@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initSqlite } from './db';
+import { initSqlite, SQLITE_MIGRATION_CONTRACT, SQLITE_SCHEMA_VERSION } from './db';
 import {
   ANALYSIS_RUNS_TABLES, V16_DOMAIN_TABLES, POLICY_AUTHORITY_TABLES,
   EXECUTION_AUTHORITY_TABLES,
@@ -28,7 +28,7 @@ afterEach(() => {
   }
 });
 
-describe('representative legacy database upgrade to migration 20', () => {
+describe('representative legacy database upgrade to the current migration', () => {
   it('classifies every source record once without adding current authority or copying private settings', () => {
     const filename = createRepresentativeV7Fixture();
     const source = new Database(filename);
@@ -76,16 +76,16 @@ describe('representative legacy database upgrade to migration 20', () => {
       expect(() => runLegacyCompatibilityMigration(database)).toThrow(/schema mismatch/);
     } finally { database.close(); }
   });
-  it('preserves v7 business rows and binds one restorable pre-v20 snapshot for migrations 8 through 20', () => {
+  it('preserves v7 business rows and binds one restorable snapshot for the complete current migration chain', () => {
     const databasePath = createRepresentativeV7Fixture();
 
     const upgraded = initSqlite(databasePath);
     let upgradeBackup: UpgradeBackupManifest;
     try {
       expect(upgraded.prepare(`
-        SELECT version, status FROM schema_migrations ORDER BY version
-      `).all()).toEqual(Array.from({ length: 20 }, (_, index) => ({
-        version: index + 1,
+        SELECT version, name, checksum, status FROM schema_migrations ORDER BY version
+      `).all()).toEqual(SQLITE_MIGRATION_CONTRACT.map(migration => ({
+        ...migration,
         status: 'applied',
       })));
       expect(upgraded.prepare(`SELECT value FROM app_settings WHERE key = 'legacy-business-sentinel'`).get())
@@ -102,7 +102,7 @@ describe('representative legacy database upgrade to migration 20', () => {
       expect(upgradeBackup).toMatchObject({
         status: 'created',
         sourceVersion: 7,
-        targetVersion: 20,
+        targetVersion: SQLITE_SCHEMA_VERSION,
         integrityCheck: 'ok',
         backupIntegrityCheck: 'ok',
       });
@@ -110,16 +110,16 @@ describe('representative legacy database upgrade to migration 20', () => {
       expect(upgradeBackup.tableRowCounts.products).toBeGreaterThanOrEqual(1);
 
       const repository = new StoreRepository(upgraded);
-      expect(repository.getMigrationRecoveryPreflight(20)).toMatchObject({
+      expect(repository.getMigrationRecoveryPreflight(SQLITE_SCHEMA_VERSION)).toMatchObject({
         canRestore: true,
         sourceVersion: 7,
-        targetVersion: 20,
+        targetVersion: SQLITE_SCHEMA_VERSION,
         schemaFingerprintMatches: true,
         tableRowCountsMatch: true,
       });
-      const restoredPath = path.join(path.dirname(databasePath), 'restored-pre-v20.db');
-      expect(repository.restoreMigrationBackupTo(restoredPath, 20)).toMatchObject({
-        version: 20,
+      const restoredPath = path.join(path.dirname(databasePath), `restored-pre-v${SQLITE_SCHEMA_VERSION}.db`);
+      expect(repository.restoreMigrationBackupTo(restoredPath, SQLITE_SCHEMA_VERSION)).toMatchObject({
+        version: SQLITE_SCHEMA_VERSION,
         destinationPath: path.resolve(restoredPath),
         integrityCheck: 'ok',
       });
@@ -147,17 +147,21 @@ describe('representative legacy database upgrade to migration 20', () => {
     expect(fs.existsSync(upgradeBackup!.manifestPath!)).toBe(true);
   });
 
-  it('reuses the same bound snapshot after a recorded interrupted v20 attempt', () => {
+  it('reuses the bound current-target snapshot after a recorded interruption at migration 20', () => {
     const databasePath = createRepresentativeV7Fixture();
     const interrupted = new Database(databasePath);
+    let originalBackup: UpgradeBackupManifest;
     interrupted.pragma('journal_mode = WAL');
     interrupted.pragma('foreign_keys = ON');
     try {
+      // 备份绑定当前完整链目标，中断记录仍保留第 20 步身份。
+      const target = SQLITE_MIGRATION_CONTRACT.at(-1)!;
       const backup = prepareUpgradeBackup(interrupted, {
-        targetVersion: AI_SPEND_MIGRATION_VERSION,
-        targetName: AI_SPEND_MIGRATION_NAME,
-        targetChecksum: AI_SPEND_MIGRATION_CHECKSUM,
+        targetVersion: target.version,
+        targetName: target.name,
+        targetChecksum: target.checksum,
       });
+      originalBackup = backup;
       interrupted.prepare(`
         INSERT INTO schema_migrations (
           version, name, checksum, status, started_at, applied_at,
@@ -168,7 +172,7 @@ describe('representative legacy database upgrade to migration 20', () => {
         AI_SPEND_MIGRATION_CHECKSUM,
         '2026-07-27T00:00:00.000Z',
         JSON.stringify({
-          version: 20,
+          version: AI_SPEND_MIGRATION_VERSION,
           name: AI_SPEND_MIGRATION_NAME,
           checksum: AI_SPEND_MIGRATION_CHECKSUM,
           startedAt: '2026-07-27T00:00:00.000Z',
@@ -188,6 +192,11 @@ describe('representative legacy database upgrade to migration 20', () => {
       expect(row.status).toBe('applied');
       expect(manifest.upgradeBackup.status).toBe('reused');
       expect(manifest.upgradeBackup.sourceVersion).toBe(7);
+      expect(manifest.upgradeBackup).toMatchObject({
+        backupPath: originalBackup!.backupPath,
+        sha256: originalBackup!.sha256,
+        targetVersion: SQLITE_SCHEMA_VERSION,
+      });
       expect(recovered.prepare(`SELECT value FROM app_settings WHERE key = 'legacy-business-sentinel'`).get())
         .toEqual({ value: 'preserve-after-v8' });
     } finally {
@@ -232,7 +241,12 @@ function createRepresentativeV7Fixture(): string {
       ALTER TABLE store_connections DROP COLUMN normalized_collection_store_name;
       ALTER TABLE store_connections DROP COLUMN collection_store_name;
       ALTER TABLE store_connections DROP COLUMN normalized_external_account_id;
+      ALTER TABLE ad_daily_metrics DROP COLUMN source_asin;
+      ALTER TABLE ad_daily_metrics DROP COLUMN source_metric_mask;
     `);
+    // 隔离 v7 夹具不能保留当前版本新增的来源列。
+    expect((current.pragma('table_info(ad_daily_metrics)') as Array<{ name: string }>)
+      .filter(column => ['source_asin', 'source_metric_mask'].includes(column.name))).toEqual([]);
     current.prepare(`DELETE FROM schema_migrations WHERE version >= 8`).run();
     current.prepare(`
       INSERT INTO app_settings (key, value, updated_at)

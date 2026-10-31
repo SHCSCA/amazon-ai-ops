@@ -6,9 +6,11 @@ import { pathToFileURL } from 'node:url';
 import native from './v16-native-artifacts.js';
 import ui from './package-ui-evidence.js';
 import security from './smoke-package-security-boundaries.js';
+import version from './current-app-version.js';
 
 // 仅供校验器测试，不能生成正式验收证据。
 export function nativeFixture() {
+  const packageVersion = version.currentAppVersion();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'v16-native-fixture-'));
   const now = Date.now() - 10000, generatedAt = new Date(now + 1000).toISOString();
   const execution = { startedAt: new Date(now).toISOString(), finishedAt: new Date(now + 9000).toISOString(), exitCode: 0 };
@@ -27,15 +29,15 @@ export function nativeFixture() {
   const bundle = Object.fromEntries(Object.entries({ 'main/index.js': main, 'preload/index.js': 'preload', 'preload/index.cjs': 'preload', 'renderer/index.html': '<main>fixture</main>' }).map(([name, content]) => [name, write(`${app}/dist/${name}`, content).sha256]));
   const sqlite = write(`${app}/node_modules/better-sqlite3/build/Release/better_sqlite3.node`, 'fixture-sqlite');
   const duckdb = write(`${app}/node_modules/duckdb/lib/binding/duckdb.node`, 'fixture-duckdb');
-  write(`${app}/package.json`, JSON.stringify({ name: '@amazon-ai-ops/desktop', version: '1.6.0', main: 'dist/main/index.js' }));
-  write('apps/desktop/package.json', JSON.stringify({ name: '@amazon-ai-ops/desktop', version: '1.6.0', main: 'dist/main/index.js' }));
+  write(`${app}/package.json`, JSON.stringify({ name: '@amazon-ai-ops/desktop', version: packageVersion, main: 'dist/main/index.js' }));
+  write('apps/desktop/package.json', JSON.stringify({ name: '@amazon-ai-ops/desktop', version: packageVersion, main: 'dist/main/index.js' }));
   write(`${app}/playwright-browsers/chrome-win64/chrome.exe`, 'fixture-browser');
   write('packages/local-db/src/sqlite/repositories/settings-repo.ts', "this.set('login_credentials_encrypted', value)");
   write('packages/local-db/src/sqlite/db.ts', 'new Database(finalPath)');
   for (const name of ['db-migration-contract', 'db-migration-runner', 'db-metric-identity', 'db-columns']) write(`packages/local-db/src/sqlite/${name}.ts`, 'export {}');
   const exe = write('apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe', 'fixture-current-exe');
-  const artifacts = Object.fromEntries(['installer', 'portable', 'zip'].map((key, i) => [key, write(`apps/desktop/release/AmazonAIOpsAgent-1.6.0${i === 1 ? '-portable' : ''}.${i === 2 ? 'zip' : 'exe'}`, `fixture-${key}`)]));
-  const identity = { sourceRevision: 'a'.repeat(40), sourceSha256: 'b'.repeat(64), packageVersion: '1.6.0', packageHashes: { ...Object.fromEntries(Object.entries(artifacts).map(([key, record]) => [key, record.sha256])), mainBundle: bundle['main/index.js'], appContent: ui.buildAppContentManifest(path.join(root, app)).sha256 } };
+  const artifacts = Object.fromEntries(['installer', 'portable', 'zip'].map((key, i) => [key, write(`apps/desktop/release/AmazonAIOpsAgent-${packageVersion}${i === 1 ? '-portable' : ''}.${i === 2 ? 'zip' : 'exe'}`, `fixture-${key}`)]));
+  const identity = { sourceRevision: 'a'.repeat(40), sourceSha256: 'b'.repeat(64), packageVersion, packageHashes: { ...Object.fromEntries(Object.entries(artifacts).map(([key, record]) => [key, record.sha256])), mainBundle: bundle['main/index.js'], appContent: ui.buildAppContentManifest(path.join(root, app)).sha256 } };
   const current = native.currentPackage(root, identity);
   const profile = path.join(root, 'amazon-ai-ops-runtime-validation/fixture-run');
   const runtime = kind => ({

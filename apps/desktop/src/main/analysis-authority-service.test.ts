@@ -52,7 +52,14 @@ describe('AnalysisAuthorityService', () => {
       ALTER TABLE analysis_action_batches DROP COLUMN authority_json;
       ALTER TABLE decisions DROP COLUMN authority_json;
       ALTER TABLE mission_grants DROP COLUMN authority_json;
+      ALTER TABLE ad_daily_metrics DROP COLUMN source_asin;
+      ALTER TABLE ad_daily_metrics DROP COLUMN source_metric_mask;
       DELETE FROM schema_migrations WHERE version>=17;`);
+    // 隔离夹具同时还原历史结构与账本，避免保留后续来源列。
+    expect((legacy.pragma('table_info(ad_daily_metrics)') as Array<{ name: string }>)
+      .filter(column => ['source_asin', 'source_metric_mask'].includes(column.name))).toEqual([]);
+    expect(legacy.prepare("SELECT MAX(version) AS version FROM schema_migrations WHERE status='applied'").get())
+      .toEqual({ version: 16 });
     legacy.close();
     const upgraded = initSqlite(legacyPath); databases.push(upgraded);
     const repository = new MissionDomainRepository(upgraded, { now: () => new Date(NOW) });

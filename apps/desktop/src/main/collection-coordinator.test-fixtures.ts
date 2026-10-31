@@ -248,7 +248,8 @@ export function harness(options: {
       claimedAt: claim?.claimedAt ?? '2026-07-22T07:59:30.000Z',
     };
   };
-  const importResult = vi.fn(async () => ({ inserted: 12 }));
+  const importResult = vi.fn(async (_result: RunBatchResult,
+    _options: { startedAt: string; assertBeforeCommit?: () => void; expectedClaim?: CollectionResumeClaim }) => ({ inserted: 12 }));
   const receiptFor = (
     claim: CollectionResumeClaim,
     outcome: CollectionResumeAttemptReceipt['outcome'],

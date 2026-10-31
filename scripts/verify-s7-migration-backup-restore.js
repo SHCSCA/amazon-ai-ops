@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  TARGET_VERSION,
+  getTargetVersion,
   collectRowCounts,
   evaluateBusinessRowPreservation,
   loadLocalDbRuntime,
@@ -35,6 +35,7 @@ function parseS7VerifierArgs(argv) {
 }
 
 function verifyS7MigrationBackupRestore(manifestPath, trustedRuntime) {
+  const TARGET_VERSION = trustedRuntime ? trustedRuntime.migrationContract?.at(-1)?.version : getTargetVersion();
   const absoluteManifestPath = path.resolve(manifestPath);
   assertRegularFile(absoluteManifestPath, 'S7 migration manifest');
   const manifest = JSON.parse(fs.readFileSync(absoluteManifestPath, 'utf8'));

@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
-const { TARGET_VERSION } = require('./migrate-current-user-db');
+const { getMigrationPlan } = require('./migration-contract-source');
 
 
 const ROOT = path.resolve(__dirname, '..');
@@ -13,7 +13,7 @@ const KIND = 'production-authority-selection-preflight';
 
 const SCHEMA_VERSION = 'production-authority-selection-preflight/v1';
 
-const TARGET_MIGRATION_VERSION = TARGET_VERSION;
+function getTargetMigrationVersion() { return getMigrationPlan().targetVersion; }
 
 const PACKAGED_APP_NAME = '@amazon-ai-ops/desktop';
 
@@ -277,4 +277,6 @@ function canonicalSql(value) {
     return output.trim().replace(/;$/, '').trimEnd();
 }
 
-module.exports = { fail, normalizedPath, samePath, assertCleanAbsolutePath, assertExpectedSha256, entryExists, canonicalSql, ROOT, requireFromLocalDb, KIND, SCHEMA_VERSION, TARGET_MIGRATION_VERSION, PACKAGED_APP_NAME, SIDECAR_SUFFIXES, REQUIRED_TABLES, V11_STORE_PROVIDER_IDENTITY_COLUMNS, V11_STORE_PROVIDER_IDENTITY_INDEX, V11_STORE_PROVIDER_IDENTITY_TRIGGERS, V11_STORE_PROVIDER_IDENTITY_ROW_INVARIANTS, SINGLE_VALUE_OPTIONS };
+module.exports = { fail, normalizedPath, samePath, assertCleanAbsolutePath, assertExpectedSha256, entryExists, canonicalSql, ROOT, requireFromLocalDb, KIND, SCHEMA_VERSION, getTargetMigrationVersion, PACKAGED_APP_NAME, SIDECAR_SUFFIXES, REQUIRED_TABLES, V11_STORE_PROVIDER_IDENTITY_COLUMNS, V11_STORE_PROVIDER_IDENTITY_INDEX, V11_STORE_PROVIDER_IDENTITY_TRIGGERS, V11_STORE_PROVIDER_IDENTITY_ROW_INVARIANTS, SINGLE_VALUE_OPTIONS };
+
+Object.defineProperty(module.exports, 'TARGET_MIGRATION_VERSION', { enumerable: true, get: getTargetMigrationVersion });

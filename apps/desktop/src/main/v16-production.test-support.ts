@@ -5,7 +5,7 @@ import { BrowserLeaseManager, deriveStoreCapsulePaths, ensureStoreCapsulePaths }
 import { AiCallLogRepository, ExecutionAuthorityRepository } from '@amazon-ai-ops/local-db';
 import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { V16_API_VERSION, type V16Result } from '@amazon-ai-ops/shared-types/src/v16-api';
-import { createHarness, NOW } from './analysis-authority.test-support';
+import { createHarness, createHarnessAsync, type Harness, NOW } from './analysis-authority.test-support';
 import { FakeExecutionPage } from './execution-browser.test-support';
 import { MissionDomainService } from './mission-domain-service';
 import { ExecutionAuthorityService } from './execution-authority-service';
@@ -15,6 +15,14 @@ export function workflow(mode: 'manual_approval' | 'policy_auto' = 'manual_appro
   importReports?: NonNullable<Parameters<typeof createHarness>[0]>['importReports'],
   options: Pick<NonNullable<Parameters<typeof createHarness>[0]>, 'now' | 'reportDateEnd'> = {}) {
   const h = createHarness({ autonomyMode: mode, recommendationCount: count, importReports, ...options });
+  return workflowFromHarness(h);
+}
+export async function workflowAsync(mode: 'manual_approval' | 'policy_auto', count: number,
+  importReports: Parameters<typeof createHarnessAsync>[0]['importReports'],
+  options: Pick<NonNullable<Parameters<typeof createHarness>[0]>, 'now' | 'reportDateEnd'> = {}) {
+  return workflowFromHarness(await createHarnessAsync({ autonomyMode: mode, recommendationCount: count, importReports, ...options }));
+}
+function workflowFromHarness(h: Harness) {
   h.database.prepare("INSERT INTO store_connections (id, store_id, provider, status, external_account_id, normalized_external_account_id, created_at, updated_at) VALUES ('connection-ads', 'store-one', 'amazon_ads', 'ready', 'ads-account-1', 'ads-account-1', ?, ?)").run(NOW, NOW);
   h.database.prepare("UPDATE store_session_metadata SET external_account_id = 'ads-account-1' WHERE store_id = 'store-one' AND provider = 'amazon_ads'").run();
   const coordinator = { assertActiveStoreContext: (input: unknown) => {

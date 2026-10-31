@@ -76,7 +76,18 @@ function verifyOfflineMigration(raw, descriptor, context) {
 }
 function verifyLiveMigration(raw, descriptor, context) {
   const verifier = require('./verify-s7-live-migration-acceptance');
-  verifier.validateS7LiveMigrationAcceptanceReceipt(raw);
+  let targetVersion;
+  if (context.trustedNativeEnvironment) {
+    const runtime = context.trustedNativeEnvironment.offlineMigrationRuntime;
+    insist(runtime, 'TRUSTED_MIGRATION_RUNTIME_REQUIRED');
+    const contract = runtime.migrationContract;
+    insist(Array.isArray(contract) && contract.length > 0 && Array.from(contract).every((record, index) => record
+      && record.version === index + 1 && typeof record.name === 'string' && record.name.length > 0
+      && typeof record.checksum === 'string' && record.checksum.length > 0), 'TRUSTED_MIGRATION_CONTRACT_INVALID');
+    // 仅使用 Main 注入的冻结合同；待验回执不能选择目标或触发开发源码读取。
+    targetVersion = contract.length;
+  }
+  verifier.validateS7LiveMigrationAcceptanceReceipt(raw, targetVersion);
   const authority = context.load(descriptor.authorityArtifactId, 'authority-snapshot');
   insist(path.resolve(raw.inputs.database.path) === path.resolve(authority.source.absolutePath), 'LIVE_MIGRATION_AUTHORITY_PATH_MISMATCH');
   for (const key of ['authoritySelection', 'migrationManifest', 'migrationVerification']) readArtifact(context.root, raw.inputs[key]);

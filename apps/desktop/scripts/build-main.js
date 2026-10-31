@@ -31,6 +31,7 @@ function buildMain(options = {}) {
     ['index.ts', 'index.cjs'],
     ['delivery-v16-worker.ts', 'delivery-v16-worker.cjs'],
     ['delivery-v16-backup-child.ts', 'delivery-v16-backup-child.cjs'],
+    ['report-parser-worker.ts', 'report-parser-worker.cjs'],
     ]) {
       (options.buildSync ?? esbuild.buildSync)({
       ...common, entryPoints: [path.join('src/main', entry)],

@@ -1,6 +1,6 @@
 # 当前架构导航
 
-更新日期：2026-10-27。本文说明源码职责；验收状态见 [PROJECT_STATUS](PROJECT_STATUS.md)，历史 v1.2 设计保留在原路径供比较。
+更新日期：2026-10-31。本文说明源码职责；验收状态见 [PROJECT_STATUS](PROJECT_STATUS.md)，历史 v1.2 设计保留在原路径供比较。
 
 ## Windows 本地应用
 
@@ -17,6 +17,9 @@
 | 页面注册 | `renderer/mission-control/workspaces/registry.ts` |
 | 六模块导航 | 同目录 `v16-module-router.ts` |
 | 持久化 | `packages/local-db/src/sqlite/` 的迁移与按领域拆分仓储 |
+| 报表资源 | `packages/report-parser/src/` 的策略、ZIP/OOXML、XLS、文本和工作表预算模块 |
+| 隔离解析 | `report-parser-runtime.ts`、`report-parser-worker-client.ts`、`report-parser-worker.ts`；请求和结果合同按职责独立 |
+| 导入提交 | `lingxing-report-import.ts`、`report-import-commit-guard.ts`、`collection-import-state-cas.ts` |
 
 路径表中未写绝对目录的 Main 文件位于 `apps/desktop/src/main/`，Renderer 文件位于 `apps/desktop/src/`。原大型聚合文件已按领域拆分，不能重新通过拼接、压行或泛化巨型模块规避尺寸门。
 
@@ -25,6 +28,10 @@
 实际路由为六个业务模块，映射十个内部 workspace 和 22 个入口。`registry.ts` 定义 workspace/subview，`v16-module-router.ts` 定义一级模块映射；“六模块”和“十 workspace”是不同层级。
 
 业务主链为：店铺连接与身份确认 → 八类报表采集/校验/导入 → 分析与建议 → Decision/MissionGrant → 执行前检查 → 一次动作和回读 → 实验 → 因果记忆。
+
+报表下载预检与正式解析统一经过资源端口。Main 从配置总线捕获请求快照，在原字节分配前预留全局自有额度；解析 Worker 的克隆、展开内容、派生 STORE 容器及结果另受明确预算限制。派生容器不修改原始文件或其 SHA，Worker 不接收数据库或业务授权端口，也不是操作系统权限沙箱。
+
+Main 等待真实解析终态后，在同一连接的 immediate 事务内重新核验来源、店铺/会话和持有的任务/claim/CAS，再执行原同步仓储提交。任务状态结算比较同一生产规范化合同，不能以重新读取当前数据库追认过期版本。关闭时解析排空加入原数据库关闭门，未归还额度或未退出 Worker 仍阻断正常关闭；细节见治理基线。
 
 ## 跨领域不变量
 

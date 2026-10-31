@@ -7,7 +7,7 @@
 ## 权威与范围
 
 - 正式库通过 Main 的当前 authority selection 定位；不得用相似 C:/D: 路径、旧副本或默认新建空库替代。
-- schema_migrations 是迁移账本，当前源码链为 1–20；PRAGMA user_version 不能代替账本、校验和及 schema 检查。未知合同、checksum 冲突或不连续 applied 账本在业务 DDL 前拒绝。
+- schema_migrations 是迁移账本，当前源码链为 1–22，目标版本以实际迁移导出注册表及已冻结合同为准；PRAGMA user_version 不能代替账本、校验和及 schema 检查。未知合同、checksum 冲突或不连续 applied 账本在业务 DDL 前拒绝。
 - 生产业务权威继续使用 missions / decisions / mission_grants / policy_runtime / analysis_* / ad_execution_* / experiments / causal_events。analysis_runs 由 AnalysisAuthorityService 写入。
 - v16_missions、decisions_v16、mission_grants_v16、execution_slots、execution_batches、causal_events_v16、policy_versions_v16 等草稿表保留为历史。不能从这些表恢复当前授权或与生产表双写。
 - schema 19 从已验证的升级前快照分类历史，legacy_record_classifications 仅存不可改写的分类回执：原表/主键/行哈希、source schema、classifier revision、原因与分类时间，不成为业务权威。有效店铺配置为 validated-compatible（连接仍须重新验证）；产品/指标/分析/建议须 re-derivation-required；其余有效旧记录为 historical-read-only；缺失归属、结构/外键错误或必要 proof 缺失为 quarantined。秘密与凭证表不复制到分类账本。

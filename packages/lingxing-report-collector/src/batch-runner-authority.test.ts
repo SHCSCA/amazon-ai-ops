@@ -13,6 +13,7 @@ import {
   type LingxingReportDefinition,
 } from '@amazon-ai-ops/shared-types';
 import { runLingxingReportBatch, type RunBatchOptions } from './batch-runner';
+import { inspectReportFileContent } from './report-file-inspector';
 import type { DownloadCenterAutomationPort } from './download-center-page';
 
 const DATE_RANGE: { start: string; end: string } = {
@@ -102,6 +103,7 @@ function runOptions(
 ): RunBatchOptions {
   return {
     requestId: 'authority-test-request',
+    reportContentInspector: async (filePath, reportType) => inspectReportFileContent(filePath, reportType),
     storeContext: STORE_CONTEXT,
     storeDisplayName: 'SHC001 · 美国站',
     dateStart: DATE_RANGE.start,
@@ -124,6 +126,27 @@ function runOptions(
 }
 
 describe('store-authoritative Lingxing collection runner', () => {
+  it('异步报表解析后再次核验授权，失效时不发布下载完成记录', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'isolated-collector-authority-'));
+    let allowed = true;
+    const progress: LingxingCollectionProgressEvent[] = [];
+    try {
+      const result = await runLingxingReportBatch(runOptions(rootDownloadDir, automationWith(), {
+        reportContentInspector: async (filePath, reportType) => {
+          const inspected = inspectReportFileContent(filePath, reportType);
+          await Promise.resolve(); allowed = false;
+          return inspected;
+        },
+        authorityGuard: () => allowed ? { allowed: true } : { allowed: false, blockerCode: 'STORE_CONTEXT_STALE', detail: '隔离测试：解析等待期间授权失效。' },
+        progressSink: event => { progress.push(event); },
+      }));
+      expect(result.job.state).toBe('stale_authority');
+      expect(progress.some(event => event.job.reports.some(report => report.state === 'downloaded'))).toBe(false);
+    } finally {
+      if (path.dirname(rootDownloadDir) !== path.resolve(os.tmpdir())) throw new Error('拒绝清理非隔离测试目录。');
+      fs.rmSync(rootDownloadDir, { recursive: true, force: true });
+    }
+  });
   it('accepts only a safe Main-supplied store display label for the legacy batch manifest field', async () => {
     const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-store-label-'));
     const automation = automationWith();
@@ -534,6 +557,7 @@ describe('store-authoritative Lingxing collection runner', () => {
       'create',
       'wait_ready',
       'download',
+      'verify',
       'verify',
       'stop_trace',
       'write_manifest',

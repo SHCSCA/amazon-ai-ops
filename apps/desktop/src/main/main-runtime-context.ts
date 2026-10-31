@@ -10,6 +10,7 @@ import { runtimeLogger } from './runtime-logger';
 import { runtimeLog } from './runtime-log-adapter';
 import { MainIpcOperationTracker } from './main-ipc-operation-tracker';
 import { createTrackedIpcRegistrar } from './tracked-ipc-handler';
+import { createReportParserRuntime } from './report-parser-runtime';
 import { StrictBrowserControllerCleanup } from './strict-browser-controller-cleanup';
 import { initializeDesktopBootstrap } from './desktop-bootstrap';
 import { PackageUiSchedulerAudit } from './package-ui-scheduler-audit';
@@ -105,6 +106,8 @@ const state: AppState = {
 
 
 };
+
+const reportParserRuntime = createReportParserRuntime({ mainModulePath, getConfigurationBus: () => state.configurationBus });
 
 const browserOperationLeases = new BrowserLeaseManager();
 
@@ -400,6 +403,10 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
     
     const shutdownBarrierSteps = [
       {
+        name: 'report-parser-drain',
+        operation: invokeShutdownOperationNow(() => reportParserRuntime.stopAndDrain()),
+      },
+      {
         name: 'main-ipc-drain',
         operation: invokeShutdownOperationNow(
           () => deliveryRuntime.stopAndDrain(() => mainIpcOperationTracker.stopAndDrain(shutdownTimeoutMs)),
@@ -476,6 +483,7 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
     pendingBrowserControllerCleanup,
     registerTrackedIpcHandler,
     trackedIpcRegistrar,
+    reportParserRuntime,
     desktopBootstrap,
     bootstrapConfiguration,
     mainStartupAdmission,

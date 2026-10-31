@@ -5,11 +5,13 @@ import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { LingxingImportRepository, StoreRepository } from '@amazon-ai-ops/local-db';
-import { ReportParser, LINGXING_TEMPLATE_MANIFEST } from '@amazon-ai-ops/report-parser';
+import { LINGXING_TEMPLATE_MANIFEST } from '@amazon-ai-ops/report-parser';
 import { ANALYSIS_REQUIRED_REPORT_TYPES, type LingxingReportFile, type LingxingReportBatch } from '@amazon-ai-ops/shared-types';
 import { importLingxingDownloadedReportMetrics } from './lingxing-report-import';
-import { createHarness, NOW } from './analysis-authority.test-support';
-import { workflow, success, approveHumanBatch } from './v16-production.test-support';
+import { createHarnessAsync, NOW } from './analysis-authority.test-support';
+import { workflowAsync, success, approveHumanBatch } from './v16-production.test-support';
+import { captureReportImportCommitGuard } from './report-import-commit-guard';
+import { testReportParserSession } from './report-parser-worker.test-support';
 const XLSX = createRequire(new URL('../../../../packages/report-parser/package.json', import.meta.url))('xlsx');
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW)); });
@@ -61,62 +63,129 @@ function reportFiles(database: Database.Database, directory: string, invalid?: '
   }
   const result = { batch, files };
   repository.saveCollectionSnapshotForStore('store-one' as never, result);
-  return { repository, stores, result, paths };
+  const parser = testReportParserSession();
+  let generation = '4', cancelled = false;
+  const guard = captureReportImportCommitGuard({ database, storeId: 'store-one', batchId: batch.id,
+    assertConnection: () => { if (!database.open) throw new Error('TEST_DATABASE_CLOSED'); },
+    assertAuthority: () => { if (cancelled) throw new Error('REPORT_IMPORT_TEST_CANCELLED');
+      if (stores.getStore('store-one' as never)?.status !== 'active') throw new Error('TEST_STORE_NOT_ACTIVE'); },
+    readSessionGeneration: () => generation });
+  return { repository, stores, result, paths, parser, guard,
+    advanceSession: () => { generation = '5'; }, cancel: () => { cancelled = true; } };
 }
 
-function importEight(database: Database.Database, directory: string) {
+async function importEight(database: Database.Database, directory: string) {
   const fixture = reportFiles(database, directory);
   // Download metadata may be stale; the immutable receipt must describe the actual bytes.
   fixture.result.files.forEach(file => { file.fileSizeBytes = 1; });
-  const imported = importLingxingDownloadedReportMetrics(fixture.result, fixture);
+  const imported = await importLingxingDownloadedReportMetrics(fixture.result, fixture);
   expect(imported, JSON.stringify(imported)).toMatchObject({ parsedFiles: 8, inserted: 9, deduplicated: false, errors: [] });
   expect(fixture.repository.listImportRunsForStore('store-one' as never)).toHaveLength(1);
   const sizes = database.prepare('SELECT file_size_bytes AS size, file_path AS path FROM report_import_file_snapshots').all() as Array<{ size: number; path: string }>;
   expect(sizes).toHaveLength(8);
   for (const file of sizes) expect(file.size).toBe(fs.statSync(file.path).size);
   expect(database.prepare('SELECT COUNT(*) AS count FROM report_import_metric_evidence').get()).toEqual({ count: 1 });
-  const repeated = importLingxingDownloadedReportMetrics(fixture.result, fixture);
+  const repeated = await importLingxingDownloadedReportMetrics(fixture.result, fixture);
   expect(repeated).toMatchObject({ deduplicated: true, importRunId: imported.importRunId, inserted: 9 });
   return fixture.paths;
 }
 
 describe('Eight workbook import into the production business services', () => {
-  it('rejects a workbook replaced during parsing even when its row count and cost remain equal', () => {
-    const autoParse = ReportParser.prototype.autoParse;
-    vi.spyOn(ReportParser.prototype, 'autoParse').mockImplementation(function(this: ReportParser, ...args) {
-      const parsed = autoParse.apply(this, args);
-      if (args[0].includes('_keyword.xlsx')) {
-        const workbook = XLSX.readFile(args[0]);
+  it.each(['session', 'cancel', 'job', 'claim', 'source'] as const)('完整八报在最后一次真实 Worker await 后发生 %s 变化仍保持零提交', async change => {
+    await expect(createHarnessAsync({ async importReports(database, directory) {
+      const fixture = reportFiles(database, directory), totals = fixture.parser.controlTotals;
+      const commit = vi.spyOn(fixture.repository, 'commitImportForStore');
+      let completed = 0, mutated = false;
+      vi.spyOn(fixture.parser, 'controlTotals').mockImplementation(async (snapshot, window) => {
+        const value = await totals(snapshot, window);
+        if (++completed === 8) {
+          if (change === 'session') fixture.advanceSession();
+          if (change === 'cancel') fixture.cancel();
+          if (change === 'job') database.prepare("UPDATE lingxing_collection_jobs SET snapshot_json = '{}' WHERE job_id = 'batch-1'").run();
+          if (change === 'source') {
+            const bytes = fs.readFileSync(fixture.paths.campaign); bytes[bytes.length - 1] ^= 1;
+            fs.writeFileSync(fixture.paths.campaign, bytes);
+          }
+          if (change === 'claim') {
+            database.prepare(`INSERT INTO lingxing_collection_resume_attempts (store_id, attempt_id, job_id, request_id,
+              base_job_updated_at, base_authority_proof_sha256, durable_session_generation, execution_session_generation,
+              execution_context_sha256, claimed_at) VALUES ('store-one', 'raced-attempt', 'batch-1', 'request-1', ?, ?, 4, 4, ?, ?)`)
+              .run(NOW, 'a'.repeat(64), 'b'.repeat(64), NOW);
+            database.prepare(`INSERT INTO lingxing_collection_resume_active_claims (store_id, job_id, request_id, attempt_id,
+              claim_token_sha256, expected_job_updated_at, expected_authority_proof_sha256, version, claimed_at, updated_at)
+              VALUES ('store-one', 'batch-1', 'request-1', 'raced-attempt', ?, ?, ?, 1, ?, ?)`)
+              .run('c'.repeat(64), NOW, 'a'.repeat(64), NOW, NOW);
+          }
+          mutated = true;
+        }
+        return value;
+      });
+      let failed = false;
+      try { const imported = await importLingxingDownloadedReportMetrics(fixture.result, fixture); failed = imported.errors.length > 0; }
+      catch (error) { expect(error).toBeInstanceOf(Error); failed = true; }
+      expect(completed).toBe(8); expect(mutated).toBe(true); expect(failed).toBe(true); expect(commit).not.toHaveBeenCalled();
+      for (const table of ['report_import_runs', 'report_import_file_snapshots', 'ad_daily_metrics', 'mission_grants'])
+        expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+      throw new Error('EXPECTED_REJECTED_IMPORT');
+    } })).rejects.toThrow('EXPECTED_REJECTED_IMPORT');
+  }, 15_000);
+  it('keeps the original immutable batch and report types when caller objects change during a real Worker await', async () => {
+    const harness = await createHarnessAsync({ async importReports(database, directory) {
+      const fixture = reportFiles(database, directory), parse = fixture.parser.parse;
+      let changed = false;
+      vi.spyOn(fixture.parser, 'parse').mockImplementation(async (snapshot, options) => {
+        const parsed = await parse(snapshot, options);
+        if (!changed) {
+          changed = true; fixture.result.batch.id = 'forged-batch'; fixture.result.files[0].reportType = 'keyword';
+        }
+        return parsed;
+      });
+      const imported = await importLingxingDownloadedReportMetrics(fixture.result, fixture);
+      expect(imported).toMatchObject({ parsedFiles: 8, inserted: 9, importRunId: 'import_batch-1', errors: [] });
+      expect(fixture.repository.getImportRunForStore('store-one' as never, 'import_forged-batch')).toBeUndefined();
+      const snapshot = fixture.repository.listFileSnapshotsForStore('store-one' as never, 'import_batch-1');
+      expect(snapshot).toHaveLength(8);
+      expect(snapshot.find(file => file.filePath === fixture.paths.campaign)?.reportType).toBe('campaign');
+      return fixture.paths;
+    } });
+    expect(harness.database.prepare('SELECT COUNT(*) AS count FROM report_import_runs').get()).toEqual({ count: 1 });
+  }, 15_000);
+  it('rejects a workbook replaced during parsing even when its row count and cost remain equal', async () => {
+    await expect(createHarnessAsync({ async importReports(database, directory) {
+      const fixture = reportFiles(database, directory);
+      const parse = fixture.parser.parse;
+      vi.spyOn(fixture.parser, 'parse').mockImplementation(async (snapshot, options) => {
+      const parsed = await parse(snapshot, options);
+      if (snapshot.path.includes('_keyword.xlsx')) {
+        const workbook = XLSX.readFile(snapshot.path);
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Report);
         rows[5]['关键词'] = 'different-object-with-identical-control-totals';
         workbook.Sheets.Report = XLSX.utils.json_to_sheet(rows);
-        XLSX.writeFile(workbook, args[0]);
+        XLSX.writeFile(workbook, snapshot.path);
       }
       return parsed;
-    });
-    expect(() => createHarness({ importReports(database, directory) {
-      const fixture = reportFiles(database, directory);
-      const imported = importLingxingDownloadedReportMetrics(fixture.result, fixture);
+      });
+      const imported = await importLingxingDownloadedReportMetrics(fixture.result, fixture);
       expect(imported).toMatchObject({ inserted: 0, errors: [expect.objectContaining({ reportType: 'keyword' })] });
       expect(database.prepare('SELECT COUNT(*) AS count FROM report_import_runs').get()).toEqual({ count: 0 });
       throw new Error('EXPECTED_REJECTED_IMPORT');
-    } })).toThrow('EXPECTED_REJECTED_IMPORT');
+    } })).rejects.toThrow('EXPECTED_REJECTED_IMPORT');
   });
-  it.each(['seven', 'unknown-template', 'bad-date', 'duplicate-column'] as const)('rejects %s without a partial completed import', invalid => {
-    expect(() => createHarness({ importReports(database, directory) {
+  it.each(['seven', 'unknown-template', 'bad-date', 'duplicate-column'] as const)('rejects %s without a partial completed import', async invalid => {
+    await expect(createHarnessAsync({ async importReports(database, directory) {
       const fixture = reportFiles(database, directory, invalid);
-      if (invalid === 'seven') expect(() => importLingxingDownloadedReportMetrics(fixture.result, fixture)).toThrow('RECONCILIATION_EVIDENCE_MISSING');
-      else expect(importLingxingDownloadedReportMetrics(fixture.result, fixture)).toMatchObject({ inserted: 0, errors: [expect.any(Object)] });
+      if (invalid === 'seven') await expect(importLingxingDownloadedReportMetrics(fixture.result, fixture)).rejects.toThrow('RECONCILIATION_EVIDENCE_MISSING');
+      else expect(await importLingxingDownloadedReportMetrics(fixture.result, fixture)).toMatchObject({ inserted: 0, errors: [expect.any(Object)] });
       for (const table of ['report_import_runs', 'report_import_file_snapshots', 'ad_daily_metrics', 'mission_grants']) {
         expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
       }
       throw new Error('EXPECTED_REJECTED_IMPORT');
-    } })).toThrow('EXPECTED_REJECTED_IMPORT');
-  });
+    } })).rejects.toThrow('EXPECTED_REJECTED_IMPORT');
+  }, 30_000);
 
   it.each(['manual_approval', 'policy_auto'] as const)('%s persists eight files through analysis, execution, experiment baseline and memory', async mode => {
     let now = new Date(NOW);
-    const h = workflow(mode, 1, importEight, { reportDateEnd: '2026-07-21', now: () => now });
+    const h = await workflowAsync(mode, 1, importEight, { reportDateEnd: '2026-07-21', now: () => now });
     const analysis = success(await h.api.analysisRun(h.request({ missionId: h.missionId })));
     expect(analysis.proposals).toHaveLength(1);
     if (mode === 'manual_approval') await approveHumanBatch(h);
@@ -148,7 +217,7 @@ describe('Eight workbook import into the production business services', () => {
     const observation = reportFiles(h.database, h.directory, undefined, { ...source.batch,
       id: 'observation-batch', requestId: 'observation-request', dateStart: '2026-07-23', dateEnd: '2026-07-29',
       businessDate: h.context.businessDate, createdAt: now.toISOString(), completedAt: now.toISOString() });
-    const imported = importLingxingDownloadedReportMetrics(observation.result, observation);
+    const imported = await importLingxingDownloadedReportMetrics(observation.result, observation);
     expect(imported, JSON.stringify(imported)).toMatchObject({ parsedFiles: 8, inserted: 9, errors: [] });
     // Collection transport is a declared fixture; all file import and domain writes below are production code.
     const jobRow = h.database.prepare('SELECT * FROM lingxing_collection_jobs WHERE job_id=?').get('batch-1') as Record<string, unknown>;
@@ -189,5 +258,5 @@ describe('Eight workbook import into the production business services', () => {
     expect(readbackMemory[0].proofs.map(proof => proof.evidenceType).sort()).toEqual(['ad_execution_after', 'ad_execution_before', 'ad_execution_reload']);
     expect(readbackMemory[0].proofs.every(proof => /^[a-f0-9]{64}$/i.test(proof.sha256))).toBe(true);
     expect(h.page.clickCount).toBe(1);
-  });
+  }, 30_000);
 });

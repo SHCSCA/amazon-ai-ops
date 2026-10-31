@@ -1,8 +1,15 @@
 export { ReportParser } from './parser';
+export { parseReportBytes, readRawControlTotalsBytes } from './parser';
+export type { LingxingRawReportControlWindow, LingxingRawReportControlTotals } from './parser';
+export { REPORT_PARSE_HARD_LIMITS, resolveReportResourceLimits, ReportResourceError } from './report-resource-policy';
+export type { ReportResourceLimits, ReportResourceOptions } from './report-resource-policy';
+export { readBoundedReportFileBytes, readReportWorkbookBytes, reportSheetRows, readReportHeaderRowsBytes } from './report-workbook-reader';
 export { LINGXING_TEMPLATE_MANIFEST } from './lingxing-template-manifest';
 export { keywordMetricDiagnosticsToCsv, parseKeywordMetrics, parseKeywordMetricsWithDiagnostics } from './keyword-metrics';
+export { parseKeywordMetricsBytes } from './keyword-metrics';
 export type { KeywordMetricParseDiagnostics, KeywordMetricParseIssue, KeywordMetricParseResult } from './keyword-metrics';
 export { parseListingContent } from './listing-content';
+export { parseListingContentBytes } from './listing-content';
 export { normalizeFieldName, mapRowFields, AD_REPORT_FIELD_MAPPING } from './field-mapper';
 export { validateBatch, cleanNumericFields, validateMetrics } from './validators';
 export type { ParseKeywordMetricsOptions } from './keyword-metrics';

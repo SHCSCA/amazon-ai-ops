@@ -5,7 +5,6 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ExpectedTargetVersion = 20
 
 Add-Type -TypeDefinition @'
 using System;
@@ -206,6 +205,21 @@ $request = Get-Content -LiteralPath $requestFullPath -Raw -Encoding UTF8 | Conve
 if ($request.kind -ne 's7-offline-migration-lease-request' -or
     $request.schemaVersion -ne 1) {
   throw 'Offline lease request contract is invalid.'
+}
+$nodeExecutable = Assert-RegularDirectPath ([string]$request.nodeExecutable) 'Metadata Node executable' $false
+$migrationScript = Assert-RegularDirectPath ([string]$request.migrationScriptPath) 'Migration script' $false
+$expectedMigrationScript = Join-Path $PSScriptRoot 'migrate-current-user-db.js'
+if (-not (Test-SamePath $migrationScript $expectedMigrationScript)) {
+  throw 'Offline lease migration script must be the fixed production entry.'
+}
+$metadataScript = Assert-RegularDirectPath (Join-Path $PSScriptRoot 'migration-contract-source.js') 'Migration metadata script' $false
+# 先读取同一注册表目标，再检查计划；此时尚未读取源库或取得租约。
+$metadataOutput = @(& $nodeExecutable $metadataScript '--target-version')
+$ExpectedTargetVersion = 0
+if ($LASTEXITCODE -ne 0 -or $metadataOutput.Count -ne 1 -or
+    [string]$metadataOutput[0] -notmatch '^[1-9][0-9]*$' -or
+    -not [int]::TryParse([string]$metadataOutput[0], [ref]$ExpectedTargetVersion)) {
+  throw 'Offline lease migration metadata target is invalid.'
 }
 $targetVersionValue = $request.plan.targetVersion
 $targetVersionIsInteger = $targetVersionValue -is [sbyte] -or

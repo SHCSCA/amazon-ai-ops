@@ -1,19 +1,16 @@
 import { attachUniqueProductContext } from './lingxing-report-product-attribution';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
-import { ReportParser } from '@amazon-ai-ops/report-parser';
+import type { LingxingRawReportControlTotals } from '@amazon-ai-ops/report-parser';
+import type { ReportParserSession } from './report-parser-runtime';
+import type { ReportSourceSnapshot } from './report-parser-source';
+import type { captureReportImportCommitGuard } from './report-import-commit-guard';
+import { logReportParserFailure } from './report-parser-errors';
 import { LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
 import type { LingxingImportRepository, StoreRepository, ReportImportReconciliationInput } from '@amazon-ai-ops/local-db';
 import type { AdDailyMetrics, LingxingReportBatch, LingxingReportFile } from '@amazon-ai-ops/shared-types';
 import { assertLingxingParsedReportImportable } from './lingxing-report-import-validation';
 
 export type LingxingBatchFilesResult = { batch: LingxingReportBatch; files: LingxingReportFile[] };
-function canonicalizeExistingPath(filePath: string): string { return fs.realpathSync.native(path.resolve(filePath)); }
-function fileHashOrNull(filePath: string): string | null {
-  try { return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'); } catch { return null; }
-}
-function fileSizeOrZero(filePath: string): number { return fs.statSync(filePath).size; }
 export function invalidLingxingImportReconciliationEvidence(detail: string): Error {
   return new Error(`${LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID}: ${detail}`);
 }
@@ -30,21 +27,22 @@ export const LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID =
  * businessDate, exact batch window and file identity. Parsed rows never certify
  * themselves. metricDate remains the canonical window-end evidence date.
  */
-function readIndependentLingxingReportControlTotals(
+async function readIndependentLingxingReportControlTotals(
   result: LingxingBatchFilesResult,
-  importFiles: ReadonlyArray<{
+  importFile: {
     lingxingFileId: string;
     reportType: string;
     filePath: string;
     fileHash: string;
-  }>,
-): readonly ReportImportReconciliationInput[] | undefined {
-  if (importFiles.length !== LINGXING_AD_REPORTS.length) return undefined;
-  return importFiles.map((importFile) => {
-    const beforeHash = fileHashOrNull(importFile.filePath);
-    let totals: ReturnType<typeof ReportParser.readLingxingRawReportControlTotals>;
+  },
+  parser: ReportParserSession,
+  snapshot: ReportSourceSnapshot,
+): Promise<ReportImportReconciliationInput> {
+    if (!snapshot || snapshot.sha256 !== importFile.fileHash) throw invalidLingxingImportReconciliationEvidence('独立扫描缺少同一来源字节快照。');
+    parser.assertCurrent(snapshot);
+    let totals: LingxingRawReportControlTotals;
     try {
-      totals = ReportParser.readLingxingRawReportControlTotals(importFile.filePath, {
+      totals = await parser.controlTotals(snapshot, {
         dateStart: result.batch.dateStart,
         dateEnd: result.batch.dateEnd,
       });
@@ -54,12 +52,7 @@ function readIndependentLingxingReportControlTotals(
         + `${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    const afterHash = fileHashOrNull(importFile.filePath);
-    if (beforeHash !== importFile.fileHash || afterHash !== importFile.fileHash) {
-      throw invalidLingxingImportReconciliationEvidence(
-        `${importFile.reportType} 的原始报表在 control total 扫描前后发生变化。`,
-      );
-    }
+    parser.assertCurrent(snapshot);
     return {
       dateStart: result.batch.dateStart,
       dateEnd: result.batch.dateEnd,
@@ -69,7 +62,6 @@ function readIndependentLingxingReportControlTotals(
       expectedCost: totals.expectedCost,
       tolerance: 0,
     };
-  });
 }
 
 function assertExactIndependentLingxingReportControlTotals(
@@ -99,11 +91,12 @@ function assertExactIndependentLingxingReportControlTotals(
   }
 }
 
-export function importLingxingDownloadedReportMetrics(
+export async function importLingxingDownloadedReportMetrics(
   result: LingxingBatchFilesResult,
-  dependencies: { repository: LingxingImportRepository; stores: StoreRepository },
+  dependencies: { repository: LingxingImportRepository; stores: StoreRepository; parser: ReportParserSession;
+    guard: ReturnType<typeof captureReportImportCommitGuard> },
   options: { startedAt?: string } = {},
-): {
+): Promise<{
   inserted: number;
   parsedFiles: number;
   skippedFiles: number;
@@ -111,16 +104,25 @@ export function importLingxingDownloadedReportMetrics(
   deduplicated: boolean;
   importRunId?: string;
   errors: Array<{ reportType: string; filePath?: string; message: string }>;
-} {
+}> {
+  result = structuredClone({ batch: result.batch, files: result.files });
+  dependencies = { ...dependencies };
+  options = { ...options };
   if (!result.batch.storeId) {
     throw new Error('店铺级领星导入仓库或批次 StoreContext 尚未就绪。');
   }
+  if (result.files.length > LINGXING_AD_REPORTS.length) throw new Error('REPORT_IMPORT_FILE_COUNT_LIMIT');
   const storeId = result.batch.storeId;
   const store = dependencies.stores.getStore(storeId);
   if (!store || store.status !== 'active') {
     throw new Error(`店铺 ${storeId} 不存在或已停用，拒绝导入领星报表。`);
   }
-  const parser = new ReportParser();
+  const parser = dependencies.parser;
+  if (!parser || !dependencies.guard) throw new Error('REPORT_IMPORT_TRUSTED_PARSER_AND_GUARD_REQUIRED');
+  dependencies.guard.assertCurrent();
+  const snapshots = new Map<string, ReportSourceSnapshot>();
+  const reconciliations: ReportImportReconciliationInput[] = [];
+  let resultBytes = 0;
   const errors: Array<{ reportType: string; filePath?: string; message: string }> = [];
   const parsedMetrics: AdDailyMetrics[] = [];
   const importFiles: Array<{
@@ -139,25 +141,34 @@ export function importLingxingDownloadedReportMetrics(
       skippedFiles += 1;
       continue;
     }
+    let snapshot: ReportSourceSnapshot | undefined;
     try {
-      const sourceFile = canonicalizeExistingPath(file.filePath);
-      const fileHash = fileHashOrNull(sourceFile);
-      if (!fileHash) throw new Error(`无法计算报表 SHA-256：${path.basename(sourceFile)}。`);
-      const parsed = parser.autoParse(sourceFile, { reportType: file.reportType, requireRegisteredTemplate: true });
-      if (fileHashOrNull(sourceFile) !== fileHash) {
-        throw invalidLingxingImportReconciliationEvidence(`${file.reportType} 在解析期间发生变化，请重新下载后导入。`);
-      }
+      dependencies.guard.assertCurrent();
+      snapshot = parser.read(file.filePath);
+      const sourceFile = snapshot.path, fileHash = snapshot.sha256;
+      const parsed = await parser.parse(snapshot, { reportType: file.reportType, requireRegisteredTemplate: true });
+      parser.assertCurrent(snapshot);
+      dependencies.guard.assertCurrent();
       assertLingxingParsedReportImportable(parsed, {
         dateStart: result.batch.dateStart,
         dateEnd: result.batch.dateEnd,
         sourceName: path.basename(sourceFile),
       });
+      resultBytes += Buffer.byteLength(JSON.stringify(parsed.data));
+      if (resultBytes > parser.maxAggregateResultBytes) throw new Error('REPORT_IMPORT_AGGREGATE_RESULT_LIMIT');
+      const rawTotal = await readIndependentLingxingReportControlTotals(result, {
+        lingxingFileId: file.id, reportType: file.reportType, filePath: sourceFile, fileHash,
+      }, parser, snapshot);
+      dependencies.guard.assertCurrent();
+      reconciliations.push(rawTotal);
+      // 两条独立解析已消费同一快照，只保留身份元数据供事务内最终重验。
+      snapshots.set(sourceFile, { ...snapshot, bytes: new Uint8Array() });
       importFiles.push({
         lingxingFileId: file.id,
         reportType: file.reportType,
         filePath: sourceFile,
         fileName: path.basename(sourceFile),
-        fileSizeBytes: fileSizeOrZero(sourceFile),
+        fileSizeBytes: snapshot.sizeBytes,
         fileHash,
         importedRows: parsed.data.length,
       });
@@ -171,12 +182,13 @@ export function importLingxingDownloadedReportMetrics(
         sourceFile,
       })));
     } catch (error) {
+      const failure = logReportParserFailure('report_parser.import_file_failed', error);
       errors.push({
         reportType: file.reportType,
         filePath: file.filePath,
-        message: error instanceof Error ? error.message : String(error),
+        message: failure instanceof Error ? failure.message : String(failure),
       });
-    }
+    } finally { if (snapshot) parser.release(snapshot); }
   }
 
   const metrics = attachUniqueProductContext(parsedMetrics);
@@ -191,20 +203,17 @@ export function importLingxingDownloadedReportMetrics(
     };
   }
 
-  const reconciliations = readIndependentLingxingReportControlTotals(result, importFiles);
-  if (!reconciliations) {
+  if (reconciliations.length !== LINGXING_AD_REPORTS.length) {
     throw new Error(
       `${LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING}: `
       + '当前采集器未捕获领星逐报独立行数/花费 control totals；拒绝由解析结果自证 matched，且未写入 completed import run。',
     );
   }
   assertExactIndependentLingxingReportControlTotals(result, reconciliations);
-  if (importFiles.some(file => fileHashOrNull(file.filePath) !== file.fileHash)) {
-    throw invalidLingxingImportReconciliationEvidence('报表在解析/对账后发生变化，未提交导入；请重新下载。');
-  }
-
   const runId = `import_${result.batch.id}`;
-  const commit = dependencies.repository.commitImportForStore(storeId, {
+  const commit = dependencies.guard.commit(() => {
+    for (const snapshot of snapshots.values()) parser.assertCurrent(snapshot);
+    return dependencies.repository.commitImportForStore(storeId, {
     runId,
     idempotencyKey: `lingxing:${result.batch.id}`,
     batchId: result.batch.id,
@@ -212,6 +221,7 @@ export function importLingxingDownloadedReportMetrics(
     metrics,
     reconciliations,
     startedAt: options.startedAt ?? result.batch.completedAt ?? result.batch.createdAt,
+    });
   });
   return {
     inserted: commit.run.metricRowCount,

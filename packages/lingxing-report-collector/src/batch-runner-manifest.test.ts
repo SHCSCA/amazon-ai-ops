@@ -15,6 +15,7 @@ vi.mock('./manifest', () => ({
 }));
 
 import { runLingxingReportBatch, type RunBatchOptions } from './batch-runner';
+import { inspectReportFileContent } from './report-file-inspector';
 
 const STORE_CONTEXT = normalizeStoreContextEnvelope({
   storeId: 'shc001',
@@ -32,6 +33,7 @@ function options(
 ): RunBatchOptions {
   return {
     requestId: 'manifest-order-test',
+    reportContentInspector: async (filePath, reportType) => inspectReportFileContent(filePath, reportType),
     storeContext: STORE_CONTEXT,
     storeDisplayName: 'SHC001 · 美国站',
     dateStart: '2026-07-01',

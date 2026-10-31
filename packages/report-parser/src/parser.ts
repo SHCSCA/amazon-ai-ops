@@ -7,6 +7,9 @@ import { validateBatch, cleanNumericFields } from './validators';
 import type { AdDailyMetrics, LingxingReportType } from '@amazon-ai-ops/shared-types';
 import type { ValidationResult } from './validators';
 import { matchLingxingTemplate, validateLingxingTemplateRows, type TemplateCompatibility } from './lingxing-template-manifest';
+import { readBoundedReportFileBytes, readReportWorkbookBytes, reportSheetRows } from './report-workbook-reader';
+import { checkReportSheet } from './report-sheet-budget';
+import { resolveReportResourceLimits, type ReportResourceOptions } from './report-resource-policy';
 
 export interface ParseOptions {
   skipHeaderRows?: number;  // 跳过前几行表头，默认 0
@@ -41,6 +44,7 @@ export interface LingxingRawReportControlWindow {
 }
 
 export class ReportParser {
+  constructor(private readonly resource: ReportResourceOptions = {}) {}
   /**
    * Read control totals directly from provider-owned workbook cells without
    * using mapped metrics or the canonical ReportParser row output.
@@ -48,8 +52,9 @@ export class ReportParser {
   static readLingxingRawReportControlTotals(
     filePath: string,
     window: LingxingRawReportControlWindow,
+    resource: ReportResourceOptions = {},
   ): LingxingRawReportControlTotals {
-    return readLingxingRawReportControlTotals(filePath, window);
+    return readLingxingRawReportControlTotals(filePath, window, resource);
   }
 
   /**
@@ -60,12 +65,12 @@ export class ReportParser {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    return this.parseExcelBytes(fs.readFileSync(filePath), filePath, options);
+    return this.parseExcelBytes(readBoundedReportFileBytes(filePath, this.resource), filePath, options);
   }
 
   // 允许只读观察在同一份字节快照上计算摘要并解析，避免哈希与行内容脱节。
   parseExcelBytes(bytes: Uint8Array, sourceFile: string, options: ParseOptions = {}): ParseResult {
-    const workbook = XLSX.read(bytes, { type: 'buffer', cellNF: true });
+    const workbook = readReportWorkbookBytes(bytes, sourceFile, { cellNF: true }, this.resource);
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     return this.parseSheet(worksheet, sourceFile, options);
   }
@@ -78,8 +83,7 @@ export class ReportParser {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const csvText = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-    const workbook = XLSX.read(csvText, { type: 'string', cellNF: true });
+    const workbook = readReportWorkbookBytes(readBoundedReportFileBytes(filePath, this.resource), filePath, { cellNF: true }, this.resource);
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     
@@ -90,23 +94,24 @@ export class ReportParser {
    * 解析 Sheet 数据
    */
   private parseSheet(worksheet: XLSX.WorkSheet, sourceFile: string, options: ParseOptions): ParseResult {
+    checkReportSheet(worksheet, resolveReportResourceLimits(this.resource.limits));
     const skipRows = options.skipHeaderRows ?? 0;
     // 数值解析保持原始值；原 worksheet 的格式仅用于来源单位核验。
     const valueSheet = Object.fromEntries(Object.entries(worksheet).map(([key, cell]) =>
       key.startsWith('!') ? [key, cell] : [key, { ...cell, z: undefined }]));
-    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(valueSheet, {
+    const rawRows = reportSheetRows<unknown[]>(valueSheet, {
       header: 1,
       defval: '',
       blankrows: false,
-    });
+    }, this.resource);
     const rawHeaders = (rawRows[0] ?? [])
       .map((value) => String(value ?? '').trim())
       .filter(Boolean);
     
     // 转换为 JSON
-    const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(valueSheet, {
+    const jsonData = reportSheetRows<Record<string, any>>(valueSheet, {
       defval: '',  // 默认值为空字符串
-    });
+    }, this.resource);
     const compatibility = options.requireRegisteredTemplate ? matchLingxingTemplate(rawHeaders, options.reportType) : undefined;
     if (compatibility?.error) return {
       success: false, schemaValid: false, data: [], headers: rawHeaders,
@@ -326,25 +331,33 @@ function controlCost(value: unknown): number {
 function readLingxingRawReportControlTotals(
   filePath: string,
   window: LingxingRawReportControlWindow,
+  resource: ReportResourceOptions,
 ): LingxingRawReportControlTotals {
   if (!fs.existsSync(filePath)) throw new Error('领星原始报表 control total 文件不存在。');
+  return readRawControlTotalsBytes(readBoundedReportFileBytes(filePath, resource), filePath, window, resource);
+}
+
+export function parseReportBytes(bytes: Uint8Array, sourceName: string, options: ParseOptions = {}, resource: ReportResourceOptions = {}): ParseResult {
+  return new ReportParser(resource).parseExcelBytes(bytes, sourceName, options);
+}
+
+export function readRawControlTotalsBytes(
+  bytes: Uint8Array, sourceName: string, window: LingxingRawReportControlWindow, resource: ReportResourceOptions = {},
+): LingxingRawReportControlTotals {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(window.dateStart)
     || !/^\d{4}-\d{2}-\d{2}$/.test(window.dateEnd)
     || window.dateStart > window.dateEnd) {
     throw new Error('领星原始报表 control total 日期窗口无效。');
   }
-  const extension = path.extname(filePath).toLowerCase();
-  const workbook = extension === '.csv'
-    ? XLSX.read(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''), { type: 'string' })
-    : XLSX.read(fs.readFileSync(filePath), { type: 'buffer', cellDates: false, raw: true });
+  const workbook = readReportWorkbookBytes(bytes, sourceName, { cellDates: false, raw: true }, resource);
   const worksheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!worksheet) throw new Error('领星原始报表 control total 缺少工作表。');
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+  const rows = reportSheetRows<unknown[]>(worksheet, {
     header: 1,
     defval: '',
     raw: true,
     blankrows: false,
-  });
+  }, resource);
   const headerRowIndex = rows.slice(0, 12).findIndex((row) => {
     const normalized = row.map(normalizeReportHeader);
     return normalized.some((header) => CONTROL_DATE_HEADERS.has(header))

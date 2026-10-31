@@ -59,6 +59,7 @@ export async function start(this: CollectionCoordinatorRuntime,
           progressSink,
           authorityGuard,
           cancellationGuard,
+          reportContentInspector: this.dependencies.reportContentInspector ?? (async () => { throw new Error('REPORT_CONTENT_INSPECTOR_REQUIRED'); }),
           ...(input.resumeFrom ? { resumeFrom: input.resumeFrom } : {}),
         };
         const runner = request.mode === 'download-existing'
@@ -108,6 +109,7 @@ export async function start(this: CollectionCoordinatorRuntime,
         if (importEligible) {
           this.assertNotCancelled(result.job.jobId, request, capturedContext);
           operation.assertStepCurrent();
+          const expectedBeforePending = structuredClone(finalizedResult.job);
           const attemptedAt = nextCollectionTimestamp(finalizedResult.job.updatedAt);
           finalizedResult = {
             ...finalizedResult,
@@ -115,7 +117,8 @@ export async function start(this: CollectionCoordinatorRuntime,
               attemptedAt,
             }),
           };
-          await this.dependencies.persistence.persistImportState(finalizedResult.job);
+          await this.dependencies.persistence.persistImportState(finalizedResult.job, expectedBeforePending);
+          const expectedPending = structuredClone(finalizedResult.job);
           this.publishTerminalProgress(finalizedResult);
           try {
             // 导入状态写入后再次检查取消，避免等待期间失效的权限继续写入报表。
@@ -124,7 +127,11 @@ export async function start(this: CollectionCoordinatorRuntime,
             if (!importResult) {
               throw new Error('LINGXING_COLLECTION_IMPORT_HANDLER_UNAVAILABLE');
             }
-            importSummary = await importResult(finalizedResult, { startedAt: attemptedAt });
+            importSummary = await importResult(finalizedResult, { startedAt: attemptedAt, assertBeforeCommit: () => {
+              this.assertNotCancelled(result.job.jobId, request, capturedContext);
+              operation.assertStepCurrent();
+              this.dependencies.assertRuntimeCurrent?.(capturedContext, runtime);
+            } });
           } catch (error) {
             const completedAt = nextCollectionTimestamp(finalizedResult.job.updatedAt);
             finalizedResult = {
@@ -135,7 +142,8 @@ export async function start(this: CollectionCoordinatorRuntime,
                 error: error instanceof Error ? error.message : String(error),
               }),
             };
-            await this.dependencies.persistence.persistImportState(finalizedResult.job);
+            try { await this.dependencies.persistence.persistImportState(finalizedResult.job, expectedPending); }
+            catch (settlementError) { throw new AggregateError([error, settlementError], 'COLLECTION_IMPORT_FAILURE_SETTLEMENT_CONFLICT'); }
             this.publishTerminalProgress(finalizedResult);
             throw error;
           }
@@ -147,7 +155,7 @@ export async function start(this: CollectionCoordinatorRuntime,
               completedAt,
             }),
           };
-          await this.dependencies.persistence.persistImportState(finalizedResult.job);
+          await this.dependencies.persistence.persistImportState(finalizedResult.job, expectedPending);
           this.publishTerminalProgress(finalizedResult);
         }
         return {

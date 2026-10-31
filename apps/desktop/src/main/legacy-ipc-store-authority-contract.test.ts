@@ -77,7 +77,7 @@ describe('collection Renderer boundary contract', () => {
       '.interruptOrphanedCollectionResumeClaimsForStartup();',
     );
     const importRecovery = source.indexOf(
-      'const importRecovery = recoverPendingLingxingCollectionImportsOnStartup();',
+      'const importRecovery = await recoverPendingLingxingCollectionImportsOnStartup();',
     );
     const importAuthorityGate = source.indexOf(
       'assertLingxingImportStartupRecoverySafe(importRecovery)',
@@ -103,8 +103,12 @@ describe('collection Renderer boundary contract', () => {
     );
 
     expect(wiring).toContain("policy: 'exact-eight-lineage-v1'");
-    expect(wiring).toContain('run: (result, options)');
-    expect(wiring).toContain('importStoreScopedLingxingDownloadedReportMetrics(result, options)');
+    expect(wiring).toContain('run: async (result, options)');
+    expect(wiring).toContain('await importStoreScopedLingxingDownloadedReportMetrics(result, {');
+    expect(wiring).toContain('startedAt: options.startedAt');
+    expect(wiring).toContain('assertCurrent: options.assertBeforeCommit');
+    expect(wiring).toContain('expectedJob: result.job');
+    expect(wiring).toContain('expectedClaim: options.expectedClaim');
   });
 
   it('routes the legacy full-eight collection action through MainRuntime semantic admission', () => {
@@ -208,11 +212,15 @@ describe('collection Renderer boundary contract', () => {
     );
     const controlTotalGuard = between(
       'function assertExactIndependentLingxingReportControlTotals',
-      'export function importLingxingDownloadedReportMetrics',
+      'export async function importLingxingDownloadedReportMetrics',
       importSource,
     );
-    const importer = importSource.slice(importSource.indexOf('export function importLingxingDownloadedReportMetrics'));
-    expect(mainRuntimeFunctionContract('importStoreScopedLingxingDownloadedReportMetrics')).toContain('return importLingxingDownloadedReportMetrics(result, { repository: state.lingxingImportRepo, stores: state.storeRepo }, options)');
+    const importer = importSource.slice(importSource.indexOf('export async function importLingxingDownloadedReportMetrics'));
+    const wiring = mainRuntimeFunctionContract('importStoreScopedLingxingDownloadedReportMetrics');
+    expect(wiring).toContain('captureReportImportCommitGuard');
+    expect(wiring).toContain('reportParserRuntime.createSession()');
+    expect(wiring).toContain('readSessionGeneration');
+    expect(wiring).toContain('return importLingxingDownloadedReportMetrics(result, { repository, stores, parser, guard }, options)');
 
     const evidenceRead = importer.indexOf('readIndependentLingxingReportControlTotals');
     const missingGuard = importer.indexOf('LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING');
@@ -226,14 +234,15 @@ describe('collection Renderer boundary contract', () => {
     expect(importer).not.toContain('reconciliations: []');
     expect(importer).not.toContain('expectedRows: 0');
     expect(importer).not.toContain('expectedCost: 0');
-    expect(evidenceReader).toContain('ReportParser.readLingxingRawReportControlTotals');
-    expect(evidenceReader).toContain('const beforeHash = fileHashOrNull(importFile.filePath)');
-    expect(evidenceReader).toContain('const afterHash = fileHashOrNull(importFile.filePath)');
-    expect(evidenceReader.indexOf('const beforeHash = fileHashOrNull(importFile.filePath)'))
-      .toBeLessThan(evidenceReader.indexOf('ReportParser.readLingxingRawReportControlTotals'));
-    expect(evidenceReader.indexOf('ReportParser.readLingxingRawReportControlTotals'))
-      .toBeLessThan(evidenceReader.indexOf('const afterHash = fileHashOrNull(importFile.filePath)'));
-    expect(evidenceReader).toContain('beforeHash !== importFile.fileHash || afterHash !== importFile.fileHash');
+    expect(evidenceReader).toContain('await parser.controlTotals(snapshot');
+    expect(evidenceReader).toContain('snapshot.sha256 !== importFile.fileHash');
+    expect(evidenceReader.indexOf('parser.assertCurrent(snapshot)'))
+      .toBeLessThan(evidenceReader.indexOf('await parser.controlTotals(snapshot'));
+    expect(evidenceReader.indexOf('await parser.controlTotals(snapshot'))
+      .toBeLessThan(evidenceReader.lastIndexOf('parser.assertCurrent(snapshot)'));
+    expect(importer.indexOf('dependencies.guard.commit')).toBeLessThan(importer.indexOf('commitImportForStore'));
+    expect(importer).toContain('for (const snapshot of snapshots.values()) parser.assertCurrent(snapshot)');
+    expect(importSource).not.toContain('ReportParser.readLingxingRawReportControlTotals');
     expect(controlTotalGuard).toContain('reconciliation.dateStart !== result.batch.dateStart');
     expect(controlTotalGuard).toContain('reconciliation.dateEnd !== result.batch.dateEnd');
     expect(controlTotalGuard).toContain('reconciliation.metricDate !== result.batch.dateEnd');
@@ -265,10 +274,15 @@ describe('collection Renderer boundary contract', () => {
     expect(recovery).toContain('receipt.casToken');
     expect(recovery).not.toContain("persistLingxingCollectionImportState(job, 'failed'");
     expect(recovery).toContain(
-      'importStoreScopedLingxingDownloadedReportMetrics(snapshot, { startedAt: attemptedAt })',
+      'await importStoreScopedLingxingDownloadedReportMetrics(snapshot, { startedAt: attemptedAt, expectedJob: pending',
     );
     expect(recovery).toContain('assertPersistedFullLingxingReconciliationProof(pending, committedRun)');
-    expect(recovery).toContain('currentJob.updatedAt !== pending.updatedAt');
+    expect(recovery).toContain("persistLingxingCollectionImportState(pending, 'failed'");
+    expect(mainRuntimeFunctionContract('persistLingxingCollectionImportState')).toContain('withCollectionImportStateCas(db, job, next');
+    const settlement = readFileSync(new URL('./collection-import-state-cas.ts', import.meta.url), 'utf8');
+    expect(settlement).toContain('stableJson(JSON.parse(row.snapshot)) !== stableJson(expected)');
+    expect(settlement).toContain('}).immediate()');
+    expect(settlement.indexOf('COLLECTION_IMPORT_STATE_CAS_CONFLICT')).toBeLessThan(settlement.indexOf('return write()'));
     expect(recovery).not.toContain("persistLingxingCollectionImportState(pending, 'succeeded'");
   });
 

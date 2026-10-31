@@ -1,6 +1,7 @@
 // 职责模块保留原有公开接口及安全校验边界。
 import { normalizeStoreContextEnvelope, type LingxingCollectionExternalStep, type LingxingCollectionGuardContext, type LingxingCollectionGuardDecision, type LingxingCollectionJobSnapshot, type LingxingCollectionProgressEvent, type LingxingCollectionReportCheckpoint, type LingxingCollectionReportState, type LingxingCollectionRequestDto, type LingxingCollectionResumeState, type LingxingCreateReportOutcome, type LingxingCreatedReportIdentity, type LingxingReportBatch, type LingxingReportDefinition, type LingxingReportFile, type LingxingReportType, type StoreContextEnvelope, } from '@amazon-ai-ops/shared-types';
 import { DownloadCenterPage, type DownloadCenterAutomationPort } from './download-center-page';
+import type { ReportContentInspector } from './report-file-inspector';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -11,6 +12,7 @@ export type LingxingCollectionAuthorityGuard = (context: LingxingCollectionGuard
 export type LingxingCollectionCancellationGuard = (context: LingxingCollectionGuardContext) => MaybePromise<LingxingCollectionGuardDecision>;
 
 export interface RunBatchOptions {
+    reportContentInspector: ReportContentInspector;
     requestId: string;
     storeContext: StoreContextEnvelope;
     storeDisplayName: string;

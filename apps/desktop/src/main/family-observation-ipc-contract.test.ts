@@ -9,8 +9,9 @@ describe('family observation desktop bridge', () => {
     for (const [channel, method] of [
       ['list', 'ListFamilyObservationFiles'], ['prepare', 'PrepareFamilyObservation'], ['confirm', 'ConfirmFamilyObservation'],
     ]) {
-      expect(main).toContain(`registerTrackedIpcHandler('family-observation:${channel}', (event, input)`);
-      expect(main).toContain(`rendererPayload(handle${method}(event.sender.id, input))`);
+      const asynchronous = channel === 'confirm';
+      expect(main).toContain(`registerTrackedIpcHandler('family-observation:${channel}', ${asynchronous ? 'async ' : ''}(event, input)`);
+      expect(main).toContain(`rendererPayload(${asynchronous ? 'await ' : ''}handle${method}(event.sender.id, input))`);
       expect(preload).toContain(`ipcRenderer.invoke('family-observation:${channel}',`);
     }
     expect(main).toContain('handleCancelFamilyObservation(event.sender.id)');

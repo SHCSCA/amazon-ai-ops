@@ -672,7 +672,19 @@ const AUDITED_GLOBAL_WRITE_PORTS = Object.freeze([
   ["../../scripts/migrate-current-user-db.js","9609483323c835c396a35230694b0fd882376558f30e0a10754ec1ff0311ca3f"],
   ["../../scripts/sqlite-authority-currentness.js","3d7b617d59f2bda7a401993951871204fde7195e70843e4a5380b10c9d93701f"],
   ["../../scripts/sqlite-authority-currentness.js","53b4fe4f2c12351c80522f4ea2e9c79ab3d0d0ca9f7b62060cca380036489456"],
-  ["../../scripts/smoke-package-security-boundaries.js","a9f18f3271cccc7b347e58468e90241f32e0e7f62d7d6b075591135743438fb3"]
+  ["../../scripts/smoke-package-security-boundaries.js","a9f18f3271cccc7b347e58468e90241f32e0e7f62d7d6b075591135743438fb3"],
+  ["../../scripts/verify-v16-trace-closure.js","a4795426c0819600f6bd6fd80ce5297d8e6513da2251d385df7d49de993fb3de"],
+  ["../../scripts/verify-v16-required-test-manifest.js","9e81cfbb1549791fd9126c61e09ea2b986841fe05957f32aebd7e7e5b2ee5abe"],
+  ["../../scripts/verify-s7-migration-backup-restore.js","3340d514715c23709f27995471f18a996c5ca7c8910afa599a0271cd6ba5d9e5"],
+  ["../../scripts/migrate-current-user-db.js","56417601c805100f0d901e8f3d754b6dc70734ca5a40136541d12f3651bb7aa4"],
+  ["../../scripts/smoke-package-adversarial-node-env.js","467ac14040aa6af81f16a0d9d78dae95921f021ecaf99013c95a86358730c46c"],
+  ["../../scripts/smoke-package-security-boundaries.js","cd8890e2760977812dfb13f49ca24680d37e4ef0bdb83f47231bfb96e653ed54"],
+  ["../../scripts/migration-contract-source.js","79537e6978069ca3641094e0febe0617800f8a9cb4b75d8142ea9b1720674fb2"],
+  ["../../scripts/verify-v16-trace-closure.js","869fe16e0626dff23b8fcf6cdc69b056250b6ea2ec80f8880a96a53ffabb15e8"],
+  ["../../scripts/verify-v16-required-test-manifest.js","d89953cedfee41f483c0ebaace73290d6279407076f189ef303c83f5f0feed46"],
+  ["../../scripts/verify-s7-migration-backup-restore.js","b51c19128b94149b36ab763af52c070e77044e875705605556c4a308cbca50aa"],
+  ["../../scripts/smoke-package-adversarial-node-env.js","7d228300f4c7d39b151b04b874232b5f51c7d60ccec65f5957d3c68a2d6fa96d"],
+  ["../../scripts/smoke-package-security-boundaries.js","26401e09a58bef16814efc8bd911b78f5ac40905d9382f035d027e4ee80f2eec"]
 ]);
 
 function auditedGlobalAssignments(index) {

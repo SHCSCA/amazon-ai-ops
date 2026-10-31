@@ -217,6 +217,9 @@ importers:
 
   packages/lingxing-report-collector:
     dependencies:
+      '@amazon-ai-ops/report-parser':
+        specifier: workspace:*
+        version: link:../report-parser
       '@amazon-ai-ops/shared-types':
         specifier: workspace:*
         version: link:../shared-types

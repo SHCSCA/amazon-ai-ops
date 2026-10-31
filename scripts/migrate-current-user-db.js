@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const TARGET_VERSION = 20;
+function getTargetVersion() { return require('./migration-contract-source').getMigrationPlan().targetVersion; }
 const SCRIPT_SCHEMA_VERSION = 1;
 const INSPECTION_TEMP_PREFIX = `amazon-ai-ops-s7-inspection-${process.pid}-`;
 const OFFLINE_MIGRATION_USAGE = `Usage:
@@ -19,7 +19,7 @@ Options:
   --expected-sha256 <hash>   Expected 64-character SHA-256 of the source database.
   --work-dir <path>          Absolute isolated directory for working copies and evidence.
   --out <path>               Optional absolute manifest path inside --work-dir.
-  --execute                  Upgrade a working copy to v${TARGET_VERSION}; never overwrite the source.
+  --execute                  Upgrade a working copy to the current production version; never overwrite the source.
   --help                     Show this help and exit without reading files or loading SQLite.
 
 Without --execute, the command performs a read-only inspection and prints the migration plan.
@@ -107,22 +107,22 @@ function inspectOfflineMigration(args) {
     const integrityCheck = inspected.pragma('integrity_check', { simple: true });
     if (integrityCheck !== 'ok') throw new Error(`Source database integrity_check returned: ${integrityCheck}`);
     const sourceVersion = readAppliedVersion(inspected);
-    if (sourceVersion >= TARGET_VERSION) {
+    if (sourceVersion >= getTargetVersion()) {
       throw new Error(`Source database is already at migration ${sourceVersion}; no offline upgrade is pending.`);
     }
     const sourceTableRowCounts = collectRowCounts(inspected);
     const listingMergeBaseline = collectListingMergeBaseline(inspected);
     const workingDatabasePath = path.join(
       workDir,
-      `${path.basename(sourcePath, path.extname(sourcePath))}.upgrade-to-v${TARGET_VERSION}.db`,
+      `${path.basename(sourcePath, path.extname(sourcePath))}.upgrade-to-v${getTargetVersion()}.db`,
     );
     const restoreDatabasePath = path.join(
       workDir,
-      `${path.basename(sourcePath, path.extname(sourcePath))}.restored-pre-v${TARGET_VERSION}.db`,
+      `${path.basename(sourcePath, path.extname(sourcePath))}.restored-pre-v${getTargetVersion()}.db`,
     );
     const manifestPath = args.out
       ? path.resolve(args.out)
-      : path.join(workDir, `s7-offline-upgrade-v${sourceVersion}-to-v${TARGET_VERSION}.json`);
+      : path.join(workDir, `s7-offline-upgrade-v${sourceVersion}-to-v${getTargetVersion()}.json`);
     if (!samePath(path.dirname(manifestPath), workDir)) {
       throw new Error('output manifest must be a direct child of the isolated work directory.');
     }
@@ -148,7 +148,7 @@ function inspectOfflineMigration(args) {
         tableRowCounts: sourceTableRowCounts,
         listingMergeBaseline,
       },
-      targetVersion: TARGET_VERSION,
+      targetVersion: getTargetVersion(),
       workDir,
       workingDatabasePath,
       restoreDatabasePath,
@@ -286,7 +286,7 @@ function executeOfflineMigration(args, hooks = {}) {
   const evidence = readJsonFile(plan.manifestPath, 'published migration manifest');
   if (
     evidence?.passed !== true
-    || evidence?.targetVersion !== TARGET_VERSION
+    || evidence?.targetVersion !== getTargetVersion()
     || normalizeSha256(evidence?.source?.sha256, 'manifest source SHA-256')
       !== plan.source.sha256
     || evidence?.offlineLease?.method !== 'windows-file-share-none'
@@ -339,12 +339,12 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
       SELECT version, name, checksum, status, applied_at AS appliedAt
       FROM schema_migrations ORDER BY version
     `).all();
-    const expectedVersions = Array.from({ length: TARGET_VERSION }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: getTargetVersion() }, (_, index) => index + 1);
     const appliedVersions = migrations
       .filter((migration) => migration.status === 'applied')
       .map((migration) => Number(migration.version));
     if (JSON.stringify(appliedVersions) !== JSON.stringify(expectedVersions)) {
-      throw new Error(`Upgrade did not apply migrations 1..${TARGET_VERSION}.`);
+      throw new Error(`Upgrade did not apply migrations 1..${getTargetVersion()}.`);
     }
     if (integrityCheck !== 'ok' || foreignKeyViolations.length > 0) {
       throw new Error(`Upgraded database verification failed (integrity=${integrityCheck}, fk=${foreignKeyViolations.length}).`);
@@ -364,14 +364,14 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
 
     const targetMigration = upgraded.prepare(`
       SELECT manifest_json AS manifestJson FROM schema_migrations WHERE version = ?
-    `).get(TARGET_VERSION);
+    `).get(getTargetVersion());
     const targetMigrationManifest = JSON.parse(targetMigration.manifestJson);
     const storeRepository = new runtime.StoreRepository(upgraded);
-    const recoveryPreflight = storeRepository.getMigrationRecoveryPreflight(TARGET_VERSION);
+    const recoveryPreflight = storeRepository.getMigrationRecoveryPreflight(getTargetVersion());
     if (!recoveryPreflight.canRestore) {
       throw new Error(`Upgrade recovery preflight failed: ${recoveryPreflight.blockers.join(' ')}`);
     }
-    const restore = storeRepository.restoreMigrationBackupTo(plan.restoreDatabasePath, TARGET_VERSION);
+    const restore = storeRepository.restoreMigrationBackupTo(plan.restoreDatabasePath, getTargetVersion());
     const restored = new (requireSqlite())(plan.restoreDatabasePath, { readonly: true, fileMustExist: true });
     let restoredVersion;
     let restoredIntegrityCheck;
@@ -396,7 +396,7 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
       passed: true,
       source: plan.source,
       offlineLease,
-      targetVersion: TARGET_VERSION,
+      targetVersion: getTargetVersion(),
       workingDatabase: {
         path: plan.workingDatabasePath,
         sourceCopySha256: copiedSha256,
@@ -428,8 +428,8 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
 }
 
 function assertTargetVersion(plan, label) {
-  if (!Number.isInteger(plan?.targetVersion) || plan.targetVersion !== TARGET_VERSION) {
-    throw new Error(`${label} targetVersion must be exactly ${TARGET_VERSION}.`);
+  if (!Number.isInteger(plan?.targetVersion) || plan.targetVersion !== getTargetVersion()) {
+    throw new Error(`${label} targetVersion must be exactly ${getTargetVersion()}.`);
   }
 }
 
@@ -952,7 +952,7 @@ function cliMain(argv = process.argv, logger = console) {
 
 module.exports = {
   OFFLINE_MIGRATION_USAGE,
-  TARGET_VERSION,
+  getTargetVersion,
   cliMain,
   collectRowCounts,
   evaluateBusinessRowPreservation,
@@ -968,5 +968,7 @@ module.exports = {
   requireSqlite,
   sha256File,
 };
+
+Object.defineProperty(module.exports, 'TARGET_VERSION', { enumerable: true, get: getTargetVersion });
 
 if (require.main === module) process.exitCode = cliMain();

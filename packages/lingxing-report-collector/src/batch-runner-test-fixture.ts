@@ -1,5 +1,6 @@
 // 按证据职责拆分共享夹具与断言，保留原有完整测试名称。
 import { type LegacyTestOptions, type LingxingCreateReportOutcome, type LingxingInPlaceResumeState, type LingxingReportDefinition, REPORT_DIMENSION_HEADER, type RunBatchOptions, TEST_STORE_CONTEXT, XLSX, downloadExistingLingxingReportBatch, fs, os, path, runLingxingReportBatch } from './batch-runner-test-environment';
+import { inspectReportFileContent } from './report-file-inspector';
 function writeSemanticReportFixture(filePath: string, report: LingxingReportDefinition): void {
     const headers = ['日期', '广告活动'];
     if (report.type !== 'campaign')
@@ -36,6 +37,8 @@ function testAuthority() {
     requestSequence += 1;
     return {
         requestId: `collector-test-${requestSequence}`,
+        // 隔离测试显式适配同步夹具，不提供正式 Main 的 CPU 隔离信用。
+        reportContentInspector: async (filePath: string, reportType: LingxingReportDefinition['type']) => inspectReportFileContent(filePath, reportType),
         storeContext: TEST_STORE_CONTEXT,
         storeDisplayName: 'SHC001 · 美国站',
         async progressSink() {

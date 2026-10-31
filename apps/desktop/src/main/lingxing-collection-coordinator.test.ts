@@ -55,10 +55,26 @@ it('re-authorizes the captured store, owns the capsule path, persists progress, 
       }),
       {
         startedAt: test.persistedImportStates[0].importAttemptedAt,
+        assertBeforeCommit: expect.any(Function),
       },
     );
     expect(output.result.job.importState).toBe('succeeded');
     expect(output.importSummary).toEqual({ inserted: 12 });
+  });
+
+it('rechecks the held authority at the import commit port after an asynchronous parse window', async () => {
+    const test = harness();
+    test.importResult.mockImplementationOnce(async (_result, options) => {
+      expect(typeof options.assertBeforeCommit).toBe('function');
+      options.assertBeforeCommit!();
+      await Promise.resolve();
+      test.active = context('store-one', 5);
+      options.assertBeforeCommit!();
+      return { inserted: 12 };
+    });
+    await expect(test.coordinator.start(request())).rejects.toThrow('stale authority');
+    expect(test.persistedImportStates.map(job => job.importState)).toEqual(['pending', 'failed']);
+    expect(test.importResult).toHaveBeenCalledTimes(1);
   });
 
 it('keeps a standalone selected-report download out of the production exact-eight import chain', async () => {

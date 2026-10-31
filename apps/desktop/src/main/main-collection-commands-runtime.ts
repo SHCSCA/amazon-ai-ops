@@ -170,7 +170,7 @@ export async function handleCollectLingxingReports(input: unknown) {
   };
 }
 
-export function handleImportCurrentBusinessReports(input: unknown) {
+export async function handleImportCurrentBusinessReports(input: unknown) {
   const mainRuntimeContext = getMainRuntimeContext();
   const scope = normalizeBusinessMutationScope(input);
   const batchResult = loadLatestBusinessBatch(scope);
@@ -191,18 +191,19 @@ export function handleImportCurrentBusinessReports(input: unknown) {
   const sourceBatchIds = Array.from(new Set(
     realReportFiles.map((file) => file.batchId || batchResult.batch.id),
   ));
-  const importSummaries = sourceBatchIds.map((batchId) => {
+  const importSummaries = [];
+  for (const batchId of sourceBatchIds) {
     mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(scope.storeContext);
     const sourceBatch = loadPersistedLingxingBatch(batchId);
     const sourceFiles = sourceBatch.files.filter((file) => isExistingRawReportFile(file, sourceBatch.batch));
     if (sourceFiles.length === 0) {
       throw new Error(`导入被阻断：来源批次 ${batchId} 没有可验证的真实报表文件。`);
     }
-    return importStoreScopedLingxingDownloadedReportMetrics({
+    importSummaries.push(await importStoreScopedLingxingDownloadedReportMetrics({
       batch: sourceBatch.batch,
       files: sourceFiles,
-    });
-  });
+    }, { assertCurrent: () => mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(scope.storeContext) }));
+  }
   const metricsImport = {
     inserted: importSummaries.reduce((sum, item) => sum + item.inserted, 0),
     parsedFiles: importSummaries.reduce((sum, item) => sum + item.parsedFiles, 0),
@@ -247,14 +248,16 @@ export async function handleImportLocalBusinessReportFiles(input: unknown) {
   if (!store || store.status !== 'active') {
     throw new Error('本地导入被阻断：当前店铺不存在或已停用。');
   }
-  const result = buildLocalBusinessReportBatch(
+  const result = await buildLocalBusinessReportBatch(
     scope,
     selected.filePaths,
     storeCapsuleFor(store),
   );
   mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(context);
   mainRuntimeContext.state.lingxingImportRepo!.saveCollectionSnapshotForStore(context.storeId, result);
-  const metricsImport = importStoreScopedLingxingDownloadedReportMetrics(result);
+  const metricsImport = await importStoreScopedLingxingDownloadedReportMetrics(result, {
+    assertCurrent: () => mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(context),
+  });
   mainRuntimeContext.mainWindow.webContents.send('business-ui:data-updated');
   return {
     cancelled: false,

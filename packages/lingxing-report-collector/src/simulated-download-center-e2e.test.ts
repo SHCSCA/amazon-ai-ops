@@ -10,6 +10,7 @@ import {
   type LingxingReportDefinition,
 } from '@amazon-ai-ops/shared-types';
 import { runLingxingReportBatch } from './batch-runner';
+import { inspectReportFileContent } from './report-file-inspector';
 import type { DownloadCenterAutomationPort } from './download-center-page';
 
 class SimulatedDownloadCenter implements DownloadCenterAutomationPort {
@@ -109,6 +110,7 @@ describe('simulated Lingxing download center E2E', () => {
 
     try {
       const result = await runLingxingReportBatch({
+        reportContentInspector: async (filePath, reportType) => inspectReportFileContent(filePath, reportType),
         requestId: 'simulated-e2e-request',
         storeContext,
         storeDisplayName: 'SHC001 · 美国站',

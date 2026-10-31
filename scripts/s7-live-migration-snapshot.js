@@ -1,5 +1,5 @@
 // 按职责复用原有严格校验，公共入口继续保持兼容。
-const { TARGET_VERSION, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
+const { getTargetVersion, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
 const { REQUIRED_TABLES, inspectStoreProviderIdentityV11Schema, legacyV1Checksum, migrationContract, migrationRowsMatchProductionContract, migrationV1ChecksumWhitelist, } = require('./verify-production-authority-selection.js');
 const { fileArtifact, normalizeSha256, readJsonArtifact } = require('./s7-live-migration-artifacts.js');
 const { addRequiredCheck, fail, samePath, stableJson } = require('./s7-live-migration-contracts.js');
@@ -27,34 +27,34 @@ function validateUpgradeBackup(database, databaseArtifact, offlineManifest, targ
         migrationManifest = JSON.parse(String(targetMigrationRow.manifestJson ?? ''));
     }
     catch {
-        fail(`LIVE_V9_UPGRADE_BACKUP_EMBEDDED: migration ${TARGET_VERSION} manifest_json is malformed.`);
+        fail(`LIVE_V9_UPGRADE_BACKUP_EMBEDDED: migration ${getTargetVersion()} manifest_json is malformed.`);
     }
     const upgradeBackup = migrationManifest?.upgradeBackup;
-    const targetContract = context.migrationContract.find((migration) => migration.version === TARGET_VERSION);
-    const fixedBackupPath = `${databaseArtifact.realPath}.pre-upgrade-to-v${TARGET_VERSION}.bak`;
-    const fixedManifestPath = `${databaseArtifact.realPath}.pre-upgrade-to-v${TARGET_VERSION}.manifest.json`;
+    const targetContract = context.migrationContract.find((migration) => migration.version === getTargetVersion());
+    const fixedBackupPath = `${databaseArtifact.realPath}.pre-upgrade-to-v${getTargetVersion()}.bak`;
+    const fixedManifestPath = `${databaseArtifact.realPath}.pre-upgrade-to-v${getTargetVersion()}.manifest.json`;
     addRequiredCheck(checks, 'LIVE_V9_UPGRADE_BACKUP_EMBEDDED', upgradeBackup?.kind === 'schema-upgrade-backup'
         && upgradeBackup?.schemaVersion === 1
         && ['created', 'reused'].includes(upgradeBackup?.status)
-        && upgradeBackup?.targetVersion === TARGET_VERSION
+        && upgradeBackup?.targetVersion === getTargetVersion()
         && upgradeBackup?.targetName === targetContract?.name
-        && upgradeBackup?.targetChecksum === targetContract?.checksum, `migration ${TARGET_VERSION} must embed the current recoverable schema-upgrade-backup contract`);
+        && upgradeBackup?.targetChecksum === targetContract?.checksum, `migration ${getTargetVersion()} must embed the current recoverable schema-upgrade-backup contract`);
     addRequiredCheck(checks, 'LIVE_V9_UPGRADE_BACKUP_PATHS_BOUND', samePath(upgradeBackup.databasePath, databaseArtifact.realPath)
         && samePath(upgradeBackup.backupPath, fixedBackupPath)
         && samePath(upgradeBackup.manifestPath, fixedManifestPath), 'upgrade database, backup, and manifest paths must be canonical fixed adjacent live-db paths');
     addRequiredCheck(checks, 'LIVE_V9_UPGRADE_BACKUP_SOURCE_BOUND', upgradeBackup.sourceVersion === offlineManifest.source.version, 'upgrade backup sourceVersion must equal the offline source version');
-    const backupArtifact = fileArtifact(fixedBackupPath, `Migration ${TARGET_VERSION} upgrade backup`);
-    const sidecarManifest = readJsonArtifact(fixedManifestPath, `Migration ${TARGET_VERSION} upgrade backup manifest`);
-    addRequiredCheck(checks, 'LIVE_V9_UPGRADE_BACKUP_MANIFEST_MATCH', sameUpgradeBackupContract(upgradeBackup, sidecarManifest.value), `embedded migration ${TARGET_VERSION} upgradeBackup must match its adjacent manifest contract`);
+    const backupArtifact = fileArtifact(fixedBackupPath, `Migration ${getTargetVersion()} upgrade backup`);
+    const sidecarManifest = readJsonArtifact(fixedManifestPath, `Migration ${getTargetVersion()} upgrade backup manifest`);
+    addRequiredCheck(checks, 'LIVE_V9_UPGRADE_BACKUP_MANIFEST_MATCH', sameUpgradeBackupContract(upgradeBackup, sidecarManifest.value), `embedded migration ${getTargetVersion()} upgradeBackup must match its adjacent manifest contract`);
     const repository = new context.runtime.StoreRepository(database);
-    const preflight = repository.getMigrationRecoveryPreflight(TARGET_VERSION);
+    const preflight = repository.getMigrationRecoveryPreflight(getTargetVersion());
     const expectedBackupSha256 = normalizeSha256(upgradeBackup.sha256, 'Embedded upgrade backup SHA-256');
     addRequiredCheck(checks, 'LIVE_V9_RECOVERY_PREFLIGHT_CAN_RESTORE', preflight.canRestore === true
         && Array.isArray(preflight.blockers)
         && preflight.blockers.length === 0
-        && preflight.version === TARGET_VERSION
-        && preflight.targetVersion === TARGET_VERSION
-        && preflight.sourceVersion === offlineManifest.source.version, `StoreRepository recovery preflight must allow restore for the bound v${TARGET_VERSION} backup`);
+        && preflight.version === getTargetVersion()
+        && preflight.targetVersion === getTargetVersion()
+        && preflight.sourceVersion === offlineManifest.source.version, `StoreRepository recovery preflight must allow restore for the bound v${getTargetVersion()} backup`);
     addRequiredCheck(checks, 'LIVE_V9_RECOVERY_BACKUP_SHA_INTEGRITY', preflight.backupIntegrityCheck === 'ok'
         && normalizeSha256(preflight.backupSha256, 'Recovery preflight backup SHA-256') === expectedBackupSha256
         && backupArtifact.sha256 === expectedBackupSha256
@@ -120,7 +120,7 @@ function inspectLogicalSnapshot(snapshotPath, databaseArtifact, offlineManifest,
         const liveRowCounts = collectRowCounts(database);
         const preservation = evaluateBusinessRowPreservation(database, offlineManifest.source.tableRowCounts, liveRowCounts, offlineManifest.source.listingMergeBaseline);
         addRequiredCheck(checks, 'LIVE_BUSINESS_ROWS_PRESERVED', preservation.passed === true && preservation.failures.length === 0, `failureCount=${preservation.failures.length}`);
-        const targetMigrationRow = rawMigrationRows.find((row) => Number(row.version) === TARGET_VERSION);
+        const targetMigrationRow = rawMigrationRows.find((row) => Number(row.version) === getTargetVersion());
         const recovery = validateUpgradeBackup(database, databaseArtifact, offlineManifest, targetMigrationRow, context, checks);
         return {
             integrityCheck,

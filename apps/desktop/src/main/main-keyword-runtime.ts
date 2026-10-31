@@ -1,7 +1,9 @@
 import { validateArray, validateListing, normalizeKeywordSource } from './main-input-contract';
 import * as path from 'path';
 import * as fs from 'fs';
-import { keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics } from '@amazon-ai-ops/report-parser';
+import { keywordMetricDiagnosticsToCsv } from '@amazon-ai-ops/report-parser';
+import { loadFixedReportFieldMapping } from './report-parser-field-mapping';
+import { resolveBusinessStoreAuthority } from './main-business-scope-runtime';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage } from '@amazon-ai-ops/listing-analyzer';
 import type { KeywordMetric, KeywordOpportunity, ListingContent } from '@amazon-ai-ops/shared-types';
@@ -184,7 +186,7 @@ export function pruneKeywordOpportunitiesTo(opportunities: KeywordOpportunity[])
   remove();
 }
 
-export function handleImportKeywordMetrics(
+export async function handleImportKeywordMetrics(
   filePath: string,
   source?: string,
   duplicateStrategy: KeywordImportDuplicateStrategy = 'merge',
@@ -197,15 +199,27 @@ export function handleImportKeywordMetrics(
   }
 
   const resolvedFilePath = canonicalizeExistingPath(filePath);
-  const parseResult = parseKeywordMetricsWithDiagnostics(resolvedFilePath, {
-    source: normalizeKeywordSource(source),
-    fieldMappingsDir: path.join(getBundledResourcesPath(), 'field-mappings'),
+  const mainRuntimeContext = getMainRuntimeContext();
+  const context = resolveBusinessStoreAuthority().context;
+  const database = mainRuntimeContext.state.db;
+  if (!database) throw new Error('REPORT_IMPORT_DATABASE_REQUIRED');
+  const parser = mainRuntimeContext.reportParserRuntime.createSession();
+  const snapshot = parser.read(filePath);
+  try {
+  if (snapshot.path !== resolvedFilePath) throw new Error('REPORT_SOURCE_CHANGED_BEFORE_COMMIT');
+  const metricSource = normalizeKeywordSource(source) ?? 'manual';
+  const parseResult = await parser.keyword(snapshot, {
+    source: metricSource, fieldMapping: loadFixedReportFieldMapping(metricSource),
   });
   const { metrics, diagnostics } = parseResult;
   if (metrics.length === 0) {
     throw new Error('未在报表中识别到关键词指标，请检查字段映射');
   }
 
+  return database.transaction(() => {
+  if (mainRuntimeContext.state.db !== database) throw new Error('REPORT_IMPORT_RUNTIME_CHANGED');
+  mainRuntimeContext.state.storeCoordinator!.assertActiveStoreContext(context);
+  parser.assertCurrent(snapshot);
   const metricsForPersistence = metrics.map((metric) => ({ ...metric, sourceFile: resolvedFilePath }));
   const importResult = persistKeywordMetrics(metricsForPersistence, duplicateStrategy);
   if (importResult.skipped) {
@@ -240,6 +254,8 @@ export function handleImportKeywordMetrics(
     existingRows: importResult.existingRows,
     skipped: false,
   };
+  }).immediate();
+  } finally { parser.release(snapshot); }
 }
 
 export function handleBuildKeywordOpportunities(metrics: KeywordMetric[], options: { brandWhitelist?: string[] } = {}) {

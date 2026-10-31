@@ -7,6 +7,7 @@ import { resolveBusinessStoreAuthority } from './main-business-scope-runtime';
 import { getMainRuntimeContext } from './main-runtime-access';
 import { runtimeLog } from './runtime-log-adapter';
 import { isRejectedEvidenceLikePath, BUSINESS_REAL_REPORT_EXTENSIONS } from './business-report-files';
+import { logReportParserFailure } from './report-parser-errors';
 
 function unavailable(): never { throw new Error('产品族只读观察暂不可用，请重新选择店铺并检查已导入报表。'); }
 function isWithin(candidate: string, root: string): boolean {
@@ -34,20 +35,35 @@ export function readFamilyObservationFile(source: FamilyObservationSource, autho
   if (!isWithin(realStoreRoot, realTrustedRoot) || path.relative(realTrustedRoot, realStoreRoot) !== authority.context.storeId) unavailable();
   const realFile = fs.realpathSync(logical);
   if (!isWithin(realFile, realStoreRoot)) unavailable();
-  const expected = fs.statSync(realFile);
-  if (!expected.isFile() || expected.size !== source.fileSize || expected.size < 1 || expected.size > 32 * 1024 * 1024) unavailable();
+  const expected = fs.statSync(realFile, { bigint: true });
+  if (!expected.isFile() || expected.nlink !== 1n || expected.size !== BigInt(source.fileSize) || expected.size < 1 || expected.size > 32 * 1024 * 1024) unavailable();
   const fd = fs.openSync(realFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  let failure: unknown;
   try {
-    const before = fs.fstatSync(fd);
-    if (!before.isFile() || before.dev !== expected.dev || before.ino !== expected.ino || before.size !== expected.size || before.mtimeMs !== expected.mtimeMs) unavailable();
-    const bytes = fs.readFileSync(fd);
-    const after = fs.fstatSync(fd);
+    const before = fs.fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.dev !== expected.dev || before.ino !== expected.ino || before.size !== expected.size
+      || before.mtimeNs !== expected.mtimeNs || before.ctimeNs !== expected.ctimeNs) unavailable();
+    const bytes = new Uint8Array(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = fs.readSync(fd, bytes, offset, bytes.length - offset, null);
+      if (!read) unavailable();
+      offset += read;
+    }
+    if (fs.readSync(fd, new Uint8Array(1), 0, 1, null) !== 0) unavailable();
+    const after = fs.fstatSync(fd, { bigint: true });
     assertNoLinks(logical, capsule.trustedStoresRoot);
-    const current = fs.statSync(logical);
-    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs
-      || current.dev !== before.dev || current.ino !== before.ino || fs.realpathSync(logical) !== realFile) unavailable();
+    const current = fs.statSync(logical, { bigint: true });
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
+      || current.dev !== before.dev || current.ino !== before.ino || current.size !== before.size
+      || current.mtimeNs !== before.mtimeNs || current.ctimeNs !== before.ctimeNs || current.nlink !== 1n || fs.realpathSync(logical) !== realFile) unavailable();
     return bytes;
-  } finally { fs.closeSync(fd); }
+  } catch (error) { failure = error; throw error; }
+  finally {
+    try { fs.closeSync(fd); }
+    catch (error) { throw logReportParserFailure('report_parser.family_source_close_failed', failure
+      ? new AggregateError([failure, error], 'REPORT_SOURCE_READ_AND_CLOSE_FAILED') : error); }
+  }
 }
 const service = new FamilyObservationService({
   authority(context) {
@@ -69,6 +85,12 @@ const service = new FamilyObservationService({
     });
   },
   read(source, authority) { return readFamilyObservationFile(source, authority, getMainRuntimeContext().STORES_DIR); },
+  reserveInputBytes(bytes, fileSizes) {
+    const parser = getMainRuntimeContext().reportParserRuntime.createSession();
+    if (fileSizes.some(size => !Number.isSafeInteger(size) || size < 1 || size > parser.maxInputBytes)) unavailable();
+    return parser.reserveInputBytes(bytes);
+  },
+  observe(scope, reports, signal) { return getMainRuntimeContext().reportParserRuntime.createSession().family(scope, reports, signal); },
 });
 function safe<T>(operation: () => T): T {
   try { return operation(); }
@@ -80,7 +102,8 @@ export function handleListFamilyObservationFiles(senderId: number, input: Family
 export function handlePrepareFamilyObservation(senderId: number, input: PrepareFamilyObservationInput) {
   return safe(() => service.prepare(senderId, input));
 }
-export function handleConfirmFamilyObservation(senderId: number, input: ConfirmFamilyObservationInput) {
-  return safe(() => service.confirm(senderId, input));
+export async function handleConfirmFamilyObservation(senderId: number, input: ConfirmFamilyObservationInput) {
+  try { return await service.confirm(senderId, input); }
+  catch (error) { runtimeLog.warn('[FamilyObservation] read-only request rejected', error); unavailable(); }
 }
 export function handleCancelFamilyObservation(senderId: number) { service.cancel(senderId); }

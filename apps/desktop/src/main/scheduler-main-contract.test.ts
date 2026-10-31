@@ -204,7 +204,11 @@ describe('desktop scheduler scope contract', () => {
     expect(shutdown).toContain('mainRuntime?.stopAndDrain(shutdownTimeoutMs)');
     expect(shutdown).toContain('executionAuthority?.prepareForShutdown(shutdownTimeoutMs)');
     expect(shutdown).toContain('mainIpcOperationTracker.stopAndDrain(shutdownTimeoutMs)');
-    expect(shutdown.match(/invokeShutdownOperationNow\(/g)).toHaveLength(4);
+    expect(shutdown).toContain("name: 'report-parser-drain'");
+    const parserDrain = shutdown.indexOf('operation: invokeShutdownOperationNow(() => reportParserRuntime.stopAndDrain())');
+    expect(parserDrain).toBeGreaterThan(barrierDeclaration);
+    expect(parserDrain).toBeLessThan(barrierAwait);
+    expect(shutdown.match(/invokeShutdownOperationNow\(/g)).toHaveLength(5);
     expect(shutdown).not.toContain('Promise.resolve().then');
     expect(shutdown).toContain('throw new AggregateError(');
     expect(shutdown).toContain('await mainRuntime?.closeRegistry(shutdownTimeoutMs)');

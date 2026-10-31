@@ -1,6 +1,6 @@
 // 按职责复用原有严格校验，公共入口继续保持兼容。
 const path = require('node:path');
-const { TARGET_VERSION, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
+const { getTargetVersion, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
 
 
 const KIND = 's7-live-migration-acceptance';
@@ -178,7 +178,10 @@ function requireAcceptanceArtifact(value, label) {
     }
 }
 
-function requireAcceptanceOfflineArtifact(value, label, expectedKind) {
+function requireAcceptanceOfflineArtifact(value, label, expectedKind, targetVersion = getTargetVersion()) {
+    if (!Number.isSafeInteger(targetVersion) || targetVersion < 1) {
+        fail(`${label} target version is invalid.`);
+    }
     const sharedKeys = [
         'path',
         'identity',
@@ -222,7 +225,7 @@ function requireAcceptanceOfflineArtifact(value, label, expectedKind) {
     }
     if (expectedKind === 'working'
         && (value.foreignKeyViolationCount !== 0
-            || value.migrationCount !== TARGET_VERSION
+            || value.migrationCount !== targetVersion
             || value.businessRowPreservationPassed !== true
             || value.recoveryCanRestore !== true)) {
         fail(`${label} migration/preservation proof is invalid.`);
@@ -230,7 +233,7 @@ function requireAcceptanceOfflineArtifact(value, label, expectedKind) {
     if (expectedKind === 'restore'
         && (!Number.isInteger(value.version)
             || value.version < 0
-            || value.version >= TARGET_VERSION
+            || value.version >= targetVersion
             || value.sourceBaselineRowsMatch !== true)) {
         fail(`${label} source-baseline proof is invalid.`);
     }

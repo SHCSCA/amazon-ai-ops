@@ -1,5 +1,10 @@
 # Real Ad Readback Runbook
 
+## 当前稳定对象身份输入
+
+后续新回读必须绑定当前可写对象，而非同名活动或只读搜索词。生成模板时使用 `--entity-id "<opaque Ads UI/API writable object id>"` 和 `--identity-proof "C:\path\to\target-identity-proof.json"`，分别写入 `target.entityId`、`target.identityProofPath`。证明文件须存在、属于同一当前对象并通过正式校验；不得复制历史证明或由名称拼出ID。完整模板与交付分支见 [用户指南维护附录](USER_GUIDE_v1_5.md#维护附录证据命令与历史兼容分支)。这些输入不构成批准或授权，实际before/after/reload与独立刷新读数仍须齐备。
+
+
 > 2026-10-27 文档对齐：本文定义合同、方法或验收案例，不提供当前通过结论。现行状态、失败与后续计划统一见 [项目状态](PROJECT_STATUS.md)；当前仍为 APP_NEEDS_WORK / INTERNAL NON_READY。正文中的旧检查点只适用于当时版本。
 
 历史 READY 阻断曾由一次低风险真实广告动作的前后回读证据关闭。2026-06-18 的执行记录现在只保留为操作示例，不能证明 2026-07-16 当前包体或当前 SQLite 状态已通过。2026-06-25 后的桌面包支持在 `结果核对` 页把审批、执行前、执行后和刷新回读截图直接拖入或 Ctrl+V 粘贴到回读工作包，由应用写入对应证据目录并回填路径/时间。本文是后续人工验收手册，不授权任何自动广告写入。

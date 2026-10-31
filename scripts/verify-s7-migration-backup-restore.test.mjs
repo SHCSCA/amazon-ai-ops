@@ -188,6 +188,8 @@ describe('S7 offline migration and recovery verifier', () => {
     fs.writeFileSync(requestPath, JSON.stringify({
       kind: 's7-offline-migration-lease-request',
       schemaVersion: 1,
+      nodeExecutable: process.execPath,
+      migrationScriptPath: path.resolve('scripts/migrate-current-user-db.js'),
       plan: { targetVersion },
     }));
     const helper = path.resolve('scripts/run-s7-offline-migration-lease.ps1');
@@ -697,6 +699,9 @@ function createV3SourceWithDuplicateListings(databasePath) {
 
 // Test-only downgrade of an empty current schema; the production migrator never drops these tables.
 function stripPostV11FixtureSchema(database) {
+  database.exec('ALTER TABLE ad_daily_metrics DROP COLUMN source_asin; ALTER TABLE ad_daily_metrics DROP COLUMN source_metric_mask;');
+  expect(database.pragma('table_info(ad_daily_metrics)').filter(column => ['source_asin', 'source_metric_mask'].includes(column.name)))
+    .toEqual([]);
   database.exec(`DROP TABLE ai_cost_records; DROP TABLE ai_spend_policies; DROP TABLE legacy_record_classifications;
     DROP TABLE ad_execution_reconciliation_cases;
     DROP TRIGGER trg_grant_slot_intent;

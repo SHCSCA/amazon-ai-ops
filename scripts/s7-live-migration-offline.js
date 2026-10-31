@@ -1,5 +1,5 @@
 // 按职责复用原有严格校验，公共入口继续保持兼容。
-const { TARGET_VERSION, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
+const { getTargetVersion, collectRowCounts, evaluateBusinessRowPreservation, loadLocalDbRuntime, readAppliedVersion, requireSqlite, } = require('./migrate-current-user-db.js');
 const { REQUIRED_TABLES, inspectStoreProviderIdentityV11Schema, legacyV1Checksum, migrationContract, migrationRowsMatchProductionContract, migrationV1ChecksumWhitelist, } = require('./verify-production-authority-selection.js');
 const { assertCleanAbsolutePath, assertOfflineSidecarsAbsent, fileArtifact, normalizeSha256, openOfflineReadOnly, sameFileArtifact } = require('./s7-live-migration-artifacts.js');
 const { addRequiredCheck, sameNumericRecord, samePath, stableJson } = require('./s7-live-migration-contracts.js');
@@ -62,10 +62,10 @@ function verifyOfflineMigrationArtifacts(manifest, context, checks) {
             && preservation.failures.length === 0
             && stableJson(preservation) === stableJson(manifest.businessRowPreservation), `preservationFailureCount=${preservation.failures.length}`);
         const recovery = new context.runtime.StoreRepository(working)
-            .getMigrationRecoveryPreflight(TARGET_VERSION);
+            .getMigrationRecoveryPreflight(getTargetVersion());
         addRequiredCheck(checks, 'OFFLINE_WORKING_V9_RECOVERY_PREFLIGHT', recovery.canRestore === true
             && recovery.sourceVersion === manifest.source.version
-            && recovery.targetVersion === TARGET_VERSION
+            && recovery.targetVersion === getTargetVersion()
             && recovery.backupIntegrityCheck === 'ok'
             && recovery.schemaFingerprintMatches === true
             && recovery.tableRowCountsMatch === true
