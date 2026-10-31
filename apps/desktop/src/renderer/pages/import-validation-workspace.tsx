@@ -1,3 +1,4 @@
+import { FamilyObservationPanel } from './family-observation-panel';
 import { BusinessDataConfigurationGuard } from '../components/business-data-configuration';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useWorkspaceOperation } from '../components/workspace/use-workspace-operation';
@@ -509,6 +510,13 @@ export function DataImportValidationPage() {
     {unconfiguredLocalImportButton.label}
   </span>
 </WorkspaceActionButton>{notice && <p role="status">{notice}</p>}{importError && <p role="alert">{importError}</p>}{collectionJobsError && <p role="alert">{collectionJobsError}</p>}</div>}
+<FamilyObservationPanel
+  contextKey={contextKey}
+  fileRevision={JSON.stringify(realFiles.map(file => [file.batchId, file.fileName, file.fileHash, file.status, file.importedRows]))}
+  scope={storeAuthority.phase === 'ready' && storeAuthority.authoritativeContext
+    ? { storeContext: storeAuthority.authoritativeContext, dateFrom: scope.dateFrom, dateTo: scope.dateTo }
+    : null}
+/>
 <BusinessDataConfigurationGuard configurationRequired={configurationRequired}>
 
 

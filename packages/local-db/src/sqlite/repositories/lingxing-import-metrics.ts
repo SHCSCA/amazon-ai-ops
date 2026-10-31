@@ -1,3 +1,4 @@
+import { AD_SOURCE_METRIC_BITS, AD_SOURCE_METRIC_MASK_ALL } from '@amazon-ai-ops/shared-types';
 import { createHash, randomBytes } from 'crypto';
 import type { AdDailyMetrics, LingxingCollectionJobSnapshot, LingxingCollectionProgressEvent, LingxingCollectionReportCheckpoint, LingxingCollectionResumeState, LingxingReportBatch, LingxingReportFile, LingxingReportType, StoreId, StoreContextEnvelope, } from '@amazon-ai-ops/shared-types';
 import { type CommitReportImportInput, type ReportImportFileInput, type ReportImportReconciliationInput } from './lingxing-import-contracts';
@@ -102,6 +103,21 @@ export function validateImportFile(file: ReportImportFileInput): void {
 }
 
 export function normalizeMetricForImport(metric: AdDailyMetrics): AdDailyMetrics {
+    if (metric.sourceAsin !== undefined && typeof metric.sourceAsin !== 'string') {
+        throw new Error('IMPORT_SOURCE_ASIN_INVALID: sourceAsin 必须为字符串或 undefined。');
+    }
+    if (metric.sourceMetricMask !== undefined) {
+        if (!Number.isSafeInteger(metric.sourceMetricMask) || metric.sourceMetricMask < 0 || metric.sourceMetricMask > AD_SOURCE_METRIC_MASK_ALL) {
+            throw new Error('IMPORT_SOURCE_METRIC_MASK_INVALID');
+        }
+        for (const [field, bit] of Object.entries(AD_SOURCE_METRIC_BITS)) {
+            const value = metric[field as keyof typeof AD_SOURCE_METRIC_BITS];
+            const count = field === 'impressions' || field === 'clicks' || field === 'orders';
+            if ((metric.sourceMetricMask & bit) && (!Number.isFinite(value) || value < 0 || (count && !Number.isSafeInteger(value)))) {
+                throw new Error('IMPORT_SOURCE_METRIC_VALUE_INVALID');
+            }
+        }
+    }
     return {
         batchId: metric.batchId,
         reportType: metric.reportType,
@@ -110,6 +126,8 @@ export function normalizeMetricForImport(metric: AdDailyMetrics): AdDailyMetrics
         storeName: metric.storeName,
         marketplaceCode: metric.marketplaceCode,
         asin: metric.asin,
+        sourceAsin: metric.sourceAsin,
+        sourceMetricMask: metric.sourceMetricMask,
         msku: metric.msku,
         campaignName: metric.campaignName,
         adGroupName: metric.adGroupName,
@@ -150,6 +168,8 @@ export function metricParams(storeId: StoreId, metric: AdDailyMetrics): Record<s
         storeName: metric.storeName,
         marketplaceCode: metric.marketplaceCode,
         asin: metric.asin,
+        sourceAsin: metric.sourceAsin ?? null,
+        sourceMetricMask: metric.sourceMetricMask ?? null,
         msku: metric.msku,
         campaignName: metric.campaignName,
         adGroupName: metric.adGroupName,

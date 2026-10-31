@@ -255,6 +255,7 @@ export async function runRecommendationGeneration(
   const strategyDiagnosisResult = await enrichAdRecommendationsWithStrategyDiagnosis(recommendations, metrics, gate.scope, {
     taskId,
     sourceFiles: gate.metricSource.sourceFiles,
+    productHistorySource: gate.metricSource,
     runtimeConfig,
     aiSettings: generationRuntime.aiSettings,
     causalMemoryPrompt,

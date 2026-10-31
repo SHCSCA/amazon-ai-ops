@@ -25,3 +25,5 @@ export * from './sqlite/repositories/execution-authority-repo';
 export * from './sqlite/repositories/analysis-runs-repo';
 export * from './sqlite/repositories/v16-domain-repositories';
 export * from './duckdb/queries/ad-summary';
+
+export * from './sqlite/repositories/ad-observed-snapshot';

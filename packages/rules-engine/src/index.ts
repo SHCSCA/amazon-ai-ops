@@ -1,7 +1,7 @@
 export { AdRules } from './ad-rules';
 export { RiskEvaluator } from './risk-evaluator';
 export { RecommendationGenerator } from './recommendation';
-export { mergeAdDecisions } from './ad-decision-merger';
+export { mergeAdDecisions, adDecisionIdentityKey } from './ad-decision-merger';
 export { AdQuantifier, buildAdMetricObjectIdentity } from './quantification';
 export {
   applyRecommendationDecision,
@@ -19,6 +19,7 @@ export type { GenerateOptions } from './recommendation';
 export type { RiskAssessment } from './risk-evaluator';
 export type {
   AdDecisionCandidate,
+  AdDecisionIdentity,
   DecisionAgreement,
   MergeAdDecisionsInput,
   MergedAdDecision,

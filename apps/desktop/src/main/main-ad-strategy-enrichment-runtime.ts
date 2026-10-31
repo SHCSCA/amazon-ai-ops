@@ -1,3 +1,4 @@
+import { recommendationDecisionIdentity, resolveAiDecisionIdentity } from './ad-decision-identity';
 import { finiteNumberOrUndefined, parseIntegerSetting } from './main-value-coercion';
 import { mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { AdActionReasonExplainer, AdStrategyDiagnoser, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
@@ -8,7 +9,8 @@ import { runtimeLog } from './runtime-log-adapter';
 import { annotateRecommendationsWithStrategy, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
 import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
 import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
-import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { loadProductHistoryObservation } from './ad-product-history-source-runtime';
+import type { BusinessMetricSource } from './main-runtime-contracts';
 import { type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
 import { buildCausalMemorySystemPersona, withCausalMemoryUserContext } from './analysis-causal-memory-prompt';
@@ -251,6 +253,7 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     storeContext: StoreContextEnvelope;
     taskId: string;
     sourceFiles: string[];
+    productHistorySource?: BusinessMetricSource;
     runtimeConfig: StoreRuntimeAnalysisConfig;
     aiSettings: Record<string, string>;
     causalMemoryPrompt?: string;
@@ -271,19 +274,14 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     limit: 100,
   }) || [];
   const productContexts = loadProductStrategyContexts(scope);
-  const productHistoryLedgers = buildAdProductHistoryLedger({
-    scope: {
-      dateFrom: scope.dateFrom,
-      dateTo: scope.dateTo,
-      storeName: scope.storeName,
-      marketplaceCode: scope.marketplaceCode,
-      asin: scope.asin,
-      batchId: scope.batchId,
-    },
-    metrics,
-    operationEvents,
-    productContexts,
-  });
+  const productHistoryQuality = loadProductHistoryObservation(mainRuntimeContext.state.db, {
+    storeId: scope.storeId,
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
+  }, options.productHistorySource);
   const evidencePack = buildAdAiEvidencePack({
     scope: {
       dateFrom: scope.dateFrom,
@@ -297,11 +295,12 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     operationEvents,
     productContexts,
     ruleRecommendations: recommendations,
-    productHistoryLedgers,
+    productHistoryQuality,
   });
   const evidencePackSummary = summarizeAiEvidencePack(evidencePack);
   const diagnosisInput = buildAdStrategyDiagnosisInput({
     scope: {
+      storeId: scope.storeId,
       dateFrom: scope.dateFrom,
       dateTo: scope.dateTo,
       storeName: scope.storeName,
@@ -315,6 +314,7 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     ruleConfig: options.runtimeConfig.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations,
     evidencePack,
+    productHistoryQuality,
   });
   const settings = options.aiSettings;
   const diagnosis = options.runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
@@ -383,8 +383,10 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     ...diagnosis,
     aiCandidates: diagnosis.aiCandidates.filter((_, index) => validation.validCandidateIndexes.includes(index)),
   };
+  const identityScope = { storeContext: options.storeContext, dateFrom: scope.dateFrom, dateTo: scope.dateTo, storeId: scope.storeId, storeName: scope.storeName, marketplaceCode: scope.marketplaceCode, asin: scope.asin, batchId: scope.batchId };
   const decisions = mergeAdDecisions({
     ruleCandidates: recommendations.map((recommendation) => ({
+      identity: recommendationDecisionIdentity(recommendation, identityScope),
       entityType: recommendation.entityType,
       entityName: recommendation.entityName,
       actionType: recommendation.actionType,
@@ -393,6 +395,7 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
       confidence: recommendation.confidence,
     })),
     aiCandidates: mergeDiagnosis.aiCandidates.map((candidate) => ({
+      identity: resolveAiDecisionIdentity(candidate, recommendations, metrics, evidencePack, identityScope),
       entityType: candidate.entityType,
       entityName: candidate.entityName,
       actionType: candidate.actionType,
@@ -403,6 +406,8 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
   });
 
   const annotated = annotateRecommendationsWithStrategy({
+    identityScope,
+    identityMetrics: metrics,
     recommendations,
     diagnosis: mergeDiagnosis,
     decisions,
@@ -415,6 +420,7 @@ export async function enrichAdRecommendationsWithStrategyDiagnosis(
     diagnosis: mergeDiagnosis,
     metrics,
     scope: {
+      storeId: scope.storeId,
       dateFrom: scope.dateFrom,
       dateTo: scope.dateTo,
       storeName: scope.storeName,

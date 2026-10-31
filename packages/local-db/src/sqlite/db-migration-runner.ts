@@ -1,6 +1,6 @@
 // 按数据库生命周期、迁移和身份保护职责拆分，事务边界保持一致。
 import Database from 'better-sqlite3';
-import { AI_SPEND_MIGRATION_CHECKSUM, AI_SPEND_MIGRATION_NAME, AI_SPEND_MIGRATION_VERSION, runMissionWriteAuthorityMigration, runGrantSlotLedgerMigration, runLegacyCompatibilityMigration, runAiSpendMigration, runExecutionReconciliationMigration, runAnalysisAuthorityMigration, runAnalysisRunsMigration, runCollectionResumeAuthorityMigration, runStoreProviderIdentityAuthorityMigration, prepareUpgradeBackup, runExecutionAuthorityMigration, prepareStoreAuthorityMigrationBackup, runListingStoreAuthorityMigration, runMissionDomainMigration, runOperationEventArchiveMigration, runProductStoreAuthorityMigration, runReportImportAuthorityMigration, runStoreAuthorityMigrations, runStoreAuthorityRepairMigration, runV16DomainMigration, applyContextBindingMigration, runPolicyAuthorityMigration, type UpgradeBackupManifest, } from './migrations';
+import { AI_SPEND_MIGRATION_CHECKSUM, AI_SPEND_MIGRATION_NAME, AI_SPEND_MIGRATION_VERSION, runMissionWriteAuthorityMigration, runGrantSlotLedgerMigration, runLegacyCompatibilityMigration, runAiSpendMigration, runAdMetricSourceAsinMigration, runAdMetricSourceMetricMaskMigration, runExecutionReconciliationMigration, runAnalysisAuthorityMigration, runAnalysisRunsMigration, runCollectionResumeAuthorityMigration, runStoreProviderIdentityAuthorityMigration, prepareUpgradeBackup, runExecutionAuthorityMigration, prepareStoreAuthorityMigrationBackup, runListingStoreAuthorityMigration, runMissionDomainMigration, runOperationEventArchiveMigration, runProductStoreAuthorityMigration, runReportImportAuthorityMigration, runStoreAuthorityMigrations, runStoreAuthorityRepairMigration, runV16DomainMigration, applyContextBindingMigration, runPolicyAuthorityMigration, type UpgradeBackupManifest, } from './migrations';
 import { ensureColumn, backfillKeywordMetricCompatibilityColumns } from './db-columns';
 import { installStoreScopedMetricIdentitySafeguards, verifyStoreScopedMetricIdentitySafeguards } from './db-metric-identity';
 
@@ -556,4 +556,6 @@ export function runMigrations(database: Database.Database, upgradeBackup: Upgrad
     runGrantSlotLedgerMigration(database, upgradeBackup);
     runLegacyCompatibilityMigration(database, upgradeBackup);
     runAiSpendMigration(database, upgradeBackup);
+    runAdMetricSourceAsinMigration(database, upgradeBackup);
+    runAdMetricSourceMetricMaskMigration(database, upgradeBackup);
 }

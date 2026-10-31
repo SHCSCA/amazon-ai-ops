@@ -9,6 +9,7 @@ import type {
   OperationEvent,
 } from '@amazon-ai-ops/shared-types';
 import type { AdProductHistoryLedger } from './ad-product-history-ledger';
+import { buildAdProductHistoryQuality, type AdProductHistoryQuality } from './ad-product-history-quality';
 
 export interface AdAiEvidenceScope {
   dateFrom: string;
@@ -26,10 +27,13 @@ export interface BuildAdAiEvidencePackInput {
   productContexts: ProductStrategyContext[];
   ruleRecommendations: ActionRecommendation[];
   productHistoryLedgers?: AdProductHistoryLedger[];
+  productHistoryQuality?: AdProductHistoryQuality;
 }
 
 export function buildAdAiEvidencePack(input: BuildAdAiEvidencePackInput): AiEvidenceItem[] {
   const evidence: AiEvidenceItem[] = [];
+  const quality = input.productHistoryQuality || buildAdProductHistoryQuality(input.scope, input.metrics);
+  evidence.push(productHistoryQualityEvidence(input.scope, quality));
 
   for (const metric of input.metrics.filter((item) => metricInScope(item, input.scope)).slice(0, 120)) {
     evidence.push(metricEvidence(input.scope, metric));
@@ -41,10 +45,6 @@ export function buildAdAiEvidencePack(input: BuildAdAiEvidencePackInput): AiEvid
 
   for (const product of input.productContexts.filter((item) => productInScope(item, input.scope)).slice(0, 40)) {
     evidence.push(productEvidence(input.scope, product));
-  }
-
-  for (const ledger of (input.productHistoryLedgers || []).filter((item) => productHistoryInScope(item, input.scope)).slice(0, 40)) {
-    evidence.push(timelineEvidence(input.scope, ledger));
   }
 
   for (const recommendation of input.ruleRecommendations.filter((item) => recommendationInScope(item, input.scope)).slice(0, 80)) {
@@ -175,47 +175,22 @@ function productEvidence(scope: AdAiEvidenceScope, product: ProductStrategyConte
   };
 }
 
-function timelineEvidence(scope: AdAiEvidenceScope, ledger: AdProductHistoryLedger): AiEvidenceItem {
-  const batchId = scope.batchId || 'no_batch';
+function productHistoryQualityEvidence(scope: AdAiEvidenceScope, quality: AdProductHistoryQuality): AiEvidenceItem {
   return {
-    evidenceId: `timeline:${safe(batchId)}:product:${safe(ledger.asin)}`,
+    evidenceId: `timeline:${safe(scope.batchId || 'no_batch')}:product-quality:${safe(scope.asin || 'scope')}`,
     type: 'timeline',
-    label: `product ${ledger.asin} / ${ledger.inferredStage || 'unknown_stage'} / ${ledger.activeDays} days`,
-    dateRange: `${ledger.dateFrom}~${ledger.dateTo}`,
-    batchId,
-    storeName: ledger.storeName || scope.storeName,
-    marketplaceCode: ledger.marketplaceCode || scope.marketplaceCode,
-    asin: ledger.asin || scope.asin,
+    label: '产品广告历史汇总不可用 · 需复核来源覆盖',
+    dateRange: `${scope.dateFrom}~${scope.dateTo}`,
+    batchId: scope.batchId,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
     entityType: 'product',
-    entityName: ledger.asin,
-    metrics: {
-      impressions: ledger.totals.impressions,
-      clicks: ledger.totals.clicks,
-      cost: ledger.totals.cost,
-      orders: ledger.totals.orders,
-      sales: ledger.totals.sales,
-      acos: ledger.totals.acos,
-      cpc: ledger.totals.cpc,
-      cvr: ledger.totals.cvr,
-      currency: 'USD',
-    },
-    product: ledger.product,
+    entityName: scope.asin,
     timeline: {
-      activeDays: ledger.activeDays,
-      firstMetricDate: ledger.firstMetricDate,
-      lastMetricDate: ledger.lastMetricDate,
-      inferredStage: ledger.inferredStage,
-      stageReasons: ledger.stageReasons,
-      recentDaily: ledger.daily.slice(-14).map((day) => ({
-        date: day.date,
-        clicks: day.clicks,
-        cost: day.cost,
-        orders: day.orders,
-        sales: day.sales,
-        acos: day.acos,
-        cvr: day.cvr,
-        currency: day.currency,
-      })),
+      inferredStage: 'unknown',
+      stageReasons: [quality.reason],
+      productHistoryQuality: quality,
     },
   };
 }
@@ -282,13 +257,6 @@ function eventInScope(event: CreateOperationEventInput | OperationEvent, scope: 
 
 function productInScope(product: ProductStrategyContext, scope: AdAiEvidenceScope): boolean {
   return !scope.asin || product.asin.toUpperCase() === scope.asin.toUpperCase();
-}
-
-function productHistoryInScope(ledger: AdProductHistoryLedger, scope: AdAiEvidenceScope): boolean {
-  if (ledger.dateTo < scope.dateFrom || ledger.dateFrom > scope.dateTo) return false;
-  if (ledger.storeName && ledger.storeName !== scope.storeName) return false;
-  if (ledger.marketplaceCode && ledger.marketplaceCode !== scope.marketplaceCode) return false;
-  return !scope.asin || ledger.asin.toUpperCase() === scope.asin.toUpperCase();
 }
 
 function recommendationInScope(recommendation: ActionRecommendation, scope: AdAiEvidenceScope): boolean {

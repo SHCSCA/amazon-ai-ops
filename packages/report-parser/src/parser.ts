@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import * as fs from 'fs';
 import * as path from 'path';
+import { sourceMetricMaskForWorksheetRow } from './source-metric-provenance';
 import { normalizeFieldName, mapRowFields } from './field-mapper';
 import { validateBatch, cleanNumericFields } from './validators';
 import type { AdDailyMetrics, LingxingReportType } from '@amazon-ai-ops/shared-types';
@@ -59,11 +60,14 @@ export class ReportParser {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    
-    return this.parseSheet(worksheet, filePath, options);
+    return this.parseExcelBytes(fs.readFileSync(filePath), filePath, options);
+  }
+
+  // 允许只读观察在同一份字节快照上计算摘要并解析，避免哈希与行内容脱节。
+  parseExcelBytes(bytes: Uint8Array, sourceFile: string, options: ParseOptions = {}): ParseResult {
+    const workbook = XLSX.read(bytes, { type: 'buffer', cellNF: true });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    return this.parseSheet(worksheet, sourceFile, options);
   }
 
   /**
@@ -75,7 +79,7 @@ export class ReportParser {
     }
 
     const csvText = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-    const workbook = XLSX.read(csvText, { type: 'string' });
+    const workbook = XLSX.read(csvText, { type: 'string', cellNF: true });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     
@@ -87,7 +91,10 @@ export class ReportParser {
    */
   private parseSheet(worksheet: XLSX.WorkSheet, sourceFile: string, options: ParseOptions): ParseResult {
     const skipRows = options.skipHeaderRows ?? 0;
-    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    // 数值解析保持原始值；原 worksheet 的格式仅用于来源单位核验。
+    const valueSheet = Object.fromEntries(Object.entries(worksheet).map(([key, cell]) =>
+      key.startsWith('!') ? [key, cell] : [key, { ...cell, z: undefined }]));
+    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(valueSheet, {
       header: 1,
       defval: '',
       blankrows: false,
@@ -97,7 +104,7 @@ export class ReportParser {
       .filter(Boolean);
     
     // 转换为 JSON
-    const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, {
+    const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(valueSheet, {
       defval: '',  // 默认值为空字符串
     });
     const compatibility = options.requireRegisteredTemplate ? matchLingxingTemplate(rawHeaders, options.reportType) : undefined;
@@ -139,7 +146,7 @@ export class ReportParser {
     const candidateRows = dataRows.map((rawRow, index) => ({
       rawRow,
       mappedRow: mapRowFields(rawRow),
-      sourceRow: index + skipRows + 2,
+      sourceRow: Number.isSafeInteger(rawRow.__rowNum__) ? rawRow.__rowNum__ + 1 : index + skipRows + 2,
     }));
     const importRows = candidateRows.filter(({ rawRow, mappedRow }) => (
       !isLingxingPausedZeroActivityPlaceholder(rawRow, mappedRow)
@@ -152,12 +159,13 @@ export class ReportParser {
     const invalidRows = new Set(validation.errors.map((error) => error.row));
     const normalizedRows = importRows.map(({ mappedRow, sourceRow }) => ({
       row: cleanNumericFields(mappedRow),
+      sourceMetricMask: sourceMetricMaskForWorksheetRow(mappedRow, worksheet, sourceRow),
       sourceRow,
     }));
 
     // 转换为 AdDailyMetrics
-    const metrics: AdDailyMetrics[] = normalizedRows.map(({ row, sourceRow }) => {
-      return this.mapToAdMetrics(row, sourceFile, reportType, sourceRow);
+    const metrics: AdDailyMetrics[] = normalizedRows.map(({ row, sourceRow, sourceMetricMask }) => {
+      return { ...this.mapToAdMetrics(row, sourceFile, reportType, sourceRow), sourceMetricMask };
     }).filter((m, index) => (
       !invalidRows.has(index)
       && m.date

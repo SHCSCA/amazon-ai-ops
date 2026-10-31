@@ -1,0 +1,16 @@
+.family-observation { display: grid; gap: 12px; }
+.family-observation p { margin: 0; }
+.family-observation-label { display: grid; gap: 6px; max-width: 420px; }
+.family-observation-label input { padding: 8px 10px; border: 1px solid var(--border, #d4dae2); border-radius: 6px; background: var(--surface, white); color: inherit; }
+.family-observation-files { display: grid; gap: 8px; border: 1px solid var(--border, #d4dae2); border-radius: 8px; max-height: 260px; overflow: auto; }
+.family-observation-files label { display: flex; align-items: start; gap: 8px; padding: 6px; }
+.family-observation-files small { display: block; opacity: .72; margin-top: 3px; }
+.family-observation-confirm { padding: 16px; border: 1px solid var(--border, #d4dae2); border-radius: 8px; display: grid; gap: 10px; }
+.family-observation code { overflow-wrap: anywhere; }
+.family-observation-table { overflow-x: auto; margin: 12px 0; }
+.family-observation-table table { width: 100%; border-collapse: collapse; text-align: right; }
+.family-observation-table th, .family-observation-table td { padding: 10px 12px; border-bottom: 1px solid var(--border, #d4dae2); white-space: nowrap; }
+.family-observation-table th:first-child { text-align: left; }
+.family-observation-table caption { text-align: left; margin-bottom: 8px; }
+.family-observation details { padding: 8px 0; }
+.family-observation details p { margin: 8px 0; }

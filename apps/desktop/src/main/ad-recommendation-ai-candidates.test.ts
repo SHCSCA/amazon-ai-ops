@@ -1,3 +1,5 @@
+import { resolveAiDecisionIdentity } from './ad-decision-identity';
+import { applyRecommendationDecision, getRecommendationApprovalBlockers } from '@amazon-ai-ops/rules-engine';
 import { describe, expect, it } from 'vitest';
 import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput } from '@amazon-ai-ops/shared-types';
 import type { AdStrategyDiagnosisOutput, AiEvidenceItem } from '@amazon-ai-ops/ai-adapter';
@@ -9,6 +11,30 @@ import {
   createAiOnlyRecommendationsFromDecisions,
 } from './ad-recommendation-ai-context';
 import { TEST_EVIDENCE_SUFFICIENCY, recommendation, evidenceItem } from './ad-recommendation-ai.test-support';
+
+
+// 夹具经过实际报表身份解析，不手写对象身份或跳过审批门。
+function createFromScopedReport(params: Parameters<typeof createAiOnlyRecommendationsFromDecisions>[0]) {
+  const scope = { ...params.scope, storeId: params.scope.storeId! };
+  const decisions = params.decisions.map((decision) => {
+    const aiCandidateIndex = params.diagnosis.aiCandidates.findIndex((candidate) => candidate.entityType === decision.entityType
+      && candidate.entityName === decision.entityName && candidate.actionType === decision.actionType);
+    const candidate = params.diagnosis.aiCandidates[aiCandidateIndex];
+    return { ...decision, aiCandidateIndex, identity: candidate
+      ? resolveAiDecisionIdentity(candidate, [], params.metrics, params.evidencePack || [], scope) : undefined };
+  });
+  return createAiOnlyRecommendationsFromDecisions({ ...params, decisions });
+}
+
+function expectReviewOnlyWithoutNativeIdentity(recommendation: ActionRecommendation) {
+  expect(recommendation.entityId).toBe('');
+  expect(recommendation.status).toBe('needs_review');
+  expect(getRecommendationApprovalBlockers(recommendation).length).toBeGreaterThan(0);
+  let persisted = false;
+  expect(() => applyRecommendationDecision({ recommendation, targetStatus: 'approved',
+    decision: { approvedBy: 'ISOLATED_FIXTURE' }, persist: () => { persisted = true; } })).toThrow();
+  expect(persisted).toBe(false);
+}
 
 describe('ad recommendation AI context', () => {
   it('creates pending review recommendations for AI-only decisions only when current metrics identify the target', () => {
@@ -70,12 +96,15 @@ describe('ad recommendation AI context', () => {
       },
     ];
 
-    const recommendations = createAiOnlyRecommendationsFromDecisions({
+    const recommendations = createFromScopedReport({
       decisions,
       diagnosis,
       metrics: [
         {
           date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
           storeName: 'FT-US-US',
           marketplaceCode: 'US',
           portfolioName: 'D6 Portfolio',
@@ -97,6 +126,7 @@ describe('ad recommendation AI context', () => {
         } as AdDailyMetrics,
       ],
       scope: {
+        storeId: 'ISOLATED_FIXTURE_STORE',
         dateFrom: '2026-06-01',
         dateTo: '2026-06-12',
         storeName: 'FT-US-US',
@@ -135,6 +165,7 @@ describe('ad recommendation AI context', () => {
     });
 
     expect(recommendations).toHaveLength(1);
+    expectReviewOnlyWithoutNativeIdentity(recommendations[0]);
     expect(recommendations[0]).toMatchObject({
       taskId: 'task_ai_only',
       storeName: 'FT-US-US',
@@ -230,12 +261,15 @@ describe('ad recommendation AI context', () => {
       },
     ];
 
-    const recommendations = createAiOnlyRecommendationsFromDecisions({
+    const recommendations = createFromScopedReport({
       decisions,
       diagnosis,
       metrics: [
         {
           date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
           storeName: 'FT-US-US',
           marketplaceCode: 'US',
           campaignName: 'D9 Auto',
@@ -255,6 +289,9 @@ describe('ad recommendation AI context', () => {
         } as AdDailyMetrics,
         {
           date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
           storeName: 'FT-US-US',
           marketplaceCode: 'US',
           campaignName: 'D6 Exact',
@@ -274,6 +311,7 @@ describe('ad recommendation AI context', () => {
         } as AdDailyMetrics,
       ],
       scope: {
+        storeId: 'ISOLATED_FIXTURE_STORE',
         dateFrom: '2026-06-01',
         dateTo: '2026-06-12',
         storeName: 'FT-US-US',
@@ -307,6 +345,7 @@ describe('ad recommendation AI context', () => {
     });
 
     expect(recommendations).toHaveLength(1);
+    expectReviewOnlyWithoutNativeIdentity(recommendations[0]);
     expect(recommendations[0]).toMatchObject({
       asin: 'B002',
       currentValue: '1.61',
@@ -363,16 +402,20 @@ describe('ad recommendation AI context', () => {
       requiresReview: true,
     }];
 
-    const recommendations = createAiOnlyRecommendationsFromDecisions({
+    const params: Parameters<typeof createAiOnlyRecommendationsFromDecisions>[0] = {
       decisions,
       diagnosis,
       metrics: [{
         date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
         storeName: 'FT-US-US',
         marketplaceCode: 'US',
         campaignName: 'D6 Exact',
         adGroupName: 'Main B',
         searchTerm: 'door lock',
+        asin: '',
         clicks: 36,
         cost: 58,
         orders: 0,
@@ -382,6 +425,7 @@ describe('ad recommendation AI context', () => {
         sourceRow: 88,
       } as AdDailyMetrics],
       scope: {
+        storeId: 'ISOLATED_FIXTURE_STORE',
         dateFrom: '2026-06-01',
         dateTo: '2026-06-12',
         storeName: 'FT-US-US',
@@ -393,6 +437,7 @@ describe('ad recommendation AI context', () => {
       operationEventCount: 0,
       evidencePack: [
         evidenceItem({
+          asin: '',
           evidenceId: 'metric_without_asin',
           type: 'metric',
           label: 'door lock / D6 Exact / Main B',
@@ -411,9 +456,10 @@ describe('ad recommendation AI context', () => {
           },
         }),
       ],
-    });
-
-    expect(recommendations).toEqual([]);
+    };
+    expect(createFromScopedReport(params)).toEqual([]);
+    expect(createFromScopedReport({ ...params, metrics: params.metrics.map((item) => ({ ...item, asin: 'B001' })),
+      evidencePack: params.evidencePack!.map((item) => ({ ...item, asin: 'B001' })) })).toHaveLength(1);
   });
 
   it('does not create formal AI-only bid recommendations with relative non-executable values', () => {
@@ -459,11 +505,14 @@ describe('ad recommendation AI context', () => {
       requiresReview: true,
     }];
 
-    const recommendations = createAiOnlyRecommendationsFromDecisions({
+    const params: Parameters<typeof createAiOnlyRecommendationsFromDecisions>[0] = {
       decisions,
       diagnosis,
       metrics: [{
         date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
         storeName: 'FT-US-US',
         marketplaceCode: 'US',
         campaignName: 'SP exact',
@@ -479,6 +528,7 @@ describe('ad recommendation AI context', () => {
         sourceRow: 21,
       } as AdDailyMetrics],
       scope: {
+        storeId: 'ISOLATED_FIXTURE_STORE',
         dateFrom: '2026-06-01',
         dateTo: '2026-06-12',
         storeName: 'FT-US-US',
@@ -497,9 +547,12 @@ describe('ad recommendation AI context', () => {
         sourceFile: 'C:/reports/user-search-term.xlsx',
         sourceRow: 21,
       })],
-    });
-
-    expect(recommendations).toEqual([]);
+    };
+    expect(resolveAiDecisionIdentity(diagnosis.aiCandidates[0], [], params.metrics, params.evidencePack!,
+      { ...params.scope, storeId: params.scope.storeId! })).toBeDefined();
+    expect(createFromScopedReport(params)).toEqual([]);
+    const absolute = { ...diagnosis, aiCandidates: [{ ...diagnosis.aiCandidates[0], recommendedValue: '1.26' }] };
+    expect(createFromScopedReport({ ...params, diagnosis: absolute, decisions: decisions.map((item) => ({ ...item, recommendedValue: '1.26' })) })).toHaveLength(1);
   });
 
   it('does not create formal AI-only recommendations without a validated AI candidate and evidence refs', () => {
@@ -517,6 +570,9 @@ describe('ad recommendation AI context', () => {
     };
     const metric = {
       date: '2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          matchType: 'exact',
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
       campaignName: 'SP exact',
@@ -531,6 +587,8 @@ describe('ad recommendation AI context', () => {
       acos: 0,
       cpc: 1.4,
       cvr: 0,
+      sourceFile: 'C:/reports/user-search-term.xlsx',
+      sourceRow: 21,
     } as AdDailyMetrics;
     const baseDiagnosis: AdStrategyDiagnosisOutput = {
       schemaVersion: 'ad_strategy_diagnosis_v1',
@@ -551,10 +609,18 @@ describe('ad recommendation AI context', () => {
       riskWarnings: [],
       source: 'ai',
     };
+    const validCandidate = {
+      entityType: baseDecision.entityType, entityName: baseDecision.entityName, actionType: baseDecision.actionType,
+      recommendedValue: baseDecision.recommendedValue, reason: 'ISOLATED_FIXTURE', reasoningSteps: [],
+      evidenceRefs: ['metric_1'], riskWarnings: [], confidence: 0.66,
+    };
+    const metricEvidence = evidenceItem({ sourceFile: metric.sourceFile, sourceRow: metric.sourceRow });
     const commonParams = {
       decisions: [baseDecision],
+      evidencePack: [metricEvidence],
       metrics: [metric],
       scope: {
+        storeId: 'ISOLATED_FIXTURE_STORE',
         dateFrom: '2026-06-01',
         dateTo: '2026-06-12',
         storeName: 'FT-US-US',
@@ -566,6 +632,11 @@ describe('ad recommendation AI context', () => {
       operationEventCount: 0,
     };
 
+    const identity = resolveAiDecisionIdentity(validCandidate, [], [metric], [metricEvidence], commonParams.scope);
+    expect(identity).toBeDefined();
+    commonParams.decisions = [{ ...baseDecision, identity, aiCandidateIndex: 0 }];
+    expect(createAiOnlyRecommendationsFromDecisions({ ...commonParams,
+      diagnosis: { ...baseDiagnosis, aiCandidates: [validCandidate] } })).toHaveLength(1);
     expect(createAiOnlyRecommendationsFromDecisions({
       ...commonParams,
       diagnosis: baseDiagnosis,

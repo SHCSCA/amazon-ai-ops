@@ -24,3 +24,5 @@ export type {
   ThresholdSuggestion,
 } from './ad-strategy-diagnosis';
 export type { AIConfig, AIResponse, SearchTermRelevanceInput, SearchTermRelevanceOutput, AdActionExplainInput, AdActionExplainOutput, DailyReportSummaryInput } from './types';
+
+export type { AdProductObservedLedger, AdProductObservedMetricField } from './ad-product-history-context';

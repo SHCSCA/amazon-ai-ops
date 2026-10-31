@@ -75,6 +75,8 @@ export function listAdMetricsForStore(repositoryContext: LingxingImportRepositor
         storeName: row.store_name,
         marketplaceCode: row.marketplace_code,
         asin: row.asin,
+        sourceAsin: row.source_asin ?? undefined,
+      sourceMetricMask: row.source_metric_mask ?? undefined,
         msku: row.msku,
         campaignName: row.campaign_name,
         adGroupName: row.ad_group_name,

@@ -3,9 +3,13 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
 
+function isValidAppVersion(value) {
+  return typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value);
+}
+
 function packageVersion(packagePath) {
   const value = JSON.parse(fs.readFileSync(packagePath, 'utf8'))?.version;
-  if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) {
+  if (!isValidAppVersion(value)) {
     throw new Error(`Invalid package version: ${packagePath}`);
   }
   return value;
@@ -20,4 +24,4 @@ function currentAppVersion() {
   return rootVersion;
 }
 
-module.exports = { currentAppVersion };
+module.exports = { currentAppVersion, isValidAppVersion };

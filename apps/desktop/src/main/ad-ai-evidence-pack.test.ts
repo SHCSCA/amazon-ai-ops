@@ -33,8 +33,8 @@ describe('buildAdAiEvidencePack', () => {
       ruleRecommendations: [],
     });
 
-    expect(evidencePack).toHaveLength(1);
-    expect(evidencePack[0]).toMatchObject({
+    expect(evidencePack).toHaveLength(2);
+    expect(evidencePack[1]).toMatchObject({
       type: 'metric',
       batchId: 'batch_1',
       reportType: 'search_term',
@@ -53,7 +53,7 @@ describe('buildAdAiEvidencePack', () => {
         currency: 'USD',
       },
     });
-    expect(evidencePack[0].evidenceId).toMatch(/^metric:batch_1:search_term:2026-06-10:search_term:/);
+    expect(evidencePack[1].evidenceId).toMatch(/^metric:batch_1:search_term:2026-06-10:search_term:/);
   });
 
   it('builds operation event evidence for Coupon, BD, and Listing change context', () => {
@@ -69,8 +69,8 @@ describe('buildAdAiEvidencePack', () => {
       ruleRecommendations: [],
     });
 
-    expect(evidencePack.map((item) => item.event?.eventType)).toEqual(['coupon', 'bd', 'listing_change']);
-    expect(evidencePack[0]).toMatchObject({
+    expect(evidencePack.filter((item) => item.type === 'operation_event').map((item) => item.event?.eventType)).toEqual(['coupon', 'bd', 'listing_change']);
+    expect(evidencePack[1]).toMatchObject({
       type: 'operation_event',
       event: {
         title: '10% Coupon started',
@@ -99,7 +99,7 @@ describe('buildAdAiEvidencePack', () => {
       ruleRecommendations: [],
     });
 
-    expect(evidencePack[0]).toMatchObject({
+    expect(evidencePack[1]).toMatchObject({
       evidenceId: 'product:FT-US-US:US:B001',
       type: 'product_context',
       product: {
@@ -112,7 +112,7 @@ describe('buildAdAiEvidencePack', () => {
     });
   });
 
-  it('builds product daily timeline evidence with stage, active days and recent daily metrics', () => {
+  it('marks legacy product daily timelines unavailable without reusing unverified totals or stage', () => {
     const evidencePack = buildAdAiEvidencePack({
       scope,
       metrics: [],
@@ -180,38 +180,22 @@ describe('buildAdAiEvidencePack', () => {
 
     expect(evidencePack).toHaveLength(1);
     expect(evidencePack[0]).toMatchObject({
-      evidenceId: 'timeline:batch_1:product:B001',
+      evidenceId: 'timeline:batch_1:product-quality:B001',
       type: 'timeline',
-      label: 'product B001 / keyword_exploration / 3 days',
       dateRange: '2026-06-01~2026-06-12',
       batchId: 'batch_1',
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
       asin: 'B001',
       entityType: 'product',
-      entityName: 'B001',
-      metrics: {
-        cost: 170.25,
-        sales: 300.5,
-        orders: 3,
-        clicks: 88,
-        currency: 'USD',
-      },
       timeline: {
-        activeDays: 3,
-        firstMetricDate: '2026-06-01',
-        lastMetricDate: '2026-06-12',
-        inferredStage: 'keyword_exploration',
-        recentDaily: [
-          { date: '2026-06-01', cost: 22.5, orders: 0, sales: 0, acos: 0 },
-          { date: '2026-06-12', cost: 84.55, orders: 2, sales: 200.51, acos: 0.422 },
-        ],
-      },
-      product: {
-        productStage: 'keyword_exploration',
-        targetAcos: 0.35,
+        inferredStage: 'unknown',
+        productHistoryQuality: { status: 'unavailable', coverage: 'unverified' },
       },
     });
+    expect(evidencePack[0].metrics).toBeUndefined();
+    expect(evidencePack[0].timeline?.activeDays).toBeUndefined();
+    expect(evidencePack[0].timeline?.recentDaily).toBeUndefined();
     expect(summarizeAiEvidencePack(evidencePack)).toMatchObject({
       total: 1,
       timeline: 1,
@@ -243,7 +227,7 @@ describe('buildAdAiEvidencePack', () => {
       ],
     });
 
-    expect(evidencePack.map((item) => item.entityName)).toEqual(['inside', 'inside event', 'B001', 'inside rule']);
+    expect(evidencePack.filter((item) => item.type !== 'timeline').map((item) => item.entityName)).toEqual(['inside', 'inside event', 'B001', 'inside rule']);
   });
 
   it('excludes metric and rule evidence without the current explicit batch', () => {
@@ -269,7 +253,7 @@ describe('buildAdAiEvidencePack', () => {
       ],
     });
 
-    expect(evidencePack.map((item) => item.entityName)).toEqual([
+    expect(evidencePack.filter((item) => item.type !== 'timeline').map((item) => item.entityName)).toEqual([
       'current batch metric',
       'current batch rule',
     ]);
@@ -289,9 +273,9 @@ describe('buildAdAiEvidencePack', () => {
 
     expect(first.map((item) => item.evidenceId)).toEqual(second.map((item) => item.evidenceId));
     expect(summarizeAiEvidencePack(first)).toEqual({
-      total: 4,
+      total: 5,
       metric: 1,
-      timeline: 0,
+      timeline: 1,
       operationEvent: 1,
       productContext: 1,
       ruleCandidate: 1,

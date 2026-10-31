@@ -9,3 +9,6 @@ export type { ParseKeywordMetricsOptions } from './keyword-metrics';
 export type { ParseListingContentOptions } from './listing-content';
 export type { ValidationError, ValidationResult } from './validators';
 export type { ParseOptions, ParseResult } from './parser';
+export { observeOwnerConfirmedFamily } from './family-observation';
+export type { OwnerConfirmedFamilyScope, FamilyReportBinding, FamilyReportBytes, FamilyReportLevel,
+  FamilyObservation, FamilyDailyObservation, FamilyLevelObservation, FamilyObservedMetrics } from './family-observation';

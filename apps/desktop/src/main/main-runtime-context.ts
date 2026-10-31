@@ -204,7 +204,7 @@ const STORE_SESSION_GENERATION_SETTING_PREFIX = 'store_session_generation:';
 
 const OPERATOR_WORKSPACE_SELECTION_SETTING_KEY = 'operator_workspace_selection:v1';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1-dev.1';
 
 const RECOMMENDATION_METRIC_LOAD_LIMIT = 5000;
 

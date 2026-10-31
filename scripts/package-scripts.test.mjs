@@ -24,7 +24,7 @@ describe('root package smoke scripts', () => {
       'verify-v15-enablement-evidence.js',
     ].map((file) => fs.readFileSync(path.join(root, 'scripts', file), 'utf8'));
 
-    expect(rootPackage.version).toBe('1.6.0');
+    expect(rootPackage.version).toBe('1.6.1-dev.1');
     expect(desktopPackage.version).toBe(rootPackage.version);
     expect(mainContextSource).toContain(`const APP_VERSION = '${rootPackage.version}'`);
     expect(mainIpcSource).toContain("mainRuntimeContext.registerTrackedIpcHandler('app:get-version', () => mainRuntimeContext.APP_VERSION)");

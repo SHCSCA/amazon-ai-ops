@@ -77,12 +77,12 @@ export class AdMetricsRepository {
     const stmt = this.db.prepare(`
       INSERT INTO ad_daily_metrics (
         batch_id, report_type, portfolio_name,
-        date, store_name, marketplace_code, asin, msku,
+        date, store_name, marketplace_code, asin, source_asin, source_metric_mask, msku,
         campaign_name, ad_group_name, targeting, search_term, match_type,
         impressions, clicks, cost, orders, sales, currency, acos, cpc, cvr, source_file, source_row
       ) VALUES (
         @batchId, @reportType, @portfolioName,
-        @date, @storeName, @marketplaceCode, @asin, @msku,
+        @date, @storeName, @marketplaceCode, @asin, @sourceAsin, @sourceMetricMask, @msku,
         @campaignName, @adGroupName, @targeting, @searchTerm, @matchType,
         @impressions, @clicks, @cost, @orders, @sales, @currency, @acos, @cpc, @cvr, @sourceFile, @sourceRow
       )
@@ -126,12 +126,12 @@ export class AdMetricsRepository {
     const insert = this.db.prepare(`
       INSERT INTO ad_daily_metrics (
         store_id, batch_id, report_type, portfolio_name,
-        date, store_name, marketplace_code, asin, msku,
+        date, store_name, marketplace_code, asin, source_asin, source_metric_mask, msku,
         campaign_name, ad_group_name, targeting, search_term, match_type,
         impressions, clicks, cost, orders, sales, currency, acos, cpc, cvr, source_file, source_row
       ) VALUES (
         @storeId, @batchId, @reportType, @portfolioName,
-        @date, @storeName, @marketplaceCode, @asin, @msku,
+        @date, @storeName, @marketplaceCode, @asin, @sourceAsin, @sourceMetricMask, @msku,
         @campaignName, @adGroupName, @targeting, @searchTerm, @matchType,
         @impressions, @clicks, @cost, @orders, @sales, @currency, @acos, @cpc, @cvr, @sourceFile, @sourceRow
       )
@@ -177,12 +177,12 @@ export class AdMetricsRepository {
     const stmt = this.db.prepare(`
       INSERT INTO ad_daily_metrics (
         batch_id, report_type, portfolio_name,
-        date, store_name, marketplace_code, asin, msku,
+        date, store_name, marketplace_code, asin, source_asin, source_metric_mask, msku,
         campaign_name, ad_group_name, targeting, search_term, match_type,
         impressions, clicks, cost, orders, sales, currency, acos, cpc, cvr, source_file, source_row
       ) VALUES (
         @batchId, @reportType, @portfolioName,
-        @date, @storeName, @marketplaceCode, @asin, @msku,
+        @date, @storeName, @marketplaceCode, @asin, @sourceAsin, @sourceMetricMask, @msku,
         @campaignName, @adGroupName, @targeting, @searchTerm, @matchType,
         @impressions, @clicks, @cost, @orders, @sales, @currency, @acos, @cpc, @cvr, @sourceFile, @sourceRow
       )
@@ -224,12 +224,12 @@ export class AdMetricsRepository {
     const insert = this.db.prepare(`
       INSERT INTO ad_daily_metrics (
         store_id, batch_id, report_type, portfolio_name,
-        date, store_name, marketplace_code, asin, msku,
+        date, store_name, marketplace_code, asin, source_asin, source_metric_mask, msku,
         campaign_name, ad_group_name, targeting, search_term, match_type,
         impressions, clicks, cost, orders, sales, currency, acos, cpc, cvr, source_file, source_row
       ) VALUES (
         @storeId, @batchId, @reportType, @portfolioName,
-        @date, @storeName, @marketplaceCode, @asin, @msku,
+        @date, @storeName, @marketplaceCode, @asin, @sourceAsin, @sourceMetricMask, @msku,
         @campaignName, @adGroupName, @targeting, @searchTerm, @matchType,
         @impressions, @clicks, @cost, @orders, @sales, @currency, @acos, @cpc, @cvr, @sourceFile, @sourceRow
       )
@@ -251,6 +251,8 @@ export class AdMetricsRepository {
           storeName: m.storeName,
           marketplaceCode: m.marketplaceCode,
           asin: m.asin,
+          sourceAsin: m.sourceAsin ?? null,
+          sourceMetricMask: m.sourceMetricMask ?? null,
           msku: m.msku,
           campaignName: m.campaignName,
           adGroupName: m.adGroupName,
@@ -609,6 +611,8 @@ export class AdMetricsRepository {
       storeName: row.store_name,
       marketplaceCode: row.marketplace_code,
       asin: row.asin,
+      sourceAsin: row.source_asin ?? undefined,
+      sourceMetricMask: row.source_metric_mask ?? undefined,
       msku: row.msku,
       campaignName: row.campaign_name,
       adGroupName: row.ad_group_name,

@@ -1,6 +1,32 @@
 # V1.6 已证实进展
 
-更新日期：2026-10-27。交付状态 **APP_NEEDS_WORK / INTERNAL NON_READY**。状态解释见 [PROJECT_STATUS](docs/PROJECT_STATUS.md)，当前缺口见 [BLOCKED](BLOCKED.md)。
+## 2026-10-30 · 1.6.1-dev.1 开发快照
+
+本次统一来源与决策安全、原生 ASIN 部分日观察、产品族桌面会话确认等开发增量；不纳入另行隔离的 source-first 修复补丁，相关生产隔离器及其失败夹具保持原样。产品根包、桌面包和 Main 版本同步；锁文件没有根包版本字段，工作区库仍保留各自版本。
+
+- Linux 安全定向验证：63 文件、743 项通过；全工作区类型检查通过；全量模块边界 2242 模块、零违规。此范围不是完整测试套件，完整 172 MUST / L1–L8 未验收。
+- 用户私有文件的只读解析器检查 195 项通过；不覆盖应用数据库导入、UI 或 Electron，原始私有数据不提交。
+- 原生 ASIN observedLedger 仅为 partial/unverified；来源匹配不等于新文件数据全部可信、完整产品日汇总或正式 AI 权限。
+- 产品族确认仅限当前桌面会话和精确文件版本，不是持久身份、所有权证明、Grant 或 Ads 执行授权。
+- 浏览器/Windows/Electron、用户真实文件的应用内导入链、真实 AI 费用、Ads 动作及效果均未取得本次验收。本次统一定向回归包含 importer/repository 测试；XLSX 解压资源安全仍未确立。
+- 额外包脚本文档合同检查有 2 项失败（同依赖、固定基线对照亦为相同 2 项失败），未计入上述 63 文件通过范围；不声称全套通过。
+- 原始报表、数据库/Profile、密钥、私有输入、交付 ZIP 及临时验证日志不纳入提交；历史归档不改写。
+
+状态保持 **APP_NEEDS_WORK / INTERNAL NON_READY（INTERNAL_NON_READY）**。本次只发布源码开发快照，不创建 tag、Release、部署或新 Windows 安装包。
+
+更新日期：2026-10-30。交付状态 **APP_NEEDS_WORK / INTERNAL NON_READY**。状态解释见 [PROJECT_STATUS](docs/PROJECT_STATUS.md)，当前缺口见 [BLOCKED](BLOCKED.md)。
+
+## 2026-10-30 云端隔离候选：产品族观察桌面入口
+
+在现有导入校验页新增主动选择文件、预览精确版本并明确确认的只读入口。Main 使用当前店铺回执和原始字节校验，绑定一次性会话 token；范围或店铺变化需重新确认。结果保留日值、差异、未知币种/归因与关键词子集边界，不新增数据库 schema 或正式权限。实现与验证细节见 [桌面观察说明](docs/FAMILY_OBSERVATION_DESKTOP.md) 及本次独立交付证据。
+
+## 2026-10-29 云端隔离候选：部分产品日观察
+
+在固定基线及第三轮来源/身份补丁上新增只读 observedLedger。它核对同一店铺、已完成批次、导入运行、文件快照、全批指标哈希及原始导入指纹；仅累计 advertised_product 的原生 ASIN 行，保留精确文件行号。字段缺失或任一原生行缺少有效单元格时该字段为未知，缺日不补零。
+
+迁移 22 为新导入保存可空数值来源位图；历史 NULL 不回填。解析器同时检查原始数值单位、Excel 格式和物理行号。观察值可传入两条诊断路径，始终 partial/unverified；完整产品汇总仍 unavailable，正式 AI/Ads 资格不变。
+
+该段记录当时的云端 Linux 隔离开发候选；本次源码快照纳入该增量，不代表 Windows 验收或正式发布。匹配候选的最终命令、测试数及哈希以独立交付 evidence 为准，不继承旧完整链信用。
 
 ## 最近完整内部链：FAILED
 

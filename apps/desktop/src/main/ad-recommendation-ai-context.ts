@@ -1,3 +1,4 @@
+import { recommendationDecisionIdentity, resolveAiDecisionIdentity, type AdDecisionScope } from './ad-decision-identity';
 import type {
   AdStrategyDiagnosisInput,
   AdStrategyDiagnosisOutput,
@@ -5,11 +6,12 @@ import type {
   AiReasonedDecision,
   ProductStrategyContext,
 } from '@amazon-ai-ops/ai-adapter';
-import { AdQuantifier, DEFAULT_RULE_CONFIG, type MergedAdDecision, type RuleConfig } from '@amazon-ai-ops/rules-engine';
+import { AdQuantifier, DEFAULT_RULE_CONFIG, adDecisionIdentityKey, type MergedAdDecision, type RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { ActionRecommendation, AdActionType, AdDailyMetrics, CreateOperationEventInput, OperationEvent } from '@amazon-ai-ops/shared-types';
-import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { buildAdProductHistoryQuality, type AdProductHistoryQuality } from './ad-product-history-quality';
 
 export interface RecommendationDiagnosisScope {
+  storeId?: string;
   dateFrom: string;
   dateTo: string;
   storeName: string;
@@ -26,9 +28,12 @@ export interface BuildAdStrategyDiagnosisInputParams {
   ruleConfig: Partial<RuleConfig> & { minSpend?: number };
   recommendations: ActionRecommendation[];
   evidencePack?: AiEvidenceItem[];
+  productHistoryQuality?: AdProductHistoryQuality;
 }
 
 export interface AnnotateRecommendationsWithStrategyParams {
+  identityScope?: AdDecisionScope;
+  identityMetrics?: AdDailyMetrics[];
   recommendations: ActionRecommendation[];
   diagnosis: AdStrategyDiagnosisOutput;
   decisions: MergedAdDecision[];
@@ -118,41 +123,8 @@ export function buildAdStrategyDiagnosisInput(
       cvr: metric.cvr,
     })),
     productContexts: params.productContexts || [],
-    productHistoryLedgers: buildAdProductHistoryLedger({
-      scope: params.scope,
-      metrics: params.metrics,
-      operationEvents: params.operationEvents,
-      productContexts: params.productContexts || [],
-    }).map((ledger) => ({
-      asin: ledger.asin,
-      storeName: ledger.storeName,
-      marketplaceCode: ledger.marketplaceCode,
-      dateFrom: ledger.dateFrom,
-      dateTo: ledger.dateTo,
-      activeDays: ledger.activeDays,
-      firstMetricDate: ledger.firstMetricDate,
-      lastMetricDate: ledger.lastMetricDate,
-      inferredStage: ledger.inferredStage,
-      stageReasons: ledger.stageReasons,
-      totals: ledger.totals,
-      recentDaily: ledger.daily.slice(-14).map((day) => ({
-        date: day.date,
-        clicks: day.clicks,
-        cost: day.cost,
-        orders: day.orders,
-        sales: day.sales,
-        acos: day.acos,
-        cvr: day.cvr,
-        currency: day.currency,
-      })),
-      events: ledger.events.map((event) => ({
-        eventDate: event.eventDate,
-        eventType: event.eventType,
-        title: event.title,
-        impactExpectation: event.impactExpectation,
-      })),
-      product: ledger.product,
-    })),
+    productHistoryLedgers: [],
+    productHistoryQuality: params.productHistoryQuality || buildAdProductHistoryQuality(params.scope, params.metrics),
     adObjectTimelines,
     operationEvents: params.operationEvents.map((event) => ({
       eventDate: event.eventDate,
@@ -203,8 +175,29 @@ export function bindRecommendationsToScopeAsin(
 export function annotateRecommendationsWithStrategy(
   params: AnnotateRecommendationsWithStrategyParams,
 ): ActionRecommendation[] {
-  return params.recommendations.map((recommendation) => {
-    const decision = params.decisions.find((item) => matchesRecommendation(item, recommendation));
+  return params.recommendations.map((recommendation, recommendationIndex) => {
+    const matchingDecisions = params.decisions.filter((item) => matchesRecommendation(item, recommendation, params.identityScope) && item.ruleCandidateIndex === recommendationIndex);
+    const matched = matchingDecisions[0];
+    const matchedAi = matched ? findAiDecision(params.diagnosis.aiCandidates, matched) : undefined;
+    const aiIdentity = matchedAi && params.identityScope && params.identityMetrics
+      ? resolveAiDecisionIdentity(matchedAi, params.recommendations, params.identityMetrics, params.evidencePack || [], params.identityScope)
+      : undefined;
+    const recommendationKey = adDecisionIdentityKey({ ...recommendation, identity: recommendationDecisionIdentity(recommendation, params.identityScope) });
+    const duplicateRules = params.recommendations.filter((item) => recommendationKey
+      ? recommendationKey === adDecisionIdentityKey({ ...item, identity: recommendationDecisionIdentity(item, params.identityScope) })
+      : normalize(item.entityType) === normalize(recommendation.entityType) && normalize(item.entityName) === normalize(recommendation.entityName)).length > 1;
+    const ruleOnlyWithoutAi = !duplicateRules && params.diagnosis.aiCandidates.length === 0 && params.decisions.every((item) => item.source === 'rule');
+    const hasAmbiguousDecision = !ruleOnlyWithoutAi && (matchingDecisions.length !== 1
+      || (matched && (matched.recommendedValue?.trim() || undefined) !== (recommendation.recommendedValue?.trim() || undefined))
+      || (matched && matched.source !== 'rule' && (!aiIdentity
+        || adDecisionIdentityKey({ ...matched, identity: aiIdentity }) !== adDecisionIdentityKey(matched)))
+      || (matchingDecisions.length === 1 && matchingDecisions[0].source !== 'rule'
+        && (!findAiDecision(params.diagnosis.aiCandidates, matchingDecisions[0])
+          || params.decisions.filter((item) => item.aiCandidateIndex === matchingDecisions[0].aiCandidateIndex).length !== 1))
+      || (matchingDecisions.length === 1
+        && params.recommendations.filter((item) => matchesRecommendation(matchingDecisions[0], item, params.identityScope)).length > 1));
+    // 缺少唯一身份时不猜测归属，保留原建议并交由复核。
+    const decision = hasAmbiguousDecision || ruleOnlyWithoutAi ? undefined : matchingDecisions[0];
     const aiDecision = decision ? findAiDecision(params.diagnosis.aiCandidates, decision) : undefined;
     const aiEvidenceDetails = resolveEvidenceDetails(params.evidencePack || [], aiDecision?.evidenceRefs || []);
     const lifecycleEvidenceDetails = resolveEvidenceDetails(
@@ -214,7 +207,8 @@ export function annotateRecommendationsWithStrategy(
     const productContext = findProductContext(params.productContexts || [], recommendation.asin || recommendation.evidence?.asin);
     const aiActionParticipated = Boolean(decision && (decision.agreement === 'aligned' || decision.agreement === 'ai_only'));
     const needsStrategyReview = Boolean(
-      (aiActionParticipated && params.diagnosis.lifecycleStageRequiresReview)
+      hasAmbiguousDecision
+      || (aiActionParticipated && params.diagnosis.lifecycleStageRequiresReview)
       || (decision && (decision.agreement === 'conflict' || decision.requiresReview)),
     );
 
@@ -246,8 +240,10 @@ export function annotateRecommendationsWithStrategy(
         decisionAgreement: decision?.agreement,
         decisionSource: decision?.source,
         decisionReasons: decision?.reasons,
-        decisionRiskWarnings: decision?.riskWarnings,
-        decisionRequiresReview: decision?.requiresReview,
+        decisionRiskWarnings: hasAmbiguousDecision
+          ? ['对象身份缺失、冲突或非一对一，无法安全匹配规则/AI 决策，必须人工复核。']
+          : decision?.riskWarnings ?? recommendation.evidence.decisionRiskWarnings,
+        decisionRequiresReview: Boolean(hasAmbiguousDecision || decision?.requiresReview || recommendation.evidence.decisionRequiresReview),
         operationEventCount: params.operationEventCount,
         productContextCount: params.productContexts?.length || 0,
         productStage: productContext?.productStage,
@@ -309,7 +305,11 @@ export function createAiOnlyRecommendationsFromDecisions(
 ): ActionRecommendation[] {
   const recommendations: ActionRecommendation[] = [];
   for (const decision of params.decisions) {
-    if (decision.agreement !== 'ai_only') continue;
+    if (decision.agreement !== 'ai_only' || !adDecisionIdentityKey(decision)) continue;
+    const identity = decision.identity!;
+    if (identity.storeId !== params.scope.storeId || identity.storeName !== params.scope.storeName || identity.marketplaceCode !== params.scope.marketplaceCode
+      || (params.scope.asin && identity.asin !== params.scope.asin) || identity.batchId !== params.scope.batchId
+      || identity.dateFrom !== params.scope.dateFrom || identity.dateTo !== params.scope.dateTo) continue;
     const entityType = toRecommendationEntityType(decision.entityType);
     const actionType = toRecommendationActionType(decision.actionType);
     if (!entityType || !actionType) continue;
@@ -336,7 +336,7 @@ export function createAiOnlyRecommendationsFromDecisions(
       asin: productAsin,
       msku: metric.msku || '',
       entityType,
-      entityId: `${metric.campaignName || ''}_${metric.adGroupName || ''}_${decision.entityName}`,
+      entityId: decision.identity!.nativeEntityId || '',
       entityName: decision.entityName,
       actionType,
       currentValue,
@@ -434,13 +434,15 @@ function resolveEvidenceDetails(
 
 function findAiDecision(
   aiCandidates: AiReasonedDecision[],
-  decision: Pick<MergedAdDecision, 'entityType' | 'entityName' | 'actionType'>,
+  decision: MergedAdDecision,
 ): AiReasonedDecision | undefined {
-  return aiCandidates.find((candidate) => (
-    normalize(candidate.entityType) === normalize(decision.entityType)
-    && normalize(candidate.entityName) === normalize(decision.entityName)
-    && normalize(candidate.actionType) === normalize(decision.actionType)
-  ));
+  if (!Number.isSafeInteger(decision.aiCandidateIndex) || decision.aiCandidateIndex! < 0) return undefined;
+  const candidate = aiCandidates[decision.aiCandidateIndex!];
+  if (!candidate || candidate.entityType !== decision.entityType || candidate.entityName !== decision.entityName
+    || normalize(candidate.actionType) !== normalize(decision.actionType)) return undefined;
+  if (decision.agreement === 'aligned'
+    && (candidate.recommendedValue?.trim() || undefined) !== (decision.recommendedValue?.trim() || undefined)) return undefined;
+  return candidate;
 }
 
 function thresholdEvidenceRefs(diagnosis: AdStrategyDiagnosisOutput): Record<string, string[]> {
@@ -462,12 +464,11 @@ function findProductContext(
     || (productContexts.length === 1 ? productContexts[0] : undefined);
 }
 
-function matchesRecommendation(decision: MergedAdDecision, recommendation: ActionRecommendation): boolean {
-  return (
-    normalize(decision.entityType) === normalize(recommendation.entityType) &&
-    normalize(decision.entityName) === normalize(recommendation.entityName) &&
-    normalize(decision.actionType) === normalize(recommendation.actionType)
-  );
+function matchesRecommendation(decision: MergedAdDecision, recommendation: ActionRecommendation, scope?: AdDecisionScope): boolean {
+  const identity = recommendationDecisionIdentity(recommendation, scope);
+  const key = adDecisionIdentityKey({ ...recommendation, identity });
+  return Boolean(key && key === adDecisionIdentityKey(decision)
+    && normalize(decision.actionType) === normalize(recommendation.actionType));
 }
 
 function findMetricForDecision(
@@ -477,33 +478,33 @@ function findMetricForDecision(
   evidencePack: AiEvidenceItem[] = [],
   aiDecision?: AiReasonedDecision,
 ): AdDailyMetrics | undefined {
-  const entityName = normalize(decision.entityName);
-  const evidenceById = new Map(evidencePack.map((item) => [item.evidenceId, item]));
-  const metricEvidence = (aiDecision?.evidenceRefs || [])
-    .map((ref) => evidenceById.get(ref))
-    .filter((item): item is AiEvidenceItem => item !== undefined && item.type === 'metric');
-  for (const evidence of metricEvidence) {
-    const sourceFile = normalizeSourcePath(evidence.sourceFile || '');
-    const sourceRow = Number(evidence.sourceRow);
-    const bySource = metrics.find((metric) => (
-      sourceFile.length > 0
-      && Number.isFinite(sourceRow)
-      && sourceRow > 0
-      && normalizeSourcePath(metric.sourceFile || '') === sourceFile
-      && Number(metric.sourceRow) === sourceRow
-    ));
-    if (bySource) return bySource;
-
-    const byAdContext = metrics.find((metric) => (
-      evidenceMatchesMetricContext(evidence, metric)
-      && metricEntityMatches(metric, entityType, entityName)
-    ));
-    if (byAdContext) return byAdContext;
+  const identity = decision.identity;
+  if (!identity || !adDecisionIdentityKey(decision) || !aiDecision) return undefined;
+  const matches: AdDailyMetrics[] = [];
+  for (const ref of new Set(aiDecision.evidenceRefs)) {
+    const evidenceMatches = evidencePack.filter((item) => item.evidenceId === ref);
+    if (evidenceMatches.length !== 1) return undefined;
+    const evidence = evidenceMatches[0];
+    if (evidence.type !== 'metric') continue;
+    if (evidence.storeName !== identity.storeName || evidence.marketplaceCode !== identity.marketplaceCode
+      || evidence.asin !== identity.asin || evidence.batchId !== identity.batchId
+      || evidence.campaignName !== identity.campaignName || evidence.adGroupName !== identity.adGroupName) return undefined;
+    if ((evidence.reportType || 'unknown_report') !== (identity.reportType || 'unknown_report') || evidence.sourceFile !== identity.sourceFile || evidence.sourceRow !== identity.sourceRow
+      || evidence.dateRange !== `${identity.metricDate}~${identity.metricDate}`) return undefined;
+    const rows = metrics.filter((metric) => metric.sourceFile === evidence.sourceFile
+      && metric.sourceRow === evidence.sourceRow && Number.isSafeInteger(metric.sourceRow) && Number(metric.sourceRow) > 0
+      && metric.storeName === identity.storeName && metric.marketplaceCode === identity.marketplaceCode
+      && metric.asin === identity.asin && metric.batchId === identity.batchId && metric.date === identity.metricDate && metric.reportType === identity.reportType
+      && metric.campaignName === identity.campaignName && metric.adGroupName === identity.adGroupName
+      && metric.matchType === identity.matchType && metricEntityMatches(metric, entityType, normalize(decision.entityName)));
+    if (rows.length !== 1) return undefined;
+    const row = rows[0];
+    const evidenceType = row.searchTerm ? 'search_term' : row.targeting ? 'target' : row.adGroupName ? 'ad_group' : 'campaign';
+    if (evidence.entityType !== evidenceType || evidence.entityName !== (row.searchTerm || row.targeting || row.adGroupName || row.campaignName)
+      || ('storeId' in row && row.storeId !== identity.storeId) || ('storeId' in evidence && evidence.storeId !== identity.storeId)) return undefined;
+    matches.push(row);
   }
-
-  return metrics.find((metric) => {
-    return metricEntityMatches(metric, entityType, entityName);
-  });
+  return matches.length && matches.every((metric) => metric === matches[0]) ? matches[0] : undefined;
 }
 
 function metricEntityMatches(
@@ -516,29 +517,6 @@ function metricEntityMatches(
   if (entityType === 'campaign') return normalize(metric.campaignName || '') === entityName;
   if (entityType === 'ad_group') return normalize(metric.adGroupName || '') === entityName;
   return false;
-}
-
-function evidenceMatchesMetricContext(evidence: AiEvidenceItem, metric: AdDailyMetrics): boolean {
-  if (evidence.storeName && metric.storeName && evidence.storeName !== metric.storeName) return false;
-  if (evidence.marketplaceCode && metric.marketplaceCode && evidence.marketplaceCode !== metric.marketplaceCode) return false;
-  if (evidence.asin && metric.asin && normalize(evidence.asin) !== normalize(metric.asin)) return false;
-  if (evidence.campaignName && normalize(evidence.campaignName) !== normalize(metric.campaignName || '')) return false;
-  if (evidence.adGroupName && normalize(evidence.adGroupName) !== normalize(metric.adGroupName || '')) return false;
-  if (evidence.entityName) {
-    const normalizedEntity = normalize(evidence.entityName);
-    const metricEntities = [
-      metric.searchTerm,
-      metric.targeting,
-      metric.campaignName,
-      metric.adGroupName,
-    ].map((value) => normalize(value || ''));
-    if (!metricEntities.includes(normalizedEntity)) return false;
-  }
-  return true;
-}
-
-function normalizeSourcePath(value: string): string {
-  return value.trim().replace(/\\/g, '/').toLowerCase();
 }
 
 function toRecommendationEntityType(value: string): ActionRecommendation['entityType'] | undefined {

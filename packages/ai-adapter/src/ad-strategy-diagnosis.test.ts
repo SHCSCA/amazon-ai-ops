@@ -81,7 +81,7 @@ describe('AdStrategyDiagnoser', () => {
     expect(observedSignal).toBe(controller.signal);
   });
 
-  it('asks AI to diagnose lifecycle stage, dynamic thresholds, and actions with operation events in USD context', async () => {
+  it('parses AI diagnosis in USD context but withholds formal eligibility and legacy product totals without verified history', async () => {
     const provider = new FakeProvider({
       success: true,
       content: `\n${JSON.stringify({
@@ -299,14 +299,17 @@ describe('AdStrategyDiagnoser', () => {
     expect(result.schemaVersion).toBe('ad_strategy_diagnosis_v1');
     expect(result.lifecycleStage).toBe('keyword_exploration');
     expect(result.evidenceSufficiency).toMatchObject({
-      level: 'high',
-      canUseForFormalActions: true,
+      level: 'low',
+      canUseForFormalActions: false,
+      metricAggregation: 'source_rows_may_overlap',
       metricEvidenceCount: 1,
       sampleDays: 1,
       totalClicks: 32,
       totalCost: 41.5,
       totalOrders: 0,
     });
+    expect(result.evidenceSufficiency?.blockers.join('；')).toContain('缺少已核验的逐产品日来源');
+    expect(result.evidenceSufficiency?.warnings.join('；')).toContain('不是产品广告总量');
     expect(result.lifecycleStageEvidenceRefs).toEqual(['metric_1']);
     expect(result.thresholdSuggestions.targetAcos.value).toBe(0.35);
     expect(result.thresholdSuggestions.targetAcos.evidenceRefs).toEqual(['metric_1']);
@@ -321,7 +324,16 @@ describe('AdStrategyDiagnoser', () => {
     const prompt = provider.messages.map((message) => message.content).join('\n');
     expect(prompt).toContain('productContexts');
     expect(prompt).toContain('productHistoryLedgers');
-    expect(prompt).toContain('activeDays');
+    const userPrompt = provider.messages.find((message) => message.role === 'user')!.content;
+    const payload = JSON.parse(userPrompt.slice(userPrompt.indexOf('{')));
+    expect(payload.productHistoryLedgers).toEqual([]);
+    expect(payload.productHistoryQuality).toMatchObject({ status: 'unavailable', coverage: 'unverified' });
+    expect(payload.productHistoryQuality.reason).toContain('缺少已核验的逐产品日来源');
+    expect(payload.evidenceSufficiency).toMatchObject({ level: 'low', canUseForFormalActions: false });
+    expect(payload.metricsSample[0]).toMatchObject({ asin: 'B001', clicks: 32, cost: 41.5, orders: 0, sales: 0 });
+    expect(payload.adObjectTimelines[0]).toMatchObject({ objectName: 'smart lock outdoor', daysActive: 10 });
+    expect(payload.evidencePack[0]).toMatchObject({ evidenceId: 'metric_1', sourceRow: 18, metrics: { cost: 41.5 } });
+    expect(payload.currentRuleConfig).toEqual({ targetAcos: 0.25, highAcosThreshold: 0.4, noOrderClickThreshold: 30, minSpend: 10 });
     expect(prompt).toContain('targetTacos');
     expect(prompt).toContain('keyword_exploration');
     expect(prompt).toContain('给出阈值时必须结合产品阶段、成本结构、目标净利率、目标 ACOS 和目标 TACOS');
@@ -334,8 +346,8 @@ describe('AdStrategyDiagnoser', () => {
     expect(prompt).toContain('evidenceSufficiency');
     expect(prompt).toContain('证据充分性不足时，动作必须进入 insightOnlyCandidates');
     expect(prompt).toContain('只能引用 input.evidencePack 中存在的 evidenceId');
-    expect(prompt).toContain('判断产品阶段和动态阈值时必须优先引用 type 为 timeline 的 evidenceId');
-    expect(prompt).toContain('timeline:* 证据代表产品日级广告历史和运营事件叠加');
+    expect(prompt).toContain('产品汇总不可用时，不得把 metricsSample、对象时间线或证据样本合计当作产品总量');
+    expect(prompt).toContain('timeline 中 productHistoryQuality 为 unavailable 或缺失时，只是质量警告，不是产品表现证据');
     expect(prompt).toContain('schemaVersion');
     expect(prompt).toContain('缺少证据时进入 insightOnlyCandidates');
     expect(prompt).toContain('metric_1');

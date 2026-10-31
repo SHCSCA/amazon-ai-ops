@@ -1,6 +1,6 @@
 {
   "name": "@amazon-ai-ops/desktop",
-  "version": "1.6.0",
+  "version": "1.6.1-dev.1",
   "description": "Amazon AI Ops Agent - 亚马逊广告运营自动化工具",
   "author": "Amazon AI Ops Team",
   "private": true,

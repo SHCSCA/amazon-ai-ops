@@ -20,7 +20,7 @@ $releaseDir = Join-Path $repoRoot 'apps\desktop\release'
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
   $desktopPackagePath = Join-Path $repoRoot 'apps\desktop\package.json'
   $desktopPackageVersion = [string]((Get-Content -Raw -LiteralPath $desktopPackagePath -Encoding UTF8 | ConvertFrom-Json).version)
-  if ($desktopPackageVersion -notmatch '^\d+\.\d+\.\d+$') {
+  if ($desktopPackageVersion -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$') {
     throw "Desktop package version is invalid: $desktopPackageVersion"
   }
   $ZipPath = Join-Path $releaseDir "AmazonAIOpsAgent-$desktopPackageVersion.zip"

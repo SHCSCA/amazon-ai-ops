@@ -1,3 +1,6 @@
+import { prepareUnverifiedProductHistory } from './ad-product-history-context';
+import type { AdProductHistoryLedgerContext, AdProductHistoryQuality } from './ad-product-history-context';
+export type { AdProductHistoryLedgerContext } from './ad-product-history-context';
 import type { AIProvider } from './provider';
 import type { AIResponse } from './types';
 
@@ -13,6 +16,7 @@ export type AdLifecycleStage =
 
 export interface AdStrategyDiagnosisInput {
   scope: {
+    storeId?: string;
     dateFrom: string;
     dateTo: string;
     storeName: string;
@@ -24,58 +28,12 @@ export interface AdStrategyDiagnosisInput {
   metrics: AdStrategyMetric[];
   productContexts?: ProductStrategyContext[];
   productHistoryLedgers?: AdProductHistoryLedgerContext[];
+  productHistoryQuality?: AdProductHistoryQuality;
   adObjectTimelines: AdStrategyTimeline[];
   operationEvents: OperationEventContext[];
   currentRuleConfig: RuleThresholdConfig;
   ruleCandidates: RuleCandidateContext[];
   evidencePack?: AiEvidenceItem[];
-}
-
-export interface AdProductHistoryLedgerContext {
-  asin: string;
-  storeName: string;
-  marketplaceCode: string;
-  dateFrom: string;
-  dateTo: string;
-  activeDays: number;
-  firstMetricDate?: string;
-  lastMetricDate?: string;
-  inferredStage: string;
-  stageReasons: string[];
-  totals: {
-    impressions: number;
-    clicks: number;
-    cost: number;
-    orders: number;
-    sales: number;
-    acos: number;
-    cpc: number;
-    cvr: number;
-    currency: 'USD';
-  };
-  recentDaily: Array<{
-    date: string;
-    clicks: number;
-    cost: number;
-    orders: number;
-    sales: number;
-    acos: number;
-    cvr: number;
-    currency: 'USD';
-  }>;
-  events: Array<{
-    eventDate: string;
-    eventType: string;
-    title: string;
-    impactExpectation?: string;
-  }>;
-  product?: {
-    productStage?: string;
-    targetAcos?: number;
-    targetTacos?: number;
-    targetNetMargin?: number;
-    minPrice?: number;
-  };
 }
 
 export interface ProductStrategyContext {
@@ -226,6 +184,7 @@ export interface AiEvidenceItem {
     minPrice?: number;
   };
   timeline?: {
+    productHistoryQuality?: AdProductHistoryQuality;
     activeDays?: number;
     firstMetricDate?: string;
     lastMetricDate?: string;
@@ -269,6 +228,7 @@ export type AiAdCandidate = AiReasonedDecision;
 export type AiEvidenceSufficiencyLevel = 'none' | 'low' | 'medium' | 'high';
 
 export interface AiEvidenceSufficiency {
+  metricAggregation?: 'source_rows_may_overlap';
   level: AiEvidenceSufficiencyLevel;
   metricEvidenceCount: number;
   sampleDays: number;
@@ -457,18 +417,20 @@ export class AdStrategyDiagnoser {
 
   private buildPrompt(input: AdStrategyDiagnosisInput): string {
     const evidenceSufficiency = assessAdEvidenceSufficiency(input);
+    const productHistory = prepareUnverifiedProductHistory(input);
     const payload = {
       scope: input.scope,
       currency: 'USD',
       evidenceSufficiency,
       productContexts: input.productContexts || [],
-      productHistoryLedgers: input.productHistoryLedgers || [],
+      productHistoryLedgers: [],
+      productHistoryQuality: productHistory.quality,
       currentRuleConfig: input.currentRuleConfig,
       adObjectTimelines: input.adObjectTimelines.slice(0, 40),
       metricsSample: input.metrics.slice(0, 80),
       operationEvents: input.operationEvents,
       ruleCandidates: input.ruleCandidates.slice(0, 80),
-      evidencePack: (input.evidencePack || []).slice(0, 160),
+      evidencePack: productHistory.evidencePack.slice(0, 160),
       requiredOutput: this.requiredOutputSkeleton(input),
     };
 
@@ -479,8 +441,9 @@ export class AdStrategyDiagnoser {
       '解释表现时必须参考运营事件，例如 Coupon、Promotion、BD、大促、价格变动和 Listing 变更。',
       '请为当前产品阶段给出量化阈值建议和候选动作；不要执行广告。',
       '你只能引用 input.evidencePack 中存在的 evidenceId。',
-      '判断产品阶段和动态阈值时必须优先引用 type 为 timeline 的 evidenceId。',
-      'timeline:* 证据代表产品日级广告历史和运营事件叠加，是阶段判断、动态阈值和趋势解释的优先证据。',
+      '产品汇总不可用时，不得把 metricsSample、对象时间线或证据样本合计当作产品总量；不同报表可能重叠。',
+      'timeline 中 productHistoryQuality 为 unavailable 或缺失时，只是质量警告，不是产品表现证据；产品阶段、阈值与 AI 动作必须人工复核。',
+      'observedLedger 仅表示单一来源的部分观察，不是完整产品总量；null 为未知，显式零仅对应已观察单元格，缺日不得补零，不得用于正式动作或自动阶段、阈值判断。',
       '所有动作、阶段判断、阈值原因必须附带 evidenceRefs。',
       '不能编造 sourceFile、sourceRow、batchId；这些字段只能来自 evidencePack。',
       '缺少证据时进入 insightOnlyCandidates，不要放入 aiCandidates。',
@@ -928,7 +891,8 @@ export function assessAdEvidenceSufficiency(input: AdStrategyDiagnosisInput): Ai
   const totalOrders = sumNumbers(metricRows.map((item) => item.orders));
   const metricEvidenceCount = metricRows.length;
   const blockers: string[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = ['证据样本合计可能包含重叠报表，不是产品广告总量。'];
+  blockers.push(input.productHistoryQuality?.reason || '缺少已核验的逐产品日来源，不能用于正式 AI 动作。');
   const minSpend = Math.max(0, Number(input.currentRuleConfig.minSpend || 0));
   const actionClickFloor = Math.max(10, Math.min(30, Number(input.currentRuleConfig.noOrderClickThreshold || 30)));
 
@@ -961,6 +925,7 @@ export function assessAdEvidenceSufficiency(input: AdStrategyDiagnosisInput): Ai
 
   return {
     level,
+    metricAggregation: 'source_rows_may_overlap',
     metricEvidenceCount,
     sampleDays,
     totalClicks,

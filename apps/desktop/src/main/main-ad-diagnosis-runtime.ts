@@ -12,7 +12,7 @@ import { applyCurrentKeywordBids } from './recommendation-live-bid';
 import { bindRecommendationsToScopeAsin, buildAdStrategyDiagnosisInput } from './ad-recommendation-ai-context';
 import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
 import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
-import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { loadProductHistoryObservation } from './ad-product-history-source-runtime';
 import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { assertRuntimeAnalysisWindow, assertRuntimeConfigStore } from './store-runtime-analysis-config';
@@ -174,12 +174,7 @@ export async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     limit: 100,
   }) || [];
   const productContexts = loadProductStrategyContexts(gate.scope);
-  const productHistoryLedgers = buildAdProductHistoryLedger({
-    scope: gate.scope,
-    metrics,
-    operationEvents,
-    productContexts,
-  });
+  const productHistoryQuality = loadProductHistoryObservation(mainRuntimeContext.state.db, gate.scope, gate.metricSource);
   const evidencePack = buildAdAiEvidencePack({
     scope: {
       dateFrom: gate.scope.dateFrom,
@@ -193,7 +188,7 @@ export async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     operationEvents,
     productContexts,
     ruleRecommendations: ruleCandidates,
-    productHistoryLedgers,
+    productHistoryQuality,
   });
   const evidencePackSummary = summarizeAiEvidencePack(evidencePack);
   const diagnosisInput = buildAdStrategyDiagnosisInput({
@@ -204,6 +199,7 @@ export async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     ruleConfig: runtimeConfig.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations: ruleCandidates,
     evidencePack,
+    productHistoryQuality,
   });
   const settings = readAiSettingsForMain();
   const fallbackDiagnosis: AdStrategyDiagnosisOutput = {

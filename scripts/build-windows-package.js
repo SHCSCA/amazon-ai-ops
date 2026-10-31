@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { isValidAppVersion } = require('./current-app-version');
 const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
@@ -159,7 +160,7 @@ function buildWindowsPackage(injected = {}) {
 function resolveExpectedPackageOutputs(packageExe = DEFAULT_PACKAGE_EXE) {
   const desktopPackage = readJson(DESKTOP_PACKAGE_JSON);
   const version = String(desktopPackage.version || '');
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  if (!isValidAppVersion(version)) {
     throw new Error(`Desktop package has an invalid exact version: ${version}`);
   }
   const executablePath = path.resolve(packageExe);

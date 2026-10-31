@@ -38,9 +38,27 @@ export function validateAiDiagnosisEvidence(input: {
   const insightOnlyCandidateIndexes: number[] = [];
   const schemaValid = input.diagnosis.schemaVersion === 'ad_strategy_diagnosis_v1';
   const evidenceSufficiency = input.diagnosis.evidenceSufficiency;
+  const productHistoryUnavailableReason = input.evidencePack.find((item) => item.timeline?.productHistoryQuality)?.timeline?.productHistoryQuality?.reason
+    || '缺少已核验的逐产品日来源，产品阶段、阈值与 AI 动作需人工复核。';
 
   markLifecycleReviewIfNeeded(input.diagnosis, evidenceById, input.scope);
   markThresholdReviewIfNeeded(input.diagnosis, evidenceById, input.scope);
+  // 当前没有可信产品汇总快照入口；缺失质量字段也不能获得执行信用。
+  if (evidenceSufficiency) {
+    evidenceSufficiency.canUseForFormalActions = false;
+    evidenceSufficiency.level = evidenceSufficiency.metricEvidenceCount === 0 ? 'none' : 'low';
+    evidenceSufficiency.metricAggregation = 'source_rows_may_overlap';
+    evidenceSufficiency.blockers = Array.from(new Set([...evidenceSufficiency.blockers, productHistoryUnavailableReason]));
+  }
+  input.diagnosis.lifecycleStageRequiresReview = true;
+  input.diagnosis.lifecycleStageInvalidReasons = Array.from(new Set([
+    ...(input.diagnosis.lifecycleStageInvalidReasons || []), productHistoryUnavailableReason,
+  ]));
+  input.diagnosis.riskWarnings = Array.from(new Set([...input.diagnosis.riskWarnings, productHistoryUnavailableReason]));
+  for (const suggestion of Object.values(input.diagnosis.thresholdSuggestions)) {
+    suggestion.requiresReview = true;
+    suggestion.reviewReasons = Array.from(new Set([...(suggestion.reviewReasons || []), productHistoryUnavailableReason]));
+  }
 
   input.diagnosis.aiCandidates.forEach((candidate, index) => {
     const missingRefs = candidate.evidenceRefs.filter((ref) => !evidenceById.has(ref));
@@ -71,7 +89,7 @@ export function validateAiDiagnosisEvidence(input: {
       evidence.type === 'metric'
       && evidenceCanBindCandidate(evidence, candidate)
     ));
-    const reasons: string[] = [];
+    const reasons: string[] = [productHistoryUnavailableReason];
 
     if (!schemaValid) {
       reasons.push('AI 输出 schemaVersion 错误，不能进入正式建议池。');

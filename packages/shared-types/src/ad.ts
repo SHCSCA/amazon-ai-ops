@@ -1,9 +1,14 @@
+export const AD_SOURCE_METRIC_BITS = Object.freeze({ impressions: 1, clicks: 2, cost: 4, orders: 8, sales: 16 } as const);
+export const AD_SOURCE_METRIC_MASK_ALL = 31;
+
 export interface AdDailyMetrics {
   id?: number;
   date: string;                    // YYYY-MM-DD
   storeName: string;
   marketplaceCode: string;
   asin: string;
+  sourceMetricMask?: number;       // undefined：旧来源未知；位值：原始有效数值单元格，含显式零
+  sourceAsin?: string;             // undefined：历史来源未知；空串：原生缺失；非空：原生 ASIN
   msku: string;
   campaignName: string;
   adGroupName: string;

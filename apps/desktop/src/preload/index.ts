@@ -1,3 +1,4 @@
+import type { FamilyObservationScope, FamilyObservationFile, FamilyObservationPreview, FamilyObservation } from '../shared/family-observation-contracts';
 import { createRuntimeLogPreloadApi } from './runtime-log-api';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { GetStoreCollectionAutomationRequest, SetStoreCollectionAutomationRequest } from '../shared/store-collection-automation-ipc';
@@ -343,6 +344,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:business-ui:import-current-reports', scope),
   importLocalBusinessReportFiles: (scope: AuthoritativeBusinessImportScope) =>
     ipcRenderer.invoke('v1_5:business-ui:import-local-report-files', scope),
+  listFamilyObservationFiles: (scope: FamilyObservationScope): Promise<FamilyObservationFile[]> =>
+    ipcRenderer.invoke('family-observation:list', scope),
+  prepareFamilyObservation: (input: FamilyObservationScope & { fileIds: number[]; familyLabel: string }): Promise<FamilyObservationPreview> =>
+    ipcRenderer.invoke('family-observation:prepare', input),
+  confirmFamilyObservation: (input: { storeContext: StoreContextEnvelope; token: string }): Promise<FamilyObservation> =>
+    ipcRenderer.invoke('family-observation:confirm', input),
+  cancelFamilyObservation: (): Promise<void> => ipcRenderer.invoke('family-observation:cancel'),
   getDeliveryReadiness: () => ipcRenderer.invoke('v1_5:delivery:readiness'),
   refreshFinalReadiness: (input?: { adReadbackPath?: string }) =>
     ipcRenderer.invoke('v1_5:delivery:refresh-final-readiness', input),

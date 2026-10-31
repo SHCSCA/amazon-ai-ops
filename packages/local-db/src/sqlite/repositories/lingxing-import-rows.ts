@@ -377,13 +377,13 @@ export function insertMetricRow(repositoryContext: LingxingImportRepositoryConte
     repositoryContext.db.prepare(`
       INSERT INTO ad_daily_metrics (
         store_id, batch_id, report_type, portfolio_name,
-        date, store_name, marketplace_code, asin, msku,
+        date, store_name, marketplace_code, asin, source_asin, source_metric_mask, msku,
         campaign_name, ad_group_name, targeting, search_term, match_type,
         impressions, clicks, cost, orders, sales, currency,
         acos, cpc, cvr, source_file, source_row
       ) VALUES (
         @storeId, @batchId, @reportType, @portfolioName,
-        @date, @storeName, @marketplaceCode, @asin, @msku,
+        @date, @storeName, @marketplaceCode, @asin, @sourceAsin, @sourceMetricMask, @msku,
         @campaignName, @adGroupName, @targeting, @searchTerm, @matchType,
         @impressions, @clicks, @cost, @orders, @sales, 'USD',
         @acos, @cpc, @cvr, @sourceFile, @sourceRow

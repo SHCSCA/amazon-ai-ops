@@ -1,3 +1,4 @@
+import { attachUniqueProductContext } from './lingxing-report-product-attribution';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -15,47 +16,6 @@ function fileHashOrNull(filePath: string): string | null {
 function fileSizeOrZero(filePath: string): number { return fs.statSync(filePath).size; }
 export function invalidLingxingImportReconciliationEvidence(detail: string): Error {
   return new Error(`${LINGXING_IMPORT_RECONCILIATION_EVIDENCE_INVALID}: ${detail}`);
-}
-
-function metricProductContextKey(metric: { date?: string; campaignName?: string; adGroupName?: string }, includeDate: boolean): string {
-  return [
-    includeDate ? metric.date || '' : '*',
-    (metric.campaignName || '').trim().toLowerCase(),
-    (metric.adGroupName || '').trim().toLowerCase(),
-  ].join('|');
-}
-
-function uniqueProductContext(
-  map: Map<string, Map<string, { asin: string; msku: string }>>,
-  key: string,
-): { asin: string; msku: string } | undefined {
-  const values = map.get(key);
-  if (!values || values.size !== 1) return undefined;
-  return Array.from(values.values())[0];
-}
-
-function attachUniqueProductContext(metrics: AdDailyMetrics[]): AdDailyMetrics[] {
-  const productByKey = new Map<string, Map<string, { asin: string; msku: string }>>();
-  const addContext = (key: string, metric: AdDailyMetrics) => {
-    if (!metric.asin) return;
-    const bucket = productByKey.get(key) ?? new Map<string, { asin: string; msku: string }>();
-    bucket.set(metric.asin.toUpperCase(), { asin: metric.asin, msku: metric.msku || '' });
-    productByKey.set(key, bucket);
-  };
-
-  for (const metric of metrics) {
-    addContext(metricProductContextKey(metric, true), metric);
-    addContext(metricProductContextKey(metric, false), metric);
-  }
-
-  return metrics.map((metric) => {
-    if (metric.asin) return metric;
-    const exact = uniqueProductContext(productByKey, metricProductContextKey(metric, true));
-    const fallback = exact ?? uniqueProductContext(productByKey, metricProductContextKey(metric, false));
-    return fallback
-      ? { ...metric, asin: fallback.asin, msku: metric.msku || fallback.msku }
-      : metric;
-  });
 }
 
 const LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING =

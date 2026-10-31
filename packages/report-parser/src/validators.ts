@@ -1,3 +1,4 @@
+import { AD_SOURCE_METRIC_BITS } from '@amazon-ai-ops/shared-types';
 import type { AdDailyMetrics } from '@amazon-ai-ops/shared-types';
 
 export interface ValidationError {
@@ -162,4 +163,15 @@ export function validateBatch(rows: Record<string, any>[]): ValidationResult {
     validCount,
     invalidCount,
   };
+}
+
+export function sourceMetricMaskForRow(row: Record<string, unknown>): number {
+  return Object.entries(AD_SOURCE_METRIC_BITS).reduce((mask, [field, bit]) => {
+    const value = valueForField(row, field);
+    if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) return mask;
+    const count = field === 'impressions' || field === 'clicks' || field === 'orders';
+    if (typeof value === 'string' && (/[¥￥%]/.test(value) || (count && /[$]/.test(value)))) return mask;
+    const number = parseNumeric(value);
+    return Number.isFinite(number) && number >= 0 && (!count || Number.isSafeInteger(number)) ? mask | bit : mask;
+  }, 0);
 }

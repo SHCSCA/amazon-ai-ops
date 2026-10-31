@@ -2,7 +2,7 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as sqliteMigrations from './migrations';
-import { AI_SPEND_MIGRATION_CHECKSUM, AI_SPEND_MIGRATION_NAME, AI_SPEND_MIGRATION_VERSION, runMissionWriteAuthorityMigration, runGrantSlotLedgerMigration, runLegacyCompatibilityMigration, runAiSpendMigration, runExecutionReconciliationMigration, runAnalysisAuthorityMigration, runAnalysisRunsMigration, runCollectionResumeAuthorityMigration, runStoreProviderIdentityAuthorityMigration, prepareUpgradeBackup, runExecutionAuthorityMigration, prepareStoreAuthorityMigrationBackup, runListingStoreAuthorityMigration, runMissionDomainMigration, runOperationEventArchiveMigration, runProductStoreAuthorityMigration, runReportImportAuthorityMigration, runStoreAuthorityMigrations, runStoreAuthorityRepairMigration, runV16DomainMigration, applyContextBindingMigration, runPolicyAuthorityMigration, type UpgradeBackupManifest, } from './migrations';
+import { AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_CHECKSUM, AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_NAME, AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_VERSION, runMissionWriteAuthorityMigration, runGrantSlotLedgerMigration, runLegacyCompatibilityMigration, runAiSpendMigration, runExecutionReconciliationMigration, runAnalysisAuthorityMigration, runAnalysisRunsMigration, runCollectionResumeAuthorityMigration, runStoreProviderIdentityAuthorityMigration, prepareUpgradeBackup, runExecutionAuthorityMigration, prepareStoreAuthorityMigrationBackup, runListingStoreAuthorityMigration, runMissionDomainMigration, runOperationEventArchiveMigration, runProductStoreAuthorityMigration, runReportImportAuthorityMigration, runStoreAuthorityMigrations, runStoreAuthorityRepairMigration, runV16DomainMigration, applyContextBindingMigration, runPolicyAuthorityMigration, type UpgradeBackupManifest, } from './migrations';
 import { SQLITE_MIGRATION_CONTRACT } from './db-migration-contract';
 import { runMigrations } from './db-migration-runner';
 
@@ -96,7 +96,7 @@ function initializeSqlite(database: Database.Database): void {
         const ledger = database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as {
             version: number | null;
         };
-        if (Number(ledger.version) > AI_SPEND_MIGRATION_VERSION)
+        if (Number(ledger.version) > AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_VERSION)
             throw new Error('Database uses a newer schema; install the matching application version.');
         const contracts = new Map(SQLITE_MIGRATION_CONTRACT.map(row => [row.version, row]));
         const rows = database.prepare('SELECT version,name,checksum,status FROM schema_migrations ORDER BY version').all() as Array<{
@@ -119,9 +119,9 @@ function initializeSqlite(database: Database.Database): void {
     database.pragma('journal_mode = WAL');
     database.pragma('foreign_keys = ON');
     const upgradeBackup = prepareUpgradeBackup(database, {
-        targetVersion: AI_SPEND_MIGRATION_VERSION,
-        targetName: AI_SPEND_MIGRATION_NAME,
-        targetChecksum: AI_SPEND_MIGRATION_CHECKSUM,
+        targetVersion: AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_VERSION,
+        targetName: AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_NAME,
+        targetChecksum: AD_METRIC_SOURCE_METRIC_MASK_MIGRATION_CHECKSUM,
     });
     prepareStoreAuthorityMigrationBackup(database);
     runMigrations(database, upgradeBackup);

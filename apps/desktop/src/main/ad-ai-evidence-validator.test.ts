@@ -12,7 +12,7 @@ describe('validateAiDiagnosisEvidence', () => {
     batchId: 'batch_1',
   };
 
-  it('accepts AI candidates when all evidence refs are valid and bind a real ad object', () => {
+  it('keeps traced AI candidates insight-only until a verified product snapshot exists', () => {
     const result = validateAiDiagnosisEvidence({
       diagnosis: diagnosis({
         aiCandidates: [
@@ -29,9 +29,9 @@ describe('validateAiDiagnosisEvidence', () => {
       scope,
     });
 
-    expect(result.validCandidateIndexes).toEqual([0]);
-    expect(result.insightOnlyCandidateIndexes).toEqual([]);
-    expect(result.invalidReasons).toEqual([]);
+    expect(result.validCandidateIndexes).toEqual([]);
+    expect(result.insightOnlyCandidateIndexes).toEqual([0]);
+    expect(result.invalidReasons[0].reason).toContain('缺少已核验的逐产品日来源');
   });
 
   it('moves AI candidates without refs into insight-only', () => {
@@ -319,7 +319,7 @@ describe('validateAiDiagnosisEvidence', () => {
       scope,
     });
 
-    expect(currentDiagnosis.thresholdSuggestions.targetAcos.requiresReview).toBeUndefined();
+    expect(currentDiagnosis.thresholdSuggestions.targetAcos.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.highAcosThreshold.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.noOrderClickThreshold.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.minSpend.requiresReview).toBe(true);
@@ -373,7 +373,7 @@ describe('validateAiDiagnosisEvidence', () => {
       scope,
     });
 
-    expect(currentDiagnosis.thresholdSuggestions.targetAcos.requiresReview).toBeUndefined();
+    expect(currentDiagnosis.thresholdSuggestions.targetAcos.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.highAcosThreshold.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.noOrderClickThreshold.requiresReview).toBe(true);
     expect(currentDiagnosis.thresholdSuggestions.minSpend.requiresReview).toBe(true);
@@ -399,6 +399,7 @@ describe('validateAiDiagnosisEvidence', () => {
     expect(currentDiagnosis.lifecycleStageInvalidReasons).toEqual([
       'AI 阶段判断引用了不可用证据：missing_ref。',
       'AI 阶段判断引用了当前运营范围之外的证据：metric_2。',
+      '缺少已核验的逐产品日来源，产品阶段、阈值与 AI 动作需人工复核。',
     ]);
     expect(currentDiagnosis.riskWarnings).toContain('AI 阶段判断证据不足或跨范围，需要人工复核后再采用。');
   });

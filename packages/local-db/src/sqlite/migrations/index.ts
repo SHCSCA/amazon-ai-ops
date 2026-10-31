@@ -176,3 +176,7 @@ export * from './0017-mission-write-authority';
 export * from './0018-grant-slot-ledger';
 export * from './0019-legacy-record-compatibility';
 export * from './0020-ai-spend-governance';
+
+export * from './0021-ad-metric-source-asin';
+
+export * from './0022-ad-metric-source-metric-mask';

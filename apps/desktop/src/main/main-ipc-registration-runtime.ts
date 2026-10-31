@@ -1,3 +1,4 @@
+import { handleListFamilyObservationFiles, handlePrepareFamilyObservation, handleConfirmFamilyObservation, handleCancelFamilyObservation } from './main-family-observation-runtime';
 import { registerRendererRuntimeLogIpc } from './renderer-runtime-log-ipc';
 import { registerV16ServicesIpc } from './v16-services-ipc';
 import { registerAnalysisRunsIpcHandlers } from './analysis-runs-ipc';
@@ -362,6 +363,18 @@ export function registerIpcHandlers(): void {
   );
   mainRuntimeContext.registerTrackedIpcHandler('v1_5:business-ui:import-local-report-files', async (_, scope) =>
     projectBusinessImportResultForRenderer(await handleImportLocalBusinessReportFiles(scope))
+  );
+  mainRuntimeContext.registerTrackedIpcHandler('family-observation:list', (event, input) =>
+    rendererPayload(handleListFamilyObservationFiles(event.sender.id, input))
+  );
+  mainRuntimeContext.registerTrackedIpcHandler('family-observation:prepare', (event, input) =>
+    rendererPayload(handlePrepareFamilyObservation(event.sender.id, input))
+  );
+  mainRuntimeContext.registerTrackedIpcHandler('family-observation:confirm', (event, input) =>
+    rendererPayload(handleConfirmFamilyObservation(event.sender.id, input))
+  );
+  mainRuntimeContext.registerTrackedIpcHandler('family-observation:cancel', (event) =>
+    handleCancelFamilyObservation(event.sender.id)
   );
   mainRuntimeContext.registerTrackedIpcHandler('v1_5:delivery:readiness', () =>
     handleGetDeliveryReadiness()

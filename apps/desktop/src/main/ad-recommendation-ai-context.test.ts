@@ -1,3 +1,4 @@
+import { reportIdentityFixture } from './ad-decision-identity.test-support';
 import { describe, expect, it } from 'vitest';
 import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput } from '@amazon-ai-ops/shared-types';
 import type { AdStrategyDiagnosisOutput, AiEvidenceItem } from '@amazon-ai-ops/ai-adapter';
@@ -136,19 +137,9 @@ describe('ad recommendation AI context', () => {
         targetTacos: 0.12,
       },
     });
-    expect(input.productHistoryLedgers?.[0]).toMatchObject({
-      asin: 'B001',
-      activeDays: 1,
-      totals: {
-        cost: 42,
-        clicks: 30,
-        orders: 0,
-        currency: 'USD',
-      },
-      events: [
-        expect.objectContaining({ title: '10% Coupon started' }),
-      ],
-    });
+    expect(input.productHistoryLedgers).toEqual([]);
+    expect(input.productHistoryQuality).toMatchObject({ status: 'unavailable', coverage: 'unverified', observedRowCount: 0 });
+    expect(input.operationEvents[0]).toMatchObject({ title: '10% Coupon started' });
     expect(input.adObjectTimelines[0]).toMatchObject({
       objectType: 'search_term',
       objectName: 'smart lock outdoor',
@@ -220,7 +211,7 @@ describe('ad recommendation AI context', () => {
           entityType: 'search_term',
           entityName: 'smart lock outdoor',
           actionType: 'lower_bid',
-          recommendedValue: '-12%',
+          recommendedValue: '1.08',
           reason: 'Coupon did not convert.',
           reasoningSteps: ['metric_1 shows no-order spend.', 'event_1 shows coupon context.'],
           evidenceRefs: ['metric_1', 'event_1'],
@@ -239,7 +230,7 @@ describe('ad recommendation AI context', () => {
         entityType: 'search_term',
         entityName: 'smart lock outdoor',
         actionType: 'lower_bid',
-        recommendedValue: '-12%',
+        recommendedValue: '1.08',
         confidence: 0.85,
         reasons: ['Rule: No-order spend exceeded threshold.', 'AI: Coupon did not convert.'],
         riskWarnings: [],
@@ -247,13 +238,17 @@ describe('ad recommendation AI context', () => {
       },
     ];
 
+    const fixture = reportIdentityFixture(recommendations[0], evidenceItem({ sourceFile: 'C:/reports/search-term.xlsx', sourceRow: 18 }));
     const annotated = annotateRecommendationsWithStrategy({
-      recommendations,
+      identityScope: fixture.scope,
+      identityMetrics: [fixture.metric],
+      recommendations: [fixture.recommendation],
       diagnosis,
-      decisions,
+      decisions: decisions.map((decision) => ({ ...decision, identity: fixture.identity, ruleCandidateIndex: 0, aiCandidateIndex: 0 })),
       operationEventCount: 1,
       evidencePack: [
         evidenceItem({
+          ...fixture.evidence,
           evidenceId: 'metric_1',
           type: 'metric',
           label: 'smart lock outdoor / 2026-06-10',
@@ -353,7 +348,7 @@ describe('ad recommendation AI context', () => {
     expect(annotated[0].evidence.aiThresholdEvidenceRefs?.targetAcos).toEqual(['product_1']);
   });
 
-  it('keeps executable rule values when aligned AI returns only a relative bid percentage', () => {
+  it('rejects an unbound aligned percentage without changing executable rule value', () => {
     const recommendations = [
       recommendation({
         entityType: 'search_term',
@@ -426,10 +421,11 @@ describe('ad recommendation AI context', () => {
     });
 
     expect(annotated[0].recommendedValue).toBe('1.08');
-    expect(annotated[0].evidence.decisionReasons).toContain('AI: 应小幅降价。');
+    expect(annotated[0].evidence.decisionReasons).toBeUndefined();
+    expect(annotated[0].status).toBe('needs_review');
   });
 
-  it('keeps the rule bid when an aligned AI absolute bid would decrease more than 10 percent', () => {
+  it('rejects an unbound aligned excessive bid decrease without changing the rule value', () => {
     const recommendations = [recommendation({
       entityType: 'target',
       entityName: 'back massager',
@@ -496,7 +492,8 @@ describe('ad recommendation AI context', () => {
     });
 
     expect(annotated.recommendedValue).toBe('2.09');
-    expect(annotated.evidence.decisionSource).toBe('rule_ai');
+    expect(annotated.evidence.decisionSource).toBeUndefined();
+    expect(annotated.status).toBe('needs_review');
   });
 
   it('moves conflicting or review-required strategy decisions out of the normal approval queue', () => {
@@ -552,7 +549,7 @@ describe('ad recommendation AI context', () => {
 
     expect(annotated[0].status).toBe('needs_review');
     expect(annotated[0].evidence).toMatchObject({
-      decisionAgreement: 'conflict',
+      decisionAgreement: undefined,
       decisionRequiresReview: true,
     });
   });
