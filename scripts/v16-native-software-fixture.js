@@ -4,10 +4,23 @@ const { randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { validateEvidenceUserDataPath } = require('./evidence-user-data');
 const { fileRecord, directPath, insist } = require('./v16-performance-artifacts');
-const { loadSoftwareDatabaseRuntime } = require('./v16-native-software-fixture-runtime');
+const { loadSoftwareDatabaseRuntime, createSoftwareReportImportRuntime } = require('./v16-native-software-fixture-runtime');
 const { seedSoftwareImport, seedSoftwareMemory } = require('./v16-native-software-fixture-data');
 const { seedSoftwareRecoveryInputs } = require('./v16-native-software-fixture-reports');
 const { seedSoftwareAnalysis } = require('./v16-native-software-fixture-analysis');
+
+async function rejectSoftwareFixtureFailure(error, { drain, close, writeLog }) {
+  const failures = [error];
+  let drained = !drain;
+  try { if (drain) { await drain(); drained = true; } } catch (secondary) { failures.push(secondary); }
+  // 未观察到真实排空时保留连接；不能关闭仍可能被旧任务使用的数据库。
+  try { if (drained && close) close(); } catch (secondary) { failures.push(secondary); }
+  const failure = failures.length === 1 ? error : new AggregateError(failures, 'SOFTWARE_FIXTURE_PRIMARY_AND_CLEANUP_FAILURE');
+  const { createRuntimeLogRecord } = require('../packages/shared-types/src/runtime-log-format.cjs');
+  try { writeLog(createRuntimeLogRecord('error', 'v16.software_fixture_failed', { error: failure })); }
+  catch (secondary) { throw new AggregateError([...failures, secondary], 'SOFTWARE_FIXTURE_PRIMARY_AND_LOG_FAILURE'); }
+  throw failure;
+}
 
 function seedSoftwareRuntimeConfigs(runtime, coordinator, bus, stores) {
   const values = { aiRecommendationsEnabled: false, collectionScheduleLocalTime: '08:00', collectionLookbackDays: 14,
@@ -45,16 +58,17 @@ async function createNativeSoftwareFixture({ repositoryRoot, directory, fixture,
   const owner = { kind: 'v16-software-fixture-owner', token: randomUUID(), classification: 'isolated-software-fixture' };
   fs.writeFileSync(path.join(root, 'owner.json'), JSON.stringify(owner), { flag: 'wx' });
   const seedDatabase = path.join(root, 'seed.db'), snapshot = path.join(root, 'logical-database.db');
-  let database, runtime;
+  let database, runtime, importer;
   try {
     runtime = await loadSoftwareDatabaseRuntime(path.resolve(repositoryRoot), root);
     database = runtime.initSqlite(seedDatabase);
+    importer = createSoftwareReportImportRuntime(runtime, database, root, owner.classification);
     const repository = new runtime.StoreRepository(database), stores = [], imports = [], recoveryInputs = [], analysisInputs = [];
     for (const suffix of ['a', 'b']) {
       const store = repository.createStore({ storeId: `software-${fixture}-store-${suffix}`, browserProfileId: `software-${fixture}-profile-${suffix}`,
         displayName: `隔离软件验收店铺 ${suffix.toUpperCase()}`, marketplace: 'US', currency: 'USD', businessTimezone: 'America/Los_Angeles' });
       stores.push(store);
-      imports.push(seedSoftwareImport(runtime, database, root, store, metricRows, date));
+      imports.push(await seedSoftwareImport(runtime, database, root, store, metricRows, date, importer));
       recoveryInputs.push(seedSoftwareRecoveryInputs(runtime, database, root, store, date, 3, { rowsPerReport: Math.ceil(metricRows / 8) }));
       analysisInputs.push(seedSoftwareAnalysis(runtime, database, store, date, recoveryInputs.at(-1).importBatchIds));
       seedSoftwareMemory(runtime, database, store, memoryRows, date);
@@ -77,6 +91,7 @@ async function createNativeSoftwareFixture({ repositoryRoot, directory, fixture,
       insist(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count === 0, 'SOFTWARE_FIXTURE_AUTHORITY_OR_AI_COST_FORBIDDEN');
     }
     coordinator.switchStore({ storeId: stores[0].storeId, marketplace: 'US' });
+    await importer.stopAndDrain(); importer = undefined;
     await database.backup(snapshot);
     runtime.closeSqlite(); database = undefined;
     const coldProfiles = Array.from({ length: 3 }, (_, index) => path.join(root, `cold-profile-${index + 1}`));
@@ -96,10 +111,11 @@ async function createNativeSoftwareFixture({ repositoryRoot, directory, fixture,
     fs.writeFileSync(path.join(root, 'fixture.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
     return result;
   } catch (error) {
-    const { createRuntimeLogRecord } = require('../packages/shared-types/src/runtime-log-format.cjs');
-    fs.appendFileSync(path.join(root, 'fixture-errors.jsonl'), JSON.stringify(createRuntimeLogRecord('error', 'v16.software_fixture_failed', { error })) + '\n');
-    if (database?.open) runtime.closeSqlite();
-    throw error;
+    return rejectSoftwareFixtureFailure(error, {
+      drain: importer ? () => importer.stopAndDrain() : undefined,
+      close: () => { if (database?.open) runtime.closeSqlite(); },
+      writeLog: record => fs.appendFileSync(path.join(root, 'fixture-errors.jsonl'), JSON.stringify(record) + '\n'),
+    });
   }
 }
-module.exports = { createNativeSoftwareFixture };
+module.exports = { createNativeSoftwareFixture, rejectSoftwareFixtureFailure };

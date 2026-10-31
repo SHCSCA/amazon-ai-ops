@@ -1,13 +1,17 @@
 # 项目状态与交付边界
 
 <!-- 本轮推进状态开始 -->
-## 2026-10-31 · 工程候选冻结前检查点
+## 2026-10-31 · 验收工具修复后的全量验证前检查点
 
-当前版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。本节是在完整工程链开始前对齐的检查点；为保持构建/文档匹配，运行期间不改本节，后续实际终态查询根PROGRESS/BLOCKED及下列原件，不能把启动前文字当作执行结论。
+版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。前一代码与文档检查点ae4d02dc64f7c9c06a5ec7d447fcb79fa6b059ee已推送master；本检查点待独审、提交并冻结后，启动全新完整L1–L3，候选目录：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`，当前未启动。开跑后源码/全部docs保持冻结，实际终态由PROGRESS.md、BLOCKED.md和原始runner维护，PROJECT_STATUS.md保留开跑前检查点。
 
-文件身份、迁移/版本、旧夹具和文档合同已修复；统一XLSX/XLS/CSV资源门、派生STORE、可终止解析、受信配置/输入及结果预算、同事务首写前重验和精确任务结算已取得定向证据。parser/collector 24文件371项、Desktop 21文件346项通过，均零失败/跳过；范围有交集，不授完整C/实包/真实业务信用。全工作区类型、全量2,279模块尺寸、3,338文件敏感扫描通过。资源基线347a的原701 builtin门零拒绝；有限5 owner+1 Program+2完整函数摘要已独审、应用并正式重建Main1e631a37…，public两项true和原193安全测试通过，原算法及旧条目保持。
+隔离夹具与报表链已补齐同源真实Worker、ConfigurationBus、同连接guard/持有job与完整await；真实等待期间session/job/source漂移零入库，未确认排空不得backup或close。定稿两文件23/23、Desktop类型及5文件语法通过；包含原15行为与8新增，不与其他范围相加。Windows构建改为完整旧/失败release树留存及受校验恢复，BigInt身份/链接/目标冲突/cleanup/sourceAfter/收据与日志次错均拒绝假成功；单文件46/46，原七步与10个构建/探针函数经LF归一化保持逐字符相同。新全量模块2,279零违规、敏感源3,338零发现。两项仍仅为定向机制证据，尚未取得本检查点全C或实包信用。
 
-唯一L1清单686文件（从652新增34、无删除），L3原28文件及其余定义不变。预定完整候选为`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`，本检查点尚未执行完整L1–L3；之后还需匹配当前Windows实包/四runtime、UI/NVDA、性能、安全、恢复和最终保护链。正式数据/绑定8项保护记录保持。真实账号、正式数据、有效授权、真实调用与观察期证据不得由内部夹具替代。
+原生预检/模块门通过后中止的前C保留于`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`；原RUNNING报告不改写，中止原因、controller实际1与保护核验见`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/full-c-interrupted-final.json`。fixture RED、未排空cleanup RED、4例原5s测试总预算超时及包体删除RED全部保留；仅4例异步测试总预算改30s，生产请求时限不变。
+
+统一资源/导入生产稿先前parser/collector371/371、Desktop346/346和193安全项仍只给各自定向信用。唯一L1仍686文件、L3仍28文件，六项退出条件不变；正式DB/Profile及原生绑定等8项保护文件字节/七stat保持，未启动正式应用或构建新Windows包。后续依次为当前完整L1–L3、隔离迁移备份恢复、canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大性能/安全/故障、最终快照字节备份及正常EXE启动总审。内部软件验收尚未完成，不能归为只待真实账号；真实费用、批准、Grant、Ads/回读与APP_READY不得合成。
+
+修复原件：`output/software-fixture-async-repair-2026-10-31-a3cd58df-80a6-4145-b3d5-01ebee23ac7d/HANDOFF.json`、`output/package-output-retention-2026-10-31-485c682e/HANDOFF.json`；总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
 <!-- 本轮推进状态结束 -->
 
 ## 2026-10-30 · 1.6.1-dev.1 开发快照

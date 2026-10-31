@@ -3,6 +3,7 @@ const { isValidAppVersion } = require('./current-app-version');
 const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
+const { createRuntimeLogRecord } = require('../packages/shared-types/src/runtime-log-format.cjs');
 
 const {
   EXPECTED_ELECTRON_MODULES_ABI,
@@ -50,7 +51,9 @@ function buildWindowsPackage(injected = {}) {
       sqliteSha256: hashFile(sourcePaths.sqliteBindingPath),
       duckdbSha256: hashFile(sourcePaths.duckdbBindingPath),
     };
-    const buildResult = prepareElectron(
+    let sourceAfter;
+    const buildResult = requireFreshOutputs(packageOutputs, () => {
+    const preparedResult = prepareElectron(
       sourcePaths,
       electronMetadata,
       (electronPreparation) => {
@@ -63,7 +66,6 @@ function buildWindowsPackage(injected = {}) {
         throw new Error('Isolated Electron preparation changed the source DuckDB binding.');
       }
 
-      return requireFreshOutputs(packageOutputs, () => {
         const builderEnvironment = {
           AAO_STAGED_SQLITE_BINDING: electronPreparation.bindings.sqlite.path,
           AAO_STAGED_SQLITE_SHA256: electronPreparation.bindings.sqlite.sha256,
@@ -104,12 +106,11 @@ function buildWindowsPackage(injected = {}) {
           stepResults,
           freshOutputs,
         };
-      });
       },
       { withLock: direct },
     );
 
-    const sourceAfter = {
+    sourceAfter = {
       sqliteSha256: hashFile(sourcePaths.sqliteBindingPath),
       duckdbSha256: hashFile(sourcePaths.duckdbBindingPath),
     };
@@ -117,6 +118,8 @@ function buildWindowsPackage(injected = {}) {
       || sourceAfter.duckdbSha256 !== sourceBefore.duckdbSha256) {
       throw new Error('Windows package build changed read-only source native bindings.');
     }
+    return preparedResult;
+    });
 
     return {
       kind: 'amazon-ai-ops-windows-package-build',
@@ -149,6 +152,7 @@ function buildWindowsPackage(injected = {}) {
         freshCurrentRun: true,
       },
       steps: buildResult.stepResults,
+      ...(buildResult.outputRetention ? { outputRetention: buildResult.outputRetention } : {}),
       nativePreparation: {
         electronAction: buildResult.electronPreparation.action,
         packageAction: buildResult.packagePreparation.action,
@@ -183,184 +187,237 @@ function resolveExpectedPackageOutputs(packageExe = DEFAULT_PACKAGE_EXE) {
 }
 
 function withFreshPackageOutputs(outputs, callback) {
-  const quarantine = quarantineExistingPackageOutputs(outputs);
+  const scope = createPackageOutputArchive(outputs);
   let result;
   let primaryError;
-  let rollbackError;
-  let cleanupError;
+  let hasPrimaryError = false;
+  let rollbackFailed = false;
+  const secondaryErrors = [];
   try {
+    writePackageArchiveRecord(scope, 'started.json', packageArchiveReceipt(scope, 'started'));
+    if (scope.previousIdentity) {
+      movePackageOutputTree(scope, scope.releaseRoot, scope.previousPath, scope.previousIdentity);
+      scope.previousRetained = true;
+    }
+    assertPackageDestinationAbsent(scope.releaseRoot);
+    fs.mkdirSync(scope.releaseRoot);
+    scope.currentIdentity = packageDirectoryIdentity(assertDirectPackageDirectory(scope.releaseRoot));
     result = callback();
+    assertPackageArchiveOwner(scope);
+    assertPackageTreeDirect(scope.releaseRoot);
+    assertDirectPackageDirectory(scope.releaseRoot, scope.currentIdentity);
   } catch (error) {
     primaryError = error;
+    hasPrimaryError = true;
   }
-
-  if (primaryError) {
+  if (hasPrimaryError) {
     try {
-      restoreQuarantinedPackageOutputs(outputs, quarantine);
-    } catch (errorDuringRollback) {
-      rollbackError = errorDuringRollback;
-    }
-  } else {
-    try {
-      removePackageQuarantine(quarantine);
-    } catch (errorDuringCleanup) {
-      cleanupError = errorDuringCleanup;
+      retainFailedPackageOutputs(scope);
+    } catch (retentionError) {
+      secondaryErrors.push(retentionError);
+      rollbackFailed = true;
     }
   }
-
-  if (primaryError && rollbackError) {
-    throw new AggregateError(
-      [primaryError, rollbackError],
-      `Windows package build and release-output rollback both failed: ${primaryError.message}`
-      + ` | ${rollbackError.message} | previous outputs preserved at ${quarantine.path}`,
-    );
+  let status = hasPrimaryError
+    ? (secondaryErrors.length ? 'failed-retained-unrestored' : 'failed-restored') : 'succeeded';
+  const receipt = packageArchiveReceipt(scope, status, primaryError, secondaryErrors, hasPrimaryError);
+  try {
+    writePackageArchiveRecord(scope, 'receipt.json', receipt);
+  } catch (receiptError) {
+    if (hasPrimaryError) secondaryErrors.push(receiptError);
+    else {
+      primaryError = receiptError; hasPrimaryError = true;
+      try { retainFailedPackageOutputs(scope); }
+      catch (retentionError) { secondaryErrors.push(retentionError); rollbackFailed = true; }
+    }
+    const buildOutcome = status;
+    status = rollbackFailed ? 'receipt-write-failed-unrestored' : 'receipt-write-failed';
+    try {
+      writePackageArchiveRecord(scope, 'receipt-failure.json', {
+        ...packageArchiveReceipt(scope, status, primaryError, secondaryErrors, true), buildOutcome,
+        originalReceiptPath: path.join(scope.archiveRoot, 'receipt.json'), receiptPath: path.join(scope.archiveRoot, 'receipt-failure.json'),
+      });
+    } catch (fallbackReceiptError) {
+      secondaryErrors.push(fallbackReceiptError);
+    }
   }
-  if (primaryError) throw primaryError;
-  if (cleanupError) {
-    throw new Error(
-      `Fresh Windows package passed, but prior-output cleanup failed: ${cleanupError.message}`
-      + ` | inspect ${quarantine.path}`,
-    );
+  if (hasPrimaryError) {
+    try {
+      process.stderr.write(JSON.stringify(createRuntimeLogRecord('error', 'package.outputs_retained_after_failure', {
+        archiveId: path.basename(scope.archiveRoot), status, primaryErrorName: primaryError?.name || 'Error',
+        secondaryErrorCount: secondaryErrors.length, previousRetained: scope.previousRetained,
+        failedRetained: scope.failedRetained, previousRestored: scope.previousRestored,
+      })) + '\n');
+    } catch (loggingError) {
+      secondaryErrors.push(loggingError);
+    }
+    if (secondaryErrors.length) {
+      throw new AggregateError([primaryError, ...secondaryErrors],
+        `Windows package failed; inspect retained archive ${path.basename(scope.archiveRoot)}.`);
+    }
+    throw primaryError;
   }
-  return result;
+  return result && typeof result === 'object' ? { ...result, outputRetention: receipt } : result;
 }
 
-function quarantineExistingPackageOutputs(outputs) {
+function createPackageOutputArchive(outputs) {
   const releaseRoot = path.resolve(outputs.releaseRoot);
-  fs.mkdirSync(releaseRoot, { recursive: true });
-  const releaseRealPath = fs.realpathSync(releaseRoot);
-  if (releaseRealPath !== releaseRoot) {
-    throw new Error(`Package release root must be a real non-link path: ${releaseRoot}`);
+  const parentRoot = path.dirname(releaseRoot);
+  if (releaseRoot === parentRoot
+    || packagePathKey(outputs.winUnpackedRoot) !== packagePathKey(path.join(releaseRoot, 'win-unpacked'))
+    || packagePathKey(outputs.executablePath) !== packagePathKey(path.join(releaseRoot, 'win-unpacked', 'AmazonAIOpsAgent.exe'))) {
+    throw new Error(`Unexpected canonical package output roots: ${releaseRoot}`);
   }
   const pathEntries = packageOutputEntries(outputs);
+  const unique = new Set();
   for (const entry of pathEntries) {
-    if (path.dirname(entry.path) !== releaseRoot && entry.path !== outputs.winUnpackedRoot) {
+    if (packagePathKey(path.dirname(entry.path)) !== packagePathKey(releaseRoot)
+      || unique.has(packagePathKey(entry.path))) {
       throw new Error(`Package output escapes the canonical release root: ${entry.path}`);
     }
+    unique.add(packagePathKey(entry.path));
   }
-  const quarantineParent = fs.realpathSync(path.dirname(releaseRoot));
-  const quarantinePath = fs.mkdtempSync(
-    path.join(quarantineParent, PACKAGE_QUARANTINE_PREFIX),
-  );
-  const stat = fs.lstatSync(quarantinePath);
-  const quarantine = {
-    path: quarantinePath,
-    realPath: fs.realpathSync(quarantinePath),
-    parentRoot: quarantineParent,
-    device: stat.dev,
-    inode: stat.ino,
-    birthtimeMs: stat.birthtimeMs,
-    moved: [],
+  ensureDirectPackageDirectory(parentRoot);
+  const parentIdentity = packageDirectoryIdentity(assertDirectPackageDirectory(parentRoot));
+  const previousStat = optionalPackageStat(releaseRoot);
+  const previousIdentity = previousStat ? packageDirectoryIdentity(assertDirectPackageDirectory(releaseRoot)) : null;
+  if (previousIdentity) assertPackageTreeDirect(releaseRoot);
+  const archiveRoot = fs.mkdtempSync(path.join(parentRoot, PACKAGE_QUARANTINE_PREFIX));
+  return {
+    releaseRoot, parentRoot, parentIdentity, archiveRoot,
+    archiveIdentity: packageDirectoryIdentity(assertDirectPackageDirectory(archiveRoot)),
+    previousPath: path.join(archiveRoot, 'previous-release'), failedPath: path.join(archiveRoot, 'failed-release'),
+    previousIdentity, currentIdentity: null, previousRetained: false, failedRetained: false, previousRestored: false,
   };
-  try {
-    for (const [index, entry] of pathEntries.entries()) {
-      if (!fs.existsSync(entry.path)) continue;
-      const targetStat = fs.lstatSync(entry.path);
-      if (targetStat.isSymbolicLink()
-        || (entry.kind === 'directory' && !targetStat.isDirectory())
-        || (entry.kind === 'file' && !targetStat.isFile())) {
-        throw new Error(`Unexpected package output type before quarantine: ${entry.path}`);
-      }
-      const backupPath = path.join(
-        quarantinePath,
-        `${String(index).padStart(2, '0')}-${path.basename(entry.path)}`,
-      );
-      fs.renameSync(entry.path, backupPath);
-      quarantine.moved.push({ ...entry, backupPath });
-    }
-    return Object.freeze({
-      ...quarantine,
-      moved: Object.freeze(quarantine.moved.map((entry) => Object.freeze(entry))),
-    });
-  } catch (error) {
-    let rollbackError;
-    try {
-      for (const entry of [...quarantine.moved].reverse()) {
-        if (fs.existsSync(entry.path)) {
-          throw new Error(`Cannot restore quarantined output over an existing path: ${entry.path}`);
-        }
-        fs.renameSync(entry.backupPath, entry.path);
-      }
-      removePackageQuarantine(quarantine);
-    } catch (errorDuringRollback) {
-      rollbackError = errorDuringRollback;
-    }
-    if (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        `Package output quarantine and rollback both failed: ${error.message}`
-        + ` | ${rollbackError.message} | inspect ${quarantinePath}`,
-      );
-    }
+}
+
+function retainFailedPackageOutputs(scope) {
+  if (scope.currentIdentity && optionalPackageStat(scope.releaseRoot)) {
+    movePackageOutputTree(scope, scope.releaseRoot, scope.failedPath, scope.currentIdentity);
+    scope.failedRetained = true;
+  }
+  if (scope.previousRetained) {
+    movePackageOutputTree(scope, scope.previousPath, scope.releaseRoot, scope.previousIdentity);
+    scope.previousRestored = true;
+  }
+}
+
+function movePackageOutputTree(scope, source, destination, identity) {
+  const allowed = [[scope.releaseRoot, scope.previousPath], [scope.releaseRoot, scope.failedPath], [scope.previousPath, scope.releaseRoot]];
+  if (!allowed.some(([from, to]) => from === source && to === destination)) {
+    throw new Error('Unowned package output rename requested.');
+  }
+  assertPackageArchiveOwner(scope);
+  assertPackageTreeDirect(source);
+  assertDirectPackageDirectory(source, identity);
+  assertPackageDestinationAbsent(destination);
+  // 只移动完整自有目录，不遍历删除，不覆盖任何已存在的旧包或失败原件。
+  fs.renameSync(source, destination);
+  if (destination === scope.previousPath) scope.previousRetained = true;
+  if (destination === scope.failedPath) scope.failedRetained = true;
+  if (source === scope.previousPath) scope.previousRestored = true;
+  assertDirectPackageDirectory(destination, identity);
+}
+
+function assertPackageArchiveOwner(scope) {
+  if (path.dirname(scope.archiveRoot) !== scope.parentRoot
+    || !path.basename(scope.archiveRoot).startsWith(PACKAGE_QUARANTINE_PREFIX)) {
+    throw new Error(`Package archive escapes its owner: ${scope.archiveRoot}`);
+  }
+  assertDirectPackageDirectory(scope.parentRoot, scope.parentIdentity);
+  assertDirectPackageDirectory(scope.archiveRoot, scope.archiveIdentity);
+}
+
+function packagePathKey(candidate) {
+  const value = path.resolve(candidate);
+  return process.platform === 'win32' ? value.toLowerCase() : value;
+}
+
+function optionalPackageStat(candidate) {
+  try { return fs.lstatSync(candidate, { bigint: true }); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
     throw error;
   }
 }
 
-function restoreQuarantinedPackageOutputs(outputs, quarantine) {
-  const errors = [];
-  for (const entry of [...packageOutputEntries(outputs)].reverse()) {
-    try {
-      removeKnownPackageOutput(entry);
-    } catch (error) {
-      errors.push(error);
+function packageDirectoryIdentity(stat) {
+  const values = [stat.dev, stat.ino, stat.birthtimeNs];
+  if (values.some(value => typeof value !== 'bigint')) throw new Error('Exact package file identity is unavailable.');
+  return Object.freeze({ dev: stat.dev.toString(), ino: stat.ino.toString(), birthtimeNs: stat.birthtimeNs.toString() });
+}
+
+function assertDirectPackageDirectory(candidate, identity) {
+  const resolved = path.resolve(candidate);
+  if (!path.isAbsolute(candidate) || candidate !== resolved) throw new Error(`Package directory must be absolute and resolved: ${candidate}`);
+  let current = path.parse(resolved).root;
+  let stat;
+  for (const component of ['', ...resolved.slice(current.length).split(path.sep).filter(Boolean)]) {
+    if (component) current = path.join(current, component);
+    stat = fs.lstatSync(current, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()
+      || packagePathKey(fs.realpathSync.native(current)) !== packagePathKey(current)) {
+      throw new Error(`Package directory contains a linked or invalid component: ${current}`);
     }
   }
-  for (const entry of quarantine.moved) {
-    try {
-      if (fs.existsSync(entry.path)) {
-        throw new Error(`Partial package output still exists during rollback: ${entry.path}`);
+  if (identity && JSON.stringify(packageDirectoryIdentity(stat)) !== JSON.stringify(identity)) {
+    throw new Error(`Package directory identity changed: ${candidate}`);
+  }
+  return stat;
+}
+
+function ensureDirectPackageDirectory(candidate) {
+  const resolved = path.resolve(candidate);
+  let current = path.parse(resolved).root;
+  assertDirectPackageDirectory(current);
+  for (const component of resolved.slice(current.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    if (!optionalPackageStat(current)) fs.mkdirSync(current);
+    assertDirectPackageDirectory(current);
+  }
+}
+
+function assertPackageDestinationAbsent(candidate) {
+  assertDirectPackageDirectory(path.dirname(candidate));
+  if (optionalPackageStat(candidate)) throw new Error(`Refusing to overwrite existing package output: ${candidate}`);
+}
+
+function assertPackageTreeDirect(root) {
+  assertDirectPackageDirectory(root);
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop();
+    assertDirectPackageDirectory(directory);
+    for (const name of fs.readdirSync(directory)) {
+      const candidate = path.join(directory, name);
+      const stat = fs.lstatSync(candidate, { bigint: true });
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())
+        || packagePathKey(fs.realpathSync.native(candidate)) !== packagePathKey(candidate)) {
+        throw new Error(`Package tree contains a linked or invalid entry: ${candidate}`);
       }
-      fs.renameSync(entry.backupPath, entry.path);
-    } catch (error) {
-      errors.push(error);
+      if (stat.isDirectory()) pending.push(candidate);
     }
-  }
-  if (errors.length === 0) {
-    try {
-      removePackageQuarantine(quarantine);
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) {
-    throw new AggregateError(errors, 'Multiple package outputs failed rollback.');
   }
 }
 
-function removeKnownPackageOutput(entry) {
-  if (!fs.existsSync(entry.path)) return;
-  const stat = fs.lstatSync(entry.path);
-  if (stat.isSymbolicLink()) {
-    throw new Error(`Refusing to remove a linked package output: ${entry.path}`);
-  }
-  if (entry.kind === 'directory') {
-    if (!stat.isDirectory()) {
-      throw new Error(`Expected package output directory during rollback: ${entry.path}`);
-    }
-    fs.rmSync(entry.path, { recursive: true, force: false });
-    return;
-  }
-  if (!stat.isFile()) {
-    throw new Error(`Expected package output file during rollback: ${entry.path}`);
-  }
-  fs.unlinkSync(entry.path);
+function packageArchiveReceipt(scope, status, primaryError, secondaryErrors = [], hasPrimaryError = false) {
+  const errorRecord = error => ({ name: error?.name || 'Error', message: error?.message || String(error) });
+  return {
+    kind: 'amazon-ai-ops-package-output-retention', schemaVersion: 1, status, recordedAt: new Date().toISOString(),
+    archiveRoot: scope.archiveRoot, canonicalReleaseRoot: scope.releaseRoot,
+    previousRelease: scope.previousRetained && !scope.previousRestored ? scope.previousPath : null,
+    failedRelease: scope.failedRetained ? scope.failedPath : null, previousRestored: scope.previousRestored,
+    previousIdentity: scope.previousIdentity, currentIdentity: scope.currentIdentity,
+    primaryError: hasPrimaryError ? errorRecord(primaryError) : null, secondaryErrors: secondaryErrors.map(errorRecord),
+    receiptPath: path.join(scope.archiveRoot, 'receipt.json'),
+  };
 }
 
-function removePackageQuarantine(quarantine) {
-  const resolved = path.resolve(quarantine.path);
-  const stat = fs.lstatSync(resolved);
-  if (path.dirname(resolved) !== quarantine.parentRoot
-    || !path.basename(resolved).startsWith(PACKAGE_QUARANTINE_PREFIX)
-    || stat.isSymbolicLink()
-    || !stat.isDirectory()
-    || fs.realpathSync(resolved) !== quarantine.realPath
-    || stat.dev !== quarantine.device
-    || stat.ino !== quarantine.inode
-    || stat.birthtimeMs !== quarantine.birthtimeMs) {
-    throw new Error(`Refusing to remove a replaced package quarantine: ${resolved}`);
-  }
-  fs.rmSync(resolved, { recursive: true, force: false });
+function writePackageArchiveRecord(scope, name, record) {
+  assertPackageArchiveOwner(scope);
+  const destination = path.join(scope.archiveRoot, name);
+  assertPackageDestinationAbsent(destination);
+  fs.writeFileSync(destination, JSON.stringify(record, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
 }
 
 function inspectFreshPackageOutputs(outputs) {
@@ -563,13 +620,12 @@ function main() {
     const result = buildWindowsPackage();
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
-    console.error(`[WINDOWS PACKAGE BLOCKED] ${error.message}`);
-    if (error instanceof AggregateError) {
-      for (const nested of error.errors) {
-        console.error(`- ${nested.message}`);
-      }
-    }
     process.exitCode = 1;
+    try {
+      process.stderr.write(JSON.stringify(createRuntimeLogRecord('error', 'package.windows_build_blocked', { error })) + '\n');
+    } catch (loggingError) {
+      throw new AggregateError([error, loggingError], 'Windows package failure logging also failed.');
+    }
   }
 }
 

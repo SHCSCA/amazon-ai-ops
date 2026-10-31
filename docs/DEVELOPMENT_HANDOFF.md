@@ -1,13 +1,17 @@
 # 开发交接与继续执行
 
 <!-- 本轮推进状态开始 -->
-## 2026-10-31 · 当前接续入口
+## 2026-10-31 · 验收工具修复后的全量验证前检查点
 
-先读根PROGRESS/BLOCKED与PROJECT_STATUS的冻结前检查点。最新原件总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`；新候选目录预定`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`，开跑与终态以`internal-run.json`和三个原始runner/封套及真实CLI为准。目录未生成或报告无终态时不可推定通过。
+版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。前一代码与文档检查点ae4d02dc64f7c9c06a5ec7d447fcb79fa6b059ee已推送master；本检查点待独审、提交并冻结后，启动全新完整L1–L3，候选目录：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`，当前未启动。开跑后源码/全部docs保持冻结，实际终态由PROGRESS.md、BLOCKED.md和原始runner维护，PROJECT_STATUS.md保留开跑前检查点。
 
-迁移CLI按实际registry静态元数据，打包路径使用可信冻结migrationContract；不回读开发TS树、不信raw目标。包界面113路径仅末尾追加元数据模块至114。报表经统一资源端口与派生STORE，源文件/原SHA保持；Main原快照/Worker克隆分开持有预算，来源最终重核用受控同步流式hash。Worker成功须唯一有效结果和实际正常退出，预算未归还或线程未退出仍阻断关闭。
+隔离夹具与报表链已补齐同源真实Worker、ConfigurationBus、同连接guard/持有job与完整await；真实等待期间session/job/source漂移零入库，未确认排空不得backup或close。定稿两文件23/23、Desktop类型及5文件语法通过；包含原15行为与8新增，不与其他范围相加。Windows构建改为完整旧/失败release树留存及受校验恢复，BigInt身份/链接/目标冲突/cleanup/sourceAfter/收据与日志次错均拒绝假成功；单文件46/46，原七步与10个构建/探针函数经LF归一化保持逐字符相同。新全量模块2,279零违规、敏感源3,338零发现。两项仍仅为定向机制证据，尚未取得本检查点全C或实包信用。
 
-新Main的owner/Program/完整函数有限准入须保留全部旧条目/原算法并以完整逆证明、真实Main反例和独审绑定；新内建读取遵循原白名单端口并核无写/逃逸。最终候选先提交代码并冻结HEAD、全部docs及完整测试清单，执行全量L1–L3；运行与匹配实包采集期间不改source/docs/HEAD，实时更新仅放根PROGRESS/BLOCKED/README。后续按原六项内部退出完成实包、读屏/性能、安全与恢复；正常DB启动前仍先最终快照和字节备份，不复用旧包或旧C信用。
+原生预检/模块门通过后中止的前C保留于`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`；原RUNNING报告不改写，中止原因、controller实际1与保护核验见`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/full-c-interrupted-final.json`。fixture RED、未排空cleanup RED、4例原5s测试总预算超时及包体删除RED全部保留；仅4例异步测试总预算改30s，生产请求时限不变。
+
+统一资源/导入生产稿先前parser/collector371/371、Desktop346/346和193安全项仍只给各自定向信用。唯一L1仍686文件、L3仍28文件，六项退出条件不变；正式DB/Profile及原生绑定等8项保护文件字节/七stat保持，未启动正式应用或构建新Windows包。后续依次为当前完整L1–L3、隔离迁移备份恢复、canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大性能/安全/故障、最终快照字节备份及正常EXE启动总审。内部软件验收尚未完成，不能归为只待真实账号；真实费用、批准、Grant、Ads/回读与APP_READY不得合成。
+
+修复原件：`output/software-fixture-async-repair-2026-10-31-a3cd58df-80a6-4145-b3d5-01ebee23ac7d/HANDOFF.json`、`output/package-output-retention-2026-10-31-485c682e/HANDOFF.json`；总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
 <!-- 本轮推进状态结束 -->
 
 ## 2026-10-30 · 1.6.1-dev.1 开发快照

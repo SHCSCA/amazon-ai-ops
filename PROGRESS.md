@@ -1,15 +1,17 @@
 # V1.6 已证实进展
 
 <!-- 本轮推进状态开始 -->
-## 2026-10-31 · 完整工程链开跑前检查点
+## 2026-10-31 · 验收工具修复后的全量验证前检查点
 
-版本 1.6.1-dev.1，保持 APP_NEEDS_WORK / INTERNAL NON_READY。已修复精确文件身份、registry 22/冻结迁移合同、旧版本及旧库夹具、文档合同，并完成统一报表资源与 Main 外解析改造。原文件/SHA不改，派生STORE、Main快照、Worker克隆/heap/结果分别受限；导入在同事务首写前重验来源、会话、job/claim/CAS，保留取消、UNKNOWN和历史恢复边界。
+版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。前一代码与文档检查点ae4d02dc64f7c9c06a5ec7d447fcb79fa6b059ee已推送master；本检查点待独审、提交并冻结后，启动全新完整L1–L3，候选目录：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`，当前未启动。开跑后源码/全部docs保持冻结，实际终态由PROGRESS.md、BLOCKED.md和原始runner维护，PROJECT_STATUS.md保留开跑前检查点。
 
-当前定稿定向结果：parser/collector 24文件371/371、Desktop 21文件346/346，零失败/跳过；后者含真实Worker、完整八报/SQLite、5类末await变化零写，以及root的34项事务/52项产品族/21项运行时字节合同。两组和其他历史定向范围不得相加冒充全量。全工作区类型通过；全量尺寸2,279模块零违规、敏感源3,338文件零发现；清单/文档64项、版本19项通过。
+隔离夹具与报表链已补齐同源真实Worker、ConfigurationBus、同连接guard/持有job与完整await；真实等待期间session/job/source漂移零入库，未确认排空不得backup或close。定稿两文件23/23、Desktop类型及5文件语法通过；包含原15行为与8新增，不与其他范围相加。Windows构建改为完整旧/失败release树留存及受校验恢复，BigInt身份/链接/目标冲突/cleanup/sourceAfter/收据与日志次错均拒绝假成功；单文件46/46，原七步与10个构建/探针函数经LF归一化保持逐字符相同。新全量模块2,279零违规、敏感源3,338零发现。两项仍仅为定向机制证据，尚未取得本检查点全C或实包信用。
 
-资源基线Main347a2d95…的701 builtin读取零拒绝；5个owner和1个Program/2个完整函数摘要经无残差逆证、37真实Main反例及独审后精确应用，原算法/旧条目/前缀保持。正式重建Main1e631a37… public两项true，原193/193安全测试通过；不授全C/实包信用。新完整L1–L3未启动，预定全新目录：`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`。开跑前会提交并冻结代码/全部docs；开跑后本文件与BLOCKED记录实际终态，旧失败不改写。
+原生预检/模块门通过后中止的前C保留于`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`；原RUNNING报告不改写，中止原因、controller实际1与保护核验见`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/full-c-interrupted-final.json`。fixture RED、未排空cleanup RED、4例原5s测试总预算超时及包体删除RED全部保留；仅4例异步测试总预算改30s，生产请求时限不变。
 
-唯一L1由652补至686文件、34新增零删除，除L1列表外全部定义保持；L3仍28文件。正式DB/Profile、原生绑定等8项字节/七stat保持。证据总入口：`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
+统一资源/导入生产稿先前parser/collector371/371、Desktop346/346和193安全项仍只给各自定向信用。唯一L1仍686文件、L3仍28文件，六项退出条件不变；正式DB/Profile及原生绑定等8项保护文件字节/七stat保持，未启动正式应用或构建新Windows包。后续依次为当前完整L1–L3、隔离迁移备份恢复、canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大性能/安全/故障、最终快照字节备份及正常EXE启动总审。内部软件验收尚未完成，不能归为只待真实账号；真实费用、批准、Grant、Ads/回读与APP_READY不得合成。
+
+修复原件：`output/software-fixture-async-repair-2026-10-31-a3cd58df-80a6-4145-b3d5-01ebee23ac7d/HANDOFF.json`、`output/package-output-retention-2026-10-31-485c682e/HANDOFF.json`；总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
 <!-- 本轮推进状态结束 -->
 
 ## 2026-10-30 · 1.6.1-dev.1 开发快照

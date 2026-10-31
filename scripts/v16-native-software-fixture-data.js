@@ -4,7 +4,7 @@ const path = require('node:path');
 const { createReportBatch } = require('./v16-native-software-fixture-reports');
 const { installSoftwareImportAuthority, completeSoftwareImportRoot } = require('./v16-performance-software-controls');
 
-function seedSoftwareImport(runtime, database, directory, store, rowCount, date) {
+async function seedSoftwareImport(runtime, database, directory, store, rowCount, date, importer) {
   const repository = new runtime.LingxingImportRepository(database);
   const root = path.join(directory, 'reports', store.storeId); fs.mkdirSync(root, { recursive: true });
   const source = createReportBatch(runtime, root, store, date, { id: `software-base-${store.storeId}`, rowsPerReport: Math.ceil(rowCount / 8) });
@@ -13,8 +13,8 @@ function seedSoftwareImport(runtime, database, directory, store, rowCount, date)
     businessTimezone: 'America/Los_Angeles', businessDate: date, sessionGeneration: 0 };
   const fixture = { classification: 'isolated-software-fixture', importBatchIds: [source.batch.id], scope: { dateFrom: date, dateTo: date } };
   const prepared = installSoftwareImportAuthority(runtime, database, context, fixture, 0);
-  const result = runtime.importLingxingDownloadedReportMetrics(repository.getCollectionSnapshotForStore(store.storeId, source.batch.id),
-    { repository, stores: new runtime.StoreRepository(database) }, { startedAt: prepared.preparedState.importAttemptedAt });
+  const result = await importer.importReports(repository.getCollectionSnapshotForStore(store.storeId, source.batch.id),
+    { context, expectedJob: prepared.preparedState, startedAt: prepared.preparedState.importAttemptedAt });
   if (result.errors.length || result.parsedFiles !== 8 || result.inserted < rowCount) {
     throw new Error('SOFTWARE_FIXTURE_PRODUCTION_IMPORT_FAILED:' + JSON.stringify(result));
   }

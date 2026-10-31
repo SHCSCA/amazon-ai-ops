@@ -4,7 +4,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import fixtureModule from './v16-native-software-fixture.js';
-import { loadSoftwareDatabaseRuntime } from './v16-native-software-fixture-runtime.js';
+import { loadSoftwareDatabaseRuntime, createSoftwareReportImportRuntime } from './v16-native-software-fixture-runtime.js';
+import reports from './v16-native-software-fixture-reports.js';
+import controls from './v16-performance-software-controls.js';
 import contract from './v16-performance-contract.js';
 import fixtureCli from './create-v16-native-software-fixture.js';
 import automationControls from '../packages/shared-types/src/store-collection-automation-control.cjs';
@@ -15,6 +17,26 @@ const identity = { sourceSha256: 'a'.repeat(64), packageHashes: { installer: 'b'
 function directory(name) { return path.join(os.tmpdir(), `amazon-ai-ops-software-fixture-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`); }
 
 describe('isolated production software fixture', () => {
+  it.each(['drain', 'close', 'log', 'drain-and-log'])('preserves primary and %s cleanup failures without closing an undrained database', async stage => {
+    const first = new Error('original fixture failure'), drainError = new Error('drain did not observe exit');
+    const closeError = new Error('database close failed'), logError = new Error('log destination failed');
+    const calls = [], records = [];
+    let failure;
+    try {
+      await fixtureModule.rejectSoftwareFixtureFailure(first, {
+        drain: async () => { calls.push('drain'); if (stage.startsWith('drain')) throw drainError; },
+        close: () => { calls.push('close'); if (stage === 'close') throw closeError; },
+        writeLog: record => { calls.push('log'); records.push(record); if (stage.includes('log')) throw logError; },
+      });
+    } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.errors).toEqual([first, ...(stage.startsWith('drain') ? [drainError] : []),
+      ...(stage === 'close' ? [closeError] : []), ...(stage.includes('log') ? [logError] : [])]);
+    expect(calls).toEqual(stage.startsWith('drain') ? ['drain','log'] : ['drain','close','log']);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({level:'error',event:'v16.software_fixture_failed'});
+  });
+
   it('accepts only the fixed software fixture kind and fresh output arguments through its CLI', () => {
     expect(fixtureCli.parseArguments(['--fixture', 'typical', '--out-dir', directory('cli')]).fixture).toBe('typical');
     for (const argv of [[], ['--fixture', 'real-store', '--out-dir', directory('bad')], ['--fixture', 'typical', '--out-dir', 'http://localhost'],
@@ -120,4 +142,66 @@ describe('isolated production software fixture', () => {
     await expect(fixtureModule.createNativeSoftwareFixture({ repositoryRoot: process.cwd(), directory: existing, fixture: 'typical', identity })).rejects.toThrow('NEW_DIRECTORY');
     expect(fs.readFileSync(path.join(existing, 'keep.txt'), 'utf8')).toBe('保留');
   });
+
+  it('uses the real parser configuration bus, rejects excess bytes without a commit, and drains before closing SQLite', async () => {
+    const root = directory('parser-bus'); fs.mkdirSync(root, { recursive: true });
+    const runtime = await loadSoftwareDatabaseRuntime(process.cwd(), root), database = runtime.initSqlite(path.join(root, 'seed.db'));
+    let importer;
+    try {
+      expect(() => createSoftwareReportImportRuntime(runtime, database, root, 'real-data-copy')).toThrow('SYNTHETIC_METADATA');
+      importer = createSoftwareReportImportRuntime(runtime, database, root, 'isolated-software-fixture');
+      const stores = new runtime.StoreRepository(database), repository = new runtime.LingxingImportRepository(database);
+      const store = stores.createStore({storeId:'bus-store',browserProfileId:'bus-profile',displayName:'隔离预算店铺',
+        marketplace:'US',currency:'USD',businessTimezone:'America/Los_Angeles'});
+      const source = reports.createReportBatch(runtime, root, store, '2026-10-15', { id:'bus-eight' });
+      repository.saveCollectionSnapshotForStore(store.storeId, source);
+      const context = {storeId:store.storeId,browserProfileId:store.browserProfileId,marketplace:'US',currency:'USD',
+        businessTimezone:store.businessTimezone,businessDate:source.batch.businessDate,sessionGeneration:0};
+      const bus = new runtime.ConfigurationBus(database);
+      bus.set('report_parser_maxInputBytes:v1', '1');
+      const rejected = await importer.importReports(source, {context});
+      expect(rejected).toMatchObject({inserted:0,parsedFiles:0});
+      expect(rejected.errors).toHaveLength(8);
+      expect(repository.getImportRunForStore(store.storeId, 'import_' + source.batch.id)).toBeUndefined();
+      expect(database.prepare('SELECT COUNT(*) n FROM ad_daily_metrics').get().n).toBe(0);
+      bus.delete('report_parser_maxInputBytes:v1');
+      expect(await importer.importReports(source, {context})).toMatchObject({inserted:8,parsedFiles:8,errors:[]});
+      await importer.stopAndDrain();
+      await expect(importer.importReports(source, {context})).rejects.toThrow('CONTEXT_REQUIRED');
+    } finally { await importer?.stopAndDrain(); if (database.open) runtime.closeSqlite(); }
+  }, 30_000);
+
+  it.each(['session', 'job', 'source'])('rejects %s drift during a real Worker await before any import write', async kind => {
+    const root = directory('await-' + kind); fs.mkdirSync(root, { recursive: true });
+    const runtime = await loadSoftwareDatabaseRuntime(process.cwd(), root), database = runtime.initSqlite(path.join(root, 'seed.db'));
+    const importer = createSoftwareReportImportRuntime(runtime, database, root, 'isolated-software-fixture');
+    try {
+      const store = new runtime.StoreRepository(database).createStore({storeId:'drift-store',browserProfileId:'drift-profile',displayName:'隔离等待核验店铺',
+        marketplace:'US',currency:'USD',businessTimezone:'America/Los_Angeles'});
+      const repository = new runtime.LingxingImportRepository(database), source = reports.createReportBatch(runtime, root, store, '2026-10-15', {id:'drift-eight'});
+      repository.saveCollectionSnapshotForStore(store.storeId, source);
+      const context = {storeId:store.storeId,browserProfileId:store.browserProfileId,marketplace:'US',currency:'USD',
+        businessTimezone:store.businessTimezone,businessDate:'2026-10-15',sessionGeneration:0};
+      const prepared = controls.installSoftwareImportAuthority(runtime, database, context,
+        {classification:'isolated-software-fixture',importBatchIds:[source.batch.id],scope:{dateFrom:'2026-10-15',dateTo:'2026-10-15'}}, 0);
+      const persisted = repository.getCollectionSnapshotForStore(store.storeId, source.batch.id);
+      const pending = importer.importReports(persisted, {context,expectedJob:prepared.preparedState,startedAt:prepared.preparedState.importAttemptedAt});
+      // 正式客户端已经启动首个 Worker；此处在其实际返回前旋转持久权威或源文件。
+      if (kind === 'session') new runtime.ConfigurationBus(database).set('store_session_generation:' + store.storeId, '1');
+      if (kind === 'job') {
+        const job = structuredClone(prepared.preparedState); job.updatedAt = new Date(Date.parse(job.updatedAt) + 1).toISOString();
+        repository.upsertCollectionProgressForStore(store.storeId, {eventId:'drift-job',emittedAt:job.updatedAt,job});
+      }
+      if (kind === 'source') fs.appendFileSync(persisted.files[0].filePath, '\n');
+      const result = await pending;
+      expect(result.inserted).toBe(0);
+      expect(result.errors.some(error => /CHANGED/.test(error.message))).toBe(true);
+      expect(repository.getImportRunForStore(store.storeId, 'import_' + source.batch.id)).toBeUndefined();
+      expect(database.prepare('SELECT COUNT(*) n FROM ad_daily_metrics').get().n).toBe(0);
+      expect(database.prepare('SELECT COUNT(*) n FROM report_import_metric_evidence').get().n).toBe(0);
+      expect(repository.getCollectionJobForStore(store.storeId, prepared.jobId).importState).toBe('pending');
+      for (const table of ['mission_grants','mission_grants_v16','ad_execution_batches','ad_execution_jobs','ai_cost_records'])
+        expect(database.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n).toBe(0);
+    } finally { await importer.stopAndDrain(); if (database.open) runtime.closeSqlite(); }
+  }, 30_000);
 });

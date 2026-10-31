@@ -1,11 +1,17 @@
 # V1.6 当前未满足条件
 
 <!-- 本轮推进状态开始 -->
-## 2026-10-31 · 完整工程链开跑前检查点
+## 2026-10-31 · 验收工具修复后的全量验证前检查点
 
-当前仍未完成内部退出。资源/异步提交生产稿已定向闭合（371/371、346/346与类型）；新Main有限准入已独审、精确应用、重建且public两项true；近端剩余为提交并冻结新HEAD，执行686文件完整L1、L2、原28文件L3。原checker算法和拒绝门不放宽，不以候选、单测或旧Main转绿。
+版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。前一代码与文档检查点ae4d02dc64f7c9c06a5ec7d447fcb79fa6b059ee已推送master；本检查点待独审、提交并冻结后，启动全新完整L1–L3，候选目录：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`，当前未启动。开跑后源码/全部docs保持冻结，实际终态由PROGRESS.md、BLOCKED.md和原始runner维护，PROJECT_STATUS.md保留开跑前检查点。
 
-预定候选：`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`，当前未开跑。之后还需当前匹配Windows包、四runtime、22入口×四视图、真实NVDA、典型/最大性能、安全对抗、故障恢复、最终快照与字节备份及正常EXE启动总审；这些内部软件工作不能归为只待真实环境。真实店铺/AI费用/批准Grant/Ads写入与回读另需有效真实条件，绝不合成。APP_NEEDS_WORK / INTERNAL NON_READY保持，旧C及每份RED原件保留。
+隔离夹具与报表链已补齐同源真实Worker、ConfigurationBus、同连接guard/持有job与完整await；真实等待期间session/job/source漂移零入库，未确认排空不得backup或close。定稿两文件23/23、Desktop类型及5文件语法通过；包含原15行为与8新增，不与其他范围相加。Windows构建改为完整旧/失败release树留存及受校验恢复，BigInt身份/链接/目标冲突/cleanup/sourceAfter/收据与日志次错均拒绝假成功；单文件46/46，原七步与10个构建/探针函数经LF归一化保持逐字符相同。新全量模块2,279零违规、敏感源3,338零发现。两项仍仅为定向机制证据，尚未取得本检查点全C或实包信用。
+
+原生预检/模块门通过后中止的前C保留于`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`；原RUNNING报告不改写，中止原因、controller实际1与保护核验见`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/full-c-interrupted-final.json`。fixture RED、未排空cleanup RED、4例原5s测试总预算超时及包体删除RED全部保留；仅4例异步测试总预算改30s，生产请求时限不变。
+
+统一资源/导入生产稿先前parser/collector371/371、Desktop346/346和193安全项仍只给各自定向信用。唯一L1仍686文件、L3仍28文件，六项退出条件不变；正式DB/Profile及原生绑定等8项保护文件字节/七stat保持，未启动正式应用或构建新Windows包。后续依次为当前完整L1–L3、隔离迁移备份恢复、canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大性能/安全/故障、最终快照字节备份及正常EXE启动总审。内部软件验收尚未完成，不能归为只待真实账号；真实费用、批准、Grant、Ads/回读与APP_READY不得合成。
+
+修复原件：`output/software-fixture-async-repair-2026-10-31-a3cd58df-80a6-4145-b3d5-01ebee23ac7d/HANDOFF.json`、`output/package-output-retention-2026-10-31-485c682e/HANDOFF.json`；总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
 <!-- 本轮推进状态结束 -->
 
 ## 2026-10-30 · 1.6.1-dev.1 开发快照
