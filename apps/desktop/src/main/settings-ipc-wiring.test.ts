@@ -63,9 +63,11 @@ describe('settings IPC Main source wiring', () => {
 
   it('retains the four synchronous shutdown admissions and waits before browser or database cleanup', () => {
     const barrier = between('const shutdownBarrierSteps = [', '] as const;');
-    expect(barrier.match(/invokeShutdownOperationNow\s*\(/g)).toHaveLength(4);
+    // 保留原四项同步准入，并加入解析排空，避免未退出的线程进入数据库清理。
+    expect(barrier.match(/invokeShutdownOperationNow\s*\(/g)).toHaveLength(5);
     expect(barrier).not.toMatch(/\bawait\b/);
     for (const marker of [
+      "name: 'report-parser-drain'", 'reportParserRuntime.stopAndDrain()',
       "name: 'main-ipc-drain'", 'mainIpcOperationTracker.stopAndDrain(shutdownTimeoutMs)',
       "name: 'local-scheduler-drain'", 'localScheduler?.stopAndDrain(shutdownTimeoutMs)',
       "name: 'store-collection-drain'", 'mainRuntime?.stopAndDrain(shutdownTimeoutMs)',

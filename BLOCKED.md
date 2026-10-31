@@ -1,17 +1,19 @@
 # V1.6 当前未满足条件
 
 <!-- 本轮推进状态开始 -->
-## 2026-10-31 · 验收工具修复后的全量验证前检查点
+## 2026-10-31 · 完整C2失败后的修复与重跑准备
 
-版本1.6.1-dev.1，保持APP_NEEDS_WORK / INTERNAL NON_READY。前一代码与文档检查点ae4d02dc64f7c9c06a5ec7d447fcb79fa6b059ee已推送master；本检查点待独审、提交并冻结后，启动全新完整L1–L3，候选目录：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`，当前未启动。开跑后源码/全部docs保持冻结，实际终态由PROGRESS.md、BLOCKED.md和原始runner维护，PROJECT_STATUS.md保留开跑前检查点。
+版本1.6.1-dev.1，已推送的最近代码检查点为3473735f6937b24ef4dadf562c4ac83c51909b5c；保持APP_NEEDS_WORK / INTERNAL NON_READY。完整C2真实controller退出1，L1失败后链路停止，L2/原28文件L3未执行；source/frozen前后无漂移，退出后8项保护文件字节/七stat全部未变，未运行新Windows构建或正式应用。
 
-隔离夹具与报表链已补齐同源真实Worker、ConfigurationBus、同连接guard/持有job与完整await；真实等待期间session/job/source漂移零入库，未确认排空不得backup或close。定稿两文件23/23、Desktop类型及5文件语法通过；包含原15行为与8新增，不与其他范围相加。Windows构建改为完整旧/失败release树留存及受校验恢复，BigInt身份/链接/目标冲突/cleanup/sourceAfter/收据与日志次错均拒绝假成功；单文件46/46，原七步与10个构建/探针函数经LF归一化保持逐字符相同。新全量模块2,279零违规、敏感源3,338零发现。两项仍仅为定向机制证据，尚未取得本检查点全C或实包信用。
+C2原件：`output/v16-evidence/development-candidate-2026-10-31-84d42a05-fdf2-4c2e-a2ef-b47025908631`。686文件、9,118断言，按实际assertion重算为8,641通过/264失败/213未执行；原runner头把未执行项计入passed，生产汇总已正确拒绝RUNNER_COUNT_MISMATCH，未给予213项通过信用。真实FAILED收据及原退出位于`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/repaired-full-c-terminal.json`，不改写为成功。
 
-原生预检/模块门通过后中止的前C保留于`output/v16-evidence/development-candidate-2026-10-31-3661ca3a-d4b7-4513-b28d-d0512a0cfc1c`；原RUNNING报告不改写，中止原因、controller实际1与保护核验见`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93/full-c-interrupted-final.json`。fixture RED、未排空cleanup RED、4例原5s测试总预算超时及包体删除RED全部保留；仅4例异步测试总预算改30s，生产请求时限不变。
+失败已分类：226断言及213个beforeAll未执行项涉及44文件的浏览器缓存路径；本轮执行环境遗漏PLAYWRIGHT_BROWSERS_PATH。现有F:/Temp/amazon-ai-ops-build-cache/playwright的revision1223与锁定Playwright1.60.0匹配，实际headless版本148.0.7778.96启动/正常关闭通过，原2文件9项复验通过；不下载/重装依赖、不跳过原断言。其余38项是第五关闭屏障及current/future/legacy schema夹具契约：settings原5项已复验通过，3个旧库测试文件已对全部65项真实迁移/备份/恢复目标复验通过，原37项失败闭合，生产迁移和安全门不改。44浏览器文件已实际复验467通过/1失败/0跳过（CLI1）；唯一失败为v16-ui-software-capture真实Shell路由进入OperationScopePage的30s测试超时；单case诊断13.7s未复现，已证首个it混入冷编译但不把它称为唯一根因。同一个memoized scopeBundle改在对应suite setup完成，setup/it/生产验证各自仍30s，原全部it callback/断言/时限逐字节保持；完整文件60/60通过。完整44统一复验已实际CLI1：462通过/0断言失败/6未执行；store-scope-switcher-actions的独立编译beforeAll30s超时导致6例未执行，原导航文件60项本轮全部通过。此新RED不转绿；该6例原样独跑6/6、CLI0、墙钟29.577s，源码/原hook与it30s预算均不变，未复现且不猜原根因。不再第三遍44，不以局部结果冒充44或全C；现进入文档/全局检查、提交冻结，再由新完整686文件C3提供统一终态。
 
-统一资源/导入生产稿先前parser/collector371/371、Desktop346/346和193安全项仍只给各自定向信用。唯一L1仍686文件、L3仍28文件，六项退出条件不变；正式DB/Profile及原生绑定等8项保护文件字节/七stat保持，未启动正式应用或构建新Windows包。后续依次为当前完整L1–L3、隔离迁移备份恢复、canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大性能/安全/故障、最终快照字节备份及正常EXE启动总审。内部软件验收尚未完成，不能归为只待真实账号；真实费用、批准、Grant、Ads/回读与APP_READY不得合成。
+下一候选预定`output/v16-evidence/development-candidate-2026-10-31-cb9743f9-9a8d-4618-a50d-97b87492445a`，当前未启动。L1按单个隔离fork逐文件执行，JSON仅整轮结束时落盘，生产器未定义整轮总时限；不以日志活动估算完成比例。新完整C必须同时带入已验证F浏览器缓存、Node22/PSModulePath清理及既有隔离环境。唯一L1仍686文件、L3仍28文件，172MUST和原安全门均不放宽。
 
-修复原件：`output/software-fixture-async-repair-2026-10-31-a3cd58df-80a6-4145-b3d5-01ebee23ac7d/HANDOFF.json`、`output/package-output-retention-2026-10-31-485c682e/HANDOFF.json`；总入口`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`。
+先前统一资源/异步导入、夹具23项、包体留存46项、193安全项均只保留各自定向信用，不冒充当前全C或实包通过。后续仍需隔离迁移恢复、当前canonical Windows包与四runtime、22入口×四视图/真实NVDA、典型最大软件性能/故障/安全，以及任何正式DB读取前的最终文件S与字节备份。当前迁移/四runtime的347-C2工具仅为准备原件且真实C2门拒绝；下一轮必须新目录重新绑定，不得改旧报告。正式库版本和ACTIVE链状态仍UNKNOWN，未以SQLite打开查询。
+
+总入口：`output/development-advance-2026-10-31-dae6edf0-3bbe-425c-861a-6ce1a9b6df93`；失败分类v2、浏览器44文件清单、保护复核及各RED原件均在其中或其引用目录保留。
 <!-- 本轮推进状态结束 -->
 
 ## 2026-10-30 · 1.6.1-dev.1 开发快照

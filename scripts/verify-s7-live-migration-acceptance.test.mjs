@@ -810,7 +810,12 @@ function createV7Source(databasePath) {
   const database = runtime.initSqlite(databasePath);
   try {
     database.pragma('foreign_keys = OFF');
-    // Test-only old-schema fixture: remove all later structures, not just their ledger rows.
+    // 隔离旧库夹具必须移除后续结构及来源列，不能只回退迁移账本。
+    expect(database.pragma('table_info(ad_daily_metrics)').map(column => column.name))
+      .toEqual(expect.arrayContaining(['source_asin', 'source_metric_mask']));
+    database.exec('ALTER TABLE ad_daily_metrics DROP COLUMN source_asin; ALTER TABLE ad_daily_metrics DROP COLUMN source_metric_mask;');
+    expect(database.pragma('table_info(ad_daily_metrics)').filter(column => ['source_asin', 'source_metric_mask'].includes(column.name)))
+      .toEqual([]);
     database.exec(`DROP TABLE ai_cost_records; DROP TABLE ai_spend_policies; DROP TABLE legacy_record_classifications;
       DROP TABLE ad_execution_reconciliation_cases;
       DROP TRIGGER trg_grant_slot_intent; DROP TRIGGER trg_decision_write_authority_immutable;

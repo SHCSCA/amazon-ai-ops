@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initGuardedExistingSqlite, initSqlite } from './db';
+import { initGuardedExistingSqlite, initSqlite, SQLITE_SCHEMA_VERSION } from './db';
 import { ProductRepository } from './repositories/product-repo';
 
 const tempDirs: string[] = [];
@@ -596,7 +596,7 @@ describe('initGuardedExistingSqlite', () => {
         SELECT MAX(version) AS version
         FROM schema_migrations
         WHERE status = 'applied'
-      `).get()).toEqual({ version: 20 });
+      `).get()).toEqual({ version: SQLITE_SCHEMA_VERSION });
     } finally {
       observed.database.close();
     }
@@ -738,14 +738,14 @@ describe('V1.6 database version and recovery boundary', () => {
     expect(() => initSqlite(filename)).toThrow(/ledger.*contract/);
     expect(fs.readFileSync(filename)).toEqual(before);
   });
-  it('backs up the complete pending chain through schema 20 before any legacy normalization', () => {
+  it(`backs up the complete pending chain through schema ${SQLITE_SCHEMA_VERSION} before any legacy normalization`, () => {
     const filename = tempDbPath();
     const legacy = new Database(filename);
     legacy.exec("CREATE TABLE recovery_sentinel (value TEXT); INSERT INTO recovery_sentinel VALUES ('keep-me')");
     legacy.close();
     const upgraded = initSqlite(filename);
     try {
-      const backup = filename + '.pre-upgrade-to-v20.bak';
+      const backup = filename + `.pre-upgrade-to-v${SQLITE_SCHEMA_VERSION}.bak`;
       expect(fs.existsSync(backup)).toBe(true);
       const snapshot = new Database(backup, { readonly: true });
       try {
@@ -758,7 +758,8 @@ describe('V1.6 database version and recovery boundary', () => {
   it('refuses a newer ledger without changing any database bytes', () => {
     const filename = tempDbPath();
     const future = new Database(filename);
-    future.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, status TEXT); INSERT INTO schema_migrations VALUES (21, 'applied')");
+    future.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, status TEXT)');
+    future.prepare("INSERT INTO schema_migrations VALUES (?, 'applied')").run(SQLITE_SCHEMA_VERSION + 1);
     future.close();
     const before = fs.readFileSync(filename);
     expect(() => initSqlite(filename)).toThrow(/newer.*schema|schema.*newer/i);

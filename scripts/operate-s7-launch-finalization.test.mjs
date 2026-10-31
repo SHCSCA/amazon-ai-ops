@@ -1,5 +1,5 @@
 // 按证据职责拆分夹具与验收断言，测试仍归属原有入口。
-import { EXCLUSIVE_WINDOW_HELPER_SCRIPT, describe, enforceS7MainStartupGate, expect, fs, it, legacyV1Checksum, path, postMigrationAuthorityContract, run, vi } from './s7-launch-operator-test-environment.mjs';
+import { EXCLUSIVE_WINDOW_HELPER_SCRIPT, TARGET_VERSION, describe, enforceS7MainStartupGate, expect, fs, it, legacyV1Checksum, path, postMigrationAuthorityContract, run, vi } from './s7-launch-operator-test-environment.mjs';
 import { executeArgs, finalizeArgs, prepare, prepareFinalizationArgs, preparePostWriteRecoveryFixture, writePassingAcceptance } from './s7-launch-operator-test-workflow.mjs';
 import { clone, gateArtifact, gateBinding, sha, write } from './s7-launch-operator-test-artifacts.mjs';
 import { setup } from './s7-launch-operator-test-setup.mjs';
@@ -108,7 +108,7 @@ it('requires a second explicit confirmation and atomically publishes FINALIZED e
     await expect(run(finalizeArgs(finalizationPacket, prepared.receipt.confirmation.token), s.context)).rejects.toThrow(/FINALIZED|one-time|replay/i);
 });
 
-it('blocks finalization when the current authority no longer matches the exact v11 schema contract', async () => {
+it('blocks finalization when the current authority no longer matches the exact current schema contract', async () => {
     const s = setup();
     const approved = await prepare(s);
     const launchReceipt = path.join(s.launchOutputRoot, 'launch.json');
@@ -120,7 +120,8 @@ it('blocks finalization when the current authority no longer matches the exact v
         return contract;
     };
     const finalizationPacket = path.join(s.finalizationOutputRoot, 'invalid-v11-schema-finalization.json');
-    await expect(run(prepareFinalizationArgs(s, approved.packetPath, launchReceipt, acceptanceReceipt, finalizationPacket), s.context)).rejects.toThrow(/exact production v20 contract/i);
+    await expect(run(prepareFinalizationArgs(s, approved.packetPath, launchReceipt, acceptanceReceipt, finalizationPacket), s.context))
+        .rejects.toThrow(new RegExp(`exact production v${TARGET_VERSION} contract`, 'i'));
     expect(fs.existsSync(finalizationPacket)).toBe(false);
     expect(fs.existsSync(s.getStartupGatePlan().finalizedPath)).toBe(false);
 });
@@ -157,7 +158,8 @@ it('blocks finalization when the authority contract hash is not self-bound to it
         contractSha256: 'A'.repeat(64),
     });
     const finalizationPacket = path.join(s.finalizationOutputRoot, 'hash-drift.json');
-    await expect(run(prepareFinalizationArgs(s, approved.packetPath, launchReceipt, acceptanceReceipt, finalizationPacket), s.context)).rejects.toThrow(/exact production v20 contract/i);
+    await expect(run(prepareFinalizationArgs(s, approved.packetPath, launchReceipt, acceptanceReceipt, finalizationPacket), s.context))
+        .rejects.toThrow(new RegExp(`exact production v${TARGET_VERSION} contract`, 'i'));
     expect(fs.existsSync(finalizationPacket)).toBe(false);
 });
 

@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { performance } from 'node:perf_hooks';
 import governance from './v16-ui-governance.js';
 import primitives from './v16-ui-software-governance.js';
 import cli from './capture-v16-ui-software.js';
@@ -109,6 +110,7 @@ describe('native software UI producer boundaries', () => {
 });
 
 const unitRequire = createRequire(import.meta.url);
+const { createRuntimeLogRecord } = unitRequire('../packages/shared-types/src/runtime-log-format.cjs');
 const { createGovernanceTransportTestPorts } = unitRequire('./v16-ui-governance-transport-test-port.cjs');
 const collectorPath = fileURLToPath(new URL('./v16-ui-software-collector.js', import.meta.url));
 const scopeContext = { storeId: 'unit-scope-store', browserProfileId: 'unit-scope-profile', marketplace: 'US', currency: 'USD',
@@ -118,6 +120,24 @@ const desiredScope = { dateFrom: '2026-10-01', dateTo: '2026-10-02', storeName: 
   marketplaceCode: 'US', currency: 'USD', asin: 'B000000001', batchId: 'unit-fixture-batch' };
 const scopeTimeoutMs = 30_000;
 let scopeBundle;
+let scopeDiagnosticRun = 0;
+
+function scopePhaseProbe() {
+  const run = ++scopeDiagnosticRun, started = performance.now();
+  // 区分冷编译、浏览器与真实页面合同的耗时，不改变原测试和生产时限。
+  const log = (phase, state, phaseStarted, error) => process.stdout.write(JSON.stringify(createRuntimeLogRecord(error ? 'error' : 'info',
+    'v16.ui_scope_unit_phase', { run, phase, state, elapsedMs: Math.round(performance.now() - started),
+      phaseElapsedMs: Math.round(performance.now() - phaseStarted), ...(error ? { error } : {}) })) + '\n');
+  return async (phase, execute) => {
+    const phaseStarted = performance.now(); log(phase, 'start', phaseStarted);
+    try { const value = await execute(); log(phase, 'complete', phaseStarted); return value; }
+    catch (error) {
+      try { log(phase, 'failed', phaseStarted, error); }
+      catch (logError) { throw new AggregateError([error, logError], 'UNIT_SCOPE_PHASE_AND_LOG_FAILED'); }
+      throw error;
+    }
+  };
+}
 
 function operationScopeFixture() {
   return `import React,{useState}from'react';import{createRoot}from'react-dom/client';
@@ -194,10 +214,14 @@ describe('isolated governance transport dependency ports', () => {
 });
 
 async function collectWithScopePage(options = {}) {
-  scopeBundle ??= bundleProductionActionFixture(operationScopeFixture());
-  const { browser, page } = await openProductionActionFixture(await scopeBundle);
+  const phase = scopePhaseProbe();
+  const bundle = await phase('bundle-ready', () => {
+    if (!scopeBundle) throw new Error('UNIT_SCOPE_BUNDLE_NOT_PREPARED');
+    return scopeBundle;
+  });
+  const { browser, page } = await phase('browser-open', () => openProductionActionFixture(bundle));
   try {
-    await page.locator('nav[aria-label="主业务导航"]').waitFor();
+    await phase('initial-navigation', () => page.locator('nav[aria-label="主业务导航"]').waitFor());
     await page.evaluate(settings => window.scopeUnit.configure(settings), options);
     const root = path.resolve(os.tmpdir(), 'unit-scope-virtual'), profile = path.join(root, 'profile'), appRoot = path.join(root, 'app');
     const identity = { pid: 20_001, creationTime: 1_000, packaged: true, executablePath: path.join(root, 'AmazonAIOpsAgent.exe'), appRoot,
@@ -254,17 +278,23 @@ async function collectWithScopePage(options = {}) {
     Object.defineProperty(dependencies, './v16-ui-software-scope', { get() {
       // 旧 collector 不读取新模块；先落测试时 RED 必须来自真实行为断言。
       const file = path.join(path.dirname(collectorPath), 'v16-ui-software-scope.js');
-      return runCollectorModule(file, fs.readFileSync(file, 'utf8'), { './v16-performance-artifacts': artifacts, './package-ui-evidence': ui });
+      return runCollectorModule(file, fs.readFileSync(file, 'utf8'), { './v16-performance-artifacts': artifacts,
+        './package-ui-evidence': { ...ui, navigateToWorkspace: (...args) => phase('public-navigation', () => ui.navigateToWorkspace(...args)) } });
     } });
     const actual = runCollectorModule(collectorPath, fs.readFileSync(collectorPath, 'utf8'), dependencies);
-    const result = await actual.collectSoftwareUi({ root, output: writer.root, fixtureRecord: { path: path.join(root, 'fixture.json') }, profile,
-      timeoutMs: options.timeoutMs ?? scopeTimeoutMs, screenReaderExecutable: options.screenReader ? path.join(root, 'nvda.exe') : undefined });
-    return { ...result, calls, logs, written, bindings, identity, runtime, readerArguments, ipc: await page.evaluate(() => window.scopeUnit.calls),
-      routes: await page.evaluate(() => window.scopeUnit.routes) };
-  } finally { await browser.close(); }
+    const result = await phase('collector', () => actual.collectSoftwareUi({ root, output: writer.root, fixtureRecord: { path: path.join(root, 'fixture.json') }, profile,
+      timeoutMs: options.timeoutMs ?? scopeTimeoutMs, screenReaderExecutable: options.screenReader ? path.join(root, 'nvda.exe') : undefined }));
+    return { ...result, calls, logs, written, bindings, identity, runtime, readerArguments, ipc: await phase('ipc-read', () => page.evaluate(() => window.scopeUnit.calls)),
+      routes: await phase('routes-read', () => page.evaluate(() => window.scopeUnit.routes)) };
+  } finally { await phase('browser-close', () => browser.close()); }
 }
 
 describe('isolated collector production operation scope route synchronization', () => {
+  beforeAll(async () => {
+    // 冷编译属于套件准备；每例仍独立启动浏览器并保留原页面与生产时限。
+    const phase = scopePhaseProbe();
+    await phase('bundle-cold', () => scopeBundle ??= bundleProductionActionFixture(operationScopeFixture()));
+  }, 30_000);
   it('navigates the real Shell registry router to OperationScopePage and verifies Main and DOM before the matrix', async () => {
     const result = await collectWithScopePage();
     expect(result.report.passed).toBe(true); expect(result.report.formalCredit).toBe(false);
